@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { graphSearch, getGraphNeighbors } from "@/lib/api";
+import { graphSearch, getGraphNeighbors, getGraphInitial } from "@/lib/api";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
 import { Search, Loader2, Maximize2 } from "lucide-react";
 
@@ -79,6 +79,52 @@ export default function GraphPage() {
     updateDimensions();
     window.addEventListener("resize", updateDimensions);
     return () => window.removeEventListener("resize", updateDimensions);
+  }, []);
+
+
+  // Auto-load initial graph data
+  useEffect(() => {
+    const loadInitial = async () => {
+      setLoading(true);
+      try {
+        const data = await getGraphInitial(300);
+        const nodeMap = new Map<string, GNode>();
+        const types = new Set<string>();
+
+        for (const node of data.nodes || []) {
+          const p = node.props || node.properties || {};
+          const id = (p.uuid as string) || `doc-${p.paperless_id}` || (p.name as string);
+          if (!id || nodeMap.has(id)) continue;
+          const label = node.labels?.[0] || "Unknown";
+          types.add(label);
+          nodeMap.set(id, {
+            id,
+            name: (p.name as string) || (p.title as string) || id,
+            label,
+            props: p,
+            color: getColor(label),
+            val: label === "Document" ? 2 : 4,
+          });
+        }
+
+        const links: GLink[] = [];
+        for (const rel of data.relationships || []) {
+          const src = rel.start || "";
+          const tgt = rel.end || "";
+          if (src && tgt && nodeMap.has(src) && nodeMap.has(tgt)) {
+            links.push({ source: src, target: tgt, type: rel.type });
+          }
+        }
+
+        setGraphData({ nodes: Array.from(nodeMap.values()), links });
+        setNodeTypes(types);
+      } catch (e) {
+        console.error("Failed to load initial graph:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadInitial();
   }, []);
 
   const addNeighbors = useCallback(
@@ -260,8 +306,8 @@ export default function GraphPage() {
           {graphData.nodes.length === 0 ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
               <div className="text-center">
-                <Maximize2 className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                <p>Search for a node to start exploring the graph</p>
+                {loading ? <Loader2 className="h-12 w-12 mx-auto mb-3 animate-spin opacity-30" /> : <Maximize2 className="h-12 w-12 mx-auto mb-3 opacity-30" />}
+                <p>{loading ? "Loading graph data..." : "No graph data found. Try syncing documents first."}</p>
               </div>
             </div>
           ) : (

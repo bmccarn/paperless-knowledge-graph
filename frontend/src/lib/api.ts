@@ -54,3 +54,11 @@ export async function getGraphNode(uuid: string) {
 export async function getGraphNeighbors(uuid: string, depth = 2) {
   return apiFetch(`/graph/neighbors/${uuid}?depth=${depth}`);
 }
+
+export async function getGraphInitial(limit = 300) {
+  return apiFetch(`/graph/initial?limit=${limit}`);
+}
+
+export async function resolveEntities() {
+  return apiFetch("/resolve-entities", { method: "POST" });
+}

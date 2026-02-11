@@ -329,12 +329,76 @@ class GraphStore:
                 return {"nodes": [], "relationships": []}
             return {"nodes": record["nodes"], "relationships": record["rels"]}
 
+    async def get_initial_graph(self, limit: int = 300) -> dict:
+        """Get an initial graph view with Person/Organization nodes and their connections."""
+        async with self.driver.session() as session:
+            # Get Person and Organization nodes
+            node_result = await session.run(
+                """
+                MATCH (n)
+                WHERE n:Person OR n:Organization
+                RETURN labels(n) AS labels, properties(n) AS props
+                ORDER BY COUNT { (n)--() } DESC
+                LIMIT $limit
+                """,
+                limit=limit,
+            )
+            nodes = [{"labels": r["labels"], "props": r["props"]} async for r in node_result]
+
+            # Get UUIDs for relationship query
+            uuids = [n["props"].get("uuid") for n in nodes if n["props"].get("uuid")]
+
+            # Get relationships between these nodes (and their connected Document nodes)
+            rel_result = await session.run(
+                """
+                MATCH (a)-[r]-(b)
+                WHERE a.uuid IN $uuids
+                RETURN DISTINCT
+                    labels(a) AS a_labels, properties(a) AS a_props,
+                    labels(b) AS b_labels, properties(b) AS b_props,
+                    type(r) AS rel_type, properties(r) AS rel_props,
+                    properties(startNode(r)).uuid AS start_uuid,
+                    properties(endNode(r)).uuid AS end_uuid,
+                    startNode(r).paperless_id AS start_pid,
+                    endNode(r).paperless_id AS end_pid
+                LIMIT 1000
+                """,
+                uuids=uuids,
+            )
+
+            all_nodes = {n["props"].get("uuid"): n for n in nodes}
+            relationships = []
+
+            async for r in rel_result:
+                # Add connected nodes we haven't seen
+                for prefix in ["a", "b"]:
+                    props = r[f"{prefix}_props"]
+                    uid = props.get("uuid") or f"doc-{props.get('paperless_id', '')}"
+                    if uid and uid not in all_nodes:
+                        all_nodes[uid] = {"labels": r[f"{prefix}_labels"], "props": props}
+
+                start = r["start_uuid"] or f"doc-{r['start_pid']}"
+                end = r["end_uuid"] or f"doc-{r['end_pid']}"
+                if start and end:
+                    relationships.append({
+                        "type": r["rel_type"],
+                        "props": r["rel_props"],
+                        "start": start,
+                        "end": end,
+                    })
+
+            return {
+                "nodes": list(all_nodes.values()),
+                "relationships": relationships,
+            }
+
 
 def _try_int(val: str) -> int:
     try:
         return int(val)
     except (ValueError, TypeError):
         return -1
+
 
 
 graph_store = GraphStore()

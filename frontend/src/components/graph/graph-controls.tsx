@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useGraphStore } from '@/lib/stores/graph-store';
 import { NODE_PALETTE, getNodeColor } from './graph-legend';
@@ -31,6 +32,8 @@ interface GraphControlsProps {
   onToggleLegend: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  nodeLimit: number;
+  onNodeLimitChange: (limit: number) => void;
 }
 
 export function GraphControls({
@@ -39,6 +42,7 @@ export function GraphControls({
   isFullscreen, onToggleFullscreen, onResetView,
   showLabels, onToggleLabels, showLegend, onToggleLegend,
   onZoomIn, onZoomOut,
+  nodeLimit, onNodeLimitChange,
 }: GraphControlsProps) {
   const { is3DMode, toggle3DMode, searchQuery, setSearchQuery } = useGraphStore();
   const [mobileExpanded, setMobileExpanded] = useState(false);
@@ -123,6 +127,23 @@ export function GraphControls({
             {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </Button>
         </TooltipTrigger><TooltipContent>{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</TooltipContent></Tooltip>
+      </div>
+
+      {/* Node limit slider (top-right) */}
+      <div className="absolute top-14 right-3 z-20 bg-card/90 backdrop-blur-md border rounded-lg px-3 py-2.5 shadow-lg w-48">
+        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">Node Limit: {nodeLimit}</p>
+        <Slider
+          value={[nodeLimit]}
+          onValueChange={(v) => onNodeLimitChange(v[0])}
+          min={50}
+          max={500}
+          step={25}
+          className="mt-1"
+        />
+        <div className="flex justify-between text-[9px] text-muted-foreground mt-0.5">
+          <span>50</span>
+          <span>500</span>
+        </div>
       </div>
 
       {/* Legend overlay (top-left) */}

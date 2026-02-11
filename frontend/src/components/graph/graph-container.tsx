@@ -69,6 +69,7 @@ function GraphContent() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isCssFullscreen, setIsCssFullscreen] = useState(false);
   const [searchResults, setSearchResults] = useState<Array<{ labels: string[]; properties: Record<string, unknown> }>>([]);
+  const [nodeLimit, setNodeLimit] = useState(200);
 
   const { selectedNodeId, hoveredNodeId, is3DMode, selectNode, setHoveredNode, searchQuery, setSearchQuery } = useGraphStore();
 
@@ -140,7 +141,7 @@ function GraphContent() {
     const loadInitial = async () => {
       setInitialLoading(true);
       try {
-        const data = await getGraphInitial(300);
+        const data = await getGraphInitial(nodeLimit);
         const nodeMap = new Map<string, GNode>();
         const types = new Set<string>();
         for (const node of data.nodes || []) {
@@ -171,7 +172,7 @@ function GraphContent() {
       }
     };
     loadInitial();
-  }, []);
+  }, [nodeLimit]);
 
   // Auto-search from URL param
   useEffect(() => {
@@ -584,6 +585,8 @@ function GraphContent() {
         onToggleLegend={() => setShowLegend(p => !p)}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
+        nodeLimit={nodeLimit}
+        onNodeLimitChange={setNodeLimit}
       />
 
       {loading && (

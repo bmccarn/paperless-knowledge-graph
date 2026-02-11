@@ -327,7 +327,20 @@ DATE_PATTERNS = [
 def _is_date_string(name: str) -> bool:
     """Check if a string is just a date (should not be an entity node)."""
     name = name.strip()
-    return any(p.match(name) for p in DATE_PATTERNS)
+    if any(p.match(name) for p in DATE_PATTERNS):
+        return True
+    # Also catch dates with label prefixes like "Date of Issue: 2015-10-30" or "R/O Open Date 12/23/25"
+    # Strip common prefixes and re-check
+    stripped = re.sub(r'^(?:Date of |R/O |In-Service |Delivery |Freight Bill |Setup |Expected date of )?\w*\s*(?:Date|date)?:?\s*', '', name).strip()
+    if stripped != name and stripped and any(p.match(stripped) for p in DATE_PATTERNS):
+        return True
+    # Catch "Month DD, YYYY - Month DD, YYYY" date ranges
+    if re.match(r'^\w+ \d{1,2},? \d{4}\s*[-–]\s*\w+ \d{1,2},? \d{4}$', name):
+        return True
+    # Catch "TOD DTD MM/DD/YYYY" style
+    if re.match(r'^[A-Z]{2,5}\s+(?:DTD\s+)?\d{1,2}/\d{1,2}/\d{2,4}$', name):
+        return True
+    return False
 
 
 
@@ -466,6 +479,11 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
     """Route entity resolution based on type."""
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
+        return ""
+    
+    # Block date strings from ALL entity types (not just Event)
+    if _is_date_string(name):
+        logger.debug(f"Skipping date string entity: '{name}' ({entity_type})")
         return ""
         
     entity_type = entity_type.strip().title()

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Track background tasks
 _tasks: dict[str, dict] = {}
+_cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 
 
 def _make_progress_callback(task_id: str):
@@ -206,12 +207,14 @@ async def sync():
         "recent_results": [],
     }
 
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
     progress_cb = _make_progress_callback(task_id)
 
     async def _run():
         try:
             invalidate_on_sync()
-            result = await sync_documents(progress_callback=progress_cb)
+            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""
@@ -247,12 +250,14 @@ async def reindex():
         "recent_results": [],
     }
 
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
     progress_cb = _make_progress_callback(task_id)
 
     async def _run():
         try:
             invalidate_on_sync()
-            result = await reindex_all(progress_callback=progress_cb)
+            result = await reindex_all(progress_callback=progress_cb, cancel_event=cancel_event)
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""

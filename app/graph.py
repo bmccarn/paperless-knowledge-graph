@@ -5,6 +5,7 @@ from typing import Any, Optional
 from neo4j import AsyncGraphDatabase
 
 from app.config import settings
+from app.retry import retry_db
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +61,18 @@ class GraphStore:
     async def create_document_node(self, paperless_id: int, title: str, doc_type: str,
                                     date: str, content_hash: str) -> str:
         """Create or update a Document node. Returns the paperless_id."""
-        async with self.driver.session() as session:
-            await session.run(
-                """
-                MERGE (d:Document {paperless_id: $pid})
-                SET d.title = $title, d.doc_type = $doc_type, d.date = $date,
-                    d.content_hash = $hash, d.processed_at = datetime()
-                """,
-                pid=paperless_id, title=title, doc_type=doc_type,
-                date=date or "", hash=content_hash,
-            )
+        async def _op():
+            async with self.driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (d:Document {paperless_id: $pid})
+                    SET d.title = $title, d.doc_type = $doc_type, d.date = $date,
+                        d.content_hash = $hash, d.processed_at = datetime()
+                    """,
+                    pid=paperless_id, title=title, doc_type=doc_type,
+                    date=date or "", hash=content_hash,
+                )
+        await retry_db(_op, operation='create_document_node')
         return str(paperless_id)
 
     async def find_person(self, name: str) -> Optional[dict]:
@@ -172,8 +175,10 @@ class GraphStore:
         props = {**properties, "uuid": node_uuid}
         props_str = ", ".join(f"{k}: ${k}" for k in props)
         query = f"CREATE (n:{label} {{{props_str}}})"
-        async with self.driver.session() as session:
-            await session.run(query, **props)
+        async def _op():
+            async with self.driver.session() as session:
+                await session.run(query, **props)
+        await retry_db(_op, operation='create_node')
         return node_uuid
 
     async def create_relationship(self, from_uuid: str, from_label: str,
@@ -189,13 +194,15 @@ class GraphStore:
             ON CREATE SET r = $props, r.weight = 1
             ON MATCH SET r.weight = coalesce(r.weight, 1) + 1, r += $props
         """
-        async with self.driver.session() as session:
-            await session.run(
-                query,
-                from_uuid=from_uuid, from_pid=_try_int(from_uuid),
-                to_uuid=to_uuid, to_pid=_try_int(to_uuid),
-                props=props,
-            )
+        async def _op():
+            async with self.driver.session() as session:
+                await session.run(
+                    query,
+                    from_uuid=from_uuid, from_pid=_try_int(from_uuid),
+                    to_uuid=to_uuid, to_pid=_try_int(to_uuid),
+                    props=props,
+                )
+        await retry_db(_op, operation='create_relationship')
 
     async def get_document_entities(self, paperless_id: int) -> list[dict]:
         """Get all entities connected to a document."""

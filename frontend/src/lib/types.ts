@@ -8,7 +8,7 @@ export interface StatusResponse {
   };
   embeddings: { document_chunks: number; entity_embeddings: number; docs_with_embeddings: number; };
   last_sync: string | null;
-  active_tasks: Record<string, string>;
+  active_tasks: Record<string, string | { status: string; type: string }>;
 }
 
 export interface TaskResponse {

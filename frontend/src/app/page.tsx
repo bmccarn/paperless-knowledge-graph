@@ -82,6 +82,20 @@ export default function DashboardPage() {
     return () => clearInterval(i);
   }, [fetchStatus]);
 
+  // Auto-attach to running tasks on page load
+  useEffect(() => {
+    if (activeTaskId || !status) return;
+    const runningTasks = Object.entries(status.active_tasks).filter(
+      ([, s]) => s === "running"
+    );
+    if (runningTasks.length > 0) {
+      const [taskId, info] = runningTasks[0];
+      setActiveTaskId(taskId);
+      const taskType = typeof info === "object" && info !== null ? (info as Record<string, string>).type || "Task" : "Task";
+      setActiveTaskType(taskType.charAt(0).toUpperCase() + taskType.slice(1));
+    }
+  }, [status, activeTaskId]);
+
   // Poll task progress
   useEffect(() => {
     if (!activeTaskId) return;
@@ -437,13 +451,17 @@ export default function DashboardPage() {
             {/* Existing active tasks (from other sessions) */}
             {!tp && Object.keys(status.active_tasks).length > 0 && (
               <div className="space-y-2">
-                {Object.entries(status.active_tasks).map(([id, s]) => (
-                  <div key={id} className="flex items-center gap-2 rounded-lg bg-accent/50 p-2.5">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                    <Badge variant="secondary" className="text-xs">{s}</Badge>
-                    <span className="text-xs text-muted-foreground truncate flex-1">{id}</span>
-                  </div>
-                ))}
+                {Object.entries(status.active_tasks).map(([id, info]) => {
+                  const taskStatus = typeof info === "object" ? info.status : info;
+                  const taskType = typeof info === "object" ? info.type : "";
+                  return (
+                    <div key={id} className="flex items-center gap-2 rounded-lg bg-accent/50 p-2.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                      <Badge variant="secondary" className="text-xs">{taskType || taskStatus}</Badge>
+                      <span className="text-xs text-muted-foreground truncate flex-1">{id}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

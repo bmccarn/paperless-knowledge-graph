@@ -30,9 +30,9 @@ EXTRACTION_PROMPTS = {
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "PATIENT_OF/WORKS_AT/etc",
       "confidence": 0.8
     }}
@@ -66,9 +66,9 @@ Document content:
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "CUSTOMER_OF/VENDOR_FOR/etc",
       "confidence": 0.8
     }}
@@ -105,9 +105,9 @@ Document content:
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "CONTRACTED_WITH/EMPLOYS/etc",
       "confidence": 0.8
     }}
@@ -135,9 +135,9 @@ Document content:
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "INSURED_BY/POLICYHOLDER_OF/etc",
       "confidence": 0.8
     }}
@@ -165,9 +165,9 @@ Document content:
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "EMPLOYED_BY/PREPARED_BY/etc",
       "confidence": 0.8
     }}
@@ -198,9 +198,9 @@ Document content:
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "OWNS/MORTGAGE_WITH/etc",
       "confidence": 0.8
     }}
@@ -244,9 +244,9 @@ GENERIC_PROMPT = """Extract structured information from this document. Return a 
   "implied_relationships": [
     {{
       "from_entity": "entity name",
-      "from_type": "Person/Organization",
+      "from_type": "Person/Organization/Location/System/Product/Document/Event",
       "to_entity": "entity name",
-      "to_type": "Person/Organization",
+      "to_type": "Person/Organization/Location/System/Product/Document/Event",
       "relationship": "relationship type",
       "confidence": 0.8
     }}

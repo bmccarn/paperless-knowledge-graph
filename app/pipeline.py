@@ -185,15 +185,8 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
             if not from_name or not to_name:
                 continue
 
-            if from_type == "Organization":
-                from_uuid = await entity_resolver.resolve_organization(from_name, doc_id)
-            else:
-                from_uuid = await entity_resolver.resolve_person(from_name, doc_id)
-
-            if to_type == "Organization":
-                to_uuid = await entity_resolver.resolve_organization(to_name, doc_id)
-            else:
-                to_uuid = await entity_resolver.resolve_person(to_name, doc_id)
+            from_uuid = await _resolve_entity(from_name, from_type, doc_id)
+            to_uuid = await _resolve_entity(to_name, to_type, doc_id)
 
             if from_uuid and to_uuid:
                 props = {**source_props, "confidence": confidence}
@@ -205,6 +198,26 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 
         except Exception as e:
             logger.warning(f"Failed to create implied relationship: {e}")
+
+
+VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event"}
+
+
+async def _resolve_entity(name: str, entity_type: str, doc_id: int) -> str:
+    """Route entity resolution based on type."""
+    entity_type = entity_type.strip().title()
+    if entity_type == "Organization":
+        return await entity_resolver.resolve_organization(name, doc_id)
+    elif entity_type == "Person":
+        return await entity_resolver.resolve_person(name, doc_id)
+    elif entity_type in VALID_ENTITY_TYPES:
+        # For other types, use the generic entity creation via entity_resolver
+        return await entity_resolver.resolve_generic(name, entity_type, doc_id)
+    else:
+        # Unknown type — default to Organization if it looks like one, else Person
+        if any(w in name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
+            return await entity_resolver.resolve_organization(name, doc_id)
+        return await entity_resolver.resolve_person(name, doc_id)
 
 
 async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict):

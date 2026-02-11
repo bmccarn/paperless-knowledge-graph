@@ -207,14 +207,14 @@ Document content:
 # Pass 2 prompt: Universal entity extraction and typing
 ENTITY_EXTRACTION_PROMPT = """Extract and properly type ALL entities from this document. You will receive the raw document text and structured metadata from Pass 1.
 
-Valid entity types: Person, Organization, Location, System, Product, Document, Event
+Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition
 
 Return a JSON object with:
 {{
   "entities": [
     {{
       "name": "entity name",
-      "type": "Person/Organization/Location/System/Product/Document/Event",
+      "type": "Person/Organization/Location/System/Product/Document/Event/Condition",
       "confidence": 0.95,
       "description": "brief description of the entity"
     }}
@@ -226,9 +226,12 @@ Entity typing guidelines:
 - Organization: Companies, hospitals, agencies, departments, etc.
 - Location: Cities, states, countries, addresses, buildings
 - System: Databases, software systems, platforms, applications
-- Product: Specific products, services, plans, policies
+- Product: Specific products, services, plans, policies (NOT medical conditions or diagnoses)
 - Document: Referenced documents, forms, reports
 - Event: Meetings, appointments, procedures, transactions
+- Condition: Medical conditions, diagnoses, symptoms, injuries, disabilities (e.g. migraine headaches, lumbosacral strain, sleep apnea, PTSD, anxiety disorder)
+
+IMPORTANT: Medical conditions, diagnoses, symptoms, and injuries must be typed as Condition, NOT Product.
 
 Be thorough - identify ALL entities mentioned. A database should be System, a city should be Location, etc.
 Include high confidence scores (0.8+) for clearly identifiable entities.

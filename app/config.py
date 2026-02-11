@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     postgres_user: str = "kguser"
     postgres_password: str = ""
 
-    max_concurrent_docs: int = 5
+    max_concurrent_docs: int = 10
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

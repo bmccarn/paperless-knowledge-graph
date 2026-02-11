@@ -31,6 +31,12 @@ class GraphStore:
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Contract) REQUIRE c.uuid IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (i:InsurancePolicy) REQUIRE i.uuid IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (e:DateEvent) REQUIRE e.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (dr:DocumentRef) REQUIRE dr.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (cond:Condition) REQUIRE cond.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (loc:Location) REQUIRE loc.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (sys:System) REQUIRE sys.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (ev:Event) REQUIRE ev.uuid IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (prod:Product) REQUIRE prod.uuid IS UNIQUE",
             ]
             for c in constraints:
                 try:
@@ -404,13 +410,13 @@ class GraphStore:
             return {"nodes": record["nodes"], "relationships": record["rels"]}
 
     async def get_initial_graph(self, limit: int = 300) -> dict:
-        """Get an initial graph view with Person/Organization nodes and their connections."""
+        """Get an initial graph view with entity nodes (not raw Document nodes) and their connections."""
         async with self.driver.session() as session:
-            # Get Person and Organization nodes
+            # Get all entity nodes (everything except raw Document nodes which are Paperless docs)
             node_result = await session.run(
                 """
                 MATCH (n)
-                WHERE n:Person OR n:Organization
+                WHERE NOT n:Document
                 RETURN labels(n) AS labels, properties(n) AS props
                 ORDER BY COUNT { (n)--() } DESC
                 LIMIT $limit

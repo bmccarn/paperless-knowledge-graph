@@ -474,6 +474,16 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 
 VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event", "Condition"}
 
+# Map entity types to Neo4j labels (avoids collision with Paperless Document nodes)
+ENTITY_TYPE_TO_LABEL = {
+    "Document": "DocumentRef",  # "Document" label is reserved for Paperless doc nodes
+}
+
+
+def _neo4j_label(entity_type: str) -> str:
+    """Get Neo4j label for an entity type."""
+    return ENTITY_TYPE_TO_LABEL.get(entity_type, entity_type)
+
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "") -> str:
     """Route entity resolution based on type."""
@@ -527,11 +537,12 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title)
             if entity_uuid:
                 # Create relationship from document to entity
+                label = _neo4j_label(entity_type)
                 await graph_store.create_relationship(
-                    doc_node_id, "Document", entity_uuid, entity_type, 
+                    doc_node_id, "Document", entity_uuid, label, 
                     "MENTIONS", {**source_props, "confidence": confidence}
                 )
-                logger.debug(f"Created entity relationship: Document {doc_id} -[MENTIONS]-> {entity_type} {name}")
+                logger.debug(f"Created entity relationship: Document {doc_id} -[MENTIONS]-> {label} {name}")
                 
         except Exception as e:
             logger.warning(f"Failed to process enhanced entity {entity}: {e}")
@@ -664,7 +675,7 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
                 rel_type = "PARTY_TO"
             
             await graph_store.create_relationship(
-                doc_node_id, "Document", entity_uuid, entity_type, rel_type, source_props)
+                doc_node_id, "Document", entity_uuid, _neo4j_label(entity_type), rel_type, source_props)
 
     # Create contract node with metadata
     contract_uuid = await graph_store.create_node("Contract", {

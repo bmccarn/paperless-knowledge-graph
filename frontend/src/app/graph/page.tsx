@@ -10,7 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { graphSearch, getGraphNeighbors } from "@/lib/api";
-import { Search, X, Loader2, Maximize2 } from "lucide-react";
+import { NodeDetailPanel } from "@/components/node-detail-panel";
+import { Search, Loader2, Maximize2 } from "lucide-react";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
@@ -319,7 +320,7 @@ export default function GraphPage() {
       </div>
 
       {/* Right panel */}
-      <div className="w-72 border-l flex flex-col">
+      <div className={`${selectedNode ? "w-96" : "w-72"} border-l flex flex-col transition-all`}>
         {/* Filters */}
         <div className="border-b p-3">
           <p className="text-xs font-medium mb-2">Filter by Type</p>
@@ -350,68 +351,19 @@ export default function GraphPage() {
           </div>
         </div>
 
-        {/* Node detail */}
-        <ScrollArea className="flex-1">
-          {selectedNode ? (
-            <div className="p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <Badge
-                  style={{ backgroundColor: selectedNode.color, color: "white" }}
-                >
-                  {selectedNode.label}
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedNode(null)}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-              <h3 className="font-medium text-sm">{selectedNode.name}</h3>
-              <Separator />
-              <div className="space-y-1.5">
-                {Object.entries(selectedNode.props).map(([key, value]) => (
-                  <div key={key}>
-                    <span className="text-[10px] text-muted-foreground uppercase">
-                      {key}
-                    </span>
-                    <p className="text-xs break-all">
-                      {typeof value === "object"
-                        ? JSON.stringify(value)
-                        : String(value)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <Separator />
-              <Button
-                size="sm"
-                variant="secondary"
-                className="w-full text-xs"
-                onClick={() => addNeighbors(selectedNode.id)}
-              >
-                Expand Neighbors
-              </Button>
-              {selectedNode.props.paperless_id != null && (
-                <a
-                  href={`http://your-paperless-host:8000/documents/${selectedNode.props.paperless_id}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button size="sm" variant="outline" className="w-full text-xs mt-1">
-                    Open in Paperless
-                  </Button>
-                </a>
-              )}
-            </div>
-          ) : (
-            <div className="p-3 text-xs text-muted-foreground">
-              <p>Click a node to view details</p>
-              <p className="mt-1">Right-click a node to expand neighbors</p>
-            </div>
-          )}
-        </ScrollArea>
+        {/* Node detail dossier */}
+        {selectedNode ? (
+          <NodeDetailPanel
+            node={selectedNode}
+            onClose={() => setSelectedNode(null)}
+            onExpandNeighbors={addNeighbors}
+          />
+        ) : (
+          <div className="p-4 text-xs text-muted-foreground space-y-2">
+            <p>Click a node to view its full dossier</p>
+            <p>Right-click a node to expand neighbors</p>
+          </div>
+        )}
       </div>
     </div>
   );

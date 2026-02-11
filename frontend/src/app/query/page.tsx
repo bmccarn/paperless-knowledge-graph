@@ -8,7 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { postQuery } from "@/lib/api";
-import { Send, Loader2, ExternalLink, History, Trash2 } from "lucide-react";
+import { Send, Loader2, ExternalLink, History, Trash2, Network, FileText, Users } from "lucide-react";
+
+interface EntityReport {
+  name?: string;
+  label?: string;
+  description?: string;
+  uuid?: string;
+}
 
 interface Message {
   role: "user" | "assistant";
@@ -20,6 +27,7 @@ interface Message {
     doc_type?: string;
     date?: string;
   }>;
+  entities?: EntityReport[];
   graph_context?: {
     nodes?: Array<{ labels: string[]; props: Record<string, unknown> }>;
     relationships?: Array<{ type: string; start: string; end: string }>;
@@ -74,10 +82,32 @@ export default function QueryPage() {
 
     try {
       const result = await postQuery(q);
+      // Extract entity descriptions from graph context nodes
+      const contextNodes = result.graph_context?.nodes || result.context?.nodes || [];
+      const entities: EntityReport[] = contextNodes
+        .filter((n: Record<string, unknown>) => {
+          const p = (n.props || n.properties || {}) as Record<string, unknown>;
+          return p.description || p.name;
+        })
+        .map((n: Record<string, unknown>) => {
+          const p = (n.props || n.properties || {}) as Record<string, unknown>;
+          const labels = n.labels as string[] | undefined;
+          return {
+            name: (p.name as string) || (p.title as string) || "Unknown",
+            label: labels?.[0] || "Entity",
+            description: p.description as string | undefined,
+            uuid: p.uuid as string | undefined,
+          };
+        });
+
+      // Also include any explicitly provided entity reports
+      const explicitEntities = result.entities || result.entity_reports || [];
+
       const assistantMsg: Message = {
         role: "assistant",
         content: result.answer || result.response || JSON.stringify(result),
         sources: result.sources || result.citations || [],
+        entities: [...entities, ...explicitEntities],
         graph_context: result.graph_context || result.context,
         timestamp: Date.now(),
       };
@@ -177,12 +207,49 @@ export default function QueryPage() {
                   <CardContent className="py-3 px-4">
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
 
+                    {/* Entity descriptions used */}
+                    {msg.entities && msg.entities.length > 0 && (
+                      <>
+                        <Separator className="my-3" />
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            Entities Referenced ({msg.entities.length})
+                          </p>
+                          {msg.entities.map((ent, j) => (
+                            <div
+                              key={j}
+                              className="rounded-md bg-accent/30 p-2.5 text-xs"
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[9px] px-1.5 py-0"
+                                >
+                                  {ent.label}
+                                </Badge>
+                                <span className="font-medium">{ent.name}</span>
+                              </div>
+                              {ent.description && (
+                                <p className="text-muted-foreground leading-relaxed mt-1">
+                                  {ent.description}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
                     {/* Sources */}
                     {msg.sources && msg.sources.length > 0 && (
                       <>
                         <Separator className="my-3" />
                         <div className="space-y-1.5">
-                          <p className="text-xs font-medium text-muted-foreground">Sources</p>
+                          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                            <FileText className="h-3 w-3" />
+                            Source Documents ({msg.sources.length})
+                          </p>
                           {msg.sources.map((s, j) => {
                             const docId = s.paperless_id || s.doc_id;
                             return (
@@ -214,15 +281,16 @@ export default function QueryPage() {
                       </>
                     )}
 
-                    {/* Graph context */}
+                    {/* Graph context (raw) */}
                     {msg.graph_context && (
                       <>
                         <Separator className="my-3" />
                         <details className="text-xs">
-                          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                            Graph context
+                          <summary className="cursor-pointer text-muted-foreground hover:text-foreground flex items-center gap-1">
+                            <Network className="h-3 w-3" />
+                            Graph traversal details
                           </summary>
-                          <pre className="mt-2 overflow-auto rounded bg-muted p-2 text-[10px]">
+                          <pre className="mt-2 overflow-auto rounded bg-muted p-2 text-[10px] max-h-48">
                             {JSON.stringify(msg.graph_context, null, 2)}
                           </pre>
                         </details>

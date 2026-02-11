@@ -11,6 +11,7 @@ import {
   Moon,
   Sun,
   Zap,
+  Terminal,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ const navItems = [
   { href: "/query", label: "Query", icon: MessageSquare },
   { href: "/graph", label: "Graph", icon: Network },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/debug", label: "Debug Logs", icon: Terminal },
 ];
 
 export function SidebarNav() {

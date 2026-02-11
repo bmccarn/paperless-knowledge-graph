@@ -1,7 +1,7 @@
 import json
 import logging
 
-from google import genai
+from openai import AsyncOpenAI
 
 from app.config import settings
 
@@ -42,7 +42,10 @@ Document content (first 3000 chars):
 
 class DocumentClassifier:
     def __init__(self):
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.client = AsyncOpenAI(
+            base_url=settings.litellm_url,
+            api_key=settings.litellm_api_key,
+        )
         self.model = settings.gemini_model
 
     async def classify(self, title: str, content: str) -> dict:
@@ -51,12 +54,12 @@ class DocumentClassifier:
         prompt = CLASSIFICATION_PROMPT.format(title=title, content=truncated)
 
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.chat.completions.create(
                 model=self.model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
             )
-            result = json.loads(response.text)
+            result = json.loads(response.choices[0].message.content)
             doc_type = result.get("doc_type", "personal")
             if doc_type not in VALID_TYPES:
                 logger.warning(f"Invalid doc_type '{doc_type}' returned, defaulting to 'personal'")

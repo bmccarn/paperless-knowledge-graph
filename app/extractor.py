@@ -1,7 +1,7 @@
 import json
 import logging
 
-from google import genai
+from openai import AsyncOpenAI
 
 from app.config import settings
 
@@ -281,7 +281,10 @@ Document content:
 
 class EntityExtractor:
     def __init__(self):
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.client = AsyncOpenAI(
+            base_url=settings.litellm_url,
+            api_key=settings.litellm_api_key,
+        )
         self.model = settings.gemini_model
 
     async def extract(self, title: str, content: str, doc_type: str) -> dict:
@@ -291,12 +294,12 @@ class EntityExtractor:
         prompt = prompt_template.format(title=title, content=truncated)
 
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.chat.completions.create(
                 model=self.model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
             )
-            result = json.loads(response.text)
+            result = json.loads(response.choices[0].message.content)
             return result
         except Exception as e:
             logger.error(f"Extraction failed for doc_type={doc_type}: {e}")
@@ -309,12 +312,12 @@ class EntityExtractor:
         prompt = FALLBACK_PROMPT.format(title=title, content=truncated)
 
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.chat.completions.create(
                 model=self.model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
             )
-            result = json.loads(response.text)
+            result = json.loads(response.choices[0].message.content)
             logger.info(f"Fallback extraction succeeded for '{title}'")
 
             # Convert fallback format to generic format

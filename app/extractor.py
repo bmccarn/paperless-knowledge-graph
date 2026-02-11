@@ -120,6 +120,38 @@ Document title: {title}
 Document content:
 {content}""",
     
+    "military": """Extract structured metadata from this military document. Return a JSON object with:
+{{
+  "service_member": "full name of the service member",
+  "rank": "military rank (e.g., A1C, SSgt, CPT)",
+  "branch": "branch of service (Air Force, Army, Navy, Marines, Coast Guard, Space Force)",
+  "unit": "assigned unit or squadron",
+  "base": "military installation or base name",
+  "date": "document date (YYYY-MM-DD if possible)",
+  "document_type": "specific type (DD-214, PCS orders, EPR/OPR, training record, medical, promotion, etc.)",
+  "afsc_mos": "AFSC or MOS code if mentioned",
+  "period_of_service": "service dates if mentioned",
+  "key_details": "brief summary of the document's key information",
+  "organizations": [
+    {{
+      "name": "military organization name",
+      "type": "type (squadron, wing, division, command, etc.)"
+    }}
+  ],
+  "locations": [
+    {{
+      "name": "location name (base, city, country)",
+      "context": "context (stationed, deployed, TDY, etc.)"
+    }}
+  ]
+}}
+
+Extract all information present. Use null for missing fields. Military abbreviations should be preserved as-is.
+
+Document title: {title}
+Document content:
+{content}""",
+
     "property_home": """Extract structured metadata from this property/home document. Return a JSON object with:
 {{
   "property_address": "full property address",

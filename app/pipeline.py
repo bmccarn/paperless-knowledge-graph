@@ -1,3 +1,4 @@
+import re
 import asyncio
 import logging
 import time
@@ -15,6 +16,123 @@ logger = logging.getLogger(__name__)
 
 # Confidence threshold - entities below this are logged but not committed
 CONFIDENCE_THRESHOLD = 0.5
+
+# --- LLM Entity Validation ---
+import json as _json
+from openai import AsyncOpenAI as _AsyncOpenAI
+
+_validation_cache: dict[str, bool] = {}
+_validation_client = None
+
+def _get_validation_client():
+    global _validation_client
+    if _validation_client is None:
+        from app.config import settings
+        _validation_client = _AsyncOpenAI(
+            base_url=settings.litellm_url,
+            api_key=settings.litellm_api_key,
+        )
+    return _validation_client
+
+ENTITY_VALIDATION_PROMPT = """You are an entity validation system for a knowledge graph. Determine if this is a real, specific named entity worth storing.
+
+Entity name: "{name}"
+Entity type: {entity_type}
+From document titled: "{doc_title}"
+
+A VALID entity is a specific, identifiable thing: a real person, company, place, product, system, law, or event.
+An INVALID entity is: a generic term, action/process description, role title without a name, sentence fragment, line item label, or date.
+
+Examples:
+- "John Doe" (Person) → VALID (specific person)
+- "Department of Veterans Affairs" (Organization) → VALID (specific org)
+- "e-QIP" (System) → VALID (specific system)
+- "background investigations" (Event) → INVALID (generic process)
+- "soliciting and verifying SSN" (Person) → INVALID (action phrase)
+- "Owner/Operator" (Person) → INVALID (generic role)
+- "LABOR" (Product) → INVALID (invoice line item)
+- "DD-214" (Document) → VALID (specific form type)
+- "Investigation Request" (Event) → INVALID (generic process)
+- "Fort Bragg" (Location) → VALID (specific place)
+- "military installations" (Location) → INVALID (generic term)
+
+Respond with ONLY a JSON object: {"valid": true} or {"valid": false}"""
+
+
+def _is_suspicious_entity(name: str, entity_type: str) -> bool:
+    """Determine if an entity name is borderline and needs LLM validation."""
+    name_clean = name.strip()
+    words = name_clean.split()
+    
+    # Always validate Event entities (most error-prone type)
+    if entity_type == "Event":
+        return True
+    
+    # Person names that don't follow typical patterns
+    if entity_type == "Person":
+        # All caps multi-word (might be a label, not a name)
+        if name_clean.isupper() and len(words) >= 3:
+            return True
+        # Contains numbers (usually not a person)
+        if any(c.isdigit() for c in name_clean):
+            return True
+        # Very short single word
+        if len(words) == 1 and len(name_clean) <= 4:
+            return True
+    
+    # Product entities are often junk from invoices
+    if entity_type == "Product":
+        return True
+    
+    # Very long names (>60 chars) are usually descriptions, not entities
+    if len(name_clean) > 60:
+        return True
+    
+    # All lowercase multi-word strings
+    if len(words) >= 2 and name_clean == name_clean.lower():
+        return True
+    
+    return False
+
+
+async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str) -> bool:
+    """Use LLM to validate if a borderline entity is real. Returns True if valid."""
+    cache_key = f"{entity_type}:{name.lower()}"
+    if cache_key in _validation_cache:
+        return _validation_cache[cache_key]
+    
+    try:
+        from app.config import settings
+        from app.retry import retry_with_backoff
+        
+        client = _get_validation_client()
+        prompt = ENTITY_VALIDATION_PROMPT.format(
+            name=name, entity_type=entity_type, doc_title=doc_title
+        )
+        
+        async def _call():
+            response = await client.chat.completions.create(
+                model=settings.gemini_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            return _json.loads(response.choices[0].message.content)
+        
+        result = await retry_with_backoff(_call, operation="validate_entity")
+        is_valid = result.get("valid", True)
+        _validation_cache[cache_key] = is_valid
+        
+        if not is_valid:
+            logger.debug(f"LLM rejected entity: '{name}' ({entity_type})")
+        
+        return is_valid
+        
+    except Exception as e:
+        logger.warning(f"Entity validation LLM call failed for '{name}': {e}")
+        # On failure, allow the entity through (don't block on validation errors)
+        return True
+
+
 
 
 async def process_document(doc: dict) -> dict:
@@ -72,7 +190,7 @@ async def process_document(doc: dict) -> dict:
         )
 
         # Step 5: Process extracted entities based on doc type
-        await _process_extraction(doc_id, doc_node_id, doc_type, extracted)
+        await _process_extraction(doc_id, doc_node_id, doc_type, extracted, title=title)
 
         # Step 5b: Process implied relationships
         await _process_implied_relationships(doc_id, extracted)
@@ -103,15 +221,35 @@ async def process_document(doc: dict) -> dict:
 
 # Blocklist of generic terms that should not become entity nodes
 BLOCKED_ENTITY_NAMES = {
+    # Generic role terms
     "subject matter expert", "candidates", "applicant", "customer", "client",
     "employee", "employer", "vendor", "buyer", "seller", "user", "admin",
     "recipient", "sender", "owner", "tenant", "landlord", "borrower", "lender",
     "insured", "beneficiary", "claimant", "plaintiff", "defendant",
     "taxpayer", "filer", "spouse", "dependent", "subscriber", "member",
     "patient", "provider", "physician", "doctor", "nurse",
+    "contractor", "subcontractor", "consultant", "freelancer", "specialist",
+    # Placeholder/null values
     "n/a", "unknown", "none", "null", "other", "various", "multiple",
     "not specified", "not applicable", "see above", "see below",
-    "contractor", "subcontractor", "consultant", "freelancer", "specialist",
+    # Invoice/accounting line items
+    "labor", "parts", "deductible", "sublet", "subtotal", "total",
+    "total due", "amount due", "balance due", "sales tax", "tax",
+    "shop supplies", "hazardous materials", "discounts", "discount",
+    "special order deposit", "deposit", "payment", "credit",
+    "warranties", "warranty", "shipping", "freight", "handling",
+    "miscellaneous", "misc", "other charges", "surcharge", "fee",
+    "document storage fee", "processing fee", "service charge",
+    # Generic roles that aren't real entity names
+    "owner/operator", "owner operator", "authorized representative",
+    "account holder", "primary contact", "secondary contact",
+    "emergency contact", "next of kin", "power of attorney",
+    "legal guardian", "authorized agent", "authorized user",
+    "motocross courses",
+    # Process/action phrases that aren't entities
+    "investigation request", "background investigations", "background investigation",
+    "continuous evaluations", "personal interview", "investigation",
+    "soliciting", "verifying ssn", "e qip",
 }
 
 
@@ -141,9 +279,67 @@ def _is_valid_entity_name(name: str) -> bool:
     # Reject obvious role descriptions
     if any(term in name_lower for term in ["matter expert", "representative", "contact person", "point of contact"]):
         return False
+    
+    # Reject standalone numbers (zip codes, years, amounts)
+    if re.match(r"^[\d,.$]+$", name_clean):
+        return False
+    
+    # Reject lowercase phrases (not proper nouns) — 3+ words all lowercase
+    if len(words) >= 3 and all(w.islower() for w in words):
+        return False
+    
+    # Reject strings starting with common verbs/gerunds
+    first_lower = words[0].lower() if words else ""
+    if first_lower in {"soliciting", "verifying", "requesting", "processing", "providing",
+                       "submitting", "reviewing", "conducting", "performing", "completing",
+                       "maintaining", "obtaining", "ensuring", "managing", "handling"}:
+        return False
+    
+    # Reject strings that are all uppercase and look like invoice codes/categories
+    if name_clean.isupper() and len(words) <= 2 and name_clean not in {"FBI", "CIA", "IRS", "VA", "DOD", "NASA", "NCDOT", "DMV", "SSA", "USPS"}:
+        # Allow known acronyms, block generic uppercase terms
+        if len(name_clean) > 10:  # Long uppercase strings are usually line items
+            return False
         
     return True
 
+
+
+
+# Date patterns that should NOT be entity nodes
+DATE_PATTERNS = [
+    re.compile(r"^\w+ \d{1,2},? \d{4}$"),           # January 15, 2026
+    re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$"),       # 01/15/2026 or 12/23/25
+    re.compile(r"^\d{4}-\d{2}-\d{2}$"),              # 2026-01-15
+    re.compile(r"^\d{1,2}-\d{1,2}-\d{2,4}$"),       # 01-15-2026
+    re.compile(r"^\w+ \d{4}$"),                        # January 2026
+    re.compile(r"^\d{4}$"),                              # 2026
+    re.compile(r"^(?:Q[1-4]|H[12])\s*\d{4}$", re.I), # Q1 2026, H1 2026
+]
+
+def _is_date_string(name: str) -> bool:
+    """Check if a string is just a date (should not be an entity node)."""
+    name = name.strip()
+    return any(p.match(name) for p in DATE_PATTERNS)
+
+
+
+def _is_full_address(name: str) -> bool:
+    """Check if a string is a full street address or too granular for a Location entity."""
+    name = name.strip()
+    # Standalone zip code
+    if re.match(r"^\d{5}(-\d{4})?$", name):
+        return True
+    # Street address pattern: starts with number + street name
+    if re.match(r"^\d+\s+(N|S|E|W|North|South|East|West|NE|NW|SE|SW)?\s*\w+\s+(St|Ave|Blvd|Rd|Dr|Ln|Way|Ct|Pl|Hwy|Highway|Pkwy|Cir|Loop|Ter|Trail)\b", name, re.I):
+        return True
+    # Long address with number prefix
+    if re.match(r"^\d+\s+\w+", name) and len(name) > 20:
+        return True
+    # Contains zip code anywhere
+    if re.search(r"\b\d{5}(-\d{4})?\b", name) and len(name) > 10:
+        return True
+    return False
 
 async def _store_entity_embeddings(doc_id: int, extracted: dict):
     """Store embeddings for ALL entity types from the 3-pass extraction."""
@@ -175,6 +371,8 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
             desc = entity.get("description", "")
             
             if not name or not _is_valid_entity_name(name):
+                continue
+            if etype == "Event" and _is_date_string(name):
                 continue
             
             # Find the entity in the graph (try specific type first, then any type)
@@ -257,7 +455,7 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event"}
 
 
-async def _resolve_entity(name: str, entity_type: str, doc_id: int) -> str:
+async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "") -> str:
     """Route entity resolution based on type."""
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
@@ -278,7 +476,7 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int) -> str:
         return await entity_resolver.resolve_person(name, doc_id)
 
 
-async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: dict):
+async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: dict, title: str = ""):
     """Process enhanced entities from 3-pass extraction (all entity types)."""
     all_entities = extracted.get("all_entities", [])
     if not all_entities:
@@ -294,9 +492,14 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             
             if not name or confidence < CONFIDENCE_THRESHOLD:
                 continue
+            
+            # Skip date strings masquerading as Event entities
+            if entity_type == "Event" and _is_date_string(name):
+                logger.debug(f"Skipping date-as-event entity: '{name}'")
+                continue
                 
             # Resolve the entity and create document relationships
-            entity_uuid = await _resolve_entity(name, entity_type, doc_id)
+            entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title)
             if entity_uuid:
                 # Create relationship from document to entity
                 await graph_store.create_relationship(
@@ -309,12 +512,12 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             logger.warning(f"Failed to process enhanced entity {entity}: {e}")
 
 
-async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict):
+async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict, title: str = ""):
     """Create graph nodes and relationships from extracted data."""
     source_props = {"source_doc": doc_id}
 
     # Process enhanced entities from 3-pass extraction if available
-    await _process_enhanced_entities(doc_id, doc_node_id, extracted)
+    await _process_enhanced_entities(doc_id, doc_node_id, extracted, title=title)
 
     if doc_type == "medical_lab":
         await _process_medical(doc_id, doc_node_id, extracted, source_props)
@@ -326,6 +529,8 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
         await _process_insurance(doc_id, doc_node_id, extracted, source_props)
     elif doc_type == "government_tax":
         await _process_tax(doc_id, doc_node_id, extracted, source_props)
+    elif doc_type == "military":
+        await _process_military(doc_id, doc_node_id, extracted, source_props)
     elif doc_type == "property_home":
         await _process_property(doc_id, doc_node_id, extracted, source_props)
     else:
@@ -507,8 +712,71 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
 
+
+async def _process_military(doc_id, doc_node_id, data, source_props):
+    """Process military documents with service-specific relationships."""
+    # If 3-pass extraction provided all_entities, skip legacy processing
+    if data.get("all_entities"):
+        return
+
+    service_member = data.get("service_member")
+    if service_member and _is_valid_entity_name(service_member):
+        person_uuid = await entity_resolver.resolve_person(service_member, doc_id, role="service_member")
+        if person_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", person_uuid, "Person", "SERVICE_RECORD_OF", source_props)
+
+    branch = data.get("branch")
+    if branch and _is_valid_entity_name(branch):
+        org_uuid = await entity_resolver.resolve_organization(branch, doc_id, org_type="military_branch")
+        if org_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", org_uuid, "Organization", "BRANCH_OF_SERVICE", source_props)
+
+    unit = data.get("unit")
+    if unit and _is_valid_entity_name(unit):
+        org_uuid = await entity_resolver.resolve_organization(unit, doc_id, org_type="military_unit")
+        if org_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", org_uuid, "Organization", "ASSIGNED_TO", source_props)
+
+    base = data.get("base")
+    if base and _is_valid_entity_name(base):
+        base_uuid = await entity_resolver.resolve_generic(base, "Location", doc_id)
+        if base_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", base_uuid, "Location", "STATIONED_AT", source_props)
+
+    for org in (data.get("organizations") or []):
+        name = org.get("name") if isinstance(org, dict) else org
+        if not name or not _is_valid_entity_name(name):
+            continue
+        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org.get("type", "military"))
+        if org_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
+
+    for loc in (data.get("locations") or []):
+        name = loc.get("name") if isinstance(loc, dict) else loc
+        if not name or not _is_valid_entity_name(name):
+            continue
+        if _is_full_address(name):
+            continue
+        loc_uuid = await entity_resolver.resolve_generic(name, "Location", doc_id)
+        if loc_uuid:
+            context = loc.get("context", "mentioned") if isinstance(loc, dict) else "mentioned"
+            rel_type = "DEPLOYED_TO" if "deploy" in context.lower() else "STATIONED_AT" if "station" in context.lower() else "LOCATED_AT"
+            await graph_store.create_relationship(
+                doc_node_id, "Document", loc_uuid, "Location", rel_type, source_props)
+
+
 async def _process_generic(doc_id, doc_node_id, data, source_props):
     """Process generic documents - dates stored as properties, not separate nodes."""
+    # If 3-pass extraction provided all_entities, skip legacy people/org processing
+    # (already handled by _process_enhanced_entities)
+    if data.get("all_entities"):
+        return
+    
     for person in (data.get("people") or []):
         name = person.get("name") if isinstance(person, dict) else person
         if not name or not _is_valid_entity_name(name):
@@ -687,6 +955,28 @@ async def reindex_all(progress_callback=None, cancel_event=None):
     errors = sum(1 for r in results if r["status"] == "error")
 
     logger.info(f"Reindex complete: {processed} processed, {errors} errors | {elapsed:.1f}s")
+
+    # Post-reindex: build vector indexes and resolve entities
+    if processed > 0 and not (cancel_event and cancel_event.is_set()):
+        if progress_callback:
+            progress_callback("current", {"title": "Building vector indexes..."})
+        try:
+            logger.info("Post-reindex: creating IVFFlat vector indexes")
+            await embeddings_store.create_vector_indexes()
+            logger.info("Post-reindex: vector indexes created")
+        except Exception as e:
+            logger.error(f"Post-reindex: failed to create indexes: {e}")
+
+        if progress_callback:
+            progress_callback("current", {"title": "Resolving duplicate entities..."})
+        try:
+            logger.info("Post-reindex: running entity resolution")
+            report = await entity_resolver.resolve_all_entities()
+            merged = report.get("total_merged", 0)
+            logger.info(f"Post-reindex: entity resolution complete — {merged} entities merged")
+        except Exception as e:
+            logger.error(f"Post-reindex: entity resolution failed: {e}")
+
     return {
         "total": len(docs),
         "processed": processed,

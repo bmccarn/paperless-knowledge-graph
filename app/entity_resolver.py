@@ -166,10 +166,32 @@ def name_parts_match_score(name_a: str, name_b: str) -> float:
     return 0.7 * coverage_short + 0.3 * coverage_long
 
 
+def _looks_like_person_name(text: str) -> bool:
+    """Check if a string looks like it could be a person name (not a phrase/action)."""
+    words = text.strip().split()
+    if not words:
+        return False
+    # Person names are typically 1-4 capitalized words, no verbs/gerunds
+    if len(words) > 5:
+        return False
+    # If any word is lowercase (not an initial), it's probably a phrase
+    for w in words:
+        if len(w) > 2 and w[0].islower():
+            return False
+        # Gerunds and common verbs are not names
+        if w.lower().endswith(("ing", "tion", "ment", "ness", "ity")):
+            return False
+    return True
+
+
 def detect_joint_name(name: str) -> list[str]:
     """Detect if a name string contains multiple people (joint names)."""
     parts = normalize_name(name).split()
     if len(parts) <= 3:
+        return [name]
+    
+    # Only attempt joint name detection on strings that look like names
+    if not _looks_like_person_name(name):
         return [name]
     
     # Check for "X AND Y" pattern
@@ -180,8 +202,10 @@ def detect_joint_name(name: str) -> list[str]:
         if idx > 0 and idx < len(parts) - 1:
             name_a = " ".join(parts[:idx])
             name_b = " ".join(parts[idx+1:])
-            if len(name_a.split()) >= 2 or len(name_b.split()) >= 2:
-                return [name_a, name_b]
+            # Both sides must look like names
+            if _looks_like_person_name(name_a) and _looks_like_person_name(name_b):
+                if len(name_a.split()) >= 2 or len(name_b.split()) >= 2:
+                    return [name_a, name_b]
     
     part_counts = {}
     for p in parts:
@@ -281,6 +305,8 @@ def advanced_match_score(name_a: str, name_b: str) -> float:
 
 
 class EntityResolver:
+    def __init__(self):
+        self._cache = {}
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None) -> str:
         """Resolve a person name to an existing or new node. Returns uuid."""
         if not name or not name.strip():

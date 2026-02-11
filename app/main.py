@@ -172,7 +172,7 @@ async def status():
                 "docs_with_embeddings": docs_w_embeds,
             },
             "last_sync": last_sync.isoformat() if last_sync else None,
-            "active_tasks": {tid: t["status"] for tid, t in _tasks.items()},
+            "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
             "cache": cache_stats,
         }
     except Exception as e:
@@ -231,6 +231,10 @@ async def health():
 
 @app.post("/sync", response_model=TaskResponse)
 async def sync():
+    # Prevent concurrent reindex/sync
+    running = [t for t in _tasks.values() if t["status"] == "running"]
+    if running:
+        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
@@ -274,6 +278,10 @@ async def sync():
 
 @app.post("/reindex", response_model=TaskResponse)
 async def reindex():
+    # Prevent concurrent reindex/sync
+    running = [t for t in _tasks.values() if t["status"] == "running"]
+    if running:
+        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
@@ -334,6 +342,19 @@ async def get_task(task_id: str):
 
 
 # --- Query ---
+
+@app.post("/task/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """Cancel a running task."""
+    cancel_event = _cancel_events.get(task_id)
+    if not cancel_event:
+        raise HTTPException(status_code=404, detail="Task not found or already completed")
+    cancel_event.set()
+    task = _tasks.get(task_id)
+    if task:
+        task["status"] = "cancelled"
+    return {"status": "cancelled", "task_id": task_id}
+
 
 @app.post("/query")
 async def query(req: QueryRequest):

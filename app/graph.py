@@ -186,6 +186,8 @@ class GraphStore:
                                    rel_type: str, properties: dict = None):
         """Create a relationship between two nodes. Increments weight on duplicate."""
         props = properties or {}
+        # Sanitize relationship type for Neo4j compatibility
+        rel_type = _sanitize_rel_type(rel_type)
         # Use MERGE to avoid duplicates and track weight
         query = f"""
             MATCH (a) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
@@ -475,6 +477,16 @@ class GraphStore:
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
         return {"status": "unhealthy", "error": "unexpected"}
+
+
+def _sanitize_rel_type(rel_type: str) -> str:
+    """Sanitize relationship type for Neo4j: uppercase, underscores, no special chars."""
+    import re
+    sanitized = rel_type.strip().replace(' ', '_').replace('-', '_')
+    sanitized = re.sub(r'[^A-Za-z0-9_]', '', sanitized)
+    sanitized = sanitized.upper()
+    sanitized = re.sub(r'_+', '_', sanitized).strip('_')
+    return sanitized or 'RELATED_TO'
 
 
 def _try_int(val: str) -> int:

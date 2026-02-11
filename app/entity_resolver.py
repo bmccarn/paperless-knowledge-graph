@@ -440,12 +440,22 @@ class EntityResolver:
         logger.info(f"Created new Organization: '{normalized}' (uuid={node_uuid})")
         return node_uuid
 
+    # Map entity types to Neo4j labels (avoids collision with Paperless Document nodes)
+    ENTITY_TYPE_TO_LABEL = {
+        "Document": "DocumentRef",
+    }
+
+    def _neo4j_label(self, entity_type: str) -> str:
+        """Get Neo4j label for an entity type."""
+        return self.ENTITY_TYPE_TO_LABEL.get(entity_type, entity_type)
+
     async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int) -> str:
         """Resolve a generic entity (Location, System, Product, etc.) — fuzzy match or create."""
         if not name or not name.strip():
             return ""
 
         name = name.strip()
+        label = self._neo4j_label(entity_type)
 
         # Check cache
         cache_key = f"{entity_type}:{name.lower()}"
@@ -455,7 +465,7 @@ class EntityResolver:
         # Try exact match in Neo4j
         async with graph_store.driver.session() as session:
             result = await session.run(
-                f"MATCH (n:{entity_type}) WHERE toLower(n.name) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
+                f"MATCH (n:{label}) WHERE toLower(n.name) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
                 name=name,
             )
             record = await result.single()
@@ -467,12 +477,12 @@ class EntityResolver:
         # Create new entity
         import uuid as uuid_mod
         new_uuid = str(uuid_mod.uuid4())
-        await graph_store.create_node(entity_type, {
+        await graph_store.create_node(label, {
             "uuid": new_uuid,
             "name": name,
             "source_doc_ids": [source_doc_id],
         })
-        logger.info(f"Created new {entity_type}: '{name}' (uuid={new_uuid})")
+        logger.info(f"Created new {entity_type} ({label}): '{name}' (uuid={new_uuid})")
         self._cache[cache_key] = new_uuid
         return new_uuid
 

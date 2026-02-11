@@ -5,6 +5,7 @@ import hashlib
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.retry import retry_with_backoff
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.cache import query_cache, vector_cache, graph_cache

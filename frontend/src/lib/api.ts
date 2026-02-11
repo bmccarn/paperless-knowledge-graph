@@ -62,3 +62,7 @@ export async function getGraphInitial(limit = 300) {
 export async function resolveEntities() {
   return apiFetch("/resolve-entities", { method: "POST" });
 }
+
+export async function cancelTask(taskId: string) {
+  return apiFetch(`/task/${taskId}/cancel`, { method: "POST" });
+}

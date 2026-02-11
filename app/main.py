@@ -13,6 +13,7 @@ from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.query import query_engine
 from app.summarizer import summarize_all_entities, summarize_entity
+from app.entity_resolver import entity_resolver
 
 logging.basicConfig(
     level=logging.INFO,
@@ -218,3 +219,27 @@ async def graph_node(node_uuid: str):
 async def graph_neighbors(node_uuid: str, depth: int = 2):
     result = await graph_store.get_neighbors(node_uuid, depth=min(depth, 4))
     return result
+
+
+# --- Graph Initial Load ---
+
+@app.get("/graph/initial")
+async def graph_initial(limit: int = 300):
+    """Return an initial set of nodes for graph visualization.
+    Loads Person and Organization nodes with their connections."""
+    result = await graph_store.get_initial_graph(limit=limit)
+    return result
+
+
+# --- Entity Resolution ---
+
+@app.post("/resolve-entities")
+async def resolve_entities():
+    """Scan all entities and merge duplicates."""
+    try:
+        report = await entity_resolver.resolve_all_entities()
+        return report
+    except Exception as e:
+        logger.error(f"Entity resolution failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+

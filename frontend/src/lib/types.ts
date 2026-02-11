@@ -3,9 +3,10 @@ export interface StatusResponse {
   graph: {
     nodes: number;
     relationships: number;
+    entities: number;
     documents: number;
   };
-  embeddings: number;
+  embeddings: { document_chunks: number; entity_embeddings: number; docs_with_embeddings: number; };
   last_sync: string | null;
   active_tasks: Record<string, string>;
 }

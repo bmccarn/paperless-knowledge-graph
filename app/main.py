@@ -159,12 +159,18 @@ async def status():
     try:
         counts = await graph_store.get_counts()
         last_sync = await embeddings_store.get_last_sync()
-        embedding_count = await embeddings_store.get_embedding_count()
+        doc_embed_count = await embeddings_store.get_embedding_count()
+        ent_embed_count = await embeddings_store.get_entity_embedding_count()
+        docs_w_embeds = await embeddings_store.get_docs_with_embeddings_count()
         cache_stats = get_all_cache_stats()
         return {
             "status": "healthy",
             "graph": counts,
-            "embeddings": embedding_count,
+            "embeddings": {
+                "document_chunks": doc_embed_count,
+                "entity_embeddings": ent_embed_count,
+                "docs_with_embeddings": docs_w_embeds,
+            },
             "last_sync": last_sync.isoformat() if last_sync else None,
             "active_tasks": {tid: t["status"] for tid, t in _tasks.items()},
             "cache": cache_stats,

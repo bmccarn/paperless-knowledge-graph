@@ -2,7 +2,7 @@ import json
 import logging
 import hashlib
 
-from google import genai
+from openai import AsyncOpenAI
 
 from app.config import settings
 from app.embeddings import embeddings_store
@@ -14,8 +14,28 @@ logger = logging.getLogger(__name__)
 
 class QueryEngine:
     def __init__(self):
-        self.gemini = genai.Client(api_key=settings.gemini_api_key)
+        self.client = AsyncOpenAI(
+            base_url=settings.litellm_url,
+            api_key=settings.litellm_api_key,
+        )
         self.model = settings.gemini_model
+
+    async def _llm_generate(self, prompt: str) -> str:
+        """Generate text via LiteLLM OpenAI-compatible API."""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
+
+    async def _llm_json(self, prompt: str) -> any:
+        """Generate JSON via LiteLLM OpenAI-compatible API."""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        return json.loads(response.choices[0].message.content)
 
     async def query(self, question: str) -> dict:
         """Answer a natural language question using hybrid search + graph context."""
@@ -91,11 +111,7 @@ Document context:
 Answer (include specific references to documents and entities where possible):"""
 
         try:
-            response = self.gemini.models.generate_content(
-                model=self.model,
-                contents=prompt,
-            )
-            answer = response.text
+            answer = await self._llm_generate(prompt)
         except Exception as e:
             logger.error(f"Query LLM failed: {e}")
             answer = f"Error generating answer: {e}"
@@ -126,7 +142,7 @@ Answer (include specific references to documents and entities where possible):""
         return result
 
     async def _maybe_decompose(self, question: str) -> list[str]:
-        """Decompose complex queries into sub-queries using Gemini."""
+        """Decompose complex queries into sub-queries."""
         words = question.split()
         if len(words) <= 8:
             return [question]
@@ -137,16 +153,12 @@ Answer (include specific references to documents and entities where possible):""
 If the question is simple or asks about one thing, return the original question only.
 If it's complex or asks about multiple topics, break it into 2-4 focused sub-queries.
 
-Return a JSON array of strings. Each string is a search query.
+Return a JSON object with a "queries" key containing an array of strings. Each string is a search query.
 
 Question: {question}"""
 
-            response = self.gemini.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            sub_queries = json.loads(response.text)
+            result = await self._llm_json(prompt)
+            sub_queries = result.get("queries", [question])
             if isinstance(sub_queries, list) and len(sub_queries) >= 1:
                 return sub_queries[:4]
         except Exception as e:
@@ -190,8 +202,8 @@ Question: {question}"""
         return results
 
     async def _get_graph_context(self, question: str, doc_results: list[dict]) -> dict:
-        """Extract entities from query using Gemini, search graph, and traverse relationships."""
-        # Step 1: Use Gemini to extract entity names from the query
+        """Extract entities from query using LLM, search graph, and traverse relationships."""
+        # Step 1: Use LLM to extract entity names from the query
         entity_names = await self._extract_entities_from_query(question)
 
         # Step 2: Search graph for those entities
@@ -252,20 +264,16 @@ Question: {question}"""
         }
 
     async def _extract_entities_from_query(self, question: str) -> list[str]:
-        """Use Gemini to extract entity names from a query."""
+        """Use LLM to extract entity names from a query."""
         try:
             prompt = f"""Extract person names, organization names, and key concepts/topics from this question.
-Return a JSON array of strings — just the names and key terms, nothing else.
+Return a JSON object with an "entities" key containing an array of strings — just the names and key terms, nothing else.
 If there are no specific entities, return the 2-3 most important search terms.
 
 Question: {question}"""
 
-            response = self.gemini.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            entities = json.loads(response.text)
+            result = await self._llm_json(prompt)
+            entities = result.get("entities", [])
             if isinstance(entities, list):
                 return [str(e) for e in entities if e][:8]
         except Exception as e:

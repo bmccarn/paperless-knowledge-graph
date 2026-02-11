@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-google-genai
 openai
 neo4j
 asyncpg

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     litellm_url: str = "http://your-server-host:4000"
     litellm_api_key: str = ""
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "text-embedding-3-large"
 
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"

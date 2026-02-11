@@ -102,18 +102,19 @@ async def health():
     except Exception as e:
         components["pgvector"] = {"status": "unhealthy", "error": str(e)}
 
-    # Gemini API
+    # LiteLLM (LLM + embeddings gateway)
     try:
-        from google import genai
+        from openai import AsyncOpenAI
         from app.config import settings
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
+        client = AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key)
+        response = await client.chat.completions.create(
             model=settings.gemini_model,
-            contents="Say 'ok'",
+            messages=[{"role": "user", "content": "Say 'ok'"}],
+            max_tokens=5,
         )
-        components["gemini"] = {"status": "healthy"} if response.text else {"status": "degraded"}
+        components["litellm"] = {"status": "healthy"} if response.choices else {"status": "degraded"}
     except Exception as e:
-        components["gemini"] = {"status": "unhealthy", "error": str(e)}
+        components["litellm"] = {"status": "unhealthy", "error": str(e)}
 
     # Cache
     components["cache"] = get_all_cache_stats()

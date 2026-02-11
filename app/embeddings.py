@@ -8,7 +8,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-INIT_SQL = """
+EMBEDDING_DIMENSIONS = 3072  # text-embedding-3-large
+
+INIT_SQL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS document_embeddings (
@@ -16,7 +18,7 @@ CREATE TABLE IF NOT EXISTS document_embeddings (
     document_id INTEGER NOT NULL,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
-    embedding vector(1536),
+    embedding vector({EMBEDDING_DIMENSIONS}),
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)
 );
@@ -65,6 +67,9 @@ class EmbeddingsStore:
             min_size=2,
             max_size=10,
         )
+        # Check if dimension migration is needed
+        await self._migrate_dimensions()
+
         async with self.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
             # Try to create pg_trgm extension and GIN index
@@ -75,6 +80,36 @@ class EmbeddingsStore:
             except Exception as e:
                 logger.warning(f"pg_trgm init failed (keyword search will be unavailable): {e}")
         logger.info("Embeddings store initialized")
+
+    async def _migrate_dimensions(self):
+        """Check embedding column dimension and recreate table if it doesn't match."""
+        async with self.pool.acquire() as conn:
+            # Check if table exists
+            exists = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'document_embeddings')"
+            )
+            if not exists:
+                return  # Table will be created by INIT_SQL
+
+            # Check current dimension by inspecting column type
+            try:
+                col_type = await conn.fetchval("""
+                    SELECT format_type(atttypid, atttypmod)
+                    FROM pg_attribute
+                    WHERE attrelid = 'document_embeddings'::regclass
+                    AND attname = 'embedding'
+                """)
+                if col_type and f"vector({EMBEDDING_DIMENSIONS})" not in col_type:
+                    logger.warning(
+                        f"Embedding dimension mismatch: current={col_type}, expected=vector({EMBEDDING_DIMENSIONS}). "
+                        f"Dropping and recreating embeddings table."
+                    )
+                    await conn.execute("DROP TABLE IF EXISTS document_embeddings CASCADE")
+                    await conn.execute("DELETE FROM document_hashes")
+                    await conn.execute("UPDATE sync_state SET last_sync_at = NULL, updated_at = NOW() WHERE id = 1")
+                    logger.info("Embeddings table dropped for dimension migration. A full reindex will be needed.")
+            except Exception as e:
+                logger.warning(f"Dimension check failed (will proceed): {e}")
 
     async def close(self):
         if self.pool:

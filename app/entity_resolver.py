@@ -9,9 +9,23 @@ from app.graph import graph_store
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 75  # Lowered from 85 for better fuzzy matching
+SIMILARITY_THRESHOLD = 85  # Auto-merge threshold (raised from 75)
+LLM_TIEBREAKER_LOW = 70   # Below this: definitely different entities
+LLM_TIEBREAKER_HIGH = 85  # 70-85 zone: would need LLM confirmation (skip for now)
+SHORT_NAME_THRESHOLD = 95  # Names ≤5 chars need this score or higher
 EMBEDDING_THRESHOLD = 0.88
-NAME_PARTS_THRESHOLD = 0.70  # For name-part-based matching
+NAME_PARTS_THRESHOLD = 0.70
+
+# Common business suffixes to strip before comparing org names
+COMMON_ORG_SUFFIXES = {
+    "inc", "llc", "ltd", "corp", "corporation", "co", "company", "group",
+    "holdings", "enterprises", "partners", "lp", "llp", "plc", "sa", "ag",
+    "gmbh", "pllc", "pa", "pc", "na", "fsb", "services", "service",
+    "mortgage", "insurance", "financial", "bank", "banking", "lending",
+    "solutions", "associates", "association", "foundation", "trust",
+    "management", "consulting", "advisors", "advisory", "capital",
+    "properties", "realty", "real", "estate", "of", "the", "and", "a",
+}
 
 # Common name abbreviations
 ABBREVIATIONS = {
@@ -40,8 +54,21 @@ def get_name_parts(name: str) -> list[str]:
     """Get significant name parts (lowercased, no initials)."""
     normalized = normalize_name(name).lower()
     parts = normalized.split()
-    # Filter out single-letter initials
     return [p for p in parts if len(p) > 1]
+
+
+def get_distinctive_org_words(name: str) -> set[str]:
+    """Get distinctive words from an org name (strip common business suffixes)."""
+    normalized = normalize_name(name).lower()
+    parts = normalized.split()
+    distinctive = {p for p in parts if p not in COMMON_ORG_SUFFIXES and len(p) > 1}
+    return distinctive
+
+
+def is_short_name(name: str) -> bool:
+    """Check if a name is too short to be reliably fuzzy-matched."""
+    normalized = normalize_name(name).strip()
+    return len(normalized) <= 5
 
 
 def expand_abbreviation(part: str) -> str:
@@ -71,7 +98,6 @@ def name_parts_match_score(name_a: str, name_b: str) -> float:
     if not parts_a or not parts_b:
         return 0.0
     
-    # Count how many parts in the shorter list match something in the longer list
     shorter, longer = (parts_a, parts_b) if len(parts_a) <= len(parts_b) else (parts_b, parts_a)
     
     matched = 0
@@ -81,17 +107,14 @@ def name_parts_match_score(name_a: str, name_b: str) -> float:
         for i, lp in enumerate(longer):
             if i in used:
                 continue
-            # Exact match
             if sp == lp:
                 matched += 1
                 used.add(i)
                 break
-            # Initial match (T matches Thomas)
             if is_initial_of(sp, lp) or is_initial_of(lp, sp):
                 matched += 0.8
                 used.add(i)
                 break
-            # Fuzzy match for typos (edit distance 1-2)
             if len(sp) > 2 and len(lp) > 2:
                 ratio = fuzz.ratio(sp, lp)
                 if ratio >= 80:
@@ -99,25 +122,18 @@ def name_parts_match_score(name_a: str, name_b: str) -> float:
                     used.add(i)
                     break
     
-    # Score based on coverage of both names
     coverage_short = matched / len(shorter) if shorter else 0
     coverage_long = matched / len(longer) if longer else 0
     
-    # Weight: we care more about covering the shorter name fully
     return 0.7 * coverage_short + 0.3 * coverage_long
 
 
 def detect_joint_name(name: str) -> list[str]:
-    """Detect if a name string contains multiple people (joint names).
-    
-    E.g., "DOE JANE DOE JOHN" -> might be two people.
-    Returns list of possible individual names, or [name] if not joint.
-    """
+    """Detect if a name string contains multiple people (joint names)."""
     parts = normalize_name(name).split()
     if len(parts) <= 3:
         return [name]
     
-    # Look for repeated surname pattern
     part_counts = {}
     for p in parts:
         pl = p.lower()
@@ -125,9 +141,7 @@ def detect_joint_name(name: str) -> list[str]:
     
     repeated = [p for p, c in part_counts.items() if c >= 2]
     if repeated:
-        # Likely a joint name with shared surname
         surname = repeated[0]
-        # Split into groups around the surname
         remaining = []
         current_group = []
         for p in parts:
@@ -146,35 +160,74 @@ def detect_joint_name(name: str) -> list[str]:
                 names.append(f"{given} {surname.title()}")
             return names
     
-    # Check for very long name (>5 parts) — likely joint
     if len(parts) > 5:
-        return [name]  # Flag but don't auto-split without more info
+        return [name]
     
     return [name]
 
 
+def org_distinctive_match(name_a: str, name_b: str) -> bool:
+    """Check if two org names share distinctive words (not just common suffixes).
+    
+    Returns True if there's meaningful overlap in distinctive words.
+    """
+    words_a = get_distinctive_org_words(name_a)
+    words_b = get_distinctive_org_words(name_b)
+    
+    if not words_a or not words_b:
+        return False
+    
+    # Check for overlap in distinctive words
+    overlap = words_a & words_b
+    # Require at least one distinctive word in common
+    return len(overlap) > 0
+
+
+def should_auto_merge(name_a: str, name_b: str, score: float,
+                      entity_type: str = "Person") -> bool:
+    """Determine if two entities should be auto-merged based on safeguards.
+    
+    Returns True only if all safeguards pass.
+    """
+    # Short name protection
+    if is_short_name(name_a) or is_short_name(name_b):
+        if score < (SHORT_NAME_THRESHOLD / 100.0):
+            logger.debug(
+                f"Short name protection blocked merge: '{name_a}' <-> '{name_b}' "
+                f"(score={score:.3f}, need {SHORT_NAME_THRESHOLD}%)"
+            )
+            return False
+    
+    # Organization specificity check
+    if entity_type == "Organization":
+        if not org_distinctive_match(name_a, name_b):
+            logger.debug(
+                f"Org specificity blocked merge: '{name_a}' <-> '{name_b}' "
+                f"(no distinctive word overlap)"
+            )
+            return False
+    
+    # Must meet threshold
+    if score < (SIMILARITY_THRESHOLD / 100.0):
+        return False
+    
+    return True
+
+
 def advanced_match_score(name_a: str, name_b: str) -> float:
     """Combined matching score using multiple strategies."""
-    # Strategy 1: Fuzzy string ratio
     norm_a = normalize_name(name_a).lower()
     norm_b = normalize_name(name_b).lower()
     fuzzy_score = fuzz.ratio(norm_a, norm_b) / 100.0
-    
-    # Strategy 2: Token sort ratio (handles word reordering)
     token_sort = fuzz.token_sort_ratio(norm_a, norm_b) / 100.0
-    
-    # Strategy 3: Name parts matching
     parts_score = name_parts_match_score(name_a, name_b)
-    
-    # Strategy 4: Token set ratio (handles subset names)
     token_set = fuzz.token_set_ratio(norm_a, norm_b) / 100.0
     
-    # Take the best score with some weighting
     return max(
         fuzzy_score,
         token_sort,
         parts_score,
-        token_set * 0.95,  # Slight penalty for pure set matching
+        token_set * 0.95,
     )
 
 
@@ -184,12 +237,9 @@ class EntityResolver:
         if not name or not name.strip():
             return ""
 
-        # Check for joint names
         individual_names = detect_joint_name(name)
         if len(individual_names) > 1:
             logger.info(f"Detected joint name: '{name}' -> {individual_names}")
-            # Resolve the first person, return their uuid
-            # (Caller should handle multiple returns in future)
             uuids = []
             for ind_name in individual_names:
                 uid = await self._resolve_single_person(ind_name.strip(), source_doc_id, role)
@@ -204,39 +254,36 @@ class EntityResolver:
         if not normalized:
             return ""
 
-        # 1. Exact match in Neo4j (case-insensitive)
+        # 1. Exact match
         existing = await graph_store.find_person(normalized)
         if existing:
             if name != existing["name"] and name not in (existing.get("aliases") or []):
                 await graph_store.add_person_alias(existing["uuid"], name)
             return existing["uuid"]
 
-        # 2. Advanced matching against all persons
+        # 2. Advanced matching against all persons (same-type only: Person↔Person)
         all_persons = await graph_store.get_all_persons()
         best_match = None
         best_score = 0.0
 
         for person in all_persons:
-            # Check against canonical name
             score = advanced_match_score(normalized, person["name"] or "")
             if score > best_score:
                 best_score = score
                 best_match = person
-
-            # Check against aliases
             for alias in (person.get("aliases") or []):
                 alias_score = advanced_match_score(normalized, alias)
                 if alias_score > best_score:
                     best_score = alias_score
                     best_match = person
 
-        if best_match and best_score >= (SIMILARITY_THRESHOLD / 100.0):
+        if best_match and should_auto_merge(normalized, best_match["name"], best_score, "Person"):
             logger.info(f"Matched '{name}' to '{best_match['name']}' (score={best_score:.3f})")
             if name != best_match["name"] and name not in (best_match.get("aliases") or []):
                 await graph_store.add_person_alias(best_match["uuid"], name)
             return best_match["uuid"]
 
-        # 3. Embedding similarity for close but not fuzzy-matched names
+        # 3. Embedding similarity
         if all_persons and best_score >= 0.5:
             query_emb = await embeddings_store.generate_embedding(normalized)
             if query_emb:
@@ -247,10 +294,12 @@ class EntityResolver:
                     if person_emb:
                         sim = _cosine_similarity(query_emb, person_emb)
                         if sim >= EMBEDDING_THRESHOLD:
-                            logger.info(f"Embedding matched '{name}' to '{person['name']}' (sim={sim:.3f})")
-                            if name != person["name"]:
-                                await graph_store.add_person_alias(person["uuid"], name)
-                            return person["uuid"]
+                            # Still apply safeguards even for embedding matches
+                            if should_auto_merge(normalized, person["name"], sim, "Person"):
+                                logger.info(f"Embedding matched '{name}' to '{person['name']}' (sim={sim:.3f})")
+                                if name != person["name"]:
+                                    await graph_store.add_person_alias(person["uuid"], name)
+                                return person["uuid"]
 
         # 4. Create new person
         node_uuid = await graph_store.create_person(
@@ -278,7 +327,7 @@ class EntityResolver:
                 await graph_store.add_org_alias(existing["uuid"], name)
             return existing["uuid"]
 
-        # Advanced fuzzy match
+        # Advanced fuzzy match (same-type only: Organization↔Organization)
         all_orgs = await graph_store.get_all_organizations()
         best_match = None
         best_score = 0.0
@@ -294,7 +343,7 @@ class EntityResolver:
                     best_score = alias_score
                     best_match = org
 
-        if best_match and best_score >= (SIMILARITY_THRESHOLD / 100.0):
+        if best_match and should_auto_merge(normalized, best_match["name"], best_score, "Organization"):
             logger.info(f"Fuzzy matched org '{name}' to '{best_match['name']}' (score={best_score:.3f})")
             if name != best_match["name"] and name not in (best_match.get("aliases") or []):
                 await graph_store.add_org_alias(best_match["uuid"], name)
@@ -310,9 +359,9 @@ class EntityResolver:
 
     async def resolve_all_entities(self) -> dict:
         """Scan all entities in Neo4j and merge duplicates. Returns a report."""
-        report = {"merged_persons": [], "merged_orgs": [], "errors": []}
+        report = {"merged_persons": [], "merged_orgs": [], "skipped": [], "errors": []}
 
-        # Resolve persons
+        # Resolve persons (same-type only: Person↔Person)
         all_persons = await graph_store.get_all_persons()
         merged_uuids = set()
 
@@ -325,7 +374,6 @@ class EntityResolver:
                 score = advanced_match_score(
                     person_a["name"] or "", person_b["name"] or ""
                 )
-                # Also check aliases
                 for alias in (person_a.get("aliases") or []):
                     s = advanced_match_score(alias, person_b["name"] or "")
                     score = max(score, s)
@@ -333,59 +381,42 @@ class EntityResolver:
                     s = advanced_match_score(person_a["name"] or "", alias)
                     score = max(score, s)
 
-                if score >= (SIMILARITY_THRESHOLD / 100.0):
-                    # Merge B into A
-                    try:
-                        await self._merge_nodes(
-                            keep_uuid=person_a["uuid"],
-                            remove_uuid=person_b["uuid"],
-                            remove_name=person_b["name"],
-                            remove_aliases=person_b.get("aliases") or [],
-                            label="Person",
-                        )
-                        merged_uuids.add(person_b["uuid"])
-                        report["merged_persons"].append({
-                            "kept": person_a["name"],
-                            "merged": person_b["name"],
+                if not should_auto_merge(person_a["name"] or "", person_b["name"] or "", score, "Person"):
+                    if score >= (LLM_TIEBREAKER_LOW / 100.0):
+                        report["skipped"].append({
+                            "a": person_a["name"],
+                            "b": person_b["name"],
                             "score": round(score, 3),
+                            "reason": "in tiebreaker zone or blocked by safeguard",
                         })
-                        logger.info(
-                            f"Merged Person '{person_b['name']}' into '{person_a['name']}' (score={score:.3f})"
-                        )
-                    except Exception as e:
-                        report["errors"].append(f"Failed to merge {person_b['name']} into {person_a['name']}: {e}")
-
-        # Resolve organizations - also check if any "Organization" is actually a Person
-        all_orgs = await graph_store.get_all_organizations()
-        all_persons_refreshed = await graph_store.get_all_persons()
-
-        for org in all_orgs:
-            if org["uuid"] in merged_uuids:
-                continue
-            # Check if this org matches a person (misclassified)
-            for person in all_persons_refreshed:
-                if person["uuid"] in merged_uuids:
                     continue
-                score = advanced_match_score(org["name"] or "", person["name"] or "")
-                if score >= (SIMILARITY_THRESHOLD / 100.0):
-                    try:
-                        await self._merge_nodes(
-                            keep_uuid=person["uuid"],
-                            remove_uuid=org["uuid"],
-                            remove_name=org["name"],
-                            remove_aliases=org.get("aliases") or [],
-                            label="Organization",
-                        )
-                        merged_uuids.add(org["uuid"])
-                        report["merged_orgs"].append({
-                            "kept": f"Person:{person['name']}",
-                            "merged": f"Organization:{org['name']}",
-                            "score": round(score, 3),
-                        })
-                    except Exception as e:
-                        report["errors"].append(f"Failed to merge org {org['name']} into person {person['name']}: {e}")
 
-        # Merge duplicate orgs
+                try:
+                    await self._merge_nodes(
+                        keep_uuid=person_a["uuid"],
+                        remove_uuid=person_b["uuid"],
+                        remove_name=person_b["name"],
+                        remove_aliases=person_b.get("aliases") or [],
+                        label="Person",
+                    )
+                    merged_uuids.add(person_b["uuid"])
+                    report["merged_persons"].append({
+                        "kept": person_a["name"],
+                        "merged": person_b["name"],
+                        "score": round(score, 3),
+                    })
+                    logger.info(
+                        f"Merged Person '{person_b['name']}' into '{person_a['name']}' (score={score:.3f})"
+                    )
+                except Exception as e:
+                    report["errors"].append(f"Failed to merge {person_b['name']} into {person_a['name']}: {e}")
+
+        # NOTE: Removed cross-type merging (Organization→Person).
+        # Entities should only merge within the same type.
+
+        # Merge duplicate orgs (same-type only: Organization↔Organization)
+        all_orgs = await graph_store.get_all_organizations()
+
         for i, org_a in enumerate(all_orgs):
             if org_a["uuid"] in merged_uuids:
                 continue
@@ -393,25 +424,36 @@ class EntityResolver:
                 if org_b["uuid"] in merged_uuids:
                     continue
                 score = advanced_match_score(org_a["name"] or "", org_b["name"] or "")
-                if score >= (SIMILARITY_THRESHOLD / 100.0):
-                    try:
-                        await self._merge_nodes(
-                            keep_uuid=org_a["uuid"],
-                            remove_uuid=org_b["uuid"],
-                            remove_name=org_b["name"],
-                            remove_aliases=org_b.get("aliases") or [],
-                            label="Organization",
-                        )
-                        merged_uuids.add(org_b["uuid"])
-                        report["merged_orgs"].append({
-                            "kept": org_a["name"],
-                            "merged": org_b["name"],
+
+                if not should_auto_merge(org_a["name"] or "", org_b["name"] or "", score, "Organization"):
+                    if score >= (LLM_TIEBREAKER_LOW / 100.0):
+                        report["skipped"].append({
+                            "a": org_a["name"],
+                            "b": org_b["name"],
                             "score": round(score, 3),
+                            "reason": "in tiebreaker zone or blocked by safeguard",
                         })
-                    except Exception as e:
-                        report["errors"].append(f"Failed to merge org: {e}")
+                    continue
+
+                try:
+                    await self._merge_nodes(
+                        keep_uuid=org_a["uuid"],
+                        remove_uuid=org_b["uuid"],
+                        remove_name=org_b["name"],
+                        remove_aliases=org_b.get("aliases") or [],
+                        label="Organization",
+                    )
+                    merged_uuids.add(org_b["uuid"])
+                    report["merged_orgs"].append({
+                        "kept": org_a["name"],
+                        "merged": org_b["name"],
+                        "score": round(score, 3),
+                    })
+                except Exception as e:
+                    report["errors"].append(f"Failed to merge org: {e}")
 
         report["total_merged"] = len(report["merged_persons"]) + len(report["merged_orgs"])
+        report["total_skipped"] = len(report["skipped"])
         return report
 
     async def _merge_nodes(self, keep_uuid: str, remove_uuid: str,
@@ -419,7 +461,6 @@ class EntityResolver:
                            label: str):
         """Merge remove_uuid node into keep_uuid node in Neo4j."""
         async with graph_store.driver.session() as session:
-            # Move all relationships from remove to keep
             await session.run(
                 """
                 MATCH (remove) WHERE remove.uuid = $remove_uuid
@@ -451,7 +492,6 @@ class EntityResolver:
                 keep_uuid=keep_uuid, remove_uuid=remove_uuid,
             )
 
-            # Add aliases
             all_aliases = [remove_name] + remove_aliases
             for alias in all_aliases:
                 if alias:
@@ -466,7 +506,6 @@ class EntityResolver:
                         uuid=keep_uuid, alias=alias,
                     )
 
-            # Delete the duplicate node
             await session.run(
                 "MATCH (n) WHERE n.uuid = $uuid DETACH DELETE n",
                 uuid=remove_uuid,

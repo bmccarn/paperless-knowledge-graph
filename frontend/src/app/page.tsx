@@ -12,6 +12,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { getStatus, postSync, postReindex, getTask, cancelTask, graphSearch } from "@/lib/api";
 import type { StatusResponse } from "@/lib/types";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   FileText,
   GitBranch,
   Database,
@@ -27,6 +35,7 @@ import {
   TrendingUp,
   SkipForward,
   AlertCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 interface TaskProgress {
@@ -68,7 +77,23 @@ export default function DashboardPage() {
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    action: () => Promise<void>;
+    variant: "default" | "destructive";
+  }>({ open: false, title: "", description: "", action: async () => {}, variant: "default" });
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
 
   const fetchStatus = useCallback(() => {
     getStatus()
@@ -86,13 +111,19 @@ export default function DashboardPage() {
   useEffect(() => {
     if (activeTaskId || !status) return;
     const runningTasks = Object.entries(status.active_tasks).filter(
-      ([, s]) => s === "running"
+      ([, info]) => {
+        const s = typeof info === "object" && info !== null ? (info as Record<string, string>).status : info;
+        return s === "running";
+      }
     );
     if (runningTasks.length > 0) {
       const [taskId, info] = runningTasks[0];
       setActiveTaskId(taskId);
-      const taskType = typeof info === "object" && info !== null ? (info as Record<string, string>).type || "Task" : "Task";
-      setActiveTaskType(taskType.charAt(0).toUpperCase() + taskType.slice(1));
+      const taskType = typeof info === "object" && info !== null ? (info as Record<string, string>).type || "task" : "task";
+      const label = taskType === "reindex" ? "Reindex" : taskType === "sync" ? "Sync" : taskType.charAt(0).toUpperCase() + taskType.slice(1);
+      setActiveTaskType(label);
+      // Immediately fetch task progress instead of waiting for poll interval
+      getTask(taskId).then((t) => setTaskProgress(t as TaskProgress)).catch(() => {});
     }
   }, [status, activeTaskId]);
 
@@ -121,26 +152,54 @@ export default function DashboardPage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [taskProgress?.recent_results]);
 
-  const handleSync = async () => {
-    try {
-      const res = await postSync();
-      setActiveTaskId(res.task_id);
-      setActiveTaskType("Sync");
-      setTaskProgress(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const handleSync = () => {
+    setConfirmDialog({
+      open: true,
+      title: "Sync New Documents",
+      description: "This will check for new or modified documents in Paperless and process them. Existing documents won't be re-processed.",
+      variant: "default",
+      action: async () => {
+        try {
+          const res = await postSync();
+          setActiveTaskId(res.task_id);
+          setActiveTaskType("Sync");
+          setTaskProgress(null);
+          setToast({ message: "Sync started successfully", type: "success" });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Failed to start sync";
+          if (msg.includes("409")) {
+            setToast({ message: "A task is already running", type: "error" });
+          } else {
+            setToast({ message: msg, type: "error" });
+          }
+        }
+      },
+    });
   };
 
-  const handleReindex = async () => {
-    try {
-      const res = await postReindex();
-      setActiveTaskId(res.task_id);
-      setActiveTaskType("Reindex");
-      setTaskProgress(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const handleReindex = () => {
+    setConfirmDialog({
+      open: true,
+      title: "Full Reindex",
+      description: "This will clear all graph data and re-process every document from scratch. This can take a while depending on the number of documents. Vector indexes and entity resolution will run automatically after.",
+      variant: "destructive",
+      action: async () => {
+        try {
+          const res = await postReindex();
+          setActiveTaskId(res.task_id);
+          setActiveTaskType("Reindex");
+          setTaskProgress(null);
+          setToast({ message: "Full reindex started", type: "success" });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Failed to start reindex";
+          if (msg.includes("409")) {
+            setToast({ message: "A task is already running", type: "error" });
+          } else {
+            setToast({ message: msg, type: "error" });
+          }
+        }
+      },
+    });
   };
 
   const handleDismiss = () => {
@@ -536,6 +595,52 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      {/* Confirmation Dialog */}
+      <Dialog open={confirmDialog.open} onOpenChange={(open) => setConfirmDialog((prev) => ({ ...prev, open }))}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {confirmDialog.variant === "destructive" && (
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+              )}
+              {confirmDialog.title}
+            </DialogTitle>
+            <DialogDescription>{confirmDialog.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDialog((prev) => ({ ...prev, open: false }))}>
+              Cancel
+            </Button>
+            <Button
+              variant={confirmDialog.variant}
+              onClick={async () => {
+                setConfirmDialog((prev) => ({ ...prev, open: false }));
+                await confirmDialog.action();
+              }}
+            >
+              {confirmDialog.variant === "destructive" ? "Yes, Reindex Everything" : "Start"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg transition-all animate-in slide-in-from-bottom-4 fade-in ${
+            toast.type === "success"
+              ? "bg-emerald-500/90 text-white"
+              : "bg-destructive/90 text-destructive-foreground"
+          }`}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <XCircle className="h-4 w-4" />
+          )}
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

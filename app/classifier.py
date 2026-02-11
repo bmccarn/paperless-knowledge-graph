@@ -17,6 +17,7 @@ VALID_TYPES = [
     "government_tax",
     "personal",
     "work",
+    "military",
 ]
 
 CLASSIFICATION_PROMPT = """You are a document classification system. Analyze the following document content and classify it into exactly ONE of these categories:
@@ -29,6 +30,7 @@ CLASSIFICATION_PROMPT = """You are a document classification system. Analyze the
 - government_tax: Tax forms, tax returns, government filings, W-2s, 1099s
 - personal: Personal correspondence, identification documents, personal records
 - work: Employment documents, work correspondence, professional documents
+- military: Military service records, orders, evaluations, DD-214s, deployment records, training records, military medical, AF forms, PCS orders
 
 Respond with a JSON object containing:
 - "doc_type": one of the category names listed above

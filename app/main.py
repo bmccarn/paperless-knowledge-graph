@@ -241,3 +241,13 @@ async def resolve_entities():
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/create-indexes")
+async def create_indexes():
+    """Create vector indexes after data is loaded."""
+    try:
+        await embeddings_store.create_vector_indexes()
+        return {"status": "ok", "message": "Vector indexes created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

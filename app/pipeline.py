@@ -84,6 +84,13 @@ def _is_suspicious_entity(name: str, entity_type: str) -> bool:
     if entity_type == "Product":
         return True
     
+    # Condition entities are generally trustworthy if they came from medical docs
+    # Only validate if suspiciously short or generic
+    if entity_type == "Condition":
+        if len(words) == 1 and len(name_clean) <= 5:
+            return True
+        return False
+    
     # Very long names (>60 chars) are usually descriptions, not entities
     if len(name_clean) > 60:
         return True
@@ -452,7 +459,7 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
             logger.warning(f"Failed to create implied relationship: {e}")
 
 
-VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event"}
+VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event", "Condition"}
 
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "") -> str:
@@ -576,6 +583,21 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
         })
         await graph_store.create_relationship(
             doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
+
+    # Process diagnoses as Condition entities
+    for diagnosis in (data.get("diagnoses") or []):
+        if not diagnosis or not _is_valid_entity_name(diagnosis):
+            continue
+        condition_uuid = await _resolve_entity(diagnosis, "Condition", doc_id, doc_title="")
+        if condition_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
+            # Link patient to condition if we have one
+            if patient and _is_valid_entity_name(patient):
+                patient_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
+                if patient_uuid:
+                    await graph_store.create_relationship(
+                        patient_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION", source_props)
 
 
 async def _process_financial(doc_id, doc_node_id, data, source_props):

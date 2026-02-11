@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import uuid
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -15,11 +17,44 @@ from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
+from starlette.responses import StreamingResponse
+
+# --- In-memory log buffer & SSE ---
+_log_buffer: deque = deque(maxlen=500)
+_log_listeners: list[asyncio.Queue] = []
+
+LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+
+
+class BufferLogHandler(logging.Handler):
+    """Captures log records into the in-memory buffer and notifies SSE listeners."""
+
+    def emit(self, record: logging.LogRecord):
+        entry = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": self.format(record),
+        }
+        _log_buffer.append(entry)
+        # Notify SSE listeners (fire-and-forget into each queue)
+        for q in list(_log_listeners):
+            try:
+                q.put_nowait(entry)
+            except Exception:
+                pass
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+
+# Install the buffer handler on the root logger (after basicConfig)
+_buffer_handler = BufferLogHandler()
+_buffer_handler.setLevel(logging.DEBUG)
+_buffer_handler.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger().addHandler(_buffer_handler)
 logger = logging.getLogger(__name__)
 
 # Track background tasks
@@ -346,6 +381,42 @@ async def resolve_entities():
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+# --- Log Endpoints ---
+
+@app.get("/logs")
+async def get_logs(limit: int = 100, level: str = None, since: str = None):
+    """Return buffered log lines with optional filtering."""
+    lines = list(_log_buffer)
+    if level and level.upper() in LOG_LEVELS:
+        min_level = LOG_LEVELS[level.upper()]
+        lines = [l for l in lines if LOG_LEVELS.get(l["level"], 0) >= min_level]
+    if since:
+        lines = [l for l in lines if l["timestamp"] > since]
+    return {"lines": lines[-limit:], "total": len(_log_buffer)}
+
+
+@app.get("/logs/stream")
+async def stream_logs():
+    """SSE endpoint for real-time log streaming."""
+    queue: asyncio.Queue = asyncio.Queue()
+    _log_listeners.append(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                line = await queue.get()
+                yield f"data: {json.dumps(line)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if queue in _log_listeners:
+                _log_listeners.remove(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/create-indexes")

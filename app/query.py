@@ -21,7 +21,6 @@ class QueryEngine:
         self.model = settings.gemini_model
 
     async def _llm_generate(self, prompt: str) -> str:
-        """Generate text via LiteLLM OpenAI-compatible API."""
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
@@ -29,7 +28,6 @@ class QueryEngine:
         return response.choices[0].message.content
 
     async def _llm_json(self, prompt: str) -> any:
-        """Generate JSON via LiteLLM OpenAI-compatible API."""
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
@@ -37,70 +35,146 @@ class QueryEngine:
         )
         return json.loads(response.choices[0].message.content)
 
+    # ── Main query entry point (iterative multi-step) ───────────────
+
     async def query(self, question: str) -> dict:
-        """Answer a natural language question using hybrid search + graph context."""
-        # Check query cache
+        """Answer a question using iterative retrieval + synthesis."""
+        # Check cache
         cache_key = f"q:{hashlib.md5(question.encode()).hexdigest()}"
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
-        # 1. Determine if query needs decomposition
-        sub_queries = await self._maybe_decompose(question)
+        # Step 1: Initial retrieval
+        initial_context = await self._retrieve(question)
 
-        # 2. Hybrid search (vector + keyword) for each sub-query
-        all_vector_results = []
-        all_keyword_results = []
-        seen_doc_chunks = set()
+        # Step 2: First synthesis + gap analysis
+        first_pass = await self._synthesize_with_gaps(question, initial_context)
 
-        for q in sub_queries:
-            vr = await self._cached_vector_search(q, limit=8)
-            for r in vr:
-                key = (r["document_id"], r["chunk_index"])
-                if key not in seen_doc_chunks:
-                    seen_doc_chunks.add(key)
-                    all_vector_results.append(r)
+        all_context = initial_context
 
-            kr = await embeddings_store.keyword_search(q, limit=5)
-            for r in kr:
-                key = (r["document_id"], r["chunk_index"])
-                if key not in seen_doc_chunks:
-                    seen_doc_chunks.add(key)
-                    all_keyword_results.append(r)
+        # Step 3: Follow-up iterations (max 2)
+        follow_ups_used = []
+        for follow_up in first_pass.get("follow_up_queries", [])[:2]:
+            extra_context = await self._retrieve(follow_up)
+            all_context = self._merge_context(all_context, extra_context)
+            follow_ups_used.append(follow_up)
 
-        # 3. Combine and rank results
-        combined = self._merge_and_rank(all_vector_results, all_keyword_results)
-        top_results = combined[:10]
+        # Graph expansion from found entities
+        entities_found = first_pass.get("entities_found", [])
+        graph_context = await self._expand_graph(entities_found)
+        all_context = self._merge_context(all_context, graph_context)
 
-        # 4. Graph-aware retrieval: extract entities from top docs, traverse graph
-        graph_context = await self._get_graph_context(question, top_results)
+        # Step 4: Final synthesis
+        final = await self._final_synthesis(
+            question, all_context, first_pass.get("draft_answer", "")
+        )
 
-        # 5. Build context for LLM
-        doc_context = "\n\n".join([
-            f"[Document {r['document_id']} chunk {r.get('chunk_index', 0)} (score={r.get('combined_score', r.get('similarity', 0)):.3f})]:\n{r['content'][:1500]}"
-            for r in top_results
-        ])
+        result = {
+            "question": question,
+            "answer": final.get("answer", ""),
+            "confidence": final.get("confidence", first_pass.get("confidence", 0.5)),
+            "sources": self._build_sources(all_context),
+            "entities_found": [
+                {"name": e} if isinstance(e, str) else e
+                for e in entities_found[:20]
+            ],
+            "graph_nodes_used": len(all_context.get("graph_nodes", [])),
+            "follow_up_queries_used": follow_ups_used,
+            "iterations": 1 + len(follow_ups_used),
+            "cached": False,
+        }
 
-        graph_text = ""
-        if graph_context and (graph_context.get("nodes") or graph_context.get("subgraph")):
-            graph_text = "\n\nKnowledge Graph context:\n" + json.dumps(graph_context, indent=2, default=str)[:4000]
+        query_cache.set(cache_key, result)
+        return result
 
-        # 6. Build source info for citations
-        source_docs = []
-        for r in top_results[:8]:
-            source_docs.append({
-                "document_id": r["document_id"],
-                "similarity": float(r.get("combined_score", r.get("similarity", 0))),
-            })
+    # ── Retrieval ───────────────────────────────────────────────────
 
-        # 7. LLM synthesis with citation instructions
-        prompt = f"""You are a knowledge assistant with access to a personal document archive and knowledge graph.
-Answer the following question based on the provided context from documents and a knowledge graph.
+    async def _retrieve(self, query_text: str) -> dict:
+        """Hybrid retrieval: vector + keyword + entity search + graph."""
+        # Vector search (documents)
+        vector_results = await self._cached_vector_search(query_text, limit=10)
 
-Be specific and thorough. When referencing information, mention the document ID or entity names.
-If information comes from the knowledge graph (relationships between entities), explain those connections.
-Say "I don't have enough information" if the context doesn't contain the answer.
+        # Keyword search (documents)
+        keyword_results = await embeddings_store.keyword_search(query_text, limit=8)
+
+        # Entity vector search
+        entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
+
+        # Entity keyword search
+        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
+
+        # LLM entity extraction from query
+        entity_names = await self._extract_entities_from_query(query_text)
+
+        # Graph search for named entities
+        graph_nodes = []
+        seen_uuids = set()
+        for name in entity_names:
+            cache_key = f"gs:{hashlib.md5(name.encode()).hexdigest()}"
+            cached = graph_cache.get(cache_key)
+            if cached is not None:
+                results = cached
+            else:
+                results = await graph_store.search_nodes(name, limit=5)
+                graph_cache.set(cache_key, results)
+            for r in results:
+                uid = r.get("properties", {}).get("uuid", "")
+                if uid and uid not in seen_uuids:
+                    seen_uuids.add(uid)
+                    graph_nodes.append(r)
+
+        # Get document-entity connections for top vector results
+        doc_entity_uuids = set()
+        for r in vector_results[:5]:
+            doc_id = r.get("document_id")
+            if doc_id:
+                try:
+                    neighbors = await graph_store.get_document_entities(doc_id)
+                    for n in neighbors:
+                        uid = n.get("uuid", "")
+                        if uid:
+                            doc_entity_uuids.add(uid)
+                            if uid not in seen_uuids:
+                                seen_uuids.add(uid)
+                                graph_nodes.append({"labels": n.get("labels", []), "properties": n})
+                except Exception:
+                    pass
+
+        # Multi-hop subgraph
+        all_uuids = list(seen_uuids | doc_entity_uuids)
+        subgraph = {}
+        if all_uuids:
+            try:
+                sg_key = f"sg:{hashlib.md5(':'.join(sorted(all_uuids[:10])).encode()).hexdigest()}"
+                cached = graph_cache.get(sg_key)
+                if cached is not None:
+                    subgraph = cached
+                else:
+                    subgraph = await graph_store.get_subgraph(all_uuids[:10], depth=2)
+                    graph_cache.set(sg_key, subgraph)
+            except Exception as e:
+                logger.warning(f"Subgraph traversal failed: {e}")
+
+        return {
+            "vector_results": vector_results,
+            "keyword_results": keyword_results,
+            "entity_results": entity_results,
+            "entity_kw_results": entity_kw_results,
+            "graph_nodes": graph_nodes[:15],
+            "subgraph": subgraph,
+            "entity_names": entity_names,
+        }
+
+    # ── Gap analysis synthesis ──────────────────────────────────────
+
+    async def _synthesize_with_gaps(self, question: str, context: dict) -> dict:
+        """First-pass synthesis that identifies gaps."""
+        doc_context = self._format_doc_context(context)
+        graph_text = self._format_graph_context(context)
+
+        prompt = f"""You are a knowledge assistant analyzing retrieved documents and a knowledge graph.
 
 Question: {question}
 
@@ -108,66 +182,246 @@ Document context:
 {doc_context}
 {graph_text}
 
-Answer (include specific references to documents and entities where possible):"""
+Based on this context, provide:
+1. A draft answer to the question (be specific, cite details from documents)
+2. A confidence score (0-1) for how complete your answer is
+3. What information is MISSING that would improve the answer? Generate 1-3 specific follow-up search queries.
+4. List all entity names (people, organizations, places, etc.) mentioned in the context.
+
+Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1", "query2"], "entities_found": ["Entity Name 1", "Entity Name 2"]}}"""
+
+        try:
+            result = await self._llm_json(prompt)
+            return {
+                "draft_answer": result.get("draft_answer", ""),
+                "confidence": float(result.get("confidence", 0.5)),
+                "follow_up_queries": result.get("follow_up_queries", []),
+                "entities_found": result.get("entities_found", []),
+            }
+        except Exception as e:
+            logger.warning(f"Gap analysis failed: {e}")
+            return {
+                "draft_answer": "",
+                "confidence": 0.0,
+                "follow_up_queries": [],
+                "entities_found": [],
+            }
+
+    # ── Graph expansion ─────────────────────────────────────────────
+
+    async def _expand_graph(self, entity_names: list) -> dict:
+        """Expand graph from found entity names (2-3 hops)."""
+        graph_nodes = []
+        seen_uuids = set()
+
+        for name in entity_names[:8]:
+            if not isinstance(name, str):
+                name = str(name)
+            try:
+                results = await graph_store.search_nodes(name, limit=3)
+                for r in results:
+                    uid = r.get("properties", {}).get("uuid", "")
+                    if uid and uid not in seen_uuids:
+                        seen_uuids.add(uid)
+                        graph_nodes.append(r)
+            except Exception:
+                pass
+
+        subgraph = {}
+        if seen_uuids:
+            try:
+                subgraph = await graph_store.get_subgraph(list(seen_uuids)[:10], depth=3)
+            except Exception as e:
+                logger.warning(f"Graph expansion failed: {e}")
+
+        return {
+            "vector_results": [],
+            "keyword_results": [],
+            "entity_results": [],
+            "entity_kw_results": [],
+            "graph_nodes": graph_nodes,
+            "subgraph": subgraph,
+            "entity_names": [],
+        }
+
+    # ── Final synthesis ─────────────────────────────────────────────
+
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str) -> dict:
+        """Final comprehensive synthesis with all accumulated context."""
+        doc_context = self._format_doc_context(context)
+        graph_text = self._format_graph_context(context)
+
+        draft_section = ""
+        if draft_answer:
+            draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
+
+        prompt = f"""You are a knowledge assistant with access to a personal document archive and knowledge graph.
+Answer the following question using ALL provided context.
+
+Guidelines:
+- Be comprehensive and detailed
+- Cite specific documents by title when available, otherwise by document ID
+- Include dates, amounts, names — be specific
+- If information conflicts between documents, note it
+- Structure the answer with headers if it's complex
+- State what you DON'T know / couldn't find
+- Reference knowledge graph relationships when relevant
+
+Question: {question}
+{draft_section}
+Document context (from multiple retrieval passes):
+{doc_context}
+{graph_text}
+
+Provide your answer. Be thorough and cite your sources."""
 
         try:
             answer = await self._llm_generate(prompt)
         except Exception as e:
-            logger.error(f"Query LLM failed: {e}")
-            answer = f"Error generating answer: {e}"
+            logger.error(f"Final synthesis failed: {e}")
+            answer = draft_answer if draft_answer else f"Error generating answer: {e}"
 
-        # Build entity list from graph context
-        entities_found = []
-        if isinstance(graph_context, dict):
-            for node in graph_context.get("nodes", []):
-                props = node.get("properties", node.get("props", {}))
-                name = props.get("name") or props.get("title", "")
-                if name:
-                    entities_found.append({
-                        "name": name,
-                        "type": (node.get("labels", ["Unknown"])[0] if node.get("labels") else "Unknown"),
-                    })
+        # Try to get a confidence score
+        confidence = 0.7
+        try:
+            conf_prompt = f"""Rate your confidence (0-1) in how completely the following answer addresses the question.
+Question: {question}
+Answer: {answer[:2000]}
+Respond with just a JSON object: {{"confidence": 0.8}}"""
+            conf_result = await self._llm_json(conf_prompt)
+            confidence = float(conf_result.get("confidence", 0.7))
+        except Exception:
+            pass
 
-        result = {
-            "question": question,
-            "answer": answer,
-            "sources": source_docs,
-            "entities_found": entities_found[:20],
-            "graph_nodes_used": len(graph_context.get("nodes", [])) if isinstance(graph_context, dict) else 0,
-            "sub_queries": sub_queries if len(sub_queries) > 1 else [],
-            "cached": False,
-        }
+        return {"answer": answer, "confidence": confidence}
 
-        query_cache.set(cache_key, result)
+    # ── Context merging ─────────────────────────────────────────────
+
+    def _merge_context(self, ctx1: dict, ctx2: dict) -> dict:
+        """Merge two context dicts, deduplicating by document_id+chunk_index."""
+        merged = {}
+
+        for key in ("vector_results", "keyword_results"):
+            seen = set()
+            combined = []
+            for r in ctx1.get(key, []) + ctx2.get(key, []):
+                k = (r.get("document_id"), r.get("chunk_index", 0))
+                if k not in seen:
+                    seen.add(k)
+                    combined.append(r)
+            merged[key] = combined
+
+        for key in ("entity_results", "entity_kw_results"):
+            seen = set()
+            combined = []
+            for r in ctx1.get(key, []) + ctx2.get(key, []):
+                k = r.get("entity_uuid", id(r))
+                if k not in seen:
+                    seen.add(k)
+                    combined.append(r)
+            merged[key] = combined
+
+        # Graph nodes
+        seen_uuids = set()
+        merged_nodes = []
+        for n in ctx1.get("graph_nodes", []) + ctx2.get("graph_nodes", []):
+            uid = n.get("properties", {}).get("uuid", "")
+            if uid and uid not in seen_uuids:
+                seen_uuids.add(uid)
+                merged_nodes.append(n)
+        merged["graph_nodes"] = merged_nodes
+
+        # Merge subgraphs (take the larger one or combine)
+        sg1 = ctx1.get("subgraph", {})
+        sg2 = ctx2.get("subgraph", {})
+        if sg2 and (not sg1 or len(str(sg2)) > len(str(sg1))):
+            merged["subgraph"] = sg2
+        else:
+            merged["subgraph"] = sg1
+
+        # Entity names
+        merged["entity_names"] = list(set(
+            ctx1.get("entity_names", []) + ctx2.get("entity_names", [])
+        ))
+
+        return merged
+
+    # ── Formatting helpers ──────────────────────────────────────────
+
+    def _format_doc_context(self, context: dict) -> str:
+        """Format document results for LLM consumption."""
+        # Combine and rank
+        combined = self._merge_and_rank(
+            context.get("vector_results", []),
+            context.get("keyword_results", [])
+        )
+        top = combined[:12]
+
+        parts = []
+        for r in top:
+            title = r.get("title", "")
+            doc_type = r.get("doc_type", "")
+            header = f"[Document {r['document_id']}"
+            if title:
+                header += f" - {title}"
+            if doc_type:
+                header += f" ({doc_type})"
+            header += f" chunk {r.get('chunk_index', 0)} (score={r.get('combined_score', r.get('similarity', 0)):.3f})]"
+            parts.append(f"{header}:\n{r['content'][:3000]}")
+
+        # Entity results
+        entity_parts = []
+        seen_entities = set()
+        for r in context.get("entity_results", []) + context.get("entity_kw_results", []):
+            eid = r.get("entity_uuid", "")
+            if eid in seen_entities:
+                continue
+            seen_entities.add(eid)
+            entity_parts.append(
+                f"[Entity: {r.get('entity_name', '')} ({r.get('entity_type', '')})] {r.get('content', '')[:500]}"
+            )
+
+        result = "\n\n".join(parts)
+        if entity_parts:
+            result += "\n\nEntity matches:\n" + "\n".join(entity_parts[:8])
         return result
 
-    async def _maybe_decompose(self, question: str) -> list[str]:
-        """Decompose complex queries into sub-queries."""
-        words = question.split()
-        if len(words) <= 8:
-            return [question]
+    def _format_graph_context(self, context: dict) -> str:
+        """Format graph context for LLM consumption."""
+        graph_nodes = context.get("graph_nodes", [])
+        subgraph = context.get("subgraph", {})
+        if not graph_nodes and not subgraph:
+            return ""
+        graph_data = {"nodes": graph_nodes[:15]}
+        if subgraph:
+            graph_data["subgraph"] = subgraph
+        return "\n\nKnowledge Graph context:\n" + json.dumps(graph_data, indent=2, default=str)[:6000]
 
-        try:
-            prompt = f"""Analyze this question and determine if it should be broken into simpler sub-queries for document retrieval.
+    def _build_sources(self, context: dict) -> list[dict]:
+        """Build source citations from context."""
+        combined = self._merge_and_rank(
+            context.get("vector_results", []),
+            context.get("keyword_results", [])
+        )
+        sources = []
+        for r in combined[:10]:
+            source = {
+                "document_id": r["document_id"],
+                "chunk_index": r.get("chunk_index", 0),
+                "similarity": float(r.get("combined_score", r.get("similarity", 0))),
+            }
+            if r.get("title"):
+                source["title"] = r["title"]
+            if r.get("doc_type"):
+                source["doc_type"] = r["doc_type"]
+            # Include a snippet
+            source["excerpt"] = r.get("content", "")[:300]
+            sources.append(source)
+        return sources
 
-If the question is simple or asks about one thing, return the original question only.
-If it's complex or asks about multiple topics, break it into 2-4 focused sub-queries.
+    # ── Existing helpers ────────────────────────────────────────────
 
-Return a JSON object with a "queries" key containing an array of strings. Each string is a search query.
-
-Question: {question}"""
-
-            result = await self._llm_json(prompt)
-            sub_queries = result.get("queries", [question])
-            if isinstance(sub_queries, list) and len(sub_queries) >= 1:
-                return sub_queries[:4]
-        except Exception as e:
-            logger.warning(f"Query decomposition failed: {e}")
-
-        return [question]
-
-    async def _cached_vector_search(self, query: str, limit: int = 8) -> list[dict]:
-        """Vector search with caching."""
+    async def _cached_vector_search(self, query: str, limit: int = 10) -> list[dict]:
         cache_key = f"vs:{hashlib.md5(query.encode()).hexdigest()}:{limit}"
         cached = vector_cache.get(cache_key)
         if cached is not None:
@@ -177,9 +431,7 @@ Question: {question}"""
         return results
 
     def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict]) -> list[dict]:
-        """Merge vector and keyword results, deduplicate, and rank by combined score."""
         scored = {}
-
         for r in vector_results:
             key = (r["document_id"], r.get("chunk_index", 0))
             if key not in scored:
@@ -194,92 +446,24 @@ Question: {question}"""
             else:
                 scored[key]["keyword_score"] = max(scored[key].get("keyword_score", 0), float(r.get("rank_score", 0.5)))
 
-        # Combined score: weight vector higher but keyword provides boost
         for key, r in scored.items():
             r["combined_score"] = 0.7 * r.get("vector_score", 0) + 0.3 * r.get("keyword_score", 0)
 
-        results = sorted(scored.values(), key=lambda x: x["combined_score"], reverse=True)
-        return results
-
-    async def _get_graph_context(self, question: str, doc_results: list[dict]) -> dict:
-        """Extract entities from query using LLM, search graph, and traverse relationships."""
-        # Step 1: Use LLM to extract entity names from the query
-        entity_names = await self._extract_entities_from_query(question)
-
-        # Step 2: Search graph for those entities
-        all_nodes = []
-        seen_uuids = set()
-
-        for name in entity_names:
-            cache_key = f"gs:{hashlib.md5(name.encode()).hexdigest()}"
-            cached = graph_cache.get(cache_key)
-            if cached is not None:
-                results = cached
-            else:
-                results = await graph_store.search_nodes(name, limit=5)
-                graph_cache.set(cache_key, results)
-
-            for r in results:
-                uid = r.get("properties", {}).get("uuid", "")
-                if uid and uid not in seen_uuids:
-                    seen_uuids.add(uid)
-                    all_nodes.append(r)
-
-        # Step 3: Extract entity UUIDs from doc results (via graph search for doc IDs)
-        doc_entity_uuids = set()
-        for r in doc_results[:5]:
-            doc_id = r.get("document_id")
-            if doc_id:
-                try:
-                    neighbors = await graph_store.get_document_entities(doc_id)
-                    for n in neighbors:
-                        uid = n.get("uuid", "")
-                        if uid:
-                            doc_entity_uuids.add(uid)
-                            if uid not in seen_uuids:
-                                seen_uuids.add(uid)
-                                all_nodes.append({"labels": n.get("labels", []), "properties": n})
-                except Exception:
-                    pass
-
-        # Step 4: Multi-hop traversal from found entities
-        all_entity_uuids = list(seen_uuids | doc_entity_uuids)
-        subgraph = {}
-        if all_entity_uuids:
-            try:
-                cache_key = f"sg:{hashlib.md5(':'.join(sorted(all_entity_uuids[:10])).encode()).hexdigest()}"
-                cached = graph_cache.get(cache_key)
-                if cached is not None:
-                    subgraph = cached
-                else:
-                    subgraph = await graph_store.get_subgraph(all_entity_uuids[:10], depth=2)
-                    graph_cache.set(cache_key, subgraph)
-            except Exception as e:
-                logger.warning(f"Subgraph traversal failed: {e}")
-
-        return {
-            "nodes": all_nodes[:15],
-            "subgraph": subgraph,
-            "entity_uuids_from_docs": list(doc_entity_uuids)[:20],
-        }
+        return sorted(scored.values(), key=lambda x: x["combined_score"], reverse=True)
 
     async def _extract_entities_from_query(self, question: str) -> list[str]:
-        """Use LLM to extract entity names from a query."""
         try:
             prompt = f"""Extract person names, organization names, and key concepts/topics from this question.
 Return a JSON object with an "entities" key containing an array of strings — just the names and key terms, nothing else.
 If there are no specific entities, return the 2-3 most important search terms.
 
 Question: {question}"""
-
             result = await self._llm_json(prompt)
             entities = result.get("entities", [])
             if isinstance(entities, list):
                 return [str(e) for e in entities if e][:8]
         except Exception as e:
             logger.warning(f"Entity extraction from query failed: {e}")
-
-        # Fallback: return significant words
         words = question.split()
         return [w for w in words if len(w) > 3][:5]
 

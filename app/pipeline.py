@@ -7,7 +7,7 @@ from app.classifier import classifier
 from app.extractor import extractor
 from app.entity_resolver import entity_resolver
 from app.graph import graph_store
-from app.embeddings import embeddings_store
+from app.embeddings import embeddings_store, chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,6 @@ async def process_document(doc: dict) -> dict:
         entity_count = _count_entities(extracted)
         logger.info(f"Doc {doc_id} extracted {entity_count} fields (confidence={extraction_confidence})")
 
-        # If primary extraction returned nothing and no fallback was tried, log it
         if entity_count == 0 and not is_fallback:
             logger.warning(f"Doc {doc_id} '{title}': no entities extracted (type={doc_type}, classification_conf={classification['confidence']:.2f})")
 
@@ -80,23 +79,84 @@ async def process_document(doc: dict) -> dict:
         # Step 5b: Process implied relationships
         await _process_implied_relationships(doc_id, extracted)
 
-        # Step 6: Store embeddings
-        # Split content into chunks for better retrieval
-        chunks = _chunk_content(content, max_chars=2000)
+        # Step 6: Store embeddings — chunk content for granular retrieval
+        chunks = chunk_text(content, chunk_size=4000, overlap=800)
         for i, chunk in enumerate(chunks):
-            await embeddings_store.store_document_embedding(doc_id, chunk, chunk_index=i)
+            await embeddings_store.store_document_embedding(
+                doc_id, chunk, chunk_index=i, title=title, doc_type=doc_type
+            )
+        logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
+
+        # Step 6b: Store entity embeddings for resolved entities
+        await _store_entity_embeddings(doc_id, extracted)
 
         # Step 7: Update hash
         await embeddings_store.set_doc_hash(doc_id, content_hash)
 
         return {"doc_id": doc_id, "status": "processed", "doc_type": doc_type,
                 "entities_extracted": entity_count,
+                "chunks": len(chunks),
                 "confidence": extraction_confidence,
                 "fallback": is_fallback}
 
     except Exception as e:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
+
+
+async def _store_entity_embeddings(doc_id: int, extracted: dict):
+    """Store entity embeddings for people and organizations found in extraction."""
+    try:
+        # People
+        for person in (extracted.get("people") or []):
+            name = person.get("name") if isinstance(person, dict) else person
+            if not name:
+                continue
+            role = person.get("role", "") if isinstance(person, dict) else ""
+            # Look up the entity UUID from the graph
+            results = await graph_store.search_nodes(name, node_type="Person", limit=1)
+            if results:
+                uuid = results[0].get("properties", {}).get("uuid", "")
+                if uuid:
+                    content = f"{name} | person | role: {role}" if role else f"{name} | person"
+                    await embeddings_store.store_entity_embedding(
+                        uuid, name, entity_type="Person", content=content
+                    )
+
+        # Organizations
+        for org in (extracted.get("organizations") or []):
+            name = org.get("name") if isinstance(org, dict) else org
+            if not name:
+                continue
+            org_type = org.get("type", "") if isinstance(org, dict) else ""
+            results = await graph_store.search_nodes(name, node_type="Organization", limit=1)
+            if results:
+                uuid = results[0].get("properties", {}).get("uuid", "")
+                if uuid:
+                    content = f"{name} | organization | type: {org_type}" if org_type else f"{name} | organization"
+                    await embeddings_store.store_entity_embedding(
+                        uuid, name, entity_type="Organization", content=content
+                    )
+
+        # Named entities from specific doc types
+        for key, etype in [("patient_name", "Person"), ("provider", "Organization"),
+                           ("vendor", "Organization"), ("policyholder", "Person"),
+                           ("filer_name", "Person"), ("ordering_physician", "Person"),
+                           ("preparer", "Person")]:
+            name = extracted.get(key)
+            if not name:
+                continue
+            results = await graph_store.search_nodes(name, node_type=etype, limit=1)
+            if results:
+                uuid = results[0].get("properties", {}).get("uuid", "")
+                if uuid:
+                    content = f"{name} | {etype.lower()} | from doc {doc_id}"
+                    await embeddings_store.store_entity_embedding(
+                        uuid, name, entity_type=etype, content=content
+                    )
+
+    except Exception as e:
+        logger.warning(f"Entity embedding storage failed for doc {doc_id}: {e}")
 
 
 async def _process_implied_relationships(doc_id: int, extracted: dict):
@@ -123,7 +183,6 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
             if not from_name or not to_name:
                 continue
 
-            # Resolve entities
             if from_type == "Organization":
                 from_uuid = await entity_resolver.resolve_organization(from_name, doc_id)
             else:
@@ -167,7 +226,6 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
 
 
 async def _process_medical(doc_id, doc_node_id, data, source_props):
-    # Patient
     patient = data.get("patient_name")
     if patient:
         person_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
@@ -175,7 +233,6 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
-    # Provider
     provider = data.get("provider")
     if provider:
         org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="medical")
@@ -183,7 +240,6 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
-    # Ordering physician
     physician = data.get("ordering_physician")
     if physician:
         phys_uuid = await entity_resolver.resolve_person(physician, doc_id, role="physician")
@@ -191,11 +247,9 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
 
-    # Test results
     for test in (data.get("tests") or []):
         if not test.get("name"):
             continue
-        # Check confidence on individual test results
         test_confidence = float(test.get("confidence", 1.0))
         if test_confidence < CONFIDENCE_THRESHOLD:
             logger.debug(f"Skipping low-confidence test result: {test.get('name')} (conf={test_confidence})")
@@ -213,7 +267,6 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_financial(doc_id, doc_node_id, data, source_props):
-    # Vendor
     vendor = data.get("vendor")
     if vendor:
         org_uuid = await entity_resolver.resolve_organization(vendor, doc_id, org_type="financial")
@@ -221,7 +274,6 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
 
-    # Financial item
     amount = data.get("total_amount")
     if amount is not None:
         fi_uuid = await graph_store.create_node("FinancialItem", {
@@ -237,7 +289,6 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_contract(doc_id, doc_node_id, data, source_props):
-    # Parties
     for party in (data.get("parties") or []):
         name = party.get("name")
         if not name:
@@ -247,7 +298,6 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
-    # Contract node
     contract_uuid = await graph_store.create_node("Contract", {
         "type": data.get("contract_type", "") or "",
         "effective_date": data.get("effective_date", "") or "",
@@ -315,7 +365,6 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_property(doc_id, doc_node_id, data, source_props):
-    # Address
     address = data.get("property_address")
     if address:
         addr_uuid = await graph_store.create_node("Address", {
@@ -324,7 +373,6 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
         await graph_store.create_relationship(
             str(doc_id), "Document", addr_uuid, "Address", "LOCATED_AT", source_props)
 
-    # Parties
     for party in (data.get("parties") or []):
         name = party.get("name")
         if not name:
@@ -336,12 +384,10 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_generic(doc_id, doc_node_id, data, source_props):
-    # People
     for person in (data.get("people") or []):
         name = person.get("name") if isinstance(person, dict) else person
         if not name:
             continue
-        # Check confidence if available
         if isinstance(person, dict):
             confidence = float(person.get("confidence", 1.0))
             if confidence < CONFIDENCE_THRESHOLD:
@@ -353,7 +399,6 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", person_uuid, "Person", "MENTIONS", source_props)
 
-    # Organizations
     for org in (data.get("organizations") or []):
         name = org.get("name") if isinstance(org, dict) else org
         if not name:
@@ -369,7 +414,6 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 str(doc_id), "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
-    # Date events
     for date_info in (data.get("dates") or []):
         if isinstance(date_info, dict):
             if not date_info.get("date"):
@@ -392,7 +436,6 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
 
 
 def _extract_date(doc: dict, extracted: dict) -> str:
-    """Extract the best date from doc metadata or extraction."""
     for key in ("date", "effective_date"):
         if extracted.get(key):
             return str(extracted[key])
@@ -400,18 +443,6 @@ def _extract_date(doc: dict, extracted: dict) -> str:
     if created:
         return str(created)[:10]
     return ""
-
-
-def _chunk_content(content: str, max_chars: int = 2000) -> list[str]:
-    """Split content into chunks."""
-    if not content:
-        return []
-    chunks = []
-    for i in range(0, len(content), max_chars):
-        chunk = content[i:i + max_chars]
-        if chunk.strip():
-            chunks.append(chunk)
-    return chunks or [content[:max_chars]]
 
 
 def _count_entities(extracted: dict) -> int:
@@ -506,7 +537,6 @@ async def reindex_document(doc_id: int):
     logger.info(f"Reindexing document {doc_id}")
     doc = await paperless_client.get_document(doc_id)
 
-    # Force reprocess by deleting hash
     await embeddings_store.delete_doc_hash(doc_id)
     await graph_store.delete_document_graph(doc_id)
     await embeddings_store.delete_document_embeddings(doc_id)

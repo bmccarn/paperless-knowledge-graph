@@ -15,7 +15,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { graphSearch, getGraphNode, postReindexDoc } from "@/lib/api";
 import {
@@ -272,8 +271,8 @@ export default function DocumentsPage() {
             ))}
           </div>
         ) : (
-          <Card className="h-full flex flex-col border-border/50">
-            <ScrollArea className="flex-1">
+          <Card className="h-full flex flex-col border-border/50 min-h-0">
+            <div className="flex-1 overflow-auto min-h-0">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -438,7 +437,7 @@ export default function DocumentsPage() {
                   )}
                 </TableBody>
               </Table>
-            </ScrollArea>
+            </div>
 
             {/* Pagination */}
             {totalPages > 1 && (

@@ -4,6 +4,7 @@ import logging
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -294,12 +295,15 @@ class EntityExtractor:
         prompt = prompt_template.format(title=title, content=truncated)
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            result = json.loads(response.choices[0].message.content)
+            async def _call():
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                return json.loads(response.choices[0].message.content)
+
+            result = await retry_with_backoff(_call, operation=f"extract:{doc_type}")
             return result
         except Exception as e:
             logger.error(f"Extraction failed for doc_type={doc_type}: {e}")
@@ -312,12 +316,15 @@ class EntityExtractor:
         prompt = FALLBACK_PROMPT.format(title=title, content=truncated)
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            result = json.loads(response.choices[0].message.content)
+            async def _call():
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                return json.loads(response.choices[0].message.content)
+
+            result = await retry_with_backoff(_call, operation="fallback_extract")
             logger.info(f"Fallback extraction succeeded for '{title}'")
 
             # Convert fallback format to generic format

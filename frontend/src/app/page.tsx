@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getStatus, postSync, postReindex, getTask, graphSearch } from "@/lib/api";
+import { getStatus, postSync, postReindex, getTask, cancelTask, graphSearch } from "@/lib/api";
 import type { StatusResponse } from "@/lib/types";
 import {
   FileText,
@@ -134,6 +134,16 @@ export default function DashboardPage() {
     setTaskProgress(null);
   };
 
+  const handleCancel = async () => {
+    if (!activeTaskId) return;
+    try {
+      await cancelTask(activeTaskId);
+      setTaskProgress((prev) => prev ? { ...prev, status: "cancelled" } : null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setSearching(true);
@@ -220,7 +230,7 @@ export default function DashboardPage() {
 
   const tp = taskProgress;
   const isRunning = tp?.status === "running";
-  const isDone = tp?.status === "completed" || tp?.status === "failed";
+  const isDone = tp?.status === "completed" || tp?.status === "failed" || tp?.status === "cancelled";
   const totalDone = (tp?.processed || 0) + (tp?.skipped || 0) + (tp?.errors || 0);
   const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
 
@@ -343,6 +353,11 @@ export default function DashboardPage() {
                       )}
                       {tp.status}
                     </Badge>
+                    {isRunning && (
+                      <Button variant="destructive" size="sm" className="h-6 px-2 text-xs" onClick={handleCancel}>
+                        Cancel
+                      </Button>
+                    )}
                     {isDone && (
                       <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleDismiss}>
                         Dismiss

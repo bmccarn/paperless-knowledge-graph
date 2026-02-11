@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.paperless import paperless_client, PaperlessClient
 from app.classifier import classifier
 from app.extractor import extractor
@@ -457,7 +459,7 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def sync_documents(progress_callback=None):
+async def sync_documents(progress_callback=None, cancel_event=None):
     """Incremental sync - process new/modified documents."""
     last_sync = await embeddings_store.get_last_sync()
     logger.info(f"Starting sync (last sync: {last_sync})")
@@ -469,14 +471,34 @@ async def sync_documents(progress_callback=None):
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs)})
 
-    results = []
-    for doc in docs:
-        if progress_callback:
-            progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
-        result = await process_document(doc)
-        results.append(result)
-        if progress_callback:
-            progress_callback("result", result)
+    semaphore = asyncio.Semaphore(settings.max_concurrent_docs)
+
+    async def _process_with_semaphore(doc):
+        if cancel_event and cancel_event.is_set():
+            return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+        async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+            if progress_callback:
+                progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
+            result = await process_document(doc)
+            if progress_callback:
+                progress_callback("result", result)
+            return result
+
+    tasks = [_process_with_semaphore(doc) for doc in docs]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Convert exceptions to error results
+    clean_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            doc_id = docs[i]["id"] if i < len(docs) else "unknown"
+            logger.error(f"Unexpected error processing doc {doc_id}: {result}")
+            clean_results.append({"doc_id": doc_id, "status": "error", "error": str(result)})
+        else:
+            clean_results.append(result)
+    results = clean_results
 
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)
@@ -507,7 +529,7 @@ async def sync_documents(progress_callback=None):
     }
 
 
-async def reindex_all(progress_callback=None):
+async def reindex_all(progress_callback=None, cancel_event=None):
     """Full reindex - clear everything and reprocess all documents."""
     logger.info("Starting full reindex")
     await graph_store.clear_all()
@@ -520,14 +542,34 @@ async def reindex_all(progress_callback=None):
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs)})
 
-    results = []
-    for doc in docs:
-        if progress_callback:
-            progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
-        result = await process_document(doc)
-        results.append(result)
-        if progress_callback:
-            progress_callback("result", result)
+    semaphore = asyncio.Semaphore(settings.max_concurrent_docs)
+
+    async def _process_with_semaphore(doc):
+        if cancel_event and cancel_event.is_set():
+            return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+        async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+            if progress_callback:
+                progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
+            result = await process_document(doc)
+            if progress_callback:
+                progress_callback("result", result)
+            return result
+
+    tasks = [_process_with_semaphore(doc) for doc in docs]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Convert exceptions to error results
+    clean_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            doc_id = docs[i]["id"] if i < len(docs) else "unknown"
+            logger.error(f"Unexpected error processing doc {doc_id}: {result}")
+            clean_results.append({"doc_id": doc_id, "status": "error", "error": str(result)})
+        else:
+            clean_results.append(result)
+    results = clean_results
 
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)

@@ -9,23 +9,173 @@ from app.graph import graph_store
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 85
+SIMILARITY_THRESHOLD = 75  # Lowered from 85 for better fuzzy matching
 EMBEDDING_THRESHOLD = 0.88
+NAME_PARTS_THRESHOLD = 0.70  # For name-part-based matching
+
+# Common name abbreviations
+ABBREVIATIONS = {
+    "wm": "william", "chas": "charles", "geo": "george", "jas": "james",
+    "jno": "john", "thos": "thomas", "robt": "robert", "benj": "benjamin",
+    "danl": "daniel", "edw": "edward", "fredk": "frederick", "saml": "samuel",
+}
 
 
 def normalize_name(name: str) -> str:
     """Normalize a name for comparison."""
     if not name:
         return ""
-    # Handle "LAST, FIRST" format
     name = name.strip()
+    # Handle "LAST, FIRST" format
     if "," in name and len(name.split(",")) == 2:
         parts = name.split(",")
         name = f"{parts[1].strip()} {parts[0].strip()}"
     # Remove special chars, extra spaces
-    name = re.sub(r"[™®©]", "", name)
+    name = re.sub(r"[™®©.\-']", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
+
+
+def get_name_parts(name: str) -> list[str]:
+    """Get significant name parts (lowercased, no initials)."""
+    normalized = normalize_name(name).lower()
+    parts = normalized.split()
+    # Filter out single-letter initials
+    return [p for p in parts if len(p) > 1]
+
+
+def expand_abbreviation(part: str) -> str:
+    """Expand a single-letter initial or abbreviation."""
+    p = part.lower().rstrip(".")
+    return ABBREVIATIONS.get(p, p)
+
+
+def is_initial_of(short: str, long: str) -> bool:
+    """Check if 'short' is an initial/abbreviation of 'long'."""
+    s = short.lower().rstrip(".")
+    l = long.lower()
+    if len(s) == 1:
+        return l.startswith(s)
+    return s == l or ABBREVIATIONS.get(s, s) == l
+
+
+def name_parts_match_score(name_a: str, name_b: str) -> float:
+    """Score how well two names match based on name parts.
+    
+    Handles: case differences, initials, abbreviations, name ordering.
+    Returns 0.0-1.0.
+    """
+    parts_a = normalize_name(name_a).lower().split()
+    parts_b = normalize_name(name_b).lower().split()
+    
+    if not parts_a or not parts_b:
+        return 0.0
+    
+    # Count how many parts in the shorter list match something in the longer list
+    shorter, longer = (parts_a, parts_b) if len(parts_a) <= len(parts_b) else (parts_b, parts_a)
+    
+    matched = 0
+    used = set()
+    
+    for sp in shorter:
+        for i, lp in enumerate(longer):
+            if i in used:
+                continue
+            # Exact match
+            if sp == lp:
+                matched += 1
+                used.add(i)
+                break
+            # Initial match (T matches Thomas)
+            if is_initial_of(sp, lp) or is_initial_of(lp, sp):
+                matched += 0.8
+                used.add(i)
+                break
+            # Fuzzy match for typos (edit distance 1-2)
+            if len(sp) > 2 and len(lp) > 2:
+                ratio = fuzz.ratio(sp, lp)
+                if ratio >= 80:
+                    matched += ratio / 100.0
+                    used.add(i)
+                    break
+    
+    # Score based on coverage of both names
+    coverage_short = matched / len(shorter) if shorter else 0
+    coverage_long = matched / len(longer) if longer else 0
+    
+    # Weight: we care more about covering the shorter name fully
+    return 0.7 * coverage_short + 0.3 * coverage_long
+
+
+def detect_joint_name(name: str) -> list[str]:
+    """Detect if a name string contains multiple people (joint names).
+    
+    E.g., "DOE JANE DOE JOHN" -> might be two people.
+    Returns list of possible individual names, or [name] if not joint.
+    """
+    parts = normalize_name(name).split()
+    if len(parts) <= 3:
+        return [name]
+    
+    # Look for repeated surname pattern
+    part_counts = {}
+    for p in parts:
+        pl = p.lower()
+        part_counts[pl] = part_counts.get(pl, 0) + 1
+    
+    repeated = [p for p, c in part_counts.items() if c >= 2]
+    if repeated:
+        # Likely a joint name with shared surname
+        surname = repeated[0]
+        # Split into groups around the surname
+        remaining = []
+        current_group = []
+        for p in parts:
+            if p.lower() == surname and current_group:
+                remaining.append(current_group)
+                current_group = []
+            else:
+                current_group.append(p)
+        if current_group:
+            remaining.append(current_group)
+        
+        if len(remaining) >= 2:
+            names = []
+            for group in remaining:
+                given = " ".join(group)
+                names.append(f"{given} {surname.title()}")
+            return names
+    
+    # Check for very long name (>5 parts) — likely joint
+    if len(parts) > 5:
+        return [name]  # Flag but don't auto-split without more info
+    
+    return [name]
+
+
+def advanced_match_score(name_a: str, name_b: str) -> float:
+    """Combined matching score using multiple strategies."""
+    # Strategy 1: Fuzzy string ratio
+    norm_a = normalize_name(name_a).lower()
+    norm_b = normalize_name(name_b).lower()
+    fuzzy_score = fuzz.ratio(norm_a, norm_b) / 100.0
+    
+    # Strategy 2: Token sort ratio (handles word reordering)
+    token_sort = fuzz.token_sort_ratio(norm_a, norm_b) / 100.0
+    
+    # Strategy 3: Name parts matching
+    parts_score = name_parts_match_score(name_a, name_b)
+    
+    # Strategy 4: Token set ratio (handles subset names)
+    token_set = fuzz.token_set_ratio(norm_a, norm_b) / 100.0
+    
+    # Take the best score with some weighting
+    return max(
+        fuzzy_score,
+        token_sort,
+        parts_score,
+        token_set * 0.95,  # Slight penalty for pure set matching
+    )
 
 
 class EntityResolver:
@@ -34,45 +184,60 @@ class EntityResolver:
         if not name or not name.strip():
             return ""
 
+        # Check for joint names
+        individual_names = detect_joint_name(name)
+        if len(individual_names) > 1:
+            logger.info(f"Detected joint name: '{name}' -> {individual_names}")
+            # Resolve the first person, return their uuid
+            # (Caller should handle multiple returns in future)
+            uuids = []
+            for ind_name in individual_names:
+                uid = await self._resolve_single_person(ind_name.strip(), source_doc_id, role)
+                if uid:
+                    uuids.append(uid)
+            return uuids[0] if uuids else ""
+
+        return await self._resolve_single_person(name, source_doc_id, role)
+
+    async def _resolve_single_person(self, name: str, source_doc_id: int, role: str = None) -> str:
         normalized = normalize_name(name)
         if not normalized:
             return ""
 
-        # 1. Exact match in Neo4j
+        # 1. Exact match in Neo4j (case-insensitive)
         existing = await graph_store.find_person(normalized)
         if existing:
-            # Add alias if the original name differs
             if name != existing["name"] and name not in (existing.get("aliases") or []):
                 await graph_store.add_person_alias(existing["uuid"], name)
             return existing["uuid"]
 
-        # 2. Fuzzy match against all persons
+        # 2. Advanced matching against all persons
         all_persons = await graph_store.get_all_persons()
         best_match = None
-        best_score = 0
+        best_score = 0.0
 
         for person in all_persons:
             # Check against canonical name
-            score = fuzz.ratio(normalized.lower(), (person["name"] or "").lower())
+            score = advanced_match_score(normalized, person["name"] or "")
             if score > best_score:
                 best_score = score
                 best_match = person
 
             # Check against aliases
             for alias in (person.get("aliases") or []):
-                alias_score = fuzz.ratio(normalized.lower(), normalize_name(alias).lower())
+                alias_score = advanced_match_score(normalized, alias)
                 if alias_score > best_score:
                     best_score = alias_score
                     best_match = person
 
-        if best_match and best_score >= SIMILARITY_THRESHOLD:
-            logger.info(f"Fuzzy matched '{name}' to '{best_match['name']}' (score={best_score})")
+        if best_match and best_score >= (SIMILARITY_THRESHOLD / 100.0):
+            logger.info(f"Matched '{name}' to '{best_match['name']}' (score={best_score:.3f})")
             if name != best_match["name"] and name not in (best_match.get("aliases") or []):
                 await graph_store.add_person_alias(best_match["uuid"], name)
             return best_match["uuid"]
 
         # 3. Embedding similarity for close but not fuzzy-matched names
-        if all_persons and best_score >= 60:
+        if all_persons and best_score >= 0.5:
             query_emb = await embeddings_store.generate_embedding(normalized)
             if query_emb:
                 for person in all_persons:
@@ -113,24 +278,24 @@ class EntityResolver:
                 await graph_store.add_org_alias(existing["uuid"], name)
             return existing["uuid"]
 
-        # Fuzzy match
+        # Advanced fuzzy match
         all_orgs = await graph_store.get_all_organizations()
         best_match = None
-        best_score = 0
+        best_score = 0.0
 
         for org in all_orgs:
-            score = fuzz.ratio(normalized.lower(), (org["name"] or "").lower())
+            score = advanced_match_score(normalized, org["name"] or "")
             if score > best_score:
                 best_score = score
                 best_match = org
             for alias in (org.get("aliases") or []):
-                alias_score = fuzz.ratio(normalized.lower(), normalize_name(alias).lower())
+                alias_score = advanced_match_score(normalized, alias)
                 if alias_score > best_score:
                     best_score = alias_score
                     best_match = org
 
-        if best_match and best_score >= SIMILARITY_THRESHOLD:
-            logger.info(f"Fuzzy matched org '{name}' to '{best_match['name']}' (score={best_score})")
+        if best_match and best_score >= (SIMILARITY_THRESHOLD / 100.0):
+            logger.info(f"Fuzzy matched org '{name}' to '{best_match['name']}' (score={best_score:.3f})")
             if name != best_match["name"] and name not in (best_match.get("aliases") or []):
                 await graph_store.add_org_alias(best_match["uuid"], name)
             return best_match["uuid"]
@@ -142,6 +307,170 @@ class EntityResolver:
         )
         logger.info(f"Created new Organization: '{normalized}' (uuid={node_uuid})")
         return node_uuid
+
+    async def resolve_all_entities(self) -> dict:
+        """Scan all entities in Neo4j and merge duplicates. Returns a report."""
+        report = {"merged_persons": [], "merged_orgs": [], "errors": []}
+
+        # Resolve persons
+        all_persons = await graph_store.get_all_persons()
+        merged_uuids = set()
+
+        for i, person_a in enumerate(all_persons):
+            if person_a["uuid"] in merged_uuids:
+                continue
+            for person_b in all_persons[i + 1:]:
+                if person_b["uuid"] in merged_uuids:
+                    continue
+                score = advanced_match_score(
+                    person_a["name"] or "", person_b["name"] or ""
+                )
+                # Also check aliases
+                for alias in (person_a.get("aliases") or []):
+                    s = advanced_match_score(alias, person_b["name"] or "")
+                    score = max(score, s)
+                for alias in (person_b.get("aliases") or []):
+                    s = advanced_match_score(person_a["name"] or "", alias)
+                    score = max(score, s)
+
+                if score >= (SIMILARITY_THRESHOLD / 100.0):
+                    # Merge B into A
+                    try:
+                        await self._merge_nodes(
+                            keep_uuid=person_a["uuid"],
+                            remove_uuid=person_b["uuid"],
+                            remove_name=person_b["name"],
+                            remove_aliases=person_b.get("aliases") or [],
+                            label="Person",
+                        )
+                        merged_uuids.add(person_b["uuid"])
+                        report["merged_persons"].append({
+                            "kept": person_a["name"],
+                            "merged": person_b["name"],
+                            "score": round(score, 3),
+                        })
+                        logger.info(
+                            f"Merged Person '{person_b['name']}' into '{person_a['name']}' (score={score:.3f})"
+                        )
+                    except Exception as e:
+                        report["errors"].append(f"Failed to merge {person_b['name']} into {person_a['name']}: {e}")
+
+        # Resolve organizations - also check if any "Organization" is actually a Person
+        all_orgs = await graph_store.get_all_organizations()
+        all_persons_refreshed = await graph_store.get_all_persons()
+
+        for org in all_orgs:
+            if org["uuid"] in merged_uuids:
+                continue
+            # Check if this org matches a person (misclassified)
+            for person in all_persons_refreshed:
+                if person["uuid"] in merged_uuids:
+                    continue
+                score = advanced_match_score(org["name"] or "", person["name"] or "")
+                if score >= (SIMILARITY_THRESHOLD / 100.0):
+                    try:
+                        await self._merge_nodes(
+                            keep_uuid=person["uuid"],
+                            remove_uuid=org["uuid"],
+                            remove_name=org["name"],
+                            remove_aliases=org.get("aliases") or [],
+                            label="Organization",
+                        )
+                        merged_uuids.add(org["uuid"])
+                        report["merged_orgs"].append({
+                            "kept": f"Person:{person['name']}",
+                            "merged": f"Organization:{org['name']}",
+                            "score": round(score, 3),
+                        })
+                    except Exception as e:
+                        report["errors"].append(f"Failed to merge org {org['name']} into person {person['name']}: {e}")
+
+        # Merge duplicate orgs
+        for i, org_a in enumerate(all_orgs):
+            if org_a["uuid"] in merged_uuids:
+                continue
+            for org_b in all_orgs[i + 1:]:
+                if org_b["uuid"] in merged_uuids:
+                    continue
+                score = advanced_match_score(org_a["name"] or "", org_b["name"] or "")
+                if score >= (SIMILARITY_THRESHOLD / 100.0):
+                    try:
+                        await self._merge_nodes(
+                            keep_uuid=org_a["uuid"],
+                            remove_uuid=org_b["uuid"],
+                            remove_name=org_b["name"],
+                            remove_aliases=org_b.get("aliases") or [],
+                            label="Organization",
+                        )
+                        merged_uuids.add(org_b["uuid"])
+                        report["merged_orgs"].append({
+                            "kept": org_a["name"],
+                            "merged": org_b["name"],
+                            "score": round(score, 3),
+                        })
+                    except Exception as e:
+                        report["errors"].append(f"Failed to merge org: {e}")
+
+        report["total_merged"] = len(report["merged_persons"]) + len(report["merged_orgs"])
+        return report
+
+    async def _merge_nodes(self, keep_uuid: str, remove_uuid: str,
+                           remove_name: str, remove_aliases: list[str],
+                           label: str):
+        """Merge remove_uuid node into keep_uuid node in Neo4j."""
+        async with graph_store.driver.session() as session:
+            # Move all relationships from remove to keep
+            await session.run(
+                """
+                MATCH (remove) WHERE remove.uuid = $remove_uuid
+                MATCH (keep) WHERE keep.uuid = $keep_uuid
+                OPTIONAL MATCH (remove)-[r_out]->(target)
+                WHERE target <> keep
+                WITH keep, remove, collect({type: type(r_out), target: target, props: properties(r_out)}) AS out_rels
+                UNWIND out_rels AS rel
+                WITH keep, remove, rel
+                WHERE rel.target IS NOT NULL
+                CALL apoc.create.relationship(keep, rel.type, rel.props, rel.target) YIELD rel AS newRel
+                RETURN count(newRel)
+                """,
+                keep_uuid=keep_uuid, remove_uuid=remove_uuid,
+            )
+            await session.run(
+                """
+                MATCH (remove) WHERE remove.uuid = $remove_uuid
+                MATCH (keep) WHERE keep.uuid = $keep_uuid
+                OPTIONAL MATCH (source)-[r_in]->(remove)
+                WHERE source <> keep
+                WITH keep, remove, collect({type: type(r_in), source: source, props: properties(r_in)}) AS in_rels
+                UNWIND in_rels AS rel
+                WITH keep, remove, rel
+                WHERE rel.source IS NOT NULL
+                CALL apoc.create.relationship(rel.source, rel.type, rel.props, keep) YIELD rel AS newRel
+                RETURN count(newRel)
+                """,
+                keep_uuid=keep_uuid, remove_uuid=remove_uuid,
+            )
+
+            # Add aliases
+            all_aliases = [remove_name] + remove_aliases
+            for alias in all_aliases:
+                if alias:
+                    await session.run(
+                        """
+                        MATCH (n) WHERE n.uuid = $uuid
+                        SET n.aliases = CASE
+                            WHEN NOT $alias IN n.aliases THEN n.aliases + $alias
+                            ELSE n.aliases
+                        END
+                        """,
+                        uuid=keep_uuid, alias=alias,
+                    )
+
+            # Delete the duplicate node
+            await session.run(
+                "MATCH (n) WHERE n.uuid = $uuid DETACH DELETE n",
+                uuid=remove_uuid,
+            )
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:

@@ -4,6 +4,7 @@ import logging
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +55,15 @@ class DocumentClassifier:
         prompt = CLASSIFICATION_PROMPT.format(title=title, content=truncated)
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            result = json.loads(response.choices[0].message.content)
+            async def _call():
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                return json.loads(response.choices[0].message.content)
+
+            result = await retry_with_backoff(_call, operation="classify")
             doc_type = result.get("doc_type", "personal")
             if doc_type not in VALID_TYPES:
                 logger.warning(f"Invalid doc_type '{doc_type}' returned, defaulting to 'personal'")

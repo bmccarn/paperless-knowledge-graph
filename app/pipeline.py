@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.paperless import paperless_client, PaperlessClient
 from app.classifier import classifier
 from app.extractor import extractor
@@ -457,7 +459,7 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def sync_documents(progress_callback=None):
+async def sync_documents(progress_callback=None, cancel_event=None):
     """Incremental sync - process new/modified documents."""
     last_sync = await embeddings_store.get_last_sync()
     logger.info(f"Starting sync (last sync: {last_sync})")
@@ -471,6 +473,9 @@ async def sync_documents(progress_callback=None):
 
     results = []
     for doc in docs:
+        if cancel_event and cancel_event.is_set():
+            logger.info("Sync cancelled by user")
+            break
         if progress_callback:
             progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
         result = await process_document(doc)
@@ -507,7 +512,7 @@ async def sync_documents(progress_callback=None):
     }
 
 
-async def reindex_all(progress_callback=None):
+async def reindex_all(progress_callback=None, cancel_event=None):
     """Full reindex - clear everything and reprocess all documents."""
     logger.info("Starting full reindex")
     await graph_store.clear_all()
@@ -522,6 +527,9 @@ async def reindex_all(progress_callback=None):
 
     results = []
     for doc in docs:
+        if cancel_event and cancel_event.is_set():
+            logger.info("Reindex cancelled by user")
+            break
         if progress_callback:
             progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
         result = await process_document(doc)

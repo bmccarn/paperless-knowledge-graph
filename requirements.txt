@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+google-genai
+openai
+neo4j
+asyncpg
+pgvector
+rapidfuzz
+httpx
+pydantic
+pydantic-settings
+python-dotenv
+numpy

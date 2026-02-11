@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -23,6 +24,58 @@ logger = logging.getLogger(__name__)
 
 # Track background tasks
 _tasks: dict[str, dict] = {}
+
+
+def _make_progress_callback(task_id: str):
+    """Create a progress callback that updates _tasks[task_id] in place."""
+    def callback(event: str, data: dict):
+        task = _tasks.get(task_id)
+        if not task:
+            return
+
+        if event == "init":
+            task["total_docs"] = data["total_docs"]
+
+        elif event == "current":
+            task["current_doc"] = data["title"]
+
+        elif event == "result":
+            result = data
+            # Update counters
+            if result.get("status") == "processed":
+                task["processed"] = task.get("processed", 0) + 1
+            elif result.get("status") == "skipped":
+                task["skipped"] = task.get("skipped", 0) + 1
+            elif result.get("status") == "error":
+                task["errors"] = task.get("errors", 0) + 1
+
+            # Timing
+            started = task.get("_start_time", time.time())
+            elapsed = time.time() - started
+            task["elapsed_seconds"] = round(elapsed, 1)
+            done = task.get("processed", 0) + task.get("skipped", 0) + task.get("errors", 0)
+            total = task.get("total_docs", 0)
+            if done > 0 and elapsed > 0:
+                task["docs_per_minute"] = round(done / (elapsed / 60), 1)
+                remaining = total - done
+                secs_per_doc = elapsed / done
+                task["estimated_remaining_seconds"] = round(remaining * secs_per_doc, 1)
+            else:
+                task["docs_per_minute"] = 0
+                task["estimated_remaining_seconds"] = 0
+
+            # Recent results (last 10)
+            recent_entry = {"doc_id": result.get("doc_id"), "title": task.get("current_doc", ""), "status": result.get("status")}
+            if result.get("status") == "processed":
+                recent_entry["entities"] = result.get("entities_extracted", 0)
+                recent_entry["relationships"] = result.get("chunks", 0)
+            elif result.get("status") == "error":
+                recent_entry["error"] = result.get("error", "")
+            recent = task.get("recent_results", [])
+            recent.append(recent_entry)
+            task["recent_results"] = recent[-10:]
+
+    return callback
 
 
 @asynccontextmanager
@@ -137,16 +190,39 @@ async def health():
 @app.post("/sync", response_model=TaskResponse)
 async def sync():
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "total_docs": 0,
+        "processed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "current_doc": "",
+        "elapsed_seconds": 0,
+        "docs_per_minute": 0,
+        "estimated_remaining_seconds": 0,
+        "recent_results": [],
+    }
+
+    progress_cb = _make_progress_callback(task_id)
 
     async def _run():
         try:
             invalidate_on_sync()
-            result = await sync_documents()
-            _tasks[task_id] = {"status": "completed", "result": result}
+            result = await sync_documents(progress_callback=progress_cb)
+            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = result
+            _tasks[task_id]["current_doc"] = ""
+            elapsed = time.time() - _tasks[task_id]["_start_time"]
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id] = {"status": "failed", "error": str(e)}
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
 
     asyncio.create_task(_run())
     return TaskResponse(task_id=task_id, status="started", message="Sync started in background")
@@ -155,16 +231,39 @@ async def sync():
 @app.post("/reindex", response_model=TaskResponse)
 async def reindex():
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "total_docs": 0,
+        "processed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "current_doc": "",
+        "elapsed_seconds": 0,
+        "docs_per_minute": 0,
+        "estimated_remaining_seconds": 0,
+        "recent_results": [],
+    }
+
+    progress_cb = _make_progress_callback(task_id)
 
     async def _run():
         try:
             invalidate_on_sync()
-            result = await reindex_all()
-            _tasks[task_id] = {"status": "completed", "result": result}
+            result = await reindex_all(progress_callback=progress_cb)
+            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = result
+            _tasks[task_id]["current_doc"] = ""
+            elapsed = time.time() - _tasks[task_id]["_start_time"]
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
         except Exception as e:
             logger.error(f"Reindex task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id] = {"status": "failed", "error": str(e)}
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
 
     asyncio.create_task(_run())
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
@@ -184,7 +283,8 @@ async def get_task(task_id: str):
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    # Return a copy without internal fields
+    return {k: v for k, v in task.items() if not k.startswith("_")}
 
 
 # --- Query ---

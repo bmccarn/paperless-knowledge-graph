@@ -179,24 +179,15 @@ class GraphStore:
     async def create_relationship(self, from_uuid: str, from_label: str,
                                    to_uuid: str, to_label: str,
                                    rel_type: str, properties: dict = None):
-        """Create a relationship between two nodes."""
+        """Create a relationship between two nodes. Increments weight on duplicate."""
         props = properties or {}
-        props_str = ""
-        if props:
-            props_str = " {" + ", ".join(f"{k}: ${k}" for k in props) + "}"
-        # Use uuid matching, try multiple label combinations
-        query = f"""
-            MATCH (a {{{("uuid" if from_label != "Document" else "uuid")}: $from_uuid}})
-            MATCH (b {{{("uuid" if to_label != "Document" else "uuid")}: $to_uuid}})
-            MERGE (a)-[r:{rel_type}]->(b)
-            SET r += $props
-        """
-        # Simpler approach: match by uuid across all labels
+        # Use MERGE to avoid duplicates and track weight
         query = f"""
             MATCH (a) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
             MATCH (b) WHERE b.uuid = $to_uuid OR b.paperless_id = $to_pid
             MERGE (a)-[r:{rel_type}]->(b)
-            SET r += $props
+            ON CREATE SET r = $props, r.weight = 1
+            ON MATCH SET r.weight = coalesce(r.weight, 1) + 1, r += $props
         """
         async with self.driver.session() as session:
             await session.run(
@@ -205,6 +196,77 @@ class GraphStore:
                 to_uuid=to_uuid, to_pid=_try_int(to_uuid),
                 props=props,
             )
+
+    async def get_document_entities(self, paperless_id: int) -> list[dict]:
+        """Get all entities connected to a document."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (d:Document {paperless_id: $pid})-[r]-(n)
+                WHERE NOT n:Document
+                RETURN DISTINCT labels(n) AS labels, properties(n) AS props, n.uuid AS uuid
+                """,
+                pid=paperless_id,
+            )
+            entities = []
+            async for r in result:
+                entity = {"labels": r["labels"], "uuid": r["uuid"]}
+                entity.update(r["props"])
+                entities.append(entity)
+            return entities
+
+    async def get_subgraph(self, entity_uuids: list[str], depth: int = 2) -> dict:
+        """Get a connected subgraph within N hops of any of the input entities."""
+        if not entity_uuids:
+            return {"nodes": [], "relationships": []}
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (n) WHERE n.uuid IN $uuids
+                CALL apoc.path.subgraphAll(n, {maxLevel: $depth})
+                YIELD nodes, relationships
+                WITH collect(nodes) AS all_nodes_lists, collect(relationships) AS all_rels_lists
+                WITH reduce(acc = [], nl IN all_nodes_lists | acc + nl) AS all_nodes,
+                     reduce(acc = [], rl IN all_rels_lists | acc + rl) AS all_rels
+                UNWIND all_nodes AS n2
+                WITH collect(DISTINCT {labels: labels(n2), props: properties(n2)}) AS nodes, all_rels
+                UNWIND all_rels AS r2
+                RETURN nodes,
+                       collect(DISTINCT {type: type(r2), props: properties(r2),
+                               start_uuid: coalesce(properties(startNode(r2)).uuid, toString(startNode(r2).paperless_id)),
+                               end_uuid: coalesce(properties(endNode(r2)).uuid, toString(endNode(r2).paperless_id)),
+                               weight: r2.weight}) AS relationships
+                """,
+                uuids=entity_uuids, depth=depth,
+            )
+            record = await result.single()
+            if not record:
+                return await self._get_subgraph_no_apoc(entity_uuids, depth)
+            return {"nodes": record["nodes"][:50], "relationships": record["relationships"][:100]}
+
+    async def _get_subgraph_no_apoc(self, entity_uuids: list[str], depth: int) -> dict:
+        """Fallback subgraph query without APOC."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH path = (start)-[*1..3]-(end)
+                WHERE start.uuid IN $uuids
+                UNWIND nodes(path) AS n
+                UNWIND relationships(path) AS r
+                WITH collect(DISTINCT {labels: labels(n), props: properties(n)}) AS nodes,
+                     collect(DISTINCT {type: type(r), props: properties(r),
+                             start_uuid: coalesce(properties(startNode(r)).uuid, toString(startNode(r).paperless_id)),
+                             end_uuid: coalesce(properties(endNode(r)).uuid, toString(endNode(r).paperless_id)),
+                             weight: r.weight}) AS rels
+                RETURN nodes, rels
+                """,
+                uuids=entity_uuids,
+            )
+            record = await result.single()
+            if not record:
+                return {"nodes": [], "relationships": []}
+            return {"nodes": record["nodes"][:50], "relationships": record["rels"][:100]}
 
     async def delete_document_graph(self, paperless_id: int):
         """Remove all nodes and relationships sourced from a document."""
@@ -391,6 +453,18 @@ class GraphStore:
                 "nodes": list(all_nodes.values()),
                 "relationships": relationships,
             }
+
+    async def check_health(self) -> dict:
+        """Check Neo4j connectivity and return health info."""
+        try:
+            async with self.driver.session() as session:
+                result = await session.run("RETURN 1 AS ok")
+                record = await result.single()
+                if record and record["ok"] == 1:
+                    return {"status": "healthy"}
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
+        return {"status": "unhealthy", "error": "unexpected"}
 
 
 def _try_int(val: str) -> int:

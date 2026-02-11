@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone
 
 from app.paperless import paperless_client, PaperlessClient
@@ -9,6 +10,9 @@ from app.graph import graph_store
 from app.embeddings import embeddings_store
 
 logger = logging.getLogger(__name__)
+
+# Confidence threshold - entities below this are logged but not committed
+CONFIDENCE_THRESHOLD = 0.5
 
 
 async def process_document(doc: dict) -> dict:
@@ -45,7 +49,19 @@ async def process_document(doc: dict) -> dict:
         if not isinstance(extracted, dict):
             logger.warning(f"Doc {doc_id}: extraction returned {type(extracted).__name__}, using empty dict")
             extracted = {}
-        logger.info(f"Doc {doc_id} extracted {len(extracted)} fields")
+
+        # Log extraction confidence
+        extraction_confidence = extracted.get("confidence", 1.0)
+        is_fallback = extracted.get("fallback_extraction", False)
+        if is_fallback:
+            logger.info(f"Doc {doc_id} used fallback extraction (confidence={extraction_confidence})")
+
+        entity_count = _count_entities(extracted)
+        logger.info(f"Doc {doc_id} extracted {entity_count} fields (confidence={extraction_confidence})")
+
+        # If primary extraction returned nothing and no fallback was tried, log it
+        if entity_count == 0 and not is_fallback:
+            logger.warning(f"Doc {doc_id} '{title}': no entities extracted (type={doc_type}, classification_conf={classification['confidence']:.2f})")
 
         # Step 3: Clean old graph data for this doc
         await graph_store.delete_document_graph(doc_id)
@@ -61,6 +77,9 @@ async def process_document(doc: dict) -> dict:
         # Step 5: Process extracted entities based on doc type
         await _process_extraction(doc_id, doc_node_id, doc_type, extracted)
 
+        # Step 5b: Process implied relationships
+        await _process_implied_relationships(doc_id, extracted)
+
         # Step 6: Store embeddings
         # Split content into chunks for better retrieval
         chunks = _chunk_content(content, max_chars=2000)
@@ -71,11 +90,60 @@ async def process_document(doc: dict) -> dict:
         await embeddings_store.set_doc_hash(doc_id, content_hash)
 
         return {"doc_id": doc_id, "status": "processed", "doc_type": doc_type,
-                "entities_extracted": _count_entities(extracted)}
+                "entities_extracted": entity_count,
+                "confidence": extraction_confidence,
+                "fallback": is_fallback}
 
     except Exception as e:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
+
+
+async def _process_implied_relationships(doc_id: int, extracted: dict):
+    """Process implied relationships extracted from the document."""
+    implied = extracted.get("implied_relationships", [])
+    if not implied or not isinstance(implied, list):
+        return
+
+    source_props = {"source_doc": doc_id, "implied": True}
+
+    for rel in implied:
+        try:
+            confidence = float(rel.get("confidence", 0.5))
+            if confidence < CONFIDENCE_THRESHOLD:
+                logger.debug(f"Skipping low-confidence implied relationship: {rel} (conf={confidence})")
+                continue
+
+            from_name = rel.get("from_entity", "")
+            to_name = rel.get("to_entity", "")
+            from_type = rel.get("from_type", "Person")
+            to_type = rel.get("to_type", "Person")
+            rel_type = rel.get("relationship", "RELATED_TO")
+
+            if not from_name or not to_name:
+                continue
+
+            # Resolve entities
+            if from_type == "Organization":
+                from_uuid = await entity_resolver.resolve_organization(from_name, doc_id)
+            else:
+                from_uuid = await entity_resolver.resolve_person(from_name, doc_id)
+
+            if to_type == "Organization":
+                to_uuid = await entity_resolver.resolve_organization(to_name, doc_id)
+            else:
+                to_uuid = await entity_resolver.resolve_person(to_name, doc_id)
+
+            if from_uuid and to_uuid:
+                props = {**source_props, "confidence": confidence}
+                await graph_store.create_relationship(
+                    from_uuid, from_type, to_uuid, to_type,
+                    rel_type, props
+                )
+                logger.debug(f"Created implied relationship: {from_name} -[{rel_type}]-> {to_name}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create implied relationship: {e}")
 
 
 async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict):
@@ -127,12 +195,18 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     for test in (data.get("tests") or []):
         if not test.get("name"):
             continue
+        # Check confidence on individual test results
+        test_confidence = float(test.get("confidence", 1.0))
+        if test_confidence < CONFIDENCE_THRESHOLD:
+            logger.debug(f"Skipping low-confidence test result: {test.get('name')} (conf={test_confidence})")
+            continue
         result_uuid = await graph_store.create_node("MedicalResult", {
             "test_name": test.get("name", ""),
             "value": str(test.get("value", "")),
             "unit": test.get("unit", "") or "",
             "reference_range": test.get("reference_range", "") or "",
             "flag": test.get("flag", "") or "",
+            "confidence": test_confidence,
         })
         await graph_store.create_relationship(
             str(doc_id), "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
@@ -168,7 +242,6 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         name = party.get("name")
         if not name:
             continue
-        # Could be person or org - try org first for contracts
         org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type="legal")
         if org_uuid:
             await graph_store.create_relationship(
@@ -265,44 +338,64 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
 async def _process_generic(doc_id, doc_node_id, data, source_props):
     # People
     for person in (data.get("people") or []):
-        name = person.get("name")
+        name = person.get("name") if isinstance(person, dict) else person
         if not name:
             continue
-        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=person.get("role"))
+        # Check confidence if available
+        if isinstance(person, dict):
+            confidence = float(person.get("confidence", 1.0))
+            if confidence < CONFIDENCE_THRESHOLD:
+                logger.debug(f"Skipping low-confidence person: {name} (conf={confidence})")
+                continue
+        role = person.get("role", "") if isinstance(person, dict) else ""
+        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=role)
         if person_uuid:
             await graph_store.create_relationship(
                 str(doc_id), "Document", person_uuid, "Person", "MENTIONS", source_props)
 
     # Organizations
     for org in (data.get("organizations") or []):
-        name = org.get("name")
+        name = org.get("name") if isinstance(org, dict) else org
         if not name:
             continue
-        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org.get("type"))
+        if isinstance(org, dict):
+            confidence = float(org.get("confidence", 1.0))
+            if confidence < CONFIDENCE_THRESHOLD:
+                logger.debug(f"Skipping low-confidence org: {name} (conf={confidence})")
+                continue
+        org_type = org.get("type", "") if isinstance(org, dict) else ""
+        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org_type)
         if org_uuid:
             await graph_store.create_relationship(
                 str(doc_id), "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
     # Date events
     for date_info in (data.get("dates") or []):
-        if not date_info.get("date"):
+        if isinstance(date_info, dict):
+            if not date_info.get("date"):
+                continue
+            de_uuid = await graph_store.create_node("DateEvent", {
+                "date": date_info["date"],
+                "description": date_info.get("description", "") or "",
+                "recurring": False,
+            })
+        elif isinstance(date_info, str):
+            de_uuid = await graph_store.create_node("DateEvent", {
+                "date": date_info,
+                "description": "",
+                "recurring": False,
+            })
+        else:
             continue
-        de_uuid = await graph_store.create_node("DateEvent", {
-            "date": date_info["date"],
-            "description": date_info.get("description", "") or "",
-            "recurring": False,
-        })
         await graph_store.create_relationship(
             str(doc_id), "Document", de_uuid, "DateEvent", "MENTIONS", source_props)
 
 
 def _extract_date(doc: dict, extracted: dict) -> str:
     """Extract the best date from doc metadata or extraction."""
-    # Try extracted date first
     for key in ("date", "effective_date"):
         if extracted.get(key):
             return str(extracted[key])
-    # Fallback to paperless created date
     created = doc.get("created")
     if created:
         return str(created)[:10]
@@ -324,6 +417,8 @@ def _chunk_content(content: str, max_chars: int = 2000) -> list[str]:
 def _count_entities(extracted: dict) -> int:
     count = 0
     for key, val in extracted.items():
+        if key in ("confidence", "fallback_extraction", "implied_relationships"):
+            continue
         if isinstance(val, list):
             count += len(val)
         elif isinstance(val, str) and val:
@@ -336,6 +431,7 @@ async def sync_documents():
     last_sync = await embeddings_store.get_last_sync()
     logger.info(f"Starting sync (last sync: {last_sync})")
 
+    start_time = time.time()
     docs = await paperless_client.get_all_documents(modified_after=last_sync)
     logger.info(f"Found {len(docs)} documents to check")
 
@@ -347,16 +443,28 @@ async def sync_documents():
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)
 
+    elapsed = time.time() - start_time
     processed = sum(1 for r in results if r["status"] == "processed")
     skipped = sum(1 for r in results if r["status"] == "skipped")
     errors = sum(1 for r in results if r["status"] == "error")
+    docs_per_minute = (processed / (elapsed / 60)) if elapsed > 0 and processed > 0 else 0
+    avg_entities = 0
+    if processed > 0:
+        total_entities = sum(r.get("entities_extracted", 0) for r in results if r["status"] == "processed")
+        avg_entities = total_entities / processed
 
-    logger.info(f"Sync complete: {processed} processed, {skipped} skipped, {errors} errors")
+    logger.info(
+        f"Sync complete: {processed} processed, {skipped} skipped, {errors} errors "
+        f"| {elapsed:.1f}s | {docs_per_minute:.1f} docs/min | {avg_entities:.1f} entities/doc avg"
+    )
     return {
         "total": len(docs),
         "processed": processed,
         "skipped": skipped,
         "errors": errors,
+        "elapsed_seconds": round(elapsed, 1),
+        "docs_per_minute": round(docs_per_minute, 1),
+        "avg_entities_per_doc": round(avg_entities, 1),
         "results": results,
     }
 
@@ -367,6 +475,7 @@ async def reindex_all():
     await graph_store.clear_all()
     await embeddings_store.clear_all()
 
+    start_time = time.time()
     docs = await paperless_client.get_all_documents()
     logger.info(f"Reindexing {len(docs)} documents")
 
@@ -378,14 +487,16 @@ async def reindex_all():
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)
 
+    elapsed = time.time() - start_time
     processed = sum(1 for r in results if r["status"] == "processed")
     errors = sum(1 for r in results if r["status"] == "error")
 
-    logger.info(f"Reindex complete: {processed} processed, {errors} errors")
+    logger.info(f"Reindex complete: {processed} processed, {errors} errors | {elapsed:.1f}s")
     return {
         "total": len(docs),
         "processed": processed,
         "errors": errors,
+        "elapsed_seconds": round(elapsed, 1),
         "results": results,
     }
 

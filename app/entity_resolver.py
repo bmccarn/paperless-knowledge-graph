@@ -392,16 +392,19 @@ class EntityResolver:
                     continue
 
                 try:
+                    # Pick canonical name
+                    canonical = pick_canonical_name(person_a["name"] or "", person_b["name"] or "")
                     await self._merge_nodes(
                         keep_uuid=person_a["uuid"],
                         remove_uuid=person_b["uuid"],
                         remove_name=person_b["name"],
                         remove_aliases=person_b.get("aliases") or [],
                         label="Person",
+                        canonical_name=canonical,
                     )
                     merged_uuids.add(person_b["uuid"])
                     report["merged_persons"].append({
-                        "kept": person_a["name"],
+                        "kept": canonical,
                         "merged": person_b["name"],
                         "score": round(score, 3),
                     })
@@ -436,16 +439,18 @@ class EntityResolver:
                     continue
 
                 try:
+                    canonical = pick_canonical_name(org_a["name"] or "", org_b["name"] or "")
                     await self._merge_nodes(
                         keep_uuid=org_a["uuid"],
                         remove_uuid=org_b["uuid"],
                         remove_name=org_b["name"],
                         remove_aliases=org_b.get("aliases") or [],
                         label="Organization",
+                        canonical_name=canonical,
                     )
                     merged_uuids.add(org_b["uuid"])
                     report["merged_orgs"].append({
-                        "kept": org_a["name"],
+                        "kept": canonical,
                         "merged": org_b["name"],
                         "score": round(score, 3),
                     })
@@ -458,7 +463,7 @@ class EntityResolver:
 
     async def _merge_nodes(self, keep_uuid: str, remove_uuid: str,
                            remove_name: str, remove_aliases: list[str],
-                           label: str):
+                           label: str, canonical_name: str = None):
         """Merge remove_uuid node into keep_uuid node in Neo4j."""
         async with graph_store.driver.session() as session:
             await session.run(
@@ -506,10 +511,46 @@ class EntityResolver:
                         uuid=keep_uuid, alias=alias,
                     )
 
+            # Update canonical name if provided
+            if canonical_name:
+                await session.run(
+                    "MATCH (n) WHERE n.uuid = $uuid SET n.name = $name",
+                    uuid=keep_uuid, name=canonical_name,
+                )
+
             await session.run(
                 "MATCH (n) WHERE n.uuid = $uuid DETACH DELETE n",
                 uuid=remove_uuid,
             )
+
+
+def pick_canonical_name(name_a: str, name_b: str) -> str:
+    """Pick the best canonical name: prefer longer, properly cased, most complete.
+    
+    "John Doe" > "JOHN DOE" > "John" (longer, properly cased = better)
+    """
+    def score_name(name: str) -> tuple:
+        n = name.strip()
+        parts = n.split()
+        # Score components:
+        # 1. Number of name parts (more = better)
+        num_parts = len(parts)
+        # 2. Length (longer = better)
+        length = len(n)
+        # 3. Case quality: mixed case > all upper > all lower
+        if n == n.upper():
+            case_score = 1  # ALL CAPS
+        elif n == n.lower():
+            case_score = 0  # all lower
+        else:
+            case_score = 2  # Mixed/Title case (best)
+        # 4. Has middle initial/name
+        has_middle = 1 if num_parts >= 3 else 0
+        return (num_parts, case_score, has_middle, length)
+    
+    score_a = score_name(name_a)
+    score_b = score_name(name_b)
+    return name_a if score_a >= score_b else name_b
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:

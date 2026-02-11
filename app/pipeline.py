@@ -253,7 +253,7 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             if entity_uuid:
                 # Create relationship from document to entity
                 await graph_store.create_relationship(
-                    str(doc_id), "Document", entity_uuid, entity_type, 
+                    doc_node_id, "Document", entity_uuid, entity_type, 
                     "MENTIONS", {**source_props, "confidence": confidence}
                 )
                 logger.debug(f"Created entity relationship: Document {doc_id} -[MENTIONS]-> {entity_type} {name}")

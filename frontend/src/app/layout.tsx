@@ -18,10 +18,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <TooltipProvider>
+          <TooltipProvider delayDuration={200}>
             <div className="flex h-screen overflow-hidden">
               <SidebarNav />
-              <main className="flex-1 overflow-auto">{children}</main>
+              <main className="flex-1 overflow-auto">
+                <div className="page-transition">{children}</div>
+              </main>
             </div>
           </TooltipProvider>
         </ThemeProvider>

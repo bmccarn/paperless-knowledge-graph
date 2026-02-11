@@ -11,6 +11,7 @@ from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.query import query_engine
+from app.summarizer import summarize_all_entities, summarize_entity
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +82,15 @@ async def sync():
     async def _run():
         try:
             result = await sync_documents()
+            # Auto-summarize entities affected by sync
+            if result.get("processed", 0) > 0:
+                logger.info("Auto-triggering entity summarization after sync")
+                try:
+                    summary_result = await summarize_all_entities(force=False)
+                    result["summarization"] = summary_result
+                except Exception as se:
+                    logger.error(f"Post-sync summarization failed: {se}")
+                    result["summarization_error"] = str(se)
             _tasks[task_id] = {"status": "completed", "result": result}
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
@@ -98,6 +108,14 @@ async def reindex():
     async def _run():
         try:
             result = await reindex_all()
+            # Auto-summarize all entities after full reindex
+            logger.info("Auto-triggering entity summarization after reindex")
+            try:
+                summary_result = await summarize_all_entities(force=True)
+                result["summarization"] = summary_result
+            except Exception as se:
+                logger.error(f"Post-reindex summarization failed: {se}")
+                result["summarization_error"] = str(se)
             _tasks[task_id] = {"status": "completed", "result": result}
         except Exception as e:
             logger.error(f"Reindex task {task_id} failed: {e}", exc_info=True)
@@ -131,6 +149,42 @@ async def query(req: QueryRequest):
     try:
         result = await query_engine.query(req.question)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+# --- Summarization ---
+
+@app.post("/summarize-entities", response_model=TaskResponse)
+async def summarize_entities_endpoint(force: bool = False):
+    """Generate descriptions for all entities needing summarization."""
+    task_id = str(uuid.uuid4())
+    _tasks[task_id] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
+
+    async def _run():
+        try:
+            result = await summarize_all_entities(force=force)
+            _tasks[task_id] = {"status": "completed", "result": result}
+        except Exception as e:
+            logger.error(f"Summarization task {task_id} failed: {e}", exc_info=True)
+            _tasks[task_id] = {"status": "failed", "error": str(e)}
+
+    asyncio.create_task(_run())
+    return TaskResponse(task_id=task_id, status="started", message="Entity summarization started in background")
+
+
+@app.post("/summarize-entity/{entity_uuid}")
+async def summarize_single_entity(entity_uuid: str):
+    """Summarize or re-summarize a single entity."""
+    try:
+        result = await summarize_entity(entity_uuid)
+        if result.get("status") == "not_found":
+            raise HTTPException(status_code=404, detail="Entity not found")
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

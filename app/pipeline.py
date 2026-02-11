@@ -485,7 +485,7 @@ def _neo4j_label(entity_type: str) -> str:
     return ENTITY_TYPE_TO_LABEL.get(entity_type, entity_type)
 
 
-async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "") -> str:
+async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "", description: str = "") -> str:
     """Route entity resolution based on type."""
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
@@ -498,12 +498,12 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
         
     entity_type = entity_type.strip().title()
     if entity_type == "Organization":
-        return await entity_resolver.resolve_organization(name, doc_id)
+        return await entity_resolver.resolve_organization(name, doc_id, description=description)
     elif entity_type == "Person":
-        return await entity_resolver.resolve_person(name, doc_id)
+        return await entity_resolver.resolve_person(name, doc_id, description=description)
     elif entity_type in VALID_ENTITY_TYPES:
         # For other types, use the generic entity creation via entity_resolver
-        return await entity_resolver.resolve_generic(name, entity_type, doc_id)
+        return await entity_resolver.resolve_generic(name, entity_type, doc_id, description=description)
     else:
         # Unknown type — default to Organization if it looks like one, else Person
         if any(w in name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
@@ -524,6 +524,7 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             name = entity.get("name", "")
             entity_type = entity.get("type", "Person")
             confidence = float(entity.get("confidence", 0.8))
+            description = entity.get("description", "")
             
             if not name or confidence < CONFIDENCE_THRESHOLD:
                 continue
@@ -534,7 +535,7 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
                 continue
                 
             # Resolve the entity and create document relationships
-            entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title)
+            entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title, description=description)
             if entity_uuid:
                 # Create relationship from document to entity
                 label = _neo4j_label(entity_type)

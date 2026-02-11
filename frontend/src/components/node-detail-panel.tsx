@@ -170,9 +170,13 @@ export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetail
             </Badge>
             <h2 className="font-semibold text-lg leading-tight break-words">{node.name}</h2>
             {aliases.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Also known as: {aliases.join(", ")}
-              </p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {aliases.map((alias, i) => (
+                  <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">
+                    {alias}
+                  </Badge>
+                ))}
+              </div>
             )}
           </div>
           <Button variant="ghost" size="icon" onClick={onClose} className="shrink-0 h-8 w-8 -mt-1 -mr-2">
@@ -218,14 +222,28 @@ export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetail
               </h3>
               <div className="space-y-2">
                 {Object.entries(detail.properties)
-                  .filter(([key]) => !["description", "aliases", "uuid", "name", "title"].includes(key))
+                  .filter(([key, value]) => !["description", "aliases", "uuid"].includes(key) && value != null && value !== "" && !(Array.isArray(value) && value.length === 0))
+                  .sort(([a], [b]) => {
+                    // Prioritize important fields
+                    const priority = ["name", "title", "entity_type", "role", "type", "date"];
+                    const ai = priority.indexOf(a);
+                    const bi = priority.indexOf(b);
+                    if (ai >= 0 && bi >= 0) return ai - bi;
+                    if (ai >= 0) return -1;
+                    if (bi >= 0) return 1;
+                    return a.localeCompare(b);
+                  })
                   .map(([key, value]) => (
                     <div key={key} className="flex gap-3">
-                      <span className="text-[10px] text-muted-foreground uppercase min-w-[70px] shrink-0 pt-0.5 tracking-wider">
-                        {key}
+                      <span className="text-[10px] text-muted-foreground uppercase min-w-[80px] shrink-0 pt-0.5 tracking-wider">
+                        {key.replace(/_/g, " ")}
                       </span>
                       <span className="text-xs break-all">
-                        {typeof value === "object" ? JSON.stringify(value) : String(value)}
+                        {Array.isArray(value)
+                          ? value.join(", ")
+                          : typeof value === "object"
+                          ? JSON.stringify(value, null, 2)
+                          : String(value)}
                       </span>
                     </div>
                   ))}

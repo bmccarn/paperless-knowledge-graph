@@ -126,14 +126,17 @@ class GraphStore:
             record = await result.single()
             return dict(record) if record else None
 
-    async def create_person(self, name: str, aliases: list[str] = None, role: str = None) -> str:
+    async def create_person(self, name: str, aliases: list[str] = None, role: str = None,
+                            description: str = None) -> str:
         node_uuid = self.new_uuid()
         async with self.driver.session() as session:
             await session.run(
                 """
-                CREATE (p:Person {uuid: $uuid, name: $name, aliases: $aliases, role: $role})
+                CREATE (p:Person {uuid: $uuid, name: $name, aliases: $aliases, role: $role,
+                                  description: $description, entity_type: 'Person'})
                 """,
                 uuid=node_uuid, name=name, aliases=aliases or [], role=role or "",
+                description=description or "",
             )
         return node_uuid
 
@@ -151,14 +154,16 @@ class GraphStore:
             )
 
     async def create_organization(self, name: str, org_type: str = None,
-                                   aliases: list[str] = None) -> str:
+                                   aliases: list[str] = None, description: str = None) -> str:
         node_uuid = self.new_uuid()
         async with self.driver.session() as session:
             await session.run(
                 """
-                CREATE (o:Organization {uuid: $uuid, name: $name, type: $type, aliases: $aliases})
+                CREATE (o:Organization {uuid: $uuid, name: $name, type: $type, aliases: $aliases,
+                                        description: $description, entity_type: 'Organization'})
                 """,
                 uuid=node_uuid, name=name, type=org_type or "", aliases=aliases or [],
+                description=description or "",
             )
         return node_uuid
 
@@ -410,15 +415,18 @@ class GraphStore:
             return {"nodes": record["nodes"], "relationships": record["rels"]}
 
     async def get_initial_graph(self, limit: int = 300) -> dict:
-        """Get an initial graph view with entity nodes (not raw Document nodes) and their connections."""
+        """Get an initial graph view sampling across ALL entity types (not raw Document nodes)."""
         async with self.driver.session() as session:
-            # Get all entity nodes (everything except raw Document nodes which are Paperless docs)
+            # Sample top nodes from each entity type for a diverse view
             node_result = await session.run(
                 """
                 MATCH (n)
                 WHERE NOT n:Document
-                RETURN labels(n) AS labels, properties(n) AS props
+                WITH labels(n)[0] AS lbl, n
                 ORDER BY COUNT { (n)--() } DESC
+                WITH lbl, collect({labels: labels(n), props: properties(n)}) AS typed_nodes
+                UNWIND typed_nodes[0..CASE WHEN size(typed_nodes) > 50 THEN 50 ELSE size(typed_nodes) END] AS node
+                RETURN node.labels AS labels, node.props AS props
                 LIMIT $limit
                 """,
                 limit=limit,

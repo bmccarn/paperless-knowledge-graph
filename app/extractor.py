@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from openai import AsyncOpenAI
 
@@ -204,37 +205,112 @@ Document title: {title}
 Document content:
 {content}"""
 
-# Pass 2 prompt: Universal entity extraction and typing
-ENTITY_EXTRACTION_PROMPT = """Extract and properly type ALL entities from this document. You will receive the raw document text and structured metadata from Pass 1.
+# Pass 2 prompt: Entity extraction with precision focus, few-shot examples, and exclusion rules
+ENTITY_EXTRACTION_PROMPT = """You are an entity extraction system for a knowledge graph. Extract only NAMED, SPECIFIC entities from this document. Prefer precision over recall — when in doubt, skip it.
 
 Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition
 
-Return a JSON object with:
+=== FEW-SHOT EXAMPLE ===
+
+DOCUMENT SNIPPET:
+"John Doe visited Dr. Sarah Johnson at Quest Diagnostics in Charlotte, NC on March 15, 2024. His CBC panel results showed elevated WBC. He was diagnosed with PTSD and prescribed Gabapentin 300mg. His DD-214 confirms service during Operation Desert Storm. He filed his claim through eBenefits."
+
+CORRECT entity extractions:
+- "John Doe" (Person) — named individual, full name
+- "Dr. Sarah Johnson" (Person) — named individual
+- "Quest Diagnostics" (Organization) — named company
+- "Charlotte, NC" (Location) — specific named place
+- "PTSD" (Condition) — named medical condition
+- "Gabapentin 300mg" (Product) — specific named product
+- "DD-214" (Document) — specific named form
+- "Operation Desert Storm" (Event) — specific named event
+- "eBenefits" (System) — named software platform
+
+WRONG extractions to AVOID:
+- "the patient" → generic role, not a named person
+- "tax preparer" → generic role without a proper name
+- "VR&E Officer" → generic role title, not a specific person
+- "30 percent" → a numeric value, not an entity
+- "90% combined rating" → a numeric value, not an entity
+- "your area" → vague reference, not a specific place
+- "the facility" → generic reference, not named
+- "Certification Issue Date" → form field label, not an entity
+- "Date of Issue" → form field label
+- "Direct Review" → procedural term, not an event
+- "Evidence Submission" → process description, not an event
+- "Section 3" → document section header
+- "How VA Combines Percentages" → descriptive phrase
+- "psychiatric care" → generic concept, not a product
+- "anxiety medications" → generic category, not a named product
+- "disaster area" → generic phrase, not a specific location
+- "lab results" → generic concept, not a specific document
+- "blood draw" → procedure description, not an entity
+
+=== DO NOT EXTRACT ===
+- Generic roles without proper names ("tax preparer", "officer", "physician", "VR&E Officer", "Veterans Law Judge")
+- Form field labels ("Date of Issue", "Reference Number", "Certification Issue Date", "Certification Expiration Date")
+- Percentages, dollar amounts, or numeric values ("30 percent", "90% combined rating", "$1,500")
+- Vague/generic locations ("your area", "the facility", "disaster area", "the hospital")
+- Process descriptions or procedural terms ("Direct Review", "Evidence Submission", "Hearing", "background investigations")
+- Document section headers ("Section 3", "Part A", "Chapter 2")
+- Descriptive phrases that aren't proper nouns ("How VA Combines Percentages", "psychiatric care", "anxiety medications")
+- Common English words or generic nouns
+
+=== TYPE-BY-TYPE EXTRACTION GUIDANCE ===
+
+Think through each type systematically:
+
+1. PERSON: Named individuals ONLY. Must have a proper name (first name, last name, or both).
+   YES: "John Doe", "Dr. Sarah Johnson", "John A. Smith"
+   NO: "tax preparer", "VR&E Officer", "the physician", "Veteran", "applicant"
+
+2. ORGANIZATION: Named entities with proper names.
+   YES: "Quest Diagnostics", "Department of Veterans Affairs", "Bank of America", "82nd Airborne Division"
+   NO: "the hospital", "the bank", "insurance company", "military unit"
+
+3. LOCATION: Specific named places only.
+   YES: "Charlotte, NC", "Fort Bragg", "Walter Reed Medical Center"
+   NO: "your area", "the facility", "disaster area", "home address"
+
+4. CONDITION: Named medical conditions, diagnoses, symptoms, injuries, disabilities.
+   YES: "PTSD", "sleep apnea", "lumbar strain", "migraine headaches", "anxiety disorder"
+   NO: "feeling tired", "pain", "symptoms", "health issues"
+
+5. DOCUMENT: Specific named forms, documents, or publications.
+   YES: "DD-214", "SF-86", "Form W-2", "VA Form 21-526EZ"
+   NO: "the form", "application", "the letter", "paperwork"
+
+6. PRODUCT: Named commercial products, medications with specific names/dosages, named services.
+   YES: "Gabapentin 300mg", "Sertraline 50mg", "CPAP machine"
+   NO: "anxiety medications", "pain pills", "medical equipment"
+
+7. SYSTEM: Named software, databases, or platforms.
+   YES: "eBenefits", "MyHealtheVet", "VBMS", "e-QIP"
+   NO: "the website", "online portal", "the database"
+
+8. EVENT: Specific named events, operations, or incidents with identifiable names/dates.
+   YES: "Operation Desert Storm", "9/11 attacks", "Hurricane Katrina"
+   NO: "Direct Review", "Evidence Submission", "Hearing", "the appointment"
+
+=== CANONICAL NAME GUIDANCE ===
+Use the most complete, properly-cased form of each name found in the document:
+- Prefer "John Doe" over "SMITH" or "John"
+- Prefer "Department of Veterans Affairs" over "VA" (unless VA is the only form used)
+- Prefer "Charlotte, NC" over "charlotte" or "CHARLOTTE NC"
+
+Return a JSON object:
 {{
   "entities": [
     {{
-      "name": "entity name",
+      "name": "entity name (canonical form)",
       "type": "Person/Organization/Location/System/Product/Document/Event/Condition",
       "confidence": 0.95,
-      "description": "brief description of the entity"
+      "description": "brief description of the entity in context"
     }}
   ]
 }}
 
-Entity typing guidelines:
-- Person: Individual people (patients, employees, signatories, etc.)
-- Organization: Companies, hospitals, agencies, departments, etc.
-- Location: Cities, states, countries, addresses, buildings
-- System: Databases, software systems, platforms, applications
-- Product: Specific products, services, plans, policies (NOT medical conditions or diagnoses)
-- Document: Referenced documents, forms, reports
-- Event: Meetings, appointments, procedures, transactions
-- Condition: Medical conditions, diagnoses, symptoms, injuries, disabilities (e.g. migraine headaches, lumbosacral strain, sleep apnea, PTSD, anxiety disorder)
-
-IMPORTANT: Medical conditions, diagnoses, symptoms, and injuries must be typed as Condition, NOT Product.
-
-Be thorough - identify ALL entities mentioned. A database should be System, a city should be Location, etc.
-Include high confidence scores (0.8+) for clearly identifiable entities.
+Only include entities with confidence >= 0.8. If unsure about an entity, skip it entirely.
 
 Document title: {title}
 
@@ -244,35 +320,48 @@ Structured metadata from Pass 1:
 Raw document content:
 {content}"""
 
-# Pass 3 prompt: Relationship inference
-RELATIONSHIP_EXTRACTION_PROMPT = """Infer relationships between entities based on document context. You will receive the entity list from Pass 2 and the document context.
+# Pass 3 prompt: Relationship inference with constrained patterns
+RELATIONSHIP_EXTRACTION_PROMPT = """Infer relationships between the provided entities based on document context.
+
+IMPORTANT RULES:
+- Only create relationships between entities that exist in the entity list below. Do NOT invent new entities.
+- Only infer relationships that can be reasonably inferred from the document context.
+- Include confidence scores based on how explicit the relationship is in the document.
+
+=== VALID RELATIONSHIP PATTERNS ===
+
+These are the allowed source_type → relationship → target_type patterns:
+
+- Person → WORKS_AT / EMPLOYED_BY → Organization
+- Person → PATIENT_OF / TREATED_BY → Organization
+- Person → LOCATED_AT / LIVES_IN → Location
+- Person → DIAGNOSED_WITH / HAS_CONDITION → Condition
+- Person → PRESCRIBED / TAKES → Product
+- Person → SERVED_IN / PARTICIPATED_IN → Event
+- Person → USES → System
+- Person → FILED / SUBMITTED → Document
+- Organization → LOCATED_IN → Location
+- Organization → PROVIDES → Product
+- Document → AUTHORED_BY / SIGNED_BY → Person
+- Document → ISSUED_BY / FROM → Organization
+- Document → REFERENCES → Document
+- Product → TREATS → Condition
+
+Relationship types should be UPPER_SNAKE_CASE (Neo4j compatible).
+You may also use: RELATED_TO as a generic fallback, but prefer specific types.
 
 Return a JSON object with:
 {{
   "relationships": [
     {{
-      "from_entity": "source entity name",
-      "to_entity": "target entity name", 
+      "from_entity": "source entity name (must match entity list exactly)",
+      "to_entity": "target entity name (must match entity list exactly)", 
       "relationship_type": "RELATIONSHIP_TYPE",
       "confidence": 0.8,
       "description": "brief explanation of why this relationship exists"
     }}
   ]
 }}
-
-Relationship types should be UPPER_SNAKE_CASE (Neo4j compatible). Common types:
-- WORKS_AT, EMPLOYED_BY, EMPLOYS
-- PATIENT_OF, TREATED_BY, PROVIDES_CARE_TO  
-- CUSTOMER_OF, VENDOR_FOR, SERVES
-- OWNS, OWNED_BY, MANAGES
-- LOCATED_AT, LOCATED_IN
-- AUTHORED_BY, CREATED_BY
-- INSURED_BY, COVERS
-- CONTRACTED_WITH, PARTY_TO
-- RELATED_TO (generic fallback)
-
-Only infer relationships that can be reasonably inferred from the document context.
-Include confidence scores based on how explicit the relationship is in the document.
 
 Document title: {title}
 
@@ -281,6 +370,101 @@ Entities from Pass 2:
 
 Document context:
 {content}"""
+
+# Pass 4 prompt: Verification/critique of extracted entities
+VERIFICATION_PROMPT = """You are a quality reviewer for a knowledge graph entity extraction system. Review the following entity list extracted from a document and REMOVE any that are not real, specific, named entities.
+
+REMOVE entities that are:
+1. Generic descriptions rather than named entities (e.g., "tax preparer", "the physician", "VR&E Officer")
+2. Form field labels (e.g., "Date of Issue", "Certification Issue Date", "Reference Number")
+3. Numbers, percentages, or dollar amounts masquerading as entities (e.g., "30 percent", "90% combined rating")
+4. Vague references (e.g., "your area", "the facility", "disaster area")
+5. Process descriptions or procedural terms (e.g., "Direct Review", "Evidence Submission")
+6. Document section headers (e.g., "Section 3", "Part A")
+7. Descriptive phrases that aren't proper nouns (e.g., "How VA Combines Percentages")
+8. Duplicates or near-duplicates (keep the most complete version)
+
+KEEP entities that are:
+- Real named people (with actual proper names)
+- Specific named organizations, companies, agencies
+- Specific named places (cities, bases, buildings)
+- Named medical conditions and diagnoses
+- Named products/medications with specific names
+- Specific named documents/forms (DD-214, SF-86, etc.)
+- Named software systems/platforms
+- Named events/operations
+
+Document title: {title}
+
+Entity list to review:
+{entities}
+
+Return a JSON object with ONLY the validated entities (remove all junk):
+{{
+  "entities": [
+    {{
+      "name": "entity name",
+      "type": "entity type",
+      "confidence": 0.95,
+      "description": "description"
+    }}
+  ]
+}}"""
+
+
+def _repair_json(raw_text: str) -> dict:
+    """Attempt to parse and repair common JSON issues from LLM output."""
+    if not raw_text or not raw_text.strip():
+        return {}
+    
+    text = raw_text.strip()
+    
+    # 1. Try standard parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # 2. Strip markdown code fences
+    text = re.sub(r'^```(?:json)?\s*\n?', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
+    text = text.strip()
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # 3. Fix trailing commas before } or ]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # 4. Try to fix single quotes to double quotes (carefully)
+    # Only do this if there are no double quotes at all (suggesting single-quote JSON)
+    if '"' not in text and "'" in text:
+        fixed = text.replace("'", '"')
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+    
+    # 5. Try extracting the first JSON object from the text
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            candidate = match.group(0)
+            # Fix trailing commas in the extracted object too
+            candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    
+    # Give up - raise with context
+    raise json.JSONDecodeError(f"Failed to repair JSON", raw_text[:200], 0)
 
 
 class EntityExtractor:
@@ -292,7 +476,7 @@ class EntityExtractor:
         self.model = settings.gemini_model
 
     async def extract(self, title: str, content: str, doc_type: str) -> dict:
-        """Extract entities and relationships using 3-pass pipeline."""
+        """Extract entities and relationships using 4-pass pipeline."""
         # Pass 1: Structured Metadata Extraction
         metadata = await self._pass1_metadata_extraction(title, content, doc_type)
         logger.debug(f"Pass 1 completed for '{title}' (type: {doc_type})")
@@ -302,14 +486,20 @@ class EntityExtractor:
         entity_count = len(entities.get("entities", []))
         logger.debug(f"Pass 2 extracted {entity_count} entities for '{title}'")
         
-        # Pass 3: Relationship Inference
-        relationships = await self._pass3_relationship_extraction(title, content, entities)
+        # Pass 4: Verification (critique & refine) - runs between pass 2 and pass 3
+        verified_entities = await self._pass4_verification(title, entities)
+        verified_count = len(verified_entities.get("entities", []))
+        if verified_count < entity_count:
+            logger.info(f"Pass 4 verification removed {entity_count - verified_count} junk entities for '{title}' ({entity_count} -> {verified_count})")
+        
+        # Pass 3: Relationship Inference (uses verified entities)
+        relationships = await self._pass3_relationship_extraction(title, content, verified_entities)
         rel_count = len(relationships.get("relationships", []))
         logger.debug(f"Pass 3 inferred {rel_count} relationships for '{title}'")
         
         # Combine results in format expected by pipeline.py
-        result = self._combine_results(metadata, entities, relationships)
-        result["extraction_method"] = "3-pass"
+        result = self._combine_results(metadata, verified_entities, relationships)
+        result["extraction_method"] = "4-pass"
         
         return result
 
@@ -325,7 +515,7 @@ class EntityExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
-            return json.loads(response.choices[0].message.content)
+            return _repair_json(response.choices[0].message.content)
 
         return await retry_with_backoff(_call, operation=f"pass1_metadata:{doc_type}")
 
@@ -345,7 +535,7 @@ class EntityExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
-            return json.loads(response.choices[0].message.content)
+            return _repair_json(response.choices[0].message.content)
 
         return await retry_with_backoff(_call, operation="pass2_entities")
 
@@ -365,9 +555,48 @@ class EntityExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
-            return json.loads(response.choices[0].message.content)
+            return _repair_json(response.choices[0].message.content)
 
         return await retry_with_backoff(_call, operation="pass3_relationships")
+
+    async def _pass4_verification(self, title: str, entities: dict) -> dict:
+        """Pass 4: Verify and filter extracted entities (Extract-Critique-Refine pattern)."""
+        entity_list = entities.get("entities", [])
+        if not entity_list:
+            return entities
+        
+        # Skip verification for very small entity lists (nothing to filter)
+        if len(entity_list) <= 3:
+            return entities
+        
+        entities_str = json.dumps(entity_list, indent=2)
+        prompt = VERIFICATION_PROMPT.format(
+            title=title,
+            entities=entities_str,
+        )
+
+        async def _call():
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            return _repair_json(response.choices[0].message.content)
+
+        try:
+            verified = await retry_with_backoff(_call, operation="pass4_verification")
+            # Sanity check: verification should not ADD entities, only remove them
+            verified_names = {e.get("name", "").lower() for e in verified.get("entities", [])}
+            original_names = {e.get("name", "").lower() for e in entity_list}
+            # If verification added new entities, that's wrong - fall back to original
+            new_entities = verified_names - original_names
+            if new_entities:
+                logger.warning(f"Pass 4 tried to add new entities: {new_entities} — using original list")
+                return entities
+            return verified
+        except Exception as e:
+            logger.warning(f"Pass 4 verification failed: {e} — using unverified entities")
+            return entities
 
     def _combine_results(self, metadata: dict, entities: dict, relationships: dict) -> dict:
         """Combine 3-pass results into format expected by pipeline.py."""

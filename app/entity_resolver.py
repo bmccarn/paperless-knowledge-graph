@@ -262,6 +262,23 @@ def should_auto_merge(name_a: str, name_b: str, score: float,
     
     Returns True only if all safeguards pass.
     """
+    # Minimum name length protection
+    if len(normalize_name(name_a).strip()) < 4 or len(normalize_name(name_b).strip()) < 4:
+        logger.debug(
+            f"Min length protection blocked merge: '{name_a}' <-> '{name_b}' (one name too short)"
+        )
+        return False
+
+    # Person word-count mismatch protection
+    if entity_type == "Person":
+        parts_a = get_name_parts(name_a)
+        parts_b = get_name_parts(name_b)
+        if (len(parts_a) == 1 and len(parts_b) >= 3) or (len(parts_b) == 1 and len(parts_a) >= 3):
+            logger.debug(
+                f"Word count mismatch blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
+            )
+            return False
+
     # Short name protection
     if is_short_name(name_a) or is_short_name(name_b):
         if score < (SHORT_NAME_THRESHOLD / 100.0):
@@ -307,7 +324,7 @@ def advanced_match_score(name_a: str, name_b: str) -> float:
 class EntityResolver:
     def __init__(self):
         self._cache = {}
-    async def resolve_person(self, name: str, source_doc_id: int, role: str = None) -> str:
+    async def resolve_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         """Resolve a person name to an existing or new node. Returns uuid."""
         if not name or not name.strip():
             return ""
@@ -385,12 +402,13 @@ class EntityResolver:
             name=normalized,
             aliases=[name] if name != normalized else [],
             role=role,
+            description=description,
         )
         logger.info(f"Created new Person: '{normalized}' (uuid={node_uuid})")
         return node_uuid
 
     async def resolve_organization(self, name: str, source_doc_id: int,
-                                    org_type: str = None) -> str:
+                                    org_type: str = None, description: str = None) -> str:
         """Resolve an organization name. Returns uuid."""
         name = normalize_org_name(name)
         if not name or len(name) < 3:
@@ -436,6 +454,7 @@ class EntityResolver:
         node_uuid = await graph_store.create_organization(
             name=normalized, org_type=org_type,
             aliases=[name] if name != normalized else [],
+            description=description,
         )
         logger.info(f"Created new Organization: '{normalized}' (uuid={node_uuid})")
         return node_uuid
@@ -449,7 +468,8 @@ class EntityResolver:
         """Get Neo4j label for an entity type."""
         return self.ENTITY_TYPE_TO_LABEL.get(entity_type, entity_type)
 
-    async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int) -> str:
+    async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int,
+                              description: str = None) -> str:
         """Resolve a generic entity (Location, System, Product, etc.) — fuzzy match or create."""
         if not name or not name.strip():
             return ""
@@ -472,16 +492,26 @@ class EntityResolver:
             if record:
                 uuid = record["uuid"]
                 self._cache[cache_key] = uuid
+                # Update description if we have a new one
+                if description:
+                    await session.run(
+                        f"MATCH (n:{label} {{uuid: $uuid}}) SET n.description = $desc, n.entity_type = $etype",
+                        uuid=uuid, desc=description, etype=entity_type,
+                    )
                 return uuid
 
         # Create new entity
         import uuid as uuid_mod
         new_uuid = str(uuid_mod.uuid4())
-        await graph_store.create_node(label, {
+        props = {
             "uuid": new_uuid,
             "name": name,
             "source_doc_ids": [source_doc_id],
-        })
+            "entity_type": entity_type,
+        }
+        if description:
+            props["description"] = description
+        await graph_store.create_node(label, props)
         logger.info(f"Created new {entity_type} ({label}): '{name}' (uuid={new_uuid})")
         self._cache[cache_key] = new_uuid
         return new_uuid
@@ -675,7 +705,10 @@ def pick_canonical_name(name_a: str, name_b: str) -> str:
             case_score = 2  # Mixed/Title case (best)
         # 4. Has middle initial/name
         has_middle = 1 if num_parts >= 3 else 0
-        return (num_parts, case_score, has_middle, length)
+        # 5. Prefer names without numbers/special characters
+        import re as _re
+        has_clean_chars = 0 if _re.search(r'[0-9#@&%]', n) else 1
+        return (num_parts, case_score, has_clean_chars, has_middle, length)
     
     score_a = score_name(name_a)
     score_b = score_name(name_b)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { getStatus, postSync, postReindex, getTask, graphSearch } from "@/lib/api";
 import type { StatusResponse } from "@/lib/types";
 import {
@@ -24,20 +25,50 @@ import {
   XCircle,
   Activity,
   TrendingUp,
+  SkipForward,
+  AlertCircle,
 } from "lucide-react";
+
+interface TaskProgress {
+  status: string;
+  started: string;
+  total_docs: number;
+  processed: number;
+  skipped: number;
+  errors: number;
+  current_doc: string;
+  elapsed_seconds: number;
+  docs_per_minute: number;
+  estimated_remaining_seconds: number;
+  recent_results: Array<{
+    doc_id: number;
+    title: string;
+    status: string;
+    entities?: number;
+    relationships?: number;
+    error?: string;
+  }>;
+  result?: unknown;
+  error?: string;
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || seconds <= 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTask, setActiveTask] = useState<{
-    id: string;
-    type: string;
-    status: string;
-    progress: number;
-  } | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeTaskType, setActiveTaskType] = useState<string>("");
+  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   const fetchStatus = useCallback(() => {
     getStatus()
@@ -51,35 +82,37 @@ export default function DashboardPage() {
     return () => clearInterval(i);
   }, [fetchStatus]);
 
-  const pollTask = useCallback(
-    (taskId: string, type: string) => {
-      setActiveTask({ id: taskId, type, status: "running", progress: 10 });
-      let progressVal = 10;
-      const interval = setInterval(async () => {
-        try {
-          progressVal = Math.min(progressVal + Math.random() * 15, 90);
-          const t = await getTask(taskId);
-          if (t.status !== "running") {
-            setActiveTask({ id: taskId, type, status: t.status, progress: 100 });
-            clearInterval(interval);
-            fetchStatus();
-            setTimeout(() => setActiveTask(null), 3000);
-          } else {
-            setActiveTask((prev) => prev ? { ...prev, progress: progressVal } : null);
-          }
-        } catch {
+  // Poll task progress
+  useEffect(() => {
+    if (!activeTaskId) return;
+    const interval = setInterval(async () => {
+      try {
+        const t = await getTask(activeTaskId);
+        setTaskProgress(t as TaskProgress);
+        if (t.status === "completed" || t.status === "failed") {
           clearInterval(interval);
-          setActiveTask(null);
+          fetchStatus();
         }
-      }, 2000);
-    },
-    [fetchStatus]
-  );
+      } catch {
+        clearInterval(interval);
+        setActiveTaskId(null);
+        setTaskProgress(null);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeTaskId, fetchStatus]);
+
+  // Auto-scroll log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [taskProgress?.recent_results]);
 
   const handleSync = async () => {
     try {
       const res = await postSync();
-      pollTask(res.task_id, "Sync");
+      setActiveTaskId(res.task_id);
+      setActiveTaskType("Sync");
+      setTaskProgress(null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -88,10 +121,17 @@ export default function DashboardPage() {
   const handleReindex = async () => {
     try {
       const res = await postReindex();
-      pollTask(res.task_id, "Reindex");
+      setActiveTaskId(res.task_id);
+      setActiveTaskType("Reindex");
+      setTaskProgress(null);
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+
+  const handleDismiss = () => {
+    setActiveTaskId(null);
+    setTaskProgress(null);
   };
 
   const handleSearch = async () => {
@@ -178,6 +218,12 @@ export default function DashboardPage() {
     },
   ];
 
+  const tp = taskProgress;
+  const isRunning = tp?.status === "running";
+  const isDone = tp?.status === "completed" || tp?.status === "failed";
+  const totalDone = (tp?.processed || 0) + (tp?.skipped || 0) + (tp?.errors || 0);
+  const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
+
   return (
     <div className="space-y-6 p-6 lg:p-8">
       {/* Header with search */}
@@ -237,7 +283,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Quick Actions */}
+        {/* Quick Actions + Progress Panel */}
         <Card className="border-border/50">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -249,10 +295,10 @@ export default function DashboardPage() {
             <div className="flex gap-3">
               <Button
                 onClick={handleSync}
-                disabled={!!activeTask}
+                disabled={!!activeTaskId && isRunning}
                 className="gap-2 flex-1"
               >
-                {activeTask?.type === "Sync" && activeTask.status === "running" ? (
+                {activeTaskType === "Sync" && isRunning ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Play className="h-4 w-4" />
@@ -261,11 +307,11 @@ export default function DashboardPage() {
               </Button>
               <Button
                 onClick={handleReindex}
-                disabled={!!activeTask}
+                disabled={!!activeTaskId && isRunning}
                 variant="secondary"
                 className="gap-2 flex-1"
               >
-                {activeTask?.type === "Reindex" && activeTask.status === "running" ? (
+                {activeTaskType === "Reindex" && isRunning ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4" />
@@ -274,37 +320,105 @@ export default function DashboardPage() {
               </Button>
             </div>
 
-            {/* Task progress */}
-            {activeTask && (
-              <div className="space-y-2 rounded-lg bg-accent/50 p-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{activeTask.type}</span>
-                  <Badge
-                    variant={
-                      activeTask.status === "completed" ? "default" :
-                      activeTask.status === "failed" ? "destructive" : "secondary"
-                    }
-                    className="gap-1"
-                  >
-                    {activeTask.status === "completed" ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : activeTask.status === "failed" ? (
-                      <XCircle className="h-3 w-3" />
-                    ) : (
-                      <Loader2 className="h-3 w-3 animate-spin" />
+            {/* Rich Progress Panel */}
+            {tp && (
+              <div className="space-y-3 rounded-lg bg-accent/50 p-4">
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{activeTaskType}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={
+                        tp.status === "completed" ? "default" :
+                        tp.status === "failed" ? "destructive" : "secondary"
+                      }
+                      className="gap-1"
+                    >
+                      {tp.status === "completed" ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : tp.status === "failed" ? (
+                        <XCircle className="h-3 w-3" />
+                      ) : (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                      {tp.status}
+                    </Badge>
+                    {isDone && (
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleDismiss}>
+                        Dismiss
+                      </Button>
                     )}
-                    {activeTask.status}
-                  </Badge>
+                  </div>
                 </div>
-                <Progress value={activeTask.progress} className="h-1.5" />
-                <p className="text-xs text-muted-foreground truncate">
-                  Task: {activeTask.id}
+
+                {/* Progress bar */}
+                <Progress value={progressPct} className="h-2" />
+
+                {/* Stats line */}
+                <p className="text-xs text-muted-foreground">
+                  {totalDone}/{tp.total_docs || "?"} docs
+                  {tp.skipped > 0 && <span> ({tp.skipped} skipped</span>}
+                  {tp.errors > 0 && <span>{tp.skipped > 0 ? ", " : " ("}{tp.errors} error{tp.errors !== 1 ? "s" : ""}</span>}
+                  {(tp.skipped > 0 || tp.errors > 0) && ")"}
+                  {tp.docs_per_minute > 0 && <span> — {tp.docs_per_minute} docs/min</span>}
+                  {isRunning && tp.estimated_remaining_seconds > 0 && (
+                    <span> — ~{formatTime(tp.estimated_remaining_seconds)} remaining</span>
+                  )}
                 </p>
+
+                {/* Current doc */}
+                {isRunning && tp.current_doc && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                    <span className="truncate">{tp.current_doc}</span>
+                  </div>
+                )}
+
+                {/* Live log */}
+                {tp.recent_results && tp.recent_results.length > 0 && (
+                  <ScrollArea className="h-36 rounded-md border border-border/50 bg-background/50">
+                    <div className="p-2 space-y-1">
+                      {tp.recent_results.map((r, i) => (
+                        <div key={`${r.doc_id}-${i}`} className="flex items-start gap-1.5 text-xs">
+                          {r.status === "processed" ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : r.status === "skipped" ? (
+                            <SkipForward className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                          )}
+                          <span className="truncate text-muted-foreground">
+                            {r.title || `Doc #${r.doc_id}`}
+                          </span>
+                          {r.status === "processed" && r.entities !== undefined && (
+                            <span className="shrink-0 text-muted-foreground/60 ml-auto">
+                              {r.entities}e
+                            </span>
+                          )}
+                          {r.status === "error" && r.error && (
+                            <span className="shrink-0 text-red-400/80 ml-auto truncate max-w-[120px]">
+                              {r.error}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      <div ref={logEndRef} />
+                    </div>
+                  </ScrollArea>
+                )}
+
+                {/* Final summary */}
+                {isDone && (
+                  <div className="text-xs text-muted-foreground border-t border-border/50 pt-2">
+                    {tp.status === "completed" ? "✅" : "❌"} {activeTaskType} {tp.status} in {formatTime(tp.elapsed_seconds)}
+                    {" — "}{tp.processed} processed, {tp.skipped} skipped, {tp.errors} errors
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Existing active tasks */}
-            {!activeTask && Object.keys(status.active_tasks).length > 0 && (
+            {/* Existing active tasks (from other sessions) */}
+            {!tp && Object.keys(status.active_tasks).length > 0 && (
               <div className="space-y-2">
                 {Object.entries(status.active_tasks).map(([id, s]) => (
                   <div key={id} className="flex items-center gap-2 rounded-lg bg-accent/50 p-2.5">
@@ -316,7 +430,7 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {!activeTask && Object.keys(status.active_tasks).length === 0 && (
+            {!tp && Object.keys(status.active_tasks).length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-2">
                 No active tasks — system is idle
               </p>

@@ -457,7 +457,7 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def sync_documents():
+async def sync_documents(progress_callback=None):
     """Incremental sync - process new/modified documents."""
     last_sync = await embeddings_store.get_last_sync()
     logger.info(f"Starting sync (last sync: {last_sync})")
@@ -466,10 +466,17 @@ async def sync_documents():
     docs = await paperless_client.get_all_documents(modified_after=last_sync)
     logger.info(f"Found {len(docs)} documents to check")
 
+    if progress_callback:
+        progress_callback("init", {"total_docs": len(docs)})
+
     results = []
     for doc in docs:
+        if progress_callback:
+            progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
         result = await process_document(doc)
         results.append(result)
+        if progress_callback:
+            progress_callback("result", result)
 
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)
@@ -500,7 +507,7 @@ async def sync_documents():
     }
 
 
-async def reindex_all():
+async def reindex_all(progress_callback=None):
     """Full reindex - clear everything and reprocess all documents."""
     logger.info("Starting full reindex")
     await graph_store.clear_all()
@@ -510,10 +517,17 @@ async def reindex_all():
     docs = await paperless_client.get_all_documents()
     logger.info(f"Reindexing {len(docs)} documents")
 
+    if progress_callback:
+        progress_callback("init", {"total_docs": len(docs)})
+
     results = []
     for doc in docs:
+        if progress_callback:
+            progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
         result = await process_document(doc)
         results.append(result)
+        if progress_callback:
+            progress_callback("result", result)
 
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)

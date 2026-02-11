@@ -43,7 +43,7 @@ async def process_document(doc: dict) -> dict:
         doc_type = classification["doc_type"]
         logger.info(f"Doc {doc_id} classified as {doc_type} (confidence={classification['confidence']:.2f})")
 
-        # Step 2: Extract
+        # Step 2: Extract (3-pass pipeline - no fallback)
         extracted = await extractor.extract(title, content, doc_type)
         if isinstance(extracted, list):
             logger.warning(f"Doc {doc_id}: extraction returned list instead of dict, wrapping")
@@ -57,7 +57,7 @@ async def process_document(doc: dict) -> dict:
         entity_count = _count_entities(extracted)
         logger.info(f"Doc {doc_id} extracted {entity_count} fields (confidence={extraction_confidence})")
 
-        if entity_count == 0 and not is_fallback:
+        if entity_count == 0:
             logger.warning(f"Doc {doc_id} '{title}': no entities extracted (type={doc_type}, classification_conf={classification['confidence']:.2f})")
 
         # Step 3: Clean old graph data for this doc
@@ -85,7 +85,7 @@ async def process_document(doc: dict) -> dict:
             )
         logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
 
-        # Step 6b: Store entity embeddings for resolved entities
+        # Step 6b: Store entity embeddings for resolved entities (ALL entity types)
         await _store_entity_embeddings(doc_id, extracted)
 
         # Step 7: Update hash
@@ -94,12 +94,55 @@ async def process_document(doc: dict) -> dict:
         return {"doc_id": doc_id, "status": "processed", "doc_type": doc_type,
                 "entities_extracted": entity_count,
                 "chunks": len(chunks),
-                "confidence": extraction_confidence,
-}
+                "confidence": extraction_confidence}
 
     except Exception as e:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
+
+
+# Blocklist of generic terms that should not become entity nodes
+BLOCKED_ENTITY_NAMES = {
+    "subject matter expert", "candidates", "applicant", "customer", "client",
+    "employee", "employer", "vendor", "buyer", "seller", "user", "admin",
+    "recipient", "sender", "owner", "tenant", "landlord", "borrower", "lender",
+    "insured", "beneficiary", "claimant", "plaintiff", "defendant",
+    "taxpayer", "filer", "spouse", "dependent", "subscriber", "member",
+    "patient", "provider", "physician", "doctor", "nurse",
+    "n/a", "unknown", "none", "null", "other", "various", "multiple",
+    "not specified", "not applicable", "see above", "see below",
+    "contractor", "subcontractor", "consultant", "freelancer", "specialist",
+}
+
+
+def _is_valid_entity_name(name: str) -> bool:
+    """Validate entity name - reject generic terms and junk."""
+    if not name or len(name.strip()) < 2:
+        return False
+    
+    name_clean = name.strip()
+    name_lower = name_clean.lower()
+    
+    # Check blocked terms
+    if name_lower in BLOCKED_ENTITY_NAMES:
+        return False
+    
+    # Reject very short names
+    if len(name_clean) < 3:
+        return False
+    
+    # Reject single common words (not proper nouns)
+    words = name_clean.split()
+    if len(words) == 1:
+        # Single word, all lowercase = probably not a proper noun
+        if name_clean.islower() or name_lower in {"and", "or", "the", "a", "an", "in", "on", "at", "by", "for", "with", "to", "of"}:
+            return False
+    
+    # Reject obvious role descriptions
+    if any(term in name_lower for term in ["matter expert", "representative", "contact person", "point of contact"]):
+        return False
+        
+    return True
 
 
 async def _store_entity_embeddings(doc_id: int, extracted: dict):
@@ -107,34 +150,67 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
     try:
         all_entities = extracted.get("all_entities", [])
         if not all_entities:
-            # Backward compat: build from people/organizations
+            # Backward compatibility: build from people/organizations
             for person in (extracted.get("people") or []):
                 name = person.get("name") if isinstance(person, dict) else person
                 if name:
-                    all_entities.append({"name": name, "type": "Person", "description": person.get("role", "") if isinstance(person, dict) else ""})
+                    all_entities.append({
+                        "name": name, 
+                        "type": "Person", 
+                        "description": person.get("role", "") if isinstance(person, dict) else ""
+                    })
             for org in (extracted.get("organizations") or []):
                 name = org.get("name") if isinstance(org, dict) else org
                 if name:
-                    all_entities.append({"name": name, "type": "Organization", "description": org.get("type", "") if isinstance(org, dict) else ""})
-
+                    all_entities.append({
+                        "name": name, 
+                        "type": "Organization", 
+                        "description": org.get("type", "") if isinstance(org, dict) else ""
+                    })
+        
+        # Process all entities (type-agnostic)
         for entity in all_entities:
             name = entity.get("name", "")
             etype = entity.get("type", "Person").strip().title()
             desc = entity.get("description", "")
+            
             if not name or not _is_valid_entity_name(name):
                 continue
+            
+            # Find the entity in the graph (try specific type first, then any type)
             results = await graph_store.search_nodes(name, node_type=etype, limit=1)
             if not results:
                 results = await graph_store.search_nodes(name, limit=1)
+            
             if results:
                 uuid = results[0].get("properties", {}).get("uuid", "")
                 if uuid:
                     emb_content = f"{name} | {etype.lower()}"
                     if desc:
                         emb_content += f" | {desc}"
+                    emb_content += f" | from doc {doc_id}"
+                    
                     await embeddings_store.store_entity_embedding(
                         uuid, name, entity_type=etype, content=emb_content
                     )
+                    logger.debug(f"Stored embedding for {etype} entity: {name}")
+
+        # Store embeddings for named entities from specific doc types
+        for key, etype in [("patient_name", "Person"), ("provider", "Organization"),
+                           ("vendor", "Organization"), ("policyholder", "Person"),
+                           ("filer_name", "Person"), ("ordering_physician", "Person"),
+                           ("preparer", "Person")]:
+            name = extracted.get(key)
+            if name and _is_valid_entity_name(name):
+                results = await graph_store.search_nodes(name, node_type=etype, limit=1)
+                if results:
+                    uuid = results[0].get("properties", {}).get("uuid", "")
+                    if uuid:
+                        content = f"{name} | {etype.lower()} | {key} from doc {doc_id}"
+                        await embeddings_store.store_entity_embedding(
+                            uuid, name, entity_type=etype, content=content
+                        )
+
     except Exception as e:
         logger.warning(f"Entity embedding storage failed for doc {doc_id}: {e}")
 
@@ -180,42 +256,13 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 
 VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event"}
 
-# Blocklist of generic terms that should not become entity nodes
-BLOCKED_ENTITY_NAMES = {
-    "subject matter expert", "candidates", "applicant", "customer", "client",
-    "employee", "employer", "vendor", "buyer", "seller", "user", "admin",
-    "recipient", "sender", "owner", "tenant", "landlord", "borrower", "lender",
-    "insured", "beneficiary", "claimant", "plaintiff", "defendant",
-    "taxpayer", "filer", "spouse", "dependent", "subscriber", "member",
-    "patient", "provider", "physician", "doctor", "nurse",
-    "n/a", "unknown", "none", "null", "other", "various", "multiple",
-    "not specified", "not applicable", "see above", "see below",
-}
-
-
-def _is_valid_entity_name(name: str) -> bool:
-    """Validate entity name - reject generic terms and junk."""
-    if not name or len(name.strip()) < 2:
-        return False
-    name_lower = name.strip().lower()
-    if name_lower in BLOCKED_ENTITY_NAMES:
-        return False
-    # Reject single common words (not proper nouns)
-    if len(name_lower.split()) == 1 and name_lower == name.strip():
-        # Single word, all lowercase = probably not a proper noun
-        if not any(c.isupper() for c in name.strip()):
-            return False
-    # Reject very short names
-    if len(name.strip()) < 3:
-        return False
-    return True
-
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int) -> str:
     """Route entity resolution based on type."""
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
         return ""
+        
     entity_type = entity_type.strip().title()
     if entity_type == "Organization":
         return await entity_resolver.resolve_organization(name, doc_id)
@@ -283,23 +330,25 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
         await _process_property(doc_id, doc_node_id, extracted, source_props)
     else:
         await _process_generic(doc_id, doc_node_id, extracted, source_props)
+
+
 async def _process_medical(doc_id, doc_node_id, data, source_props):
     patient = data.get("patient_name")
-    if patient:
+    if patient and _is_valid_entity_name(patient):
         person_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
     provider = data.get("provider")
-    if provider:
+    if provider and _is_valid_entity_name(provider):
         org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="medical")
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     physician = data.get("ordering_physician")
-    if physician:
+    if physician and _is_valid_entity_name(physician):
         phys_uuid = await entity_resolver.resolve_person(physician, doc_id, role="physician")
         if phys_uuid:
             await graph_store.create_relationship(
@@ -326,7 +375,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
 
 async def _process_financial(doc_id, doc_node_id, data, source_props):
     vendor = data.get("vendor")
-    if vendor:
+    if vendor and _is_valid_entity_name(vendor):
         org_uuid = await entity_resolver.resolve_organization(vendor, doc_id, org_type="financial")
         if org_uuid:
             await graph_store.create_relationship(
@@ -347,17 +396,32 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_contract(doc_id, doc_node_id, data, source_props):
+    """Process contract with specific relationship types (PARTY_TO, CONTRACTED_WITH)."""
     for party in (data.get("parties") or []):
         name = party.get("name")
-        if not name:
+        if not name or not _is_valid_entity_name(name):
             continue
-        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type="legal")
-        if org_uuid:
-            role = party.get("role", "party")
-            rel_type = "CONTRACTED_WITH" if "sign" in role.lower() or "party" in role.lower() else "PARTY_TO"
+        
+        # Determine if it's a person or organization based on name patterns
+        if any(w in name.lower() for w in ["inc", "llc", "corp", "company", "ltd", "agency", "dept", "department"]):
+            entity_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type="legal")
+            entity_type = "Organization"
+        else:
+            entity_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role", "party"))
+            entity_type = "Person"
+        
+        if entity_uuid:
+            # Use specific contract relationships instead of generic MENTIONS
+            role = party.get("role", "").lower()
+            if "sign" in role or "execute" in role or "enter" in role:
+                rel_type = "CONTRACTED_WITH"
+            else:
+                rel_type = "PARTY_TO"
+            
             await graph_store.create_relationship(
-                doc_node_id, "Document", org_uuid, "Organization", rel_type, source_props)
+                doc_node_id, "Document", entity_uuid, entity_type, rel_type, source_props)
 
+    # Create contract node with metadata
     contract_uuid = await graph_store.create_node("Contract", {
         "type": data.get("contract_type", "") or "",
         "effective_date": data.get("effective_date", "") or "",
@@ -371,14 +435,14 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
 
 async def _process_insurance(doc_id, doc_node_id, data, source_props):
     provider = data.get("provider")
-    if provider:
+    if provider and _is_valid_entity_name(provider):
         org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="insurance")
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     policyholder = data.get("policyholder")
-    if policyholder:
+    if policyholder and _is_valid_entity_name(policyholder):
         person_uuid = await entity_resolver.resolve_person(policyholder, doc_id, role="policyholder")
         if person_uuid:
             await graph_store.create_relationship(
@@ -398,18 +462,18 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
 
 async def _process_tax(doc_id, doc_node_id, data, source_props):
     filer = data.get("filer_name")
-    if filer:
+    if filer and _is_valid_entity_name(filer):
         person_uuid = await entity_resolver.resolve_person(filer, doc_id, role="filer")
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
 
     preparer = data.get("preparer")
-    if preparer:
+    if preparer and _is_valid_entity_name(preparer):
         prep_uuid = await entity_resolver.resolve_person(preparer, doc_id, role="tax_preparer")
         if prep_uuid:
             await graph_store.create_relationship(
-                doc_node_id, "Document", prep_uuid, "Person", "MENTIONS", source_props)
+                doc_node_id, "Document", prep_uuid, "Person", "PREPARED_BY", source_props)
 
     fi_uuid = await graph_store.create_node("FinancialItem", {
         "type": data.get("form_type", "tax") or "tax",
@@ -426,7 +490,7 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
 
 async def _process_property(doc_id, doc_node_id, data, source_props):
     address = data.get("property_address")
-    if address:
+    if address and _is_valid_entity_name(address):
         addr_uuid = await graph_store.create_node("Address", {
             "full_address": address,
         })
@@ -435,18 +499,19 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
 
     for party in (data.get("parties") or []):
         name = party.get("name")
-        if not name:
+        if not name or not _is_valid_entity_name(name):
             continue
-        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role"))
+        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role", "party"))
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
 
 async def _process_generic(doc_id, doc_node_id, data, source_props):
+    """Process generic documents - dates stored as properties, not separate nodes."""
     for person in (data.get("people") or []):
         name = person.get("name") if isinstance(person, dict) else person
-        if not name:
+        if not name or not _is_valid_entity_name(name):
             continue
         if isinstance(person, dict):
             confidence = float(person.get("confidence", 1.0))
@@ -461,7 +526,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
 
     for org in (data.get("organizations") or []):
         name = org.get("name") if isinstance(org, dict) else org
-        if not name:
+        if not name or not _is_valid_entity_name(name):
             continue
         if isinstance(org, dict):
             confidence = float(org.get("confidence", 1.0))
@@ -474,10 +539,12 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
-    # Dates are stored as properties on the document node, not as separate nodes
+    # Dates are stored as properties on the document node, not as separate DateEvent nodes
+    # The document node already has date properties set during creation
 
 
 def _extract_date(doc: dict, extracted: dict) -> str:
+    """Extract the primary date for document node properties."""
     for key in ("date", "effective_date"):
         if extracted.get(key):
             return str(extracted[key])
@@ -488,9 +555,10 @@ def _extract_date(doc: dict, extracted: dict) -> str:
 
 
 def _count_entities(extracted: dict) -> int:
+    """Count entities extracted from the document."""
     count = 0
     for key, val in extracted.items():
-        if key in ("confidence", "fallback_extraction", "implied_relationships"):
+        if key in ("confidence", "extraction_method", "implied_relationships", "all_entities"):
             continue
         if isinstance(val, list):
             count += len(val)

@@ -35,6 +35,18 @@ ABBREVIATIONS = {
 }
 
 
+# Title prefixes to strip from person names
+TITLE_PREFIXES = {
+    "dr", "dr.", "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "prof", "prof.",
+    "rev", "rev.", "hon", "hon.", "sgt", "cpl", "sra", "ssgt", "tsgt",
+    "msgt", "smsgt", "cmsgt", "od", "md", "dds", "dvm", "d.v.m.",
+    "esq", "esq.", "jr", "jr.", "sr", "sr.", "ii", "iii", "iv",
+}
+
+# Business suffixes that shouldn't appear at the START of a name
+BUSINESS_PREFIX_SUFFIXES = {"llc", "inc", "corp", "ltd", "co", "the"}
+
+
 def normalize_name(name: str) -> str:
     """Normalize a name for comparison."""
     if not name:
@@ -45,9 +57,35 @@ def normalize_name(name: str) -> str:
         parts = name.split(",")
         name = f"{parts[1].strip()} {parts[0].strip()}"
     # Remove special chars, extra spaces
-    name = re.sub(r"[™®©.\-']", " ", name)
+    name = re.sub(r"[\u2122\u00ae\u00a9.\-\']", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
+
+
+def normalize_person_name(name: str) -> str:
+    """Normalize a person name: strip titles, fix casing."""
+    name = normalize_name(name)
+    # Strip title prefixes
+    parts = name.split()
+    while parts and parts[0].lower().rstrip(".") in {t.rstrip(".") for t in TITLE_PREFIXES}:
+        parts.pop(0)
+    # Strip "AND" prefix from joint name splitting
+    if parts and parts[0].upper() == "AND":
+        parts.pop(0)
+    return " ".join(parts) if parts else name
+
+
+def normalize_org_name(name: str) -> str:
+    """Normalize an org name: move misplaced suffixes from prefix to end."""
+    name = normalize_name(name)
+    parts = name.split()
+    if not parts:
+        return name
+    # If first word is a business suffix (LLC, Inc), move it to end
+    if parts[0].lower().rstrip(",") in BUSINESS_PREFIX_SUFFIXES and len(parts) > 1:
+        suffix = parts.pop(0).rstrip(",")
+        parts.append(suffix)
+    return " ".join(parts)
 
 
 def get_name_parts(name: str) -> list[str]:
@@ -133,6 +171,17 @@ def detect_joint_name(name: str) -> list[str]:
     parts = normalize_name(name).split()
     if len(parts) <= 3:
         return [name]
+    
+    # Check for "X AND Y" pattern
+    and_indices = [i for i, p in enumerate(parts) if p.upper() == "AND"]
+    if and_indices and len(parts) >= 4:
+        # Try splitting on AND
+        idx = and_indices[0]
+        if idx > 0 and idx < len(parts) - 1:
+            name_a = " ".join(parts[:idx])
+            name_b = " ".join(parts[idx+1:])
+            if len(name_a.split()) >= 2 or len(name_b.split()) >= 2:
+                return [name_a, name_b]
     
     part_counts = {}
     for p in parts:
@@ -237,6 +286,10 @@ class EntityResolver:
         if not name or not name.strip():
             return ""
 
+        name = normalize_person_name(name)
+        if not name or len(name) < 3:
+            return ""
+
         individual_names = detect_joint_name(name)
         if len(individual_names) > 1:
             logger.info(f"Detected joint name: '{name}' -> {individual_names}")
@@ -313,6 +366,10 @@ class EntityResolver:
     async def resolve_organization(self, name: str, source_doc_id: int,
                                     org_type: str = None) -> str:
         """Resolve an organization name. Returns uuid."""
+        name = normalize_org_name(name)
+        if not name or len(name) < 3:
+            return ""
+
         if not name or not name.strip():
             return ""
 

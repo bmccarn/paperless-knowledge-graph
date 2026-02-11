@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8484:8000"
+    environment:
+      - PAPERLESS_URL=http://your-paperless-host:8000
+      - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=gemini-2.5-flash
+      - LITELLM_URL=http://your-server-host:4000
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - EMBEDDING_MODEL=text-embedding-3-small
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=knowledge_graph
+      - POSTGRES_USER=kguser
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  pgvector:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_DB=knowledge_graph
+      - POSTGRES_USER=kguser
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kguser -d knowledge_graph"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  pgvector_data:

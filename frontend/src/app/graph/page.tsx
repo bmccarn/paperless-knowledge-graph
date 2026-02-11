@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, Suspense } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { graphSearch, getGraphNeighbors, getGraphInitial } from "@/lib/api";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
@@ -22,9 +21,15 @@ import {
   Tag,
   Atom,
   X,
+  Box,
+  Square,
 } from "lucide-react";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
+  ssr: false,
+});
+
+const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), {
   ssr: false,
 });
 
@@ -35,25 +40,31 @@ interface GNode {
   props: Record<string, unknown>;
   color: string;
   val: number;
+  connections?: number;
 }
 
 interface GLink {
   source: string;
   target: string;
   type: string;
+  weight?: number;
 }
 
 const NODE_PALETTE: Record<string, { color: string; label: string }> = {
-  Person: { color: "#60a5fa", label: "Person" },
-  Organization: { color: "#34d399", label: "Organization" },
-  Document: { color: "#94a3b8", label: "Document" },
-  MedicalResult: { color: "#f87171", label: "Medical" },
-  Medical_Result: { color: "#f87171", label: "Medical" },
-  FinancialItem: { color: "#fbbf24", label: "Financial" },
+  Person: { color: "#818cf8", label: "Person" },         // indigo
+  Organization: { color: "#34d399", label: "Organization" }, // emerald
+  Document: { color: "#64748b", label: "Document" },     // slate
+  MedicalResult: { color: "#fb7185", label: "Medical" }, // rose
+  Medical_Result: { color: "#fb7185", label: "Medical" },
+  FinancialItem: { color: "#fbbf24", label: "Financial" }, // amber
   Financial_Item: { color: "#fbbf24", label: "Financial" },
-  Address: { color: "#22d3ee", label: "Address" },
-  Date: { color: "#fb923c", label: "Date" },
-  Account: { color: "#a78bfa", label: "Account" },
+  Address: { color: "#22d3ee", label: "Address" },       // cyan
+  Date: { color: "#fb923c", label: "Date" },             // orange
+  Account: { color: "#a78bfa", label: "Account" },       // violet
+  Event: { color: "#f472b6", label: "Event" },           // pink
+  Location: { color: "#2dd4bf", label: "Location" },     // teal
+  Phone: { color: "#38bdf8", label: "Phone" },           // sky
+  Email: { color: "#e879f9", label: "Email" },           // fuchsia
 };
 
 const DEFAULT_COLOR = "#c084fc";
@@ -71,6 +82,9 @@ function GraphContent() {
     links: [],
   });
   const [selectedNode, setSelectedNode] = useState<GNode | null>(null);
+  const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
+  const [highlightLinks, setHighlightLinks] = useState<Set<string>>(new Set());
+  const [hoverNode, setHoverNode] = useState<GNode | null>(null);
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [searchResults, setSearchResults] = useState<
     Array<{ labels: string[]; properties: Record<string, unknown> }>
@@ -79,12 +93,23 @@ function GraphContent() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [nodeTypes, setNodeTypes] = useState<Set<string>>(new Set());
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
-  const [showLabels, setShowLabels] = useState(true);
+  const [showLabels, setShowLabels] = useState(false);
   const [showLegend, setShowLegend] = useState(true);
+  const [is3D, setIs3D] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("graph-view-mode") === "3d";
+    }
+    return false;
+  });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+
+  // Persist 3D preference
+  useEffect(() => {
+    localStorage.setItem("graph-view-mode", is3D ? "3d" : "2d");
+  }, [is3D]);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -100,6 +125,27 @@ function GraphContent() {
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, [selectedNode]);
+
+  // Compute connection counts
+  const connectionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const link of graphData.links) {
+      const src = typeof link.source === "object" ? (link.source as unknown as GNode).id : link.source;
+      const tgt = typeof link.target === "object" ? (link.target as unknown as GNode).id : link.target;
+      counts.set(src, (counts.get(src) || 0) + 1);
+      counts.set(tgt, (counts.get(tgt) || 0) + 1);
+    }
+    return counts;
+  }, [graphData.links]);
+
+  // Update node sizes based on connections
+  const nodesWithSize = useMemo(() => {
+    return graphData.nodes.map((n) => ({
+      ...n,
+      val: Math.max(2, Math.min(12, (connectionCounts.get(n.id) || 1) * 1.5)),
+      connections: connectionCounts.get(n.id) || 0,
+    }));
+  }, [graphData.nodes, connectionCounts]);
 
   useEffect(() => {
     const loadInitial = async () => {
@@ -121,7 +167,7 @@ function GraphContent() {
             label,
             props: p,
             color: getColor(label),
-            val: label === "Document" ? 2 : 4,
+            val: 4,
           });
         }
 
@@ -130,7 +176,7 @@ function GraphContent() {
           const src = rel.start || "";
           const tgt = rel.end || "";
           if (src && tgt && nodeMap.has(src) && nodeMap.has(tgt)) {
-            links.push({ source: src, target: tgt, type: rel.type });
+            links.push({ source: src, target: tgt, type: rel.type, weight: rel.props?.weight as number });
           }
         }
 
@@ -145,13 +191,42 @@ function GraphContent() {
     loadInitial();
   }, []);
 
-  // Handle initial search query from URL
   useEffect(() => {
     if (initialQuery && !initialLoading) {
       handleSearch(initialQuery);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialLoading]);
+
+  // Handle node click highlighting
+  const handleNodeClick = useCallback(
+    (node: unknown) => {
+      const n = node as GNode;
+      setSelectedNode(n);
+
+      // Highlight this node and its neighbors
+      const connectedNodes = new Set<string>([n.id]);
+      const connectedLinks = new Set<string>();
+      for (const link of graphData.links) {
+        const src = typeof link.source === "object" ? (link.source as unknown as GNode).id : link.source;
+        const tgt = typeof link.target === "object" ? (link.target as unknown as GNode).id : link.target;
+        if (src === n.id || tgt === n.id) {
+          connectedNodes.add(src);
+          connectedNodes.add(tgt);
+          connectedLinks.add(`${src}-${tgt}`);
+        }
+      }
+      setHighlightNodes(connectedNodes);
+      setHighlightLinks(connectedLinks);
+    },
+    [graphData.links]
+  );
+
+  const handleBackgroundClick = useCallback(() => {
+    setSelectedNode(null);
+    setHighlightNodes(new Set());
+    setHighlightLinks(new Set());
+  }, []);
 
   const addNeighbors = useCallback(
     async (nodeId: string) => {
@@ -175,7 +250,7 @@ function GraphContent() {
               label,
               props: p,
               color: getColor(label),
-              val: label === "Document" ? 2 : 4,
+              val: 4,
             });
             existingIds.add(id);
           }
@@ -185,7 +260,7 @@ function GraphContent() {
             const src = rel.start || `doc-${rel.props?.source_doc}`;
             const tgt = rel.end || `doc-${rel.props?.source_doc}`;
             if (src && tgt && existingIds.has(src) && existingIds.has(tgt)) {
-              newLinks.push({ source: src, target: tgt, type: rel.type });
+              newLinks.push({ source: src, target: tgt, type: rel.type, weight: rel.props?.weight as number });
             }
           }
 
@@ -236,7 +311,7 @@ function GraphContent() {
         label,
         props: p,
         color: getColor(label),
-        val: label === "Document" ? 2 : 4,
+        val: 4,
       };
       setGraphData((prev) => ({ ...prev, nodes: [...prev.nodes, node] }));
       setNodeTypes((prev) => new Set([...prev, label]));
@@ -247,24 +322,104 @@ function GraphContent() {
     await addNeighbors(id);
   };
 
-  const filteredData = {
-    nodes: graphData.nodes.filter((n) => !hiddenTypes.has(n.label)),
-    links: graphData.links.filter((l) => {
+  const filteredData = useMemo(() => {
+    const nodes = nodesWithSize.filter((n) => !hiddenTypes.has(n.label));
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const links = graphData.links.filter((l) => {
       const srcId = typeof l.source === "object" ? (l.source as unknown as GNode).id : l.source;
       const tgtId = typeof l.target === "object" ? (l.target as unknown as GNode).id : l.target;
-      return (
-        graphData.nodes.find((n) => n.id === srcId && !hiddenTypes.has(n.label)) &&
-        graphData.nodes.find((n) => n.id === tgtId && !hiddenTypes.has(n.label))
-      );
-    }),
-  };
+      return nodeIds.has(srcId) && nodeIds.has(tgtId);
+    });
+    return { nodes, links };
+  }, [nodesWithSize, graphData.links, hiddenTypes]);
 
-  const handleZoomIn = () => fgRef.current?.zoom(fgRef.current.zoom() * 1.3, 300);
-  const handleZoomOut = () => fgRef.current?.zoom(fgRef.current.zoom() * 0.7, 300);
+  const handleZoomIn = () => {
+    if (is3D) {
+      const camera = fgRef.current?.camera();
+      if (camera) {
+        const dist = camera.position.length();
+        camera.position.setLength(dist * 0.7);
+      }
+    } else {
+      fgRef.current?.zoom(fgRef.current.zoom() * 1.3, 300);
+    }
+  };
+  const handleZoomOut = () => {
+    if (is3D) {
+      const camera = fgRef.current?.camera();
+      if (camera) {
+        const dist = camera.position.length();
+        camera.position.setLength(dist * 1.3);
+      }
+    } else {
+      fgRef.current?.zoom(fgRef.current.zoom() * 0.7, 300);
+    }
+  };
   const handleZoomReset = () => fgRef.current?.zoomToFit(400, 60);
 
+  const isHighlightActive = highlightNodes.size > 0;
+
+  const getLinkOpacity = useCallback(
+    (link: unknown) => {
+      if (!isHighlightActive) return 0.3;
+      const l = link as GLink;
+      const src = typeof l.source === "object" ? (l.source as unknown as GNode).id : l.source;
+      const tgt = typeof l.target === "object" ? (l.target as unknown as GNode).id : l.target;
+      return highlightLinks.has(`${src}-${tgt}`) || highlightLinks.has(`${tgt}-${src}`) ? 0.8 : 0.04;
+    },
+    [isHighlightActive, highlightLinks]
+  );
+
+  const getNodeOpacity = useCallback(
+    (node: unknown) => {
+      if (!isHighlightActive) return 1;
+      const n = node as GNode;
+      return highlightNodes.has(n.id) ? 1 : 0.12;
+    },
+    [isHighlightActive, highlightNodes]
+  );
+
+  // Shared props for both 2D and 3D
+  const sharedProps = {
+    graphData: filteredData,
+    width: dimensions.width,
+    height: dimensions.height,
+    nodeLabel: (node: unknown) => {
+      const n = node as GNode;
+      return `<div style="background:rgba(0,0,0,0.85);padding:4px 10px;border-radius:6px;font-size:12px;color:#fff;border:1px solid ${n.color}40">
+        <strong style="color:${n.color}">${n.name}</strong><br/>
+        <span style="color:#aaa;font-size:10px">${NODE_PALETTE[n.label]?.label || n.label} · ${n.connections || 0} connections</span>
+      </div>`;
+    },
+    linkWidth: (link: unknown) => {
+      const l = link as GLink;
+      return l.weight ? Math.min(5, Math.max(2, l.weight)) : 2.5;
+    },
+    linkDirectionalArrowLength: 7,
+    linkDirectionalArrowRelPos: 1,
+    linkDirectionalParticles: (link: unknown) => {
+      if (!isHighlightActive) return 0;
+      const l = link as GLink;
+      const src = typeof l.source === "object" ? (l.source as unknown as GNode).id : l.source;
+      const tgt = typeof l.target === "object" ? (l.target as unknown as GNode).id : l.target;
+      return highlightLinks.has(`${src}-${tgt}`) || highlightLinks.has(`${tgt}-${src}`) ? 3 : 0;
+    },
+    linkDirectionalParticleWidth: 2.5,
+    linkDirectionalParticleSpeed: 0.004,
+    onNodeClick: handleNodeClick,
+    onNodeRightClick: async (node: unknown) => {
+      const n = node as GNode;
+      await addNeighbors(n.id);
+    },
+    onBackgroundClick: handleBackgroundClick,
+    cooldownTicks: 120,
+    d3AlphaDecay: 0.025,
+    d3VelocityDecay: 0.3,
+    warmupTicks: 50,
+  };
+
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
       {/* Graph area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
@@ -343,74 +498,157 @@ function GraphContent() {
             </div>
           ) : (
             <>
-              <ForceGraph2D
-                ref={fgRef}
-                graphData={filteredData}
-                width={dimensions.width}
-                height={dimensions.height}
-                nodeLabel={() => ""}
-                nodeColor={(node: unknown) => (node as GNode).color}
-                nodeVal={(node: unknown) => (node as GNode).val}
-                nodeCanvasObject={(node: unknown, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                  const n = node as GNode & { x: number; y: number };
-                  const fontSize = 10 / globalScale;
-                  const r = Math.sqrt(n.val) * 3;
+              {is3D ? (
+                <ForceGraph3D
+                  ref={fgRef}
+                  {...sharedProps}
+                  nodeColor={(node: unknown) => {
+                    const n = node as GNode;
+                    const opacity = getNodeOpacity(n);
+                    if (opacity < 0.5) return `${n.color}20`;
+                    return n.color;
+                  }}
+                  nodeVal={(node: unknown) => (node as GNode).val}
+                  nodeOpacity={1}
+                  linkColor={(link: unknown) => {
+                    const opacity = getLinkOpacity(link);
+                    const alpha = Math.round(opacity * 255).toString(16).padStart(2, "0");
+                    return `#94a3b8${alpha}`;
+                  }}
+                  linkOpacity={1}
+                  linkDirectionalArrowColor={(link: unknown) => {
+                    const opacity = getLinkOpacity(link);
+                    const alpha = Math.round(opacity * 255).toString(16).padStart(2, "0");
+                    return `#94a3b8${alpha}`;
+                  }}
+                  backgroundColor="rgba(0,0,0,0)"
+                  showNavInfo={false}
+                />
+              ) : (
+                <ForceGraph2D
+                  ref={fgRef}
+                  {...sharedProps}
+                  nodeColor={(node: unknown) => (node as GNode).color}
+                  nodeVal={(node: unknown) => (node as GNode).val}
+                  nodeCanvasObject={(node: unknown, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                    const n = node as GNode & { x: number; y: number };
+                    const r = Math.sqrt(n.val) * 3;
+                    const opacity = getNodeOpacity(n);
+                    const isHovered = hoverNode?.id === n.id;
+                    const isSelected = selectedNode?.id === n.id;
 
-                  // Glow for selected node
-                  if (selectedNode?.id === n.id) {
+                    ctx.globalAlpha = opacity;
+
+                    // Glow effect for hovered/selected
+                    if (isHovered || isSelected) {
+                      ctx.beginPath();
+                      ctx.arc(n.x, n.y, r + 6 / globalScale, 0, 2 * Math.PI);
+                      const gradient = ctx.createRadialGradient(n.x, n.y, r, n.x, n.y, r + 6 / globalScale);
+                      gradient.addColorStop(0, `${n.color}66`);
+                      gradient.addColorStop(1, `${n.color}00`);
+                      ctx.fillStyle = gradient;
+                      ctx.fill();
+                    }
+
+                    // Draw circle
                     ctx.beginPath();
-                    ctx.arc(n.x, n.y, r + 4 / globalScale, 0, 2 * Math.PI);
-                    ctx.fillStyle = `${n.color}33`;
+                    ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+                    ctx.fillStyle = n.color;
                     ctx.fill();
-                  }
 
-                  // Draw circle
-                  ctx.beginPath();
-                  ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-                  ctx.fillStyle = n.color;
-                  ctx.fill();
+                    if (isSelected) {
+                      ctx.strokeStyle = "#fff";
+                      ctx.lineWidth = 2 / globalScale;
+                      ctx.stroke();
+                    }
 
-                  if (selectedNode?.id === n.id) {
-                    ctx.strokeStyle = "#fff";
-                    ctx.lineWidth = 2 / globalScale;
-                    ctx.stroke();
-                  }
+                    // Label on hover or if showLabels
+                    if ((isHovered || (showLabels && globalScale > 1.2)) && n.name) {
+                      const fontSize = Math.max(10 / globalScale, 3);
+                      ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
+                      ctx.textAlign = "center";
+                      ctx.textBaseline = "top";
 
-                  // Label
-                  if (showLabels && globalScale > 1.2) {
-                    ctx.font = `${fontSize}px Sans-Serif`;
+                      // Background for label
+                      const textWidth = ctx.measureText(n.name).width;
+                      const padding = 2 / globalScale;
+                      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                      ctx.beginPath();
+                      const lx = n.x - textWidth / 2 - padding;
+                      const ly = n.y + r + 1 / globalScale;
+                      const lw = textWidth + padding * 2;
+                      const lh = fontSize + padding * 2;
+                      ctx.roundRect(lx, ly, lw, lh, 2 / globalScale);
+                      ctx.fill();
+
+                      ctx.fillStyle = "#e5e7eb";
+                      ctx.fillText(n.name, n.x, n.y + r + 1 / globalScale + padding);
+                    }
+
+                    ctx.globalAlpha = 1;
+                  }}
+                  nodeCanvasObjectMode={() => "replace"}
+                  nodePointerAreaPaint={(node: unknown, color: string, ctx: CanvasRenderingContext2D) => {
+                    const n = node as GNode & { x: number; y: number };
+                    const r = Math.sqrt(n.val) * 3 + 3;
+                    ctx.beginPath();
+                    ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                  }}
+                  onNodeHover={(node: unknown) => setHoverNode(node as GNode | null)}
+                  linkCanvasObjectMode={() => "after"}
+                  linkCanvasObject={(link: unknown, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                    const l = link as GLink & { source: { x: number; y: number }; target: { x: number; y: number } };
+                    if (!l.type || !l.source?.x || !l.target?.x) return;
+
+                    const opacity = getLinkOpacity(link);
+                    if (opacity < 0.1) return;
+
+                    // Only show labels when zoomed in enough
+                    if (globalScale < 1.8) return;
+
+                    const midX = (l.source.x + l.target.x) / 2;
+                    const midY = (l.source.y + l.target.y) / 2;
+                    const fontSize = Math.max(8 / globalScale, 2);
+
+                    ctx.globalAlpha = Math.min(opacity + 0.2, 0.9);
+                    ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
                     ctx.textAlign = "center";
-                    ctx.textBaseline = "top";
-                    ctx.fillStyle = "rgba(229, 231, 235, 0.9)";
-                    ctx.fillText(n.name, n.x, n.y + r + 2);
-                  }
-                }}
-                nodeCanvasObjectMode={() => "replace"}
-                nodePointerAreaPaint={(node: unknown, color: string, ctx: CanvasRenderingContext2D) => {
-                  const n = node as GNode & { x: number; y: number };
-                  const r = Math.sqrt(n.val) * 3 + 2;
-                  ctx.beginPath();
-                  ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-                  ctx.fillStyle = color;
-                  ctx.fill();
-                }}
-                linkLabel={(link: unknown) => (link as GLink).type}
-                linkColor={() => "rgba(148, 163, 184, 0.12)"}
-                linkWidth={0.5}
-                linkDirectionalArrowLength={3}
-                linkDirectionalArrowRelPos={1}
-                linkDirectionalArrowColor={() => "rgba(148, 163, 184, 0.25)"}
-                onNodeClick={(node: unknown) => setSelectedNode(node as GNode)}
-                onNodeRightClick={async (node: unknown) => {
-                  const n = node as GNode;
-                  await addNeighbors(n.id);
-                }}
-                onBackgroundClick={() => setSelectedNode(null)}
-                backgroundColor="transparent"
-                cooldownTicks={100}
-                d3AlphaDecay={0.03}
-                d3VelocityDecay={0.3}
-              />
+                    ctx.textBaseline = "middle";
+
+                    const text = l.type.replace(/_/g, " ").toLowerCase();
+                    const textWidth = ctx.measureText(text).width;
+                    const padding = 1.5 / globalScale;
+
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+                    ctx.beginPath();
+                    ctx.roundRect(
+                      midX - textWidth / 2 - padding,
+                      midY - fontSize / 2 - padding,
+                      textWidth + padding * 2,
+                      fontSize + padding * 2,
+                      2 / globalScale
+                    );
+                    ctx.fill();
+
+                    ctx.fillStyle = "rgba(148, 163, 184, 0.9)";
+                    ctx.fillText(text, midX, midY);
+                    ctx.globalAlpha = 1;
+                  }}
+                  linkColor={(link: unknown) => {
+                    const opacity = getLinkOpacity(link);
+                    const alpha = Math.round(opacity * 255).toString(16).padStart(2, "0");
+                    return `#94a3b8${alpha}`;
+                  }}
+                  linkDirectionalArrowColor={(link: unknown) => {
+                    const opacity = getLinkOpacity(link);
+                    const alpha = Math.round(Math.min(opacity + 0.1, 1) * 255).toString(16).padStart(2, "0");
+                    return `#94a3b8${alpha}`;
+                  }}
+                  backgroundColor="transparent"
+                />
+              )}
 
               {/* Floating toolbar */}
               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-card/90 backdrop-blur-md border rounded-lg px-2 py-1.5 shadow-lg">
@@ -437,6 +675,20 @@ function GraphContent() {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Fit to view</TooltipContent>
+                </Tooltip>
+                <div className="w-px h-4 bg-border mx-0.5" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={is3D ? "secondary" : "ghost"}
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setIs3D(!is3D)}
+                    >
+                      {is3D ? <Box className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{is3D ? "Switch to 2D" : "Switch to 3D"}</TooltipContent>
                 </Tooltip>
                 <div className="w-px h-4 bg-border mx-0.5" />
                 <Tooltip>
@@ -516,10 +768,14 @@ function GraphContent() {
 
       {/* Right panel — node detail */}
       {selectedNode && (
-        <div className="w-96 border-l flex flex-col bg-card/50 slide-in-right">
+        <div className="absolute right-0 top-0 bottom-0 w-[600px] max-w-[60vw] border-l flex flex-col bg-card slide-in-right overflow-y-auto z-40 shadow-2xl p-4">
           <NodeDetailPanel
             node={selectedNode}
-            onClose={() => setSelectedNode(null)}
+            onClose={() => {
+              setSelectedNode(null);
+              setHighlightNodes(new Set());
+              setHighlightLinks(new Set());
+            }}
             onExpandNeighbors={addNeighbors}
           />
         </div>

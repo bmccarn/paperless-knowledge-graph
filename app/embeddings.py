@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS document_embeddings (
 
 CREATE TABLE IF NOT EXISTS sync_state (
     id INTEGER PRIMARY KEY DEFAULT 1,
-    last_sync_at TIMESTAMP,
+    last_sync_at TIMESTAMPTZ,
     updated_at TIMESTAMP DEFAULT NOW()
 );
 

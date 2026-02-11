@@ -39,6 +39,12 @@ async def process_document(doc: dict) -> dict:
 
         # Step 2: Extract
         extracted = await extractor.extract(title, content, doc_type)
+        if isinstance(extracted, list):
+            logger.warning(f"Doc {doc_id}: extraction returned list instead of dict, wrapping")
+            extracted = {"items": extracted} if extracted else {}
+        if not isinstance(extracted, dict):
+            logger.warning(f"Doc {doc_id}: extraction returned {type(extracted).__name__}, using empty dict")
+            extracted = {}
         logger.info(f"Doc {doc_id} extracted {len(extracted)} fields")
 
         # Step 3: Clean old graph data for this doc

@@ -21,8 +21,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <TooltipProvider delayDuration={200}>
             <div className="flex h-screen overflow-hidden">
               <SidebarNav />
-              <main className="flex-1 overflow-auto">
-                <div className="page-transition">{children}</div>
+              <main className="flex-1 overflow-hidden flex flex-col">
+                <div className="page-transition flex-1 overflow-hidden">{children}</div>
               </main>
             </div>
           </TooltipProvider>

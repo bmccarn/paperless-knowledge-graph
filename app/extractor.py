@@ -247,23 +247,6 @@ Entities from Pass 2:
 Document context:
 {content}"""
 
-FALLBACK_PROMPT = """This document may be difficult to parse. Extract whatever basic information you can find.
-Return a JSON object with:
-{{
-  "document_type": "best guess at what type of document this is",
-  "people": ["list of any person names mentioned"],
-  "organizations": ["list of any organization names mentioned"],
-  "dates": ["list of any dates mentioned"],
-  "summary": "one-sentence description of what this document appears to be",
-  "confidence": 0.5
-}}
-
-Be forgiving of OCR errors and formatting issues. Extract anything identifiable.
-
-Document title: {title}
-Document content:
-{content}"""
-
 
 class EntityExtractor:
     def __init__(self):
@@ -275,31 +258,25 @@ class EntityExtractor:
 
     async def extract(self, title: str, content: str, doc_type: str) -> dict:
         """Extract entities and relationships using 3-pass pipeline."""
-        try:
-            # Pass 1: Structured Metadata Extraction
-            metadata = await self._pass1_metadata_extraction(title, content, doc_type)
-            if not metadata:
-                logger.warning(f"Pass 1 failed for '{title}', falling back")
-                return await self._fallback_extract(title, content)
-                
-            # Pass 2: Entity Extraction & Typing
-            entities = await self._pass2_entity_extraction(title, content, metadata)
-            if not entities:
-                logger.warning(f"Pass 2 failed for '{title}', falling back") 
-                return await self._fallback_extract(title, content)
-                
-            # Pass 3: Relationship Inference
-            relationships = await self._pass3_relationship_extraction(title, content, entities)
-            
-            # Combine results in format expected by pipeline.py
-            result = self._combine_results(metadata, entities, relationships)
-            result["extraction_method"] = "3-pass"
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"3-pass extraction failed for '{title}': {e}")
-            return await self._fallback_extract(title, content)
+        # Pass 1: Structured Metadata Extraction
+        metadata = await self._pass1_metadata_extraction(title, content, doc_type)
+        logger.debug(f"Pass 1 completed for '{title}' (type: {doc_type})")
+        
+        # Pass 2: Entity Extraction & Typing
+        entities = await self._pass2_entity_extraction(title, content, metadata)
+        entity_count = len(entities.get("entities", []))
+        logger.debug(f"Pass 2 extracted {entity_count} entities for '{title}'")
+        
+        # Pass 3: Relationship Inference
+        relationships = await self._pass3_relationship_extraction(title, content, entities)
+        rel_count = len(relationships.get("relationships", []))
+        logger.debug(f"Pass 3 inferred {rel_count} relationships for '{title}'")
+        
+        # Combine results in format expected by pipeline.py
+        result = self._combine_results(metadata, entities, relationships)
+        result["extraction_method"] = "3-pass"
+        
+        return result
 
     async def _pass1_metadata_extraction(self, title: str, content: str, doc_type: str) -> dict:
         """Pass 1: Extract structured metadata specific to document type."""
@@ -315,13 +292,7 @@ class EntityExtractor:
             )
             return json.loads(response.choices[0].message.content)
 
-        try:
-            result = await retry_with_backoff(_call, operation=f"pass1_metadata:{doc_type}")
-            logger.debug(f"Pass 1 completed for '{title}' (type: {doc_type})")
-            return result
-        except Exception as e:
-            logger.error(f"Pass 1 metadata extraction failed for '{title}': {e}")
-            return {}
+        return await retry_with_backoff(_call, operation=f"pass1_metadata:{doc_type}")
 
     async def _pass2_entity_extraction(self, title: str, content: str, metadata: dict) -> dict:
         """Pass 2: Extract and type all entities."""
@@ -341,14 +312,7 @@ class EntityExtractor:
             )
             return json.loads(response.choices[0].message.content)
 
-        try:
-            result = await retry_with_backoff(_call, operation="pass2_entities")
-            entity_count = len(result.get("entities", []))
-            logger.debug(f"Pass 2 extracted {entity_count} entities for '{title}'")
-            return result
-        except Exception as e:
-            logger.error(f"Pass 2 entity extraction failed for '{title}': {e}")
-            return {}
+        return await retry_with_backoff(_call, operation="pass2_entities")
 
     async def _pass3_relationship_extraction(self, title: str, content: str, entities: dict) -> dict:
         """Pass 3: Infer relationships between entities."""
@@ -368,14 +332,7 @@ class EntityExtractor:
             )
             return json.loads(response.choices[0].message.content)
 
-        try:
-            result = await retry_with_backoff(_call, operation="pass3_relationships")
-            rel_count = len(result.get("relationships", []))
-            logger.debug(f"Pass 3 inferred {rel_count} relationships for '{title}'")
-            return result
-        except Exception as e:
-            logger.error(f"Pass 3 relationship extraction failed for '{title}': {e}")
-            return {"relationships": []}  # Non-critical failure
+        return await retry_with_backoff(_call, operation="pass3_relationships")
 
     def _combine_results(self, metadata: dict, entities: dict, relationships: dict) -> dict:
         """Combine 3-pass results into format expected by pipeline.py."""
@@ -456,48 +413,6 @@ class EntityExtractor:
         if any(w in entity_name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
             return "Organization"
         return "Person"
-
-    async def _fallback_extract(self, title: str, content: str) -> dict:
-        """Simpler fallback extraction for docs that fail 3-pass pipeline."""
-        truncated = content[:4000]
-        prompt = FALLBACK_PROMPT.format(title=title, content=truncated)
-
-        try:
-            async def _call():
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                )
-                return json.loads(response.choices[0].message.content)
-
-            result = await retry_with_backoff(_call, operation="fallback_extract")
-            logger.info(f"Fallback extraction succeeded for '{title}'")
-
-            # Convert fallback format to generic format
-            converted = {
-                "people": [],
-                "organizations": [],
-                "dates": [],
-                "summary": result.get("summary", ""),
-                "confidence": result.get("confidence", 0.3),
-                "fallback_extraction": True,
-                "extraction_method": "fallback"
-            }
-            for name in (result.get("people") or []):
-                if isinstance(name, str) and name.strip():
-                    converted["people"].append({"name": name.strip(), "role": "", "confidence": 0.4})
-            for name in (result.get("organizations") or []):
-                if isinstance(name, str) and name.strip():
-                    converted["organizations"].append({"name": name.strip(), "type": "", "confidence": 0.4})
-            for date_str in (result.get("dates") or []):
-                if isinstance(date_str, str) and date_str.strip():
-                    converted["dates"].append({"date": date_str.strip(), "description": ""})
-
-            return converted
-        except Exception as e:
-            logger.error(f"Fallback extraction also failed: {e}")
-            return {}
 
 
 extractor = EntityExtractor()

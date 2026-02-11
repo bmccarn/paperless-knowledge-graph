@@ -54,10 +54,6 @@ async def process_document(doc: dict) -> dict:
 
         # Log extraction confidence
         extraction_confidence = extracted.get("confidence", 1.0)
-        is_fallback = extracted.get("fallback_extraction", False)
-        if is_fallback:
-            logger.info(f"Doc {doc_id} used fallback extraction (confidence={extraction_confidence})")
-
         entity_count = _count_entities(extracted)
         logger.info(f"Doc {doc_id} extracted {entity_count} fields (confidence={extraction_confidence})")
 
@@ -99,7 +95,7 @@ async def process_document(doc: dict) -> dict:
                 "entities_extracted": entity_count,
                 "chunks": len(chunks),
                 "confidence": extraction_confidence,
-                "fallback": is_fallback}
+}
 
     except Exception as e:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
@@ -107,56 +103,38 @@ async def process_document(doc: dict) -> dict:
 
 
 async def _store_entity_embeddings(doc_id: int, extracted: dict):
-    """Store entity embeddings for people and organizations found in extraction."""
+    """Store embeddings for ALL entity types from the 3-pass extraction."""
     try:
-        # People
-        for person in (extracted.get("people") or []):
-            name = person.get("name") if isinstance(person, dict) else person
-            if not name:
-                continue
-            role = person.get("role", "") if isinstance(person, dict) else ""
-            # Look up the entity UUID from the graph
-            results = await graph_store.search_nodes(name, node_type="Person", limit=1)
-            if results:
-                uuid = results[0].get("properties", {}).get("uuid", "")
-                if uuid:
-                    content = f"{name} | person | role: {role}" if role else f"{name} | person"
-                    await embeddings_store.store_entity_embedding(
-                        uuid, name, entity_type="Person", content=content
-                    )
+        all_entities = extracted.get("all_entities", [])
+        if not all_entities:
+            # Backward compat: build from people/organizations
+            for person in (extracted.get("people") or []):
+                name = person.get("name") if isinstance(person, dict) else person
+                if name:
+                    all_entities.append({"name": name, "type": "Person", "description": person.get("role", "") if isinstance(person, dict) else ""})
+            for org in (extracted.get("organizations") or []):
+                name = org.get("name") if isinstance(org, dict) else org
+                if name:
+                    all_entities.append({"name": name, "type": "Organization", "description": org.get("type", "") if isinstance(org, dict) else ""})
 
-        # Organizations
-        for org in (extracted.get("organizations") or []):
-            name = org.get("name") if isinstance(org, dict) else org
-            if not name:
-                continue
-            org_type = org.get("type", "") if isinstance(org, dict) else ""
-            results = await graph_store.search_nodes(name, node_type="Organization", limit=1)
-            if results:
-                uuid = results[0].get("properties", {}).get("uuid", "")
-                if uuid:
-                    content = f"{name} | organization | type: {org_type}" if org_type else f"{name} | organization"
-                    await embeddings_store.store_entity_embedding(
-                        uuid, name, entity_type="Organization", content=content
-                    )
-
-        # Named entities from specific doc types
-        for key, etype in [("patient_name", "Person"), ("provider", "Organization"),
-                           ("vendor", "Organization"), ("policyholder", "Person"),
-                           ("filer_name", "Person"), ("ordering_physician", "Person"),
-                           ("preparer", "Person")]:
-            name = extracted.get(key)
-            if not name:
+        for entity in all_entities:
+            name = entity.get("name", "")
+            etype = entity.get("type", "Person").strip().title()
+            desc = entity.get("description", "")
+            if not name or not _is_valid_entity_name(name):
                 continue
             results = await graph_store.search_nodes(name, node_type=etype, limit=1)
+            if not results:
+                results = await graph_store.search_nodes(name, limit=1)
             if results:
                 uuid = results[0].get("properties", {}).get("uuid", "")
                 if uuid:
-                    content = f"{name} | {etype.lower()} | from doc {doc_id}"
+                    emb_content = f"{name} | {etype.lower()}"
+                    if desc:
+                        emb_content += f" | {desc}"
                     await embeddings_store.store_entity_embedding(
-                        uuid, name, entity_type=etype, content=content
+                        uuid, name, entity_type=etype, content=emb_content
                     )
-
     except Exception as e:
         logger.warning(f"Entity embedding storage failed for doc {doc_id}: {e}")
 
@@ -202,9 +180,42 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 
 VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event"}
 
+# Blocklist of generic terms that should not become entity nodes
+BLOCKED_ENTITY_NAMES = {
+    "subject matter expert", "candidates", "applicant", "customer", "client",
+    "employee", "employer", "vendor", "buyer", "seller", "user", "admin",
+    "recipient", "sender", "owner", "tenant", "landlord", "borrower", "lender",
+    "insured", "beneficiary", "claimant", "plaintiff", "defendant",
+    "taxpayer", "filer", "spouse", "dependent", "subscriber", "member",
+    "patient", "provider", "physician", "doctor", "nurse",
+    "n/a", "unknown", "none", "null", "other", "various", "multiple",
+    "not specified", "not applicable", "see above", "see below",
+}
+
+
+def _is_valid_entity_name(name: str) -> bool:
+    """Validate entity name - reject generic terms and junk."""
+    if not name or len(name.strip()) < 2:
+        return False
+    name_lower = name.strip().lower()
+    if name_lower in BLOCKED_ENTITY_NAMES:
+        return False
+    # Reject single common words (not proper nouns)
+    if len(name_lower.split()) == 1 and name_lower == name.strip():
+        # Single word, all lowercase = probably not a proper noun
+        if not any(c.isupper() for c in name.strip()):
+            return False
+    # Reject very short names
+    if len(name.strip()) < 3:
+        return False
+    return True
+
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int) -> str:
     """Route entity resolution based on type."""
+    if not _is_valid_entity_name(name):
+        logger.debug(f"Skipping invalid entity name: '{name}'")
+        return ""
     entity_type = entity_type.strip().title()
     if entity_type == "Organization":
         return await entity_resolver.resolve_organization(name, doc_id)
@@ -278,21 +289,21 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
         person_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
         if person_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", person_uuid, "Person", "PATIENT_OF", source_props)
+                doc_node_id, "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
     provider = data.get("provider")
     if provider:
         org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="medical")
         if org_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     physician = data.get("ordering_physician")
     if physician:
         phys_uuid = await entity_resolver.resolve_person(physician, doc_id, role="physician")
         if phys_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
+                doc_node_id, "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
 
     for test in (data.get("tests") or []):
         if not test.get("name"):
@@ -310,7 +321,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             "confidence": test_confidence,
         })
         await graph_store.create_relationship(
-            str(doc_id), "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
+            doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
 
 
 async def _process_financial(doc_id, doc_node_id, data, source_props):
@@ -319,7 +330,7 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
         org_uuid = await entity_resolver.resolve_organization(vendor, doc_id, org_type="financial")
         if org_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
 
     amount = data.get("total_amount")
     if amount is not None:
@@ -332,7 +343,7 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
             "payment_status": data.get("payment_status", "") or "",
         })
         await graph_store.create_relationship(
-            str(doc_id), "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
+            doc_node_id, "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
 
 
 async def _process_contract(doc_id, doc_node_id, data, source_props):
@@ -342,8 +353,10 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
             continue
         org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type="legal")
         if org_uuid:
+            role = party.get("role", "party")
+            rel_type = "CONTRACTED_WITH" if "sign" in role.lower() or "party" in role.lower() else "PARTY_TO"
             await graph_store.create_relationship(
-                str(doc_id), "Document", org_uuid, "Organization", "MENTIONS", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", rel_type, source_props)
 
     contract_uuid = await graph_store.create_node("Contract", {
         "type": data.get("contract_type", "") or "",
@@ -353,7 +366,7 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         "renewal_info": data.get("renewal_info", "") or "",
     })
     await graph_store.create_relationship(
-        str(doc_id), "Document", contract_uuid, "Contract", "CONTAINS_RESULT", source_props)
+        doc_node_id, "Document", contract_uuid, "Contract", "CONTAINS_RESULT", source_props)
 
 
 async def _process_insurance(doc_id, doc_node_id, data, source_props):
@@ -362,14 +375,14 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
         org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="insurance")
         if org_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     policyholder = data.get("policyholder")
     if policyholder:
         person_uuid = await entity_resolver.resolve_person(policyholder, doc_id, role="policyholder")
         if person_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", person_uuid, "Person", "COVERS", source_props)
+                doc_node_id, "Document", person_uuid, "Person", "COVERS", source_props)
 
     policy_uuid = await graph_store.create_node("InsurancePolicy", {
         "policy_number": data.get("policy_number", "") or "",
@@ -380,7 +393,7 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
         "expiration_date": data.get("expiration_date", "") or "",
     })
     await graph_store.create_relationship(
-        str(doc_id), "Document", policy_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
+        doc_node_id, "Document", policy_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
 
 
 async def _process_tax(doc_id, doc_node_id, data, source_props):
@@ -389,14 +402,14 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
         person_uuid = await entity_resolver.resolve_person(filer, doc_id, role="filer")
         if person_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
+                doc_node_id, "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
 
     preparer = data.get("preparer")
     if preparer:
         prep_uuid = await entity_resolver.resolve_person(preparer, doc_id, role="tax_preparer")
         if prep_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", prep_uuid, "Person", "MENTIONS", source_props)
+                doc_node_id, "Document", prep_uuid, "Person", "MENTIONS", source_props)
 
     fi_uuid = await graph_store.create_node("FinancialItem", {
         "type": data.get("form_type", "tax") or "tax",
@@ -408,7 +421,7 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
         "tax_paid": str(data.get("tax_paid", "")) if data.get("tax_paid") else "",
     })
     await graph_store.create_relationship(
-        str(doc_id), "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
+        doc_node_id, "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
 
 
 async def _process_property(doc_id, doc_node_id, data, source_props):
@@ -418,7 +431,7 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
             "full_address": address,
         })
         await graph_store.create_relationship(
-            str(doc_id), "Document", addr_uuid, "Address", "LOCATED_AT", source_props)
+            doc_node_id, "Document", addr_uuid, "Address", "LOCATED_AT", source_props)
 
     for party in (data.get("parties") or []):
         name = party.get("name")
@@ -427,7 +440,7 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
         person_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role"))
         if person_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", person_uuid, "Person", "MENTIONS", source_props)
+                doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
 
 async def _process_generic(doc_id, doc_node_id, data, source_props):
@@ -444,7 +457,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
         person_uuid = await entity_resolver.resolve_person(name, doc_id, role=role)
         if person_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", person_uuid, "Person", "MENTIONS", source_props)
+                doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
     for org in (data.get("organizations") or []):
         name = org.get("name") if isinstance(org, dict) else org
@@ -459,27 +472,9 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
         org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org_type)
         if org_uuid:
             await graph_store.create_relationship(
-                str(doc_id), "Document", org_uuid, "Organization", "MENTIONS", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
-    for date_info in (data.get("dates") or []):
-        if isinstance(date_info, dict):
-            if not date_info.get("date"):
-                continue
-            de_uuid = await graph_store.create_node("DateEvent", {
-                "date": date_info["date"],
-                "description": date_info.get("description", "") or "",
-                "recurring": False,
-            })
-        elif isinstance(date_info, str):
-            de_uuid = await graph_store.create_node("DateEvent", {
-                "date": date_info,
-                "description": "",
-                "recurring": False,
-            })
-        else:
-            continue
-        await graph_store.create_relationship(
-            str(doc_id), "Document", de_uuid, "DateEvent", "MENTIONS", source_props)
+    # Dates are stored as properties on the document node, not as separate nodes
 
 
 def _extract_date(doc: dict, extracted: dict) -> str:

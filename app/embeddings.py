@@ -12,15 +12,28 @@ EMBEDDING_DIMENSIONS = 3072  # text-embedding-3-large
 
 INIT_SQL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS document_embeddings (
     id SERIAL PRIMARY KEY,
     document_id INTEGER NOT NULL,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
+    title TEXT,
+    doc_type TEXT,
     embedding vector({EMBEDDING_DIMENSIONS}),
-    created_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS entity_embeddings (
+    id SERIAL PRIMARY KEY,
+    entity_uuid TEXT NOT NULL UNIQUE,
+    entity_name TEXT NOT NULL,
+    entity_type TEXT,
+    content TEXT NOT NULL,
+    embedding vector({EMBEDDING_DIMENSIONS}),
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -39,12 +52,69 @@ INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_doc_embeddings_doc_id ON document_embeddings(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw
+ON document_embeddings
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 24, ef_construction = 400);
+
+CREATE INDEX IF NOT EXISTS idx_entity_embeddings_hnsw
+ON entity_embeddings
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 24, ef_construction = 400);
+
+CREATE INDEX IF NOT EXISTS idx_content_trgm
+ON document_embeddings USING GIN (content gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_entity_content_trgm
+ON entity_embeddings USING GIN (content gin_trgm_ops);
 """
 
-TRGM_SQL = """
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS idx_content_trgm ON document_embeddings USING GIN (content gin_trgm_ops);
-"""
+
+def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list[str]:
+    """Split text into chunks using paragraph/sentence boundaries with overlap."""
+    if not content or not content.strip():
+        return []
+    if len(content) <= chunk_size:
+        return [content]
+
+    chunks = []
+    start = 0
+    while start < len(content):
+        end = start + chunk_size
+        if end >= len(content):
+            chunk = content[start:]
+            if chunk.strip():
+                chunks.append(chunk)
+            break
+
+        # Try to find a good break point
+        segment = content[start:end]
+        # Try paragraph boundary
+        break_pos = segment.rfind('\n\n')
+        if break_pos > chunk_size // 2:
+            end = start + break_pos + 2
+        else:
+            # Try line boundary
+            break_pos = segment.rfind('\n')
+            if break_pos > chunk_size // 2:
+                end = start + break_pos + 1
+            else:
+                # Try sentence boundary
+                break_pos = segment.rfind('. ')
+                if break_pos > chunk_size // 2:
+                    end = start + break_pos + 2
+
+        chunk = content[start:end]
+        if chunk.strip():
+            chunks.append(chunk)
+
+        # Move start with overlap
+        start = end - overlap
+        if start <= (end - chunk_size):
+            start = end  # Prevent infinite loop
+
+    return chunks if chunks else [content[:chunk_size]]
 
 
 class EmbeddingsStore:
@@ -55,7 +125,6 @@ class EmbeddingsStore:
             api_key=settings.litellm_api_key,
         )
         self.model = settings.embedding_model
-        self._trgm_initialized = False
 
     async def init(self):
         self.pool = await asyncpg.create_pool(
@@ -67,31 +136,20 @@ class EmbeddingsStore:
             min_size=2,
             max_size=10,
         )
-        # Check if dimension migration is needed
         await self._migrate_dimensions()
 
         async with self.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
-            # Try to create pg_trgm extension and GIN index
-            try:
-                await conn.execute(TRGM_SQL)
-                self._trgm_initialized = True
-                logger.info("pg_trgm extension and GIN index initialized")
-            except Exception as e:
-                logger.warning(f"pg_trgm init failed (keyword search will be unavailable): {e}")
-        logger.info("Embeddings store initialized")
+        logger.info("Embeddings store initialized (with HNSW indexes, entity table, pg_trgm)")
 
     async def _migrate_dimensions(self):
         """Check embedding column dimension and recreate table if it doesn't match."""
         async with self.pool.acquire() as conn:
-            # Check if table exists
             exists = await conn.fetchval(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'document_embeddings')"
             )
             if not exists:
-                return  # Table will be created by INIT_SQL
-
-            # Check current dimension by inspecting column type
+                return
             try:
                 col_type = await conn.fetchval("""
                     SELECT format_type(atttypid, atttypmod)
@@ -105,9 +163,10 @@ class EmbeddingsStore:
                         f"Dropping and recreating embeddings table."
                     )
                     await conn.execute("DROP TABLE IF EXISTS document_embeddings CASCADE")
+                    await conn.execute("DROP TABLE IF EXISTS entity_embeddings CASCADE")
                     await conn.execute("DELETE FROM document_hashes")
                     await conn.execute("UPDATE sync_state SET last_sync_at = NULL, updated_at = NOW() WHERE id = 1")
-                    logger.info("Embeddings table dropped for dimension migration. A full reindex will be needed.")
+                    logger.info("Embeddings tables dropped for dimension migration.")
             except Exception as e:
                 logger.warning(f"Dimension check failed (will proceed): {e}")
 
@@ -120,7 +179,7 @@ class EmbeddingsStore:
         try:
             resp = await self.openai.embeddings.create(
                 model=self.model,
-                input=text[:8000],
+                input=text[:24000],
             )
             return resp.data[0].embedding
         except Exception as e:
@@ -140,7 +199,32 @@ class EmbeddingsStore:
         text = " | ".join(parts)
         return await self.generate_embedding(text)
 
-    async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0):
+    async def store_entity_embedding(self, entity_uuid: str, entity_name: str,
+                                      entity_type: str = "", content: str = "",
+                                      connected_names: list[str] = None):
+        """Store entity embedding in the entity_embeddings table."""
+        if not content:
+            content = entity_name
+        embedding = await self.generate_rich_embedding(
+            entity_name, entity_type=entity_type,
+            description=content, connected_names=connected_names
+        )
+        if not embedding:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO entity_embeddings (entity_uuid, entity_name, entity_type, content, embedding)
+                VALUES ($1, $2, $3, $4, $5::vector)
+                ON CONFLICT (entity_uuid) DO UPDATE
+                SET entity_name = $2, entity_type = $3, content = $4,
+                    embedding = $5::vector, created_at = NOW()
+                """,
+                entity_uuid, entity_name, entity_type, content[:50000], str(embedding),
+            )
+
+    async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0,
+                                        title: str = None, doc_type: str = None):
         """Store document content and its embedding."""
         embedding = await self.generate_embedding(content)
         if not embedding:
@@ -148,12 +232,12 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO document_embeddings (document_id, chunk_index, content, embedding)
-                VALUES ($1, $2, $3, $4::vector)
+                INSERT INTO document_embeddings (document_id, chunk_index, content, title, doc_type, embedding)
+                VALUES ($1, $2, $3, $4, $5, $6::vector)
                 ON CONFLICT (document_id, chunk_index) DO UPDATE
-                SET content = $3, embedding = $4::vector, created_at = NOW()
+                SET content = $3, title = $4, doc_type = $5, embedding = $6::vector, created_at = NOW()
                 """,
-                doc_id, chunk_index, content[:10000], str(embedding),
+                doc_id, chunk_index, content[:50000], title, doc_type, str(embedding),
             )
 
     async def delete_document_embeddings(self, doc_id: int):
@@ -166,9 +250,10 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
+            await conn.execute("SET hnsw.ef_search = 100")
             rows = await conn.fetch(
                 """
-                SELECT document_id, chunk_index, content,
+                SELECT document_id, chunk_index, content, title, doc_type,
                        1 - (embedding <=> $1::vector) as similarity
                 FROM document_embeddings
                 ORDER BY embedding <=> $1::vector
@@ -178,24 +263,134 @@ class EmbeddingsStore:
             )
             return [dict(r) for r in rows]
 
-    async def keyword_search(self, query: str, limit: int = 10) -> list[dict]:
-        """Full-text keyword search using pg_trgm similarity."""
-        if not self._trgm_initialized:
+    async def filtered_vector_search(self, query: str, doc_type: str = None, limit: int = 10) -> list[dict]:
+        """Search with optional doc_type filter."""
+        embedding = await self.generate_embedding(query)
+        if not embedding:
             return []
-        try:
-            async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
+            await conn.execute("SET hnsw.ef_search = 100")
+            if doc_type:
                 rows = await conn.fetch(
                     """
-                    SELECT document_id, chunk_index, content,
-                           similarity(content, $1) AS rank_score
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           1 - (embedding <=> $1::vector) as similarity
                     FROM document_embeddings
-                    WHERE content % $1 OR content ILIKE '%' || $1 || '%'
-                    ORDER BY similarity(content, $1) DESC
+                    WHERE doc_type = $3
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    str(embedding), limit, doc_type,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           1 - (embedding <=> $1::vector) as similarity
+                    FROM document_embeddings
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    str(embedding), limit,
+                )
+            return [dict(r) for r in rows]
+
+    async def entity_vector_search(self, query: str, limit: int = 10) -> list[dict]:
+        """Search entity embeddings by vector similarity."""
+        embedding = await self.generate_embedding(query)
+        if not embedding:
+            return []
+        async with self.pool.acquire() as conn:
+            await conn.execute("SET hnsw.ef_search = 100")
+            rows = await conn.fetch(
+                """
+                SELECT entity_uuid, entity_name, entity_type, content,
+                       1 - (embedding <=> $1::vector) as similarity
+                FROM entity_embeddings
+                ORDER BY embedding <=> $1::vector
+                LIMIT $2
+                """,
+                str(embedding), limit,
+            )
+            return [dict(r) for r in rows]
+
+    async def entity_keyword_search(self, query: str, limit: int = 10) -> list[dict]:
+        """Search entity embeddings by keyword (trigram similarity + exact match)."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("SET pg_trgm.similarity_threshold = 0.1")
+                # Trigram similarity
+                trgm_rows = await conn.fetch(
+                    """
+                    SELECT entity_uuid, entity_name, entity_type, content,
+                           similarity(content, $1) AS rank_score
+                    FROM entity_embeddings
+                    WHERE content % $1
+                    ORDER BY rank_score DESC
                     LIMIT $2
                     """,
                     query, limit,
                 )
-                return [dict(r) for r in rows]
+                # Exact substring match
+                exact_rows = await conn.fetch(
+                    """
+                    SELECT entity_uuid, entity_name, entity_type, content,
+                           1.0::float AS rank_score
+                    FROM entity_embeddings
+                    WHERE content ILIKE '%' || $1 || '%'
+                    LIMIT $2
+                    """,
+                    query, limit,
+                )
+                # Deduplicate
+                seen = set()
+                results = []
+                for r in list(exact_rows) + list(trgm_rows):
+                    if r["entity_uuid"] not in seen:
+                        seen.add(r["entity_uuid"])
+                        results.append(dict(r))
+                return results[:limit]
+        except Exception as e:
+            logger.warning(f"Entity keyword search failed: {e}")
+            return []
+
+    async def keyword_search(self, query: str, limit: int = 10) -> list[dict]:
+        """Keyword search using trigram similarity + exact substring match."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("SET pg_trgm.similarity_threshold = 0.1")
+                # Trigram similarity (uses GIN index)
+                trgm_rows = await conn.fetch(
+                    """
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           similarity(content, $1) AS rank_score
+                    FROM document_embeddings
+                    WHERE content % $1
+                    ORDER BY rank_score DESC
+                    LIMIT $2
+                    """,
+                    query, limit,
+                )
+                # Exact substring match (for IDs, account numbers, etc.)
+                exact_rows = await conn.fetch(
+                    """
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           1.0::float AS rank_score
+                    FROM document_embeddings
+                    WHERE content ILIKE '%' || $1 || '%'
+                    LIMIT $2
+                    """,
+                    query, limit,
+                )
+                # Deduplicate by (document_id, chunk_index)
+                seen = set()
+                results = []
+                for r in list(exact_rows) + list(trgm_rows):
+                    key = (r["document_id"], r["chunk_index"])
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(dict(r))
+                return results[:limit]
         except Exception as e:
             logger.warning(f"Keyword search failed: {e}")
             return []
@@ -237,12 +432,17 @@ class EmbeddingsStore:
     async def clear_all(self):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings")
+            await conn.execute("DELETE FROM entity_embeddings")
             await conn.execute("DELETE FROM document_hashes")
             await conn.execute("UPDATE sync_state SET last_sync_at = NULL, updated_at = NOW() WHERE id = 1")
 
     async def get_embedding_count(self) -> int:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT COUNT(*) FROM document_embeddings")
+
+    async def get_entity_embedding_count(self) -> int:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
 
 
 embeddings_store = EmbeddingsStore()

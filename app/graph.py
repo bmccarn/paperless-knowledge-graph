@@ -395,6 +395,8 @@ class GraphStore:
 
 def _try_int(val: str) -> int:
     try:
+        if isinstance(val, str) and val.startswith("doc-"):
+            val = val[4:]
         return int(val)
     except (ValueError, TypeError):
         return -1

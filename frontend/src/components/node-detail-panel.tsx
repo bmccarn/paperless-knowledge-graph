@@ -157,7 +157,7 @@ export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetail
   const paperlessUrl = (id: number) => `http://your-paperless-host:8000/documents/${id}/`;
 
   return (
-    <ScrollArea className="flex-1">
+    <div className="space-y-4">
       <div className="p-5 space-y-5">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
@@ -381,6 +381,6 @@ export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetail
           Expand Neighbors
         </Button>
       </div>
-    </ScrollArea>
+    </div>
   );
 }

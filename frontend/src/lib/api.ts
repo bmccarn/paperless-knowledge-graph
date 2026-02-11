@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://10.10.10.10:8484";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
 
 export async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${API_URL}${path}`, {

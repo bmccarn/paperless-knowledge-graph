@@ -193,6 +193,8 @@ export default function DashboardPage() {
       </div>
     );
 
+  const totalEmbeddings = status.embeddings.document_chunks + status.embeddings.entity_embeddings;
+
   const cards = [
     {
       title: "Documents",
@@ -204,7 +206,7 @@ export default function DashboardPage() {
     },
     {
       title: "Entities",
-      value: status.graph.nodes,
+      value: status.graph.entities,
       icon: Database,
       color: "text-emerald-400",
       bgColor: "bg-emerald-500/10",
@@ -220,11 +222,11 @@ export default function DashboardPage() {
     },
     {
       title: "Embeddings",
-      value: status.embeddings,
+      value: totalEmbeddings,
       icon: Binary,
       color: "text-amber-400",
       bgColor: "bg-amber-500/10",
-      description: "Vector embeddings",
+      description: `${status.embeddings.document_chunks} doc chunks + ${status.embeddings.entity_embeddings} entities`,
     },
   ];
 
@@ -477,18 +479,21 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Graph Density</span>
                 <span className="text-sm font-medium">
-                  {status.graph.nodes > 0
-                    ? (status.graph.relationships / status.graph.nodes).toFixed(1)
+                  {status.graph.entities > 0
+                    ? (status.graph.relationships / status.graph.entities).toFixed(1)
                     : "0"}{" "}
-                  rel/node
+                  rel/entity
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Embedding Coverage</span>
                 <span className="text-sm font-medium">
-                  {status.graph.nodes > 0
-                    ? Math.round((status.embeddings / status.graph.nodes) * 100)
+                  {status.graph.documents > 0
+                    ? Math.round((status.embeddings.docs_with_embeddings / status.graph.documents) * 100)
                     : 0}%
+                  <span className="text-muted-foreground text-xs ml-1">
+                    ({status.embeddings.docs_with_embeddings}/{status.graph.documents} docs)
+                  </span>
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -497,12 +502,12 @@ export default function DashboardPage() {
                   {Object.keys(status.active_tasks).length}
                 </span>
               </div>
-              {status.graph.nodes > 0 && (
+              {status.graph.documents > 0 && (
                 <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-2">Knowledge Coverage</p>
+                  <p className="text-xs text-muted-foreground mb-2">Embedding Coverage</p>
                   <Progress
                     value={Math.min(
-                      (status.embeddings / Math.max(status.graph.nodes, 1)) * 100,
+                      (status.embeddings.docs_with_embeddings / Math.max(status.graph.documents, 1)) * 100,
                       100
                     )}
                     className="h-2"

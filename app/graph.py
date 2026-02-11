@@ -313,10 +313,13 @@ class GraphStore:
             rel_record = await rel_result.single()
             doc_result = await session.run("MATCH (d:Document) RETURN count(d) AS count")
             doc_record = await doc_result.single()
+            nodes = node_record["count"] if node_record else 0
+            docs = doc_record["count"] if doc_record else 0
             return {
-                "nodes": node_record["count"] if node_record else 0,
+                "nodes": nodes,
+                "entities": nodes - docs,
                 "relationships": rel_record["count"] if rel_record else 0,
-                "documents": doc_record["count"] if doc_record else 0,
+                "documents": docs,
             }
 
     async def search_nodes(self, query: str, node_type: str = None, limit: int = 20) -> list[dict]:

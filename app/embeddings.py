@@ -474,5 +474,15 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
 
+    async def get_docs_with_embeddings_count(self) -> int:
+        """Count distinct documents that have at least one embedding."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(DISTINCT document_id) FROM document_embeddings")
+
+    async def get_docs_with_embeddings_count(self) -> int:
+        """Count distinct documents that have at least one embedding."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(DISTINCT document_id) FROM document_embeddings")
+
 
 embeddings_store = EmbeddingsStore()

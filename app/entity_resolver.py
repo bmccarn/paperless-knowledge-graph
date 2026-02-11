@@ -357,6 +357,42 @@ class EntityResolver:
         logger.info(f"Created new Organization: '{normalized}' (uuid={node_uuid})")
         return node_uuid
 
+    async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int) -> str:
+        """Resolve a generic entity (Location, System, Product, etc.) — fuzzy match or create."""
+        if not name or not name.strip():
+            return ""
+
+        name = name.strip()
+
+        # Check cache
+        cache_key = f"{entity_type}:{name.lower()}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        # Try exact match in Neo4j
+        async with graph_store.driver.session() as session:
+            result = await session.run(
+                f"MATCH (n:{entity_type}) WHERE toLower(n.name) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
+                name=name,
+            )
+            record = await result.single()
+            if record:
+                uuid = record["uuid"]
+                self._cache[cache_key] = uuid
+                return uuid
+
+        # Create new entity
+        import uuid as uuid_mod
+        new_uuid = str(uuid_mod.uuid4())
+        await graph_store.create_node(entity_type, {
+            "uuid": new_uuid,
+            "name": name,
+            "source_doc_ids": [source_doc_id],
+        })
+        logger.info(f"Created new {entity_type}: '{name}' (uuid={new_uuid})")
+        self._cache[cache_key] = new_uuid
+        return new_uuid
+
     async def resolve_all_entities(self) -> dict:
         """Scan all entities in Neo4j and merge duplicates. Returns a report."""
         report = {"merged_persons": [], "merged_orgs": [], "skipped": [], "errors": []}

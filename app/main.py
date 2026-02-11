@@ -13,6 +13,7 @@ from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
+from app.cache import get_all_cache_stats, invalidate_on_sync
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Paperless Knowledge Graph",
     description="Knowledge graph extraction and query system for Paperless-ngx documents",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -70,15 +71,64 @@ async def status():
         counts = await graph_store.get_counts()
         last_sync = await embeddings_store.get_last_sync()
         embedding_count = await embeddings_store.get_embedding_count()
+        cache_stats = get_all_cache_stats()
         return {
             "status": "healthy",
             "graph": counts,
             "embeddings": embedding_count,
             "last_sync": last_sync.isoformat() if last_sync else None,
             "active_tasks": {tid: t["status"] for tid, t in _tasks.items()},
+            "cache": cache_stats,
         }
     except Exception as e:
         return {"status": "degraded", "error": str(e)}
+
+
+@app.get("/health")
+async def health():
+    """Detailed component health check."""
+    components = {}
+
+    # Neo4j
+    try:
+        components["neo4j"] = await graph_store.check_health()
+    except Exception as e:
+        components["neo4j"] = {"status": "unhealthy", "error": str(e)}
+
+    # pgvector
+    try:
+        count = await embeddings_store.get_embedding_count()
+        components["pgvector"] = {"status": "healthy", "embedding_count": count}
+    except Exception as e:
+        components["pgvector"] = {"status": "unhealthy", "error": str(e)}
+
+    # Gemini API
+    try:
+        from google import genai
+        from app.config import settings
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents="Say 'ok'",
+        )
+        components["gemini"] = {"status": "healthy"} if response.text else {"status": "degraded"}
+    except Exception as e:
+        components["gemini"] = {"status": "unhealthy", "error": str(e)}
+
+    # Cache
+    components["cache"] = get_all_cache_stats()
+
+    overall = "healthy"
+    for key, comp in components.items():
+        if key == "cache":
+            continue
+        if isinstance(comp, dict) and comp.get("status") == "unhealthy":
+            overall = "unhealthy"
+            break
+        elif isinstance(comp, dict) and comp.get("status") == "degraded":
+            overall = "degraded"
+
+    return {"status": overall, "components": components}
 
 
 # --- Sync & Reindex ---
@@ -90,6 +140,7 @@ async def sync():
 
     async def _run():
         try:
+            invalidate_on_sync()
             result = await sync_documents()
             _tasks[task_id] = {"status": "completed", "result": result}
         except Exception as e:
@@ -107,6 +158,7 @@ async def reindex():
 
     async def _run():
         try:
+            invalidate_on_sync()
             result = await reindex_all()
             _tasks[task_id] = {"status": "completed", "result": result}
         except Exception as e:
@@ -188,4 +240,3 @@ async def resolve_entities():
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

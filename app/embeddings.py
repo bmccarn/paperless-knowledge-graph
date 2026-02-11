@@ -39,6 +39,11 @@ ON CONFLICT (id) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_doc_embeddings_doc_id ON document_embeddings(document_id);
 """
 
+TRGM_SQL = """
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_content_trgm ON document_embeddings USING GIN (content gin_trgm_ops);
+"""
+
 
 class EmbeddingsStore:
     def __init__(self):
@@ -48,6 +53,7 @@ class EmbeddingsStore:
             api_key=settings.litellm_api_key,
         )
         self.model = settings.embedding_model
+        self._trgm_initialized = False
 
     async def init(self):
         self.pool = await asyncpg.create_pool(
@@ -61,6 +67,13 @@ class EmbeddingsStore:
         )
         async with self.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
+            # Try to create pg_trgm extension and GIN index
+            try:
+                await conn.execute(TRGM_SQL)
+                self._trgm_initialized = True
+                logger.info("pg_trgm extension and GIN index initialized")
+            except Exception as e:
+                logger.warning(f"pg_trgm init failed (keyword search will be unavailable): {e}")
         logger.info("Embeddings store initialized")
 
     async def close(self):
@@ -78,6 +91,19 @@ class EmbeddingsStore:
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             return []
+
+    async def generate_rich_embedding(self, name: str, entity_type: str = "",
+                                       description: str = "", connected_names: list[str] = None) -> list[float]:
+        """Generate a richer embedding for entities: name + type + description + connections."""
+        parts = [name]
+        if entity_type:
+            parts.append(f"type: {entity_type}")
+        if description:
+            parts.append(description)
+        if connected_names:
+            parts.append("connected to: " + ", ".join(connected_names[:10]))
+        text = " | ".join(parts)
+        return await self.generate_embedding(text)
 
     async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0):
         """Store document content and its embedding."""
@@ -116,6 +142,28 @@ class EmbeddingsStore:
                 str(embedding), limit,
             )
             return [dict(r) for r in rows]
+
+    async def keyword_search(self, query: str, limit: int = 10) -> list[dict]:
+        """Full-text keyword search using pg_trgm similarity."""
+        if not self._trgm_initialized:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT document_id, chunk_index, content,
+                           similarity(content, $1) AS rank_score
+                    FROM document_embeddings
+                    WHERE content % $1 OR content ILIKE '%' || $1 || '%'
+                    ORDER BY similarity(content, $1) DESC
+                    LIMIT $2
+                    """,
+                    query, limit,
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"Keyword search failed: {e}")
+            return []
 
     async def get_last_sync(self):
         async with self.pool.acquire() as conn:

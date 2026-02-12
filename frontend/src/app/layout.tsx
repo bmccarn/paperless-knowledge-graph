@@ -30,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex h-screen overflow-hidden">
               <SidebarNav />
               <main className="flex-1 overflow-hidden flex flex-col pb-[60px] md:pb-0">
-                <div className="page-transition flex-1 overflow-hidden">{children}</div>
+                <div className="page-transition flex-1 overflow-y-auto">{children}</div>
               </main>
             </div>
           </TooltipProvider>

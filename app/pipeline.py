@@ -81,6 +81,10 @@ def _is_suspicious_entity(name: str, entity_type: str) -> bool:
     name_clean = name.strip()
     words = name_clean.split()
     
+    # Protected entities are NEVER suspicious - skip LLM validation entirely
+    if name_clean.lower() in PROTECTED_ENTITY_NAMES:
+        return False
+    
     # Always validate Event entities (most error-prone type)
     if entity_type == "Event":
         return True
@@ -140,6 +144,10 @@ async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str)
     Returns dict with:
       {"valid": True/False, "correct_type": "Person"/"Organization"/etc.}
     """
+    # Protected entities always pass - never send to LLM
+    if name.strip().lower() in PROTECTED_ENTITY_NAMES:
+        return {"valid": True, "correct_type": entity_type}
+    
     cache_key = f"{entity_type}:{name.lower()}"
     if cache_key in _validation_cache:
         cached = _validation_cache[cache_key]
@@ -301,6 +309,14 @@ async def process_document(doc: dict) -> dict:
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
 
 
+# Protected entity names - NEVER rejected by LLM validation or blocklist.
+# These are known-good entities that the LLM might not recognize (pets, nicknames, etc.)
+PROTECTED_ENTITY_NAMES = {
+    "ggarbo", "ggarbo mccarn", "ggarbo mccam", "ggarbo mccarm",
+    "mwd ggarbo", "mwd ggarbo tattoo v234",
+}
+
+
 # Blocklist of generic terms that should not become entity nodes
 BLOCKED_ENTITY_NAMES = {
     # Generic role terms
@@ -332,6 +348,9 @@ BLOCKED_ENTITY_NAMES = {
     "investigation request", "background investigations", "background investigation",
     "continuous evaluations", "personal interview", "investigation",
     "soliciting", "verifying ssn", "e qip",
+    # Junk entities seen in reindexes
+    "rating decision", "builders", "owners", "trane",
+    "josh", "braesael", "homeowner",
 }
 
 

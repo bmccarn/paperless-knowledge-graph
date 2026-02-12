@@ -9,6 +9,12 @@ from app.graph import graph_store
 
 logger = logging.getLogger(__name__)
 
+# Protected person names that should be allowed to merge single<->multi word.
+# These are unique names (pets, nicknames) where "Ggarbo" == "Ggarbo McCarn".
+PROTECTED_PERSON_NAMES = {
+    "ggarbo", "ggarbo mccarn", "ggarbo mccam", "ggarbo mccarm",
+}
+
 SIMILARITY_THRESHOLD = 85  # Auto-merge threshold
 LLM_MERGE_LOW = 70        # Below this: definitely different entities
 LLM_MERGE_HIGH = 85       # 70-85 zone: use LLM to decide
@@ -329,12 +335,21 @@ def should_auto_merge(name_a: str, name_b: str, score: float,
         
         # Word-count mismatch protection: single-word names are too ambiguous
         # to merge with multi-word names. "Matthew" != "Matthew Smith".
+        # Exception: protected names (e.g., pet names like "Ggarbo" -> "Ggarbo McCarn")
         if (len(parts_a) == 1) != (len(parts_b) == 1):
-            # One is single-word, the other is not — block merge
-            logger.info(
-                f"Single vs multi-word blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
-            )
-            return False
+            # Exception: protected names (pets, etc.) can merge single<->multi
+            single = name_a.lower() if len(parts_a) == 1 else name_b.lower()
+            if single in PROTECTED_PERSON_NAMES:
+                logger.info(
+                    f"Single-word merge ALLOWED (protected name): '{name_a}' <-> '{name_b}'"
+                )
+                # Allow merge for protected entities
+            else:
+                # One is single-word, the other is not — block merge
+                logger.info(
+                    f"Single vs multi-word blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
+                )
+                return False
         
         # CRITICAL: First name must be compatible
         # Prevents "Blake McCarn" from merging with "Chelsea McCarn"

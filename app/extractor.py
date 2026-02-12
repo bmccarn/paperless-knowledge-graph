@@ -459,7 +459,11 @@ Return a JSON object with ONLY the validated entities (remove all junk):
 
 
 def _repair_json(raw_text: str) -> dict:
-    """Attempt to parse and repair common JSON issues from LLM output."""
+    """Attempt to parse and repair common JSON issues from LLM output.
+    
+    Returns a dict on success. Raises json.JSONDecodeError on complete failure.
+    If LLM returns a JSON array, wraps it in {"items": [...]}.
+    """
     if not raw_text or not raw_text.strip():
         return {}
     
@@ -467,17 +471,28 @@ def _repair_json(raw_text: str) -> dict:
     
     # 1. Try standard parse first
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            logger.debug("_repair_json: LLM returned JSON array, wrapping in dict")
+            return {"items": parsed}
+        return {}
     except json.JSONDecodeError:
         pass
     
-    # 2. Strip markdown code fences
+    # 2. Strip markdown code fences (```json ... ``` or ``` ... ```)
     text = re.sub(r'^```(?:json)?\s*\n?', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
     text = text.strip()
     
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return {"items": parsed}
+        return {}
     except json.JSONDecodeError:
         pass
     
@@ -485,16 +500,24 @@ def _repair_json(raw_text: str) -> dict:
     text = re.sub(r',\s*([}\]])', r'\1', text)
     
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return {"items": parsed}
+        return {}
     except json.JSONDecodeError:
         pass
     
     # 4. Try to fix single quotes to double quotes (carefully)
-    # Only do this if there are no double quotes at all (suggesting single-quote JSON)
     if '"' not in text and "'" in text:
         fixed = text.replace("'", '"')
         try:
-            return json.loads(fixed)
+            parsed = json.loads(fixed)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                return {"items": parsed}
         except json.JSONDecodeError:
             pass
     
@@ -503,59 +526,100 @@ def _repair_json(raw_text: str) -> dict:
     if match:
         try:
             candidate = match.group(0)
-            # Fix trailing commas in the extracted object too
             candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
             return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    
+    # 6. Try extracting a JSON array if no object found
+    match = re.search(r'\[[\s\S]*\]', text)
+    if match:
+        try:
+            candidate = match.group(0)
+            candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
+            parsed = json.loads(candidate)
+            if isinstance(parsed, list):
+                return {"items": parsed}
+        except json.JSONDecodeError:
+            pass
+    
+    # 7. Handle truncated JSON — try closing open braces/brackets
+    # Count unmatched openers
+    open_braces = text.count('{') - text.count('}')
+    open_brackets = text.count('[') - text.count(']')
+    if open_braces > 0 or open_brackets > 0:
+        patched = text
+        # Remove trailing comma if present
+        patched = patched.rstrip().rstrip(',')
+        # Close open structures
+        patched += ']' * max(0, open_brackets) + '}' * max(0, open_braces)
+        try:
+            parsed = json.loads(patched)
+            if isinstance(parsed, dict):
+                logger.debug("_repair_json: repaired truncated JSON by closing braces")
+                return parsed
+            if isinstance(parsed, list):
+                return {"items": parsed}
         except json.JSONDecodeError:
             pass
     
     # Give up - raise with context
     raise json.JSONDecodeError(f"Failed to repair JSON", raw_text[:200], 0)
 
-
-async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 2) -> dict:
-    """Call an LLM function expecting JSON, with type validation and retry."""
+async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 3) -> dict:
+    """Call an LLM function expecting JSON, with type validation and retry.
+    
+    Handles: dict (pass through), list (wrap in {"items": [...]}),
+    string (parse as JSON), None (retry), other types (retry).
+    Returns {} on complete failure — never raises.
+    """
     last_error = None
     for attempt in range(max_retries):
         try:
             result = await retry_with_backoff(call_fn, operation=f"{operation}_attempt{attempt}")
             
-            # Validate it's actually a dict
+            # Happy path: already a dict
             if isinstance(result, dict):
                 return result
+            
+            # List response: wrap it (Gemini sometimes returns arrays for metadata)
+            elif isinstance(result, list):
+                logger.info(f"{operation}: LLM returned list (attempt {attempt+1}), wrapping in dict")
+                return {"items": result}
+            
             elif isinstance(result, str):
-                # LLM returned a string — try to parse it as JSON
+                # LLM returned a string — try to parse/repair it as JSON
                 try:
-                    parsed = json.loads(result)
+                    parsed = _repair_json(result)
                     if isinstance(parsed, dict):
                         return parsed
                 except (json.JSONDecodeError, TypeError):
                     pass
-                logger.warning(f"{operation}: LLM returned string instead of dict (attempt {attempt+1}), retrying")
-                last_error = ValueError(f"Expected dict, got string: {str(result)[:100]}")
+                logger.warning(f"{operation}: LLM returned unparseable string (attempt {attempt+1}/{max_retries}), retrying")
+                last_error = ValueError(f"Expected dict, got string: {str(result)[:200]}")
                 continue
+            
             elif result is None:
-                logger.warning(f"{operation}: LLM returned None (attempt {attempt+1}), retrying")
+                logger.warning(f"{operation}: LLM returned None (attempt {attempt+1}/{max_retries}), retrying")
                 last_error = ValueError("LLM returned None")
                 continue
             else:
-                logger.warning(f"{operation}: LLM returned {type(result).__name__} (attempt {attempt+1}), retrying")
+                logger.warning(f"{operation}: LLM returned {type(result).__name__} (attempt {attempt+1}/{max_retries}), retrying")
                 last_error = ValueError(f"Expected dict, got {type(result).__name__}")
                 continue
                 
         except json.JSONDecodeError as e:
-            logger.warning(f"{operation}: JSON parse failed (attempt {attempt+1}): {e}")
+            logger.warning(f"{operation}: JSON parse failed (attempt {attempt+1}/{max_retries}): {e}")
             last_error = e
             continue
         except Exception as e:
-            logger.warning(f"{operation}: Unexpected error (attempt {attempt+1}): {e}")
+            logger.warning(f"{operation}: Unexpected error (attempt {attempt+1}/{max_retries}): {e}")
             last_error = e
             continue
     
     # All retries exhausted — return empty dict instead of crashing
     logger.error(f"{operation}: All {max_retries} attempts failed, using empty dict. Last error: {last_error}")
     return {}
-
 
 class EntityExtractor:
     def __init__(self):

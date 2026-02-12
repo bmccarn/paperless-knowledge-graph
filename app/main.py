@@ -470,6 +470,7 @@ async def query_stream(req: QueryRequest):
                 if event.get("type") == "complete":
                     final_sources = event.get("sources")
                     final_entities = event.get("entities_found")
+                    final_confidence = event.get("confidence")
                     final_follow_ups = event.get("follow_up_suggestions")
 
                 yield f"data: {json.dumps(event)}" + "\n\n"

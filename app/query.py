@@ -115,6 +115,7 @@ class QueryEngine:
             yield {"type": "answer_chunk", "content": cached["answer"]}
             yield {"type": "complete", "sources": cached["sources"],
                    "entities_found": cached.get("entities_found", []),
+                   "confidence": cached.get("confidence", 0.7),
                    "follow_up_suggestions": cached.get("follow_up_suggestions", []),
                    "cached": True}
             return
@@ -177,6 +178,7 @@ class QueryEngine:
 
         yield {"type": "complete", "sources": sources,
                "entities_found": result["entities_found"],
+               "confidence": result.get("confidence", 0.7),
                "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
                "cached": False}
 

@@ -163,7 +163,7 @@ class EmbeddingsStore:
 
 
     async def create_vector_indexes(self):
-        """Create IVFFlat vector indexes. Call after data is loaded (reindex)."""
+        """Create HNSW vector indexes. Call after data is loaded (reindex)."""
         async with self.pool.acquire() as conn:
             # Drop old indexes if they exist
             await conn.execute("DROP INDEX IF EXISTS idx_embeddings_hnsw")
@@ -174,25 +174,23 @@ class EmbeddingsStore:
             entity_count = await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
             
             if doc_count > 0:
-                # lists should be ~sqrt(n) for IVFFlat, min 1
-                doc_lists = max(1, min(int(doc_count ** 0.5), 1000))
-                await conn.execute(f"""
-                    CREATE INDEX idx_embeddings_ivfflat
+                # HNSW index for high-dimensional vectors (3072-dim)
+                await conn.execute("""
+                    CREATE INDEX idx_embeddings_hnsw
                     ON document_embeddings
-                    USING ivfflat (embedding vector_cosine_ops)
-                    WITH (lists = {doc_lists})
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
                 """)
-                logger.info(f"Created IVFFlat index on document_embeddings with lists={doc_lists}")
+                logger.info(f"Created HNSW index on document_embeddings ({doc_count} rows)")
             
             if entity_count > 0:
-                entity_lists = max(1, min(int(entity_count ** 0.5), 1000))
-                await conn.execute(f"""
-                    CREATE INDEX idx_entity_embeddings_ivfflat
+                await conn.execute("""
+                    CREATE INDEX idx_entity_embeddings_hnsw
                     ON entity_embeddings
-                    USING ivfflat (embedding vector_cosine_ops)
-                    WITH (lists = {entity_lists})
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
                 """)
-                logger.info(f"Created IVFFlat index on entity_embeddings with lists={entity_lists}")
+                logger.info(f"Created HNSW index on entity_embeddings ({entity_count} rows)")
 
     async def close(self):
         if self.pool:
@@ -280,7 +278,7 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET ivfflat.probes = 10")
+            await conn.execute("SET hnsw.ef_search = 40")
             rows = await conn.fetch(
                 """
                 SELECT document_id, chunk_index, content, title, doc_type,
@@ -299,7 +297,7 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET ivfflat.probes = 10")
+            await conn.execute("SET hnsw.ef_search = 40")
             if doc_type:
                 rows = await conn.fetch(
                     """
@@ -331,7 +329,7 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET ivfflat.probes = 10")
+            await conn.execute("SET hnsw.ef_search = 40")
             rows = await conn.fetch(
                 """
                 SELECT entity_uuid, entity_name, entity_type, content,

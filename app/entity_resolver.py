@@ -15,6 +15,10 @@ PROTECTED_PERSON_NAMES = {
     "ggarbo", "ggarbo mccarn", "ggarbo mccam", "ggarbo mccarm",
 }
 
+# LLM tiebreaker score thresholds for entity resolution
+LLM_TIEBREAKER_LOW = 0.6   # Below this: definitely don't merge
+LLM_TIEBREAKER_HIGH = 0.85  # Above this: definitely merge
+
 SIMILARITY_THRESHOLD = 85  # Auto-merge threshold
 LLM_MERGE_LOW = 70        # Below this: definitely different entities
 LLM_MERGE_HIGH = 85       # 70-85 zone: use LLM to decide

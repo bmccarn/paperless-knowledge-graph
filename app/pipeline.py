@@ -314,6 +314,7 @@ async def process_document(doc: dict) -> dict:
 PROTECTED_ENTITY_NAMES = {
     "ggarbo", "ggarbo mccarn", "ggarbo mccam", "ggarbo mccarm",
     "mwd ggarbo", "mwd ggarbo tattoo v234",
+    "ggarbo v234 12-0047", "ggarbo v234 12-0047 (canine)",
 }
 
 

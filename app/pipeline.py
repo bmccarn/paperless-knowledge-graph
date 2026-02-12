@@ -314,6 +314,7 @@ async def process_document(doc: dict) -> dict:
 PROTECTED_ENTITY_NAMES = {
     "rex", "rex doe", "rex doe", "rex doe",
     "mwd rex", "mwd rex tattoo v234",
+    "rex x000 00-0000", "rex x000 00-0000 (canine)",
 }
 
 

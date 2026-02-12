@@ -259,7 +259,7 @@ Valid entity types: Person, Organization, Location, System, Product, Document, E
 === FEW-SHOT EXAMPLE ===
 
 DOCUMENT SNIPPET:
-"John Doe visited Dr. Sarah Johnson at Quest Diagnostics in Charlotte, NC on March 15, 2024. His CBC panel results showed elevated WBC. He was diagnosed with PTSD and prescribed Gabapentin 300mg. His DD-214 confirms service during Operation Desert Storm. He filed his claim through eBenefits."
+"John Doe visited Dr. Sarah Johnson at Quest Diagnostics on March 15, 2024. His CBC panel results showed elevated WBC. He was diagnosed with PTSD and prescribed Gabapentin 300mg. His DD-214 confirms service during Operation Desert Storm. He filed his claim through eBenefits."
 
 CORRECT entity extractions:
 - "John Doe" (Person) — named individual, full name
@@ -340,7 +340,7 @@ Think through each type systematically:
 
 === CANONICAL NAME GUIDANCE ===
 Use the most complete, properly-cased form of each name found in the document:
-- Prefer "John Doe" over "SMITH" or "John"
+- Prefer full names over abbreviated forms (e.g. "John Doe" over "DOE")
 - Prefer "Department of Veterans Affairs" over "VA" (unless VA is the only form used)
 - Prefer "Charlotte, NC" over "charlotte" or "CHARLOTTE NC"
 

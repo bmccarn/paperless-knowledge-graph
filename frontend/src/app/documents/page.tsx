@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { graphSearch, getGraphNode, postReindexDoc } from "@/lib/api";
+import { graphSearch, getGraphNode, postReindexDoc, getConfig } from "@/lib/api";
 import {
   Search,
   RefreshCw,
@@ -63,6 +63,7 @@ function getDocTypeClass(type: string): string {
 const PAGE_SIZE = 25;
 
 export default function DocumentsPage() {
+  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
   const [documents, setDocuments] = useState<DocResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -95,6 +96,8 @@ export default function DocumentsPage() {
       setLoading(false);
     }
   }, [searchQuery]);
+
+  useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
 
   useEffect(() => {
     fetchDocs();
@@ -362,7 +365,7 @@ export default function DocumentsPage() {
                           </TableCell>
                           <TableCell>
                             <a
-                              href={`http://your-paperless-host:8000/documents/${docId}/`}
+                              href={`${paperlessBaseUrl}/documents/${docId}/`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="flex items-center gap-1 text-xs text-primary hover:underline"

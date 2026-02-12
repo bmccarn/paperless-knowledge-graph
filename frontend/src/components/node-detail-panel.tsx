@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { getGraphNode } from "@/lib/api";
+import { getGraphNode, getConfig } from "@/lib/api";
 import {
   X,
   Loader2,
@@ -154,7 +154,9 @@ export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetail
     return grouped;
   }
 
-  const paperlessUrl = (id: number) => `http://your-paperless-host:8000/documents/${id}/`;
+  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
+  useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
+  const paperlessUrl = (id: number) => `${paperlessBaseUrl}/documents/${id}/`;
 
   return (
     <div className="space-y-4">

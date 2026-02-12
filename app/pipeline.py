@@ -34,29 +34,42 @@ def _get_validation_client():
         )
     return _validation_client
 
-ENTITY_VALIDATION_PROMPT = """You are an entity validation system for a knowledge graph. Determine if this is a real, specific named entity worth storing.
+ENTITY_VALIDATION_PROMPT = """You are an entity validation and type-correction system for a knowledge graph.
 
 Entity name: "{name}"
-Entity type: {entity_type}
+Assigned type: {entity_type}
 From document titled: "{doc_title}"
+
+TASK: Determine if this is a real, specific named entity AND whether the assigned type is correct.
+
+Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition
 
 A VALID entity is a specific, identifiable thing: a real person, company, place, product, system, law, or event.
 An INVALID entity is: a generic term, action/process description, role title without a name, sentence fragment, line item label, or date.
 
-Examples:
-- "John Doe" (Person) → VALID (specific person)
-- "Department of Veterans Affairs" (Organization) → VALID (specific org)
-- "e-QIP" (System) → VALID (specific system)
-- "background investigations" (Event) → INVALID (generic process)
-- "soliciting and verifying SSN" (Person) → INVALID (action phrase)
-- "Owner/Operator" (Person) → INVALID (generic role)
-- "LABOR" (Product) → INVALID (invoice line item)
-- "DD-214" (Document) → VALID (specific form type)
-- "Investigation Request" (Event) → INVALID (generic process)
-- "Fort Bragg" (Location) → VALID (specific place)
-- "military installations" (Location) → INVALID (generic term)
+Use your general knowledge to verify:
+- Is "Trane" a person or a company? (It's an HVAC company → Organization)
+- Is "USAA" a person or a company? (It's a financial services company → Organization)
+- Is "Rating Decision" a person? (No, it's a generic term → INVALID)
+- Is "Gabapentin" a person? (No, it's a medication → Product)
+- Is "Fort Bragg" a person? (No, it's a military base → Location)
+- Is "PTSD" an event? (No, it's a medical condition → Condition)
 
-Respond with ONLY a JSON object: {"valid": true} or {"valid": false}"""
+Examples:
+- "John Doe" as Person → {{"valid": true, "correct_type": "Person"}}
+- "Trane" as Person → {{"valid": true, "correct_type": "Organization"}}
+- "USAA Federal Savings Bank" as Person → {{"valid": true, "correct_type": "Organization"}}
+- "Rating Decision" as Person → {{"valid": false}}
+- "background investigations" as Event → {{"valid": false}}
+- "e-QIP" as Product → {{"valid": true, "correct_type": "System"}}
+- "PTSD" as Event → {{"valid": true, "correct_type": "Condition"}}
+- "Gabapentin 300mg" as Person → {{"valid": true, "correct_type": "Product"}}
+- "Fort Bragg" as Person → {{"valid": true, "correct_type": "Location"}}
+
+Respond with ONLY a JSON object:
+- If valid with correct type: {{"valid": true, "correct_type": "<type>"}}
+- If valid but WRONG type: {{"valid": true, "correct_type": "<correct_type>"}}
+- If not a real entity: {{"valid": false}}"""
 
 
 def _is_suspicious_entity(name: str, entity_type: str) -> bool:
@@ -121,11 +134,19 @@ def _is_suspicious_entity(name: str, entity_type: str) -> bool:
     return False
 
 
-async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str) -> bool:
-    """Use LLM to validate if a borderline entity is real. Returns True if valid."""
+async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str) -> dict:
+    """Use LLM to validate entity and optionally correct its type.
+    
+    Returns dict with:
+      {"valid": True/False, "correct_type": "Person"/"Organization"/etc.}
+    """
     cache_key = f"{entity_type}:{name.lower()}"
     if cache_key in _validation_cache:
-        return _validation_cache[cache_key]
+        cached = _validation_cache[cache_key]
+        # Backward compat: old cache entries are bool
+        if isinstance(cached, bool):
+            return {"valid": cached, "correct_type": entity_type}
+        return cached
     
     try:
         from app.config import settings
@@ -160,17 +181,22 @@ async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str)
         
         result = await retry_with_backoff(_call, operation="validate_entity")
         is_valid = result.get("valid", True)
-        _validation_cache[cache_key] = is_valid
+        correct_type = result.get("correct_type", entity_type)
+        
+        validation_result = {"valid": is_valid, "correct_type": correct_type}
+        _validation_cache[cache_key] = validation_result
         
         if not is_valid:
-            logger.debug(f"LLM rejected entity: '{name}' ({entity_type})")
+            logger.info(f"LLM rejected entity: '{name}' ({entity_type})")
+        elif correct_type != entity_type:
+            logger.info(f"LLM reclassified entity: '{name}' from {entity_type} -> {correct_type}")
         
-        return is_valid
+        return validation_result
         
     except Exception as e:
         logger.warning(f"Entity validation LLM call failed for '{name}': {e}")
-        # On failure, allow the entity through (don't block on validation errors)
-        return True
+        # On failure, allow the entity through with original type
+        return {"valid": True, "correct_type": entity_type}
 
 
 
@@ -710,10 +736,15 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             
             # LLM validation for suspicious entities (wrong type, junk names, etc.)
             if _is_suspicious_entity(name, entity_type):
-                is_valid = await _validate_entity_with_llm(name, entity_type, title)
-                if not is_valid:
+                validation = await _validate_entity_with_llm(name, entity_type, title)
+                if not validation.get("valid", True):
                     logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
                     continue
+                # Apply type correction if LLM says the type is wrong
+                correct_type = validation.get("correct_type", entity_type)
+                if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
+                    logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
+                    entity_type = correct_type
                 
             # Resolve the entity and create document relationships
             entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title, description=description)

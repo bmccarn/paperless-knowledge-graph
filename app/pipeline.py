@@ -686,7 +686,13 @@ def _neo4j_label(entity_type: str) -> str:
 
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "", description: str = "") -> str:
-    """Route entity resolution based on type."""
+    """Route entity resolution based on type.
+    
+    ALL entity creation goes through this function, which applies:
+    1. Name validation (blocklist, dates, etc.)
+    2. LLM validation for suspicious entities (type correction + rejection)
+    3. Type-appropriate resolution (person, org, generic)
+    """
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
         return ""
@@ -695,17 +701,27 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
     if _is_date_string(name):
         logger.debug(f"Skipping date string entity: '{name}' ({entity_type})")
         return ""
-        
+    
     entity_type = entity_type.strip().title()
+    
+    # LLM validation for suspicious entities — catches wrong types and junk
+    if _is_suspicious_entity(name, entity_type):
+        validation = await _validate_entity_with_llm(name, entity_type, doc_title)
+        if not validation.get("valid", True):
+            logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
+            return ""
+        correct_type = validation.get("correct_type", entity_type)
+        if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
+            logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
+            entity_type = correct_type
+    
     if entity_type == "Organization":
         return await entity_resolver.resolve_organization(name, doc_id, description=description)
     elif entity_type == "Person":
         return await entity_resolver.resolve_person(name, doc_id, description=description)
     elif entity_type in VALID_ENTITY_TYPES:
-        # For other types, use the generic entity creation via entity_resolver
         return await entity_resolver.resolve_generic(name, entity_type, doc_id, description=description)
     else:
-        # Unknown type — default to Organization if it looks like one, else Person
         if any(w in name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
             return await entity_resolver.resolve_organization(name, doc_id)
         return await entity_resolver.resolve_person(name, doc_id)
@@ -734,19 +750,8 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
                 logger.debug(f"Skipping date-as-event entity: '{name}'")
                 continue
             
-            # LLM validation for suspicious entities (wrong type, junk names, etc.)
-            if _is_suspicious_entity(name, entity_type):
-                validation = await _validate_entity_with_llm(name, entity_type, title)
-                if not validation.get("valid", True):
-                    logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
-                    continue
-                # Apply type correction if LLM says the type is wrong
-                correct_type = validation.get("correct_type", entity_type)
-                if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
-                    logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
-                    entity_type = correct_type
-                
             # Resolve the entity and create document relationships
+            # (LLM validation happens inside _resolve_entity for ALL code paths)
             entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title, description=description)
             if entity_uuid:
                 # Create relationship from document to entity
@@ -789,21 +794,21 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
 async def _process_medical(doc_id, doc_node_id, data, source_props):
     patient = data.get("patient_name")
     if patient and _is_valid_entity_name(patient):
-        person_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
+        person_uuid = await _resolve_entity(patient, "Person", doc_id, doc_title="")
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
     provider = data.get("provider")
     if provider and _is_valid_entity_name(provider):
-        org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="medical")
+        org_uuid = await _resolve_entity(provider, "Organization", doc_id, doc_title="")
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     physician = data.get("ordering_physician")
     if physician and _is_valid_entity_name(physician):
-        phys_uuid = await entity_resolver.resolve_person(physician, doc_id, role="physician")
+        phys_uuid = await _resolve_entity(physician, "Person", doc_id, doc_title="")
         if phys_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
@@ -836,7 +841,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
                 doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
             # Link patient to condition if we have one
             if patient and _is_valid_entity_name(patient):
-                patient_uuid = await entity_resolver.resolve_person(patient, doc_id, role="patient")
+                patient_uuid = await _resolve_entity(patient, "Person", doc_id)
                 if patient_uuid:
                     await graph_store.create_relationship(
                         patient_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION", source_props)
@@ -845,7 +850,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
 async def _process_financial(doc_id, doc_node_id, data, source_props):
     vendor = data.get("vendor")
     if vendor and _is_valid_entity_name(vendor):
-        org_uuid = await entity_resolver.resolve_organization(vendor, doc_id, org_type="financial")
+        org_uuid = await _resolve_entity(vendor, "Organization", doc_id, doc_title="")
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
@@ -873,10 +878,10 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         
         # Determine if it's a person or organization based on name patterns
         if any(w in name.lower() for w in ["inc", "llc", "corp", "company", "ltd", "agency", "dept", "department"]):
-            entity_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type="legal")
+            entity_uuid = await _resolve_entity(name, "Organization", doc_id)
             entity_type = "Organization"
         else:
-            entity_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role", "party"))
+            entity_uuid = await _resolve_entity(name, "Person", doc_id)
             entity_type = "Person"
         
         if entity_uuid:
@@ -905,14 +910,14 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
 async def _process_insurance(doc_id, doc_node_id, data, source_props):
     provider = data.get("provider")
     if provider and _is_valid_entity_name(provider):
-        org_uuid = await entity_resolver.resolve_organization(provider, doc_id, org_type="insurance")
+        org_uuid = await _resolve_entity(provider, "Organization", doc_id)
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     policyholder = data.get("policyholder")
     if policyholder and _is_valid_entity_name(policyholder):
-        person_uuid = await entity_resolver.resolve_person(policyholder, doc_id, role="policyholder")
+        person_uuid = await _resolve_entity(policyholder, "Person", doc_id)
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "COVERS", source_props)
@@ -932,14 +937,14 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
 async def _process_tax(doc_id, doc_node_id, data, source_props):
     filer = data.get("filer_name")
     if filer and _is_valid_entity_name(filer):
-        person_uuid = await entity_resolver.resolve_person(filer, doc_id, role="filer")
+        person_uuid = await _resolve_entity(filer, "Person", doc_id)
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
 
     preparer = data.get("preparer")
     if preparer and _is_valid_entity_name(preparer):
-        prep_uuid = await entity_resolver.resolve_person(preparer, doc_id, role="tax_preparer")
+        prep_uuid = await _resolve_entity(preparer, "Person", doc_id)
         if prep_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", prep_uuid, "Person", "PREPARED_BY", source_props)
@@ -970,7 +975,7 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
         name = party.get("name")
         if not name or not _is_valid_entity_name(name):
             continue
-        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=party.get("role", "party"))
+        person_uuid = await _resolve_entity(name, "Person", doc_id)
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
@@ -982,21 +987,21 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
     service_member = data.get("service_member")
     person_uuid = None
     if service_member and _is_valid_entity_name(service_member):
-        person_uuid = await entity_resolver.resolve_person(service_member, doc_id, role="service_member")
+        person_uuid = await _resolve_entity(service_member, "Person", doc_id)
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "SERVICE_RECORD_OF", source_props)
 
     branch = data.get("branch")
     if branch and _is_valid_entity_name(branch):
-        org_uuid = await entity_resolver.resolve_organization(branch, doc_id, org_type="military_branch")
+        org_uuid = await _resolve_entity(branch, "Organization", doc_id)
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "BRANCH_OF_SERVICE", source_props)
 
     unit = data.get("unit")
     if unit and _is_valid_entity_name(unit):
-        org_uuid = await entity_resolver.resolve_organization(unit, doc_id, org_type="military_unit")
+        org_uuid = await _resolve_entity(unit, "Organization", doc_id)
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "ASSIGNED_TO", source_props)
@@ -1086,7 +1091,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
         name = org.get("name") if isinstance(org, dict) else org
         if not name or not _is_valid_entity_name(name):
             continue
-        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org.get("type", "military"))
+        org_uuid = await _resolve_entity(name, "Organization", doc_id)
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
@@ -1122,7 +1127,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
                 logger.debug(f"Skipping low-confidence person: {name} (conf={confidence})")
                 continue
         role = person.get("role", "") if isinstance(person, dict) else ""
-        person_uuid = await entity_resolver.resolve_person(name, doc_id, role=role)
+        person_uuid = await _resolve_entity(name, "Person", doc_id)
         if person_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
@@ -1137,7 +1142,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
                 logger.debug(f"Skipping low-confidence org: {name} (conf={confidence})")
                 continue
         org_type = org.get("type", "") if isinstance(org, dict) else ""
-        org_uuid = await entity_resolver.resolve_organization(name, doc_id, org_type=org_type)
+        org_uuid = await _resolve_entity(name, "Organization", doc_id)
         if org_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)

@@ -160,7 +160,6 @@ export default function DocumentsPage() {
     }
   };
 
-  // Filter and sort
   const filtered = documents
     .filter((d) => !typeFilter || d.properties?.doc_type === typeFilter)
     .sort((a, b) => {
@@ -181,7 +180,6 @@ export default function DocumentsPage() {
     }
   };
 
-  // Doc type stats
   const typeCounts: Record<string, number> = {};
   documents.forEach((d) => {
     const t = (d.properties?.doc_type as string) || "unknown";
@@ -190,11 +188,11 @@ export default function DocumentsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-6 pb-0 space-y-4">
+      <div className="p-4 md:p-6 pb-0 space-y-3 md:space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Documents</h1>
+            <h1 className="text-xl md:text-2xl font-bold tracking-tight">Documents</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {documents.length} documents indexed
             </p>
@@ -211,14 +209,14 @@ export default function DocumentsPage() {
               ) : (
                 <RefreshCw className="h-3.5 w-3.5" />
               )}
-              Reindex {selected.size} selected
+              <span className="hidden sm:inline">Reindex</span> {selected.size}
             </Button>
           )}
         </div>
 
         {/* Stats bar */}
         {!loading && documents.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5 md:gap-2 overflow-x-auto">
             {Object.entries(typeCounts)
               .sort((a, b) => b[1] - a[1])
               .map(([type, count]) => (
@@ -229,7 +227,7 @@ export default function DocumentsPage() {
                 >
                   <Badge
                     variant="outline"
-                    className={`text-xs gap-1.5 cursor-pointer transition-all ${
+                    className={`text-xs gap-1.5 cursor-pointer transition-all whitespace-nowrap ${
                       typeFilter === type ? "ring-1 ring-primary" : "hover:bg-accent"
                     } ${getDocTypeClass(type)}`}
                   >
@@ -241,7 +239,7 @@ export default function DocumentsPage() {
               ))}
             {typeFilter && (
               <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setTypeFilter("")}>
-                Clear filter
+                Clear
               </Button>
             )}
           </div>
@@ -259,14 +257,14 @@ export default function DocumentsPage() {
               className="pl-9"
             />
           </div>
-          <Button onClick={fetchDocs} disabled={loading} variant="secondary">
+          <Button onClick={fetchDocs} disabled={loading} variant="secondary" className="min-w-[44px]">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 px-6 pb-6 pt-4 min-h-0">
+      {/* Content */}
+      <div className="flex-1 px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 min-h-0">
         {loading && documents.length === 0 ? (
           <div className="space-y-2">
             {[...Array(8)].map((_, i) => (
@@ -274,200 +272,288 @@ export default function DocumentsPage() {
             ))}
           </div>
         ) : (
-          <Card className="h-full flex flex-col border-border/50 min-h-0">
-            <div className="flex-1 overflow-auto min-h-0">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={selected.size > 0 && selected.size === filtered.length}
-                        onCheckedChange={toggleSelectAll}
-                        className="h-3.5 w-3.5"
-                      />
-                    </TableHead>
-                    <TableHead className="w-8" />
-                    <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("title")}
-                      >
-                        Title
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("doc_type")}
-                      >
-                        Type
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("date")}
-                      >
-                        Date
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="w-16">ID</TableHead>
-                    <TableHead className="w-16" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paginated.map((doc) => {
-                    const p = doc.properties;
-                    const docId = p.paperless_id as number;
-                    const key = String(docId);
-                    const isExpanded = !!expanded[key];
-                    const docType = (p.doc_type as string) || "unknown";
-
-                    return (
-                      <>
-                        <TableRow
-                          key={key}
-                          className="cursor-pointer group"
-                          onClick={() => toggleExpand(docId, p.uuid as string)}
-                        >
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              checked={selected.has(docId)}
-                              onCheckedChange={() => toggleSelect(docId)}
-                              className="h-3.5 w-3.5"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            {isExpanded ? (
-                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium max-w-md">
-                            <span className="truncate block">
-                              {(p.title as string) || `Document #${docId}`}
-                            </span>
-                          </TableCell>
-                          <TableCell>
+          <>
+            {/* Mobile card layout */}
+            <div className="md:hidden space-y-2 overflow-y-auto h-full">
+              {paginated.map((doc) => {
+                const p = doc.properties;
+                const docId = p.paperless_id as number;
+                const docType = (p.doc_type as string) || "unknown";
+                return (
+                  <Card key={String(docId)} className="border-border/50">
+                    <CardContent className="p-3">
+                      <div className="flex items-start gap-3">
+                        <Checkbox
+                          checked={selected.has(docId)}
+                          onCheckedChange={() => toggleSelect(docId)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">
+                            {(p.title as string) || `Document #${docId}`}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                             <Badge
                               variant="outline"
                               className={`text-[10px] ${getDocTypeClass(docType)}`}
                             >
                               {docType}
                             </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                            {(p.date as string) || "—"}
-                          </TableCell>
-                          <TableCell>
+                            <span className="text-xs text-muted-foreground">
+                              {(p.date as string) || "—"}
+                            </span>
                             <a
                               href={`${paperlessBaseUrl}/documents/${docId}/`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-xs text-primary hover:underline"
-                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1 text-xs text-primary ml-auto"
                             >
-                              #{docId}
-                              <ExternalLink className="h-2.5 w-2.5" />
+                              #{docId} <ExternalLink className="h-2.5 w-2.5" />
                             </a>
-                          </TableCell>
-                          <TableCell>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={(e) => { e.stopPropagation(); handleReindex(docId); }}
-                                  disabled={reindexing.has(docId)}
-                                >
-                                  {reindexing.has(docId) ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="h-3 w-3" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Reindex</TooltipContent>
-                            </Tooltip>
-                          </TableCell>
-                        </TableRow>
-                        {isExpanded && (
-                          <TableRow key={`${key}-detail`}>
-                            <TableCell colSpan={7} className="bg-accent/20 p-0">
-                              <div className="p-4">
-                                {expanded[key]?.loading ? (
-                                  <div className="flex items-center gap-2 py-4 justify-center">
-                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    <span className="text-sm text-muted-foreground">Loading details...</span>
-                                  </div>
-                                ) : expanded[key]?.node ? (
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    {Object.entries(
-                                      (expanded[key].node as { properties?: Record<string, unknown> })?.properties || {}
-                                    )
-                                      .filter(([k]) => !["uuid"].includes(k))
-                                      .map(([k, v]) => (
-                                        <div key={k} className="space-y-0.5">
-                                          <p className="text-[10px] uppercase text-muted-foreground tracking-wider">{k}</p>
-                                          <p className="text-sm break-all">
-                                            {typeof v === "object" ? JSON.stringify(v) : String(v || "—")}
-                                          </p>
-                                        </div>
-                                      ))}
-                                  </div>
-                                ) : (
-                                  <p className="text-sm text-muted-foreground text-center py-2">No details available</p>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </>
-                    );
-                  })}
-                  {paginated.length === 0 && !loading && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                        <FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                        <p>No documents found</p>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          onClick={() => handleReindex(docId)}
+                          disabled={reindexing.has(docId)}
+                        >
+                          {reindexing.has(docId) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              {paginated.length === 0 && !loading && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                  <p>No documents found</p>
+                </div>
+              )}
             </div>
 
-            {/* Pagination */}
+            {/* Desktop table layout */}
+            <Card className="hidden md:flex h-full flex-col border-border/50 min-h-0">
+              <div className="flex-1 overflow-auto min-h-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={selected.size > 0 && selected.size === filtered.length}
+                          onCheckedChange={toggleSelectAll}
+                          className="h-3.5 w-3.5"
+                        />
+                      </TableHead>
+                      <TableHead className="w-8" />
+                      <TableHead>
+                        <button
+                          className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          onClick={() => handleSort("title")}
+                        >
+                          Title
+                          <ArrowUpDown className="h-3 w-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          onClick={() => handleSort("doc_type")}
+                        >
+                          Type
+                          <ArrowUpDown className="h-3 w-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          onClick={() => handleSort("date")}
+                        >
+                          Date
+                          <ArrowUpDown className="h-3 w-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-16">ID</TableHead>
+                      <TableHead className="w-16" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginated.map((doc) => {
+                      const p = doc.properties;
+                      const docId = p.paperless_id as number;
+                      const key = String(docId);
+                      const isExpanded = !!expanded[key];
+                      const docType = (p.doc_type as string) || "unknown";
+
+                      return (
+                        <>
+                          <TableRow
+                            key={key}
+                            className="cursor-pointer group"
+                            onClick={() => toggleExpand(docId, p.uuid as string)}
+                          >
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selected.has(docId)}
+                                onCheckedChange={() => toggleSelect(docId)}
+                                className="h-3.5 w-3.5"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              {isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium max-w-md">
+                              <span className="truncate block">
+                                {(p.title as string) || `Document #${docId}`}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${getDocTypeClass(docType)}`}
+                              >
+                                {docType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                              {(p.date as string) || "—"}
+                            </TableCell>
+                            <TableCell>
+                              <a
+                                href={`${paperlessBaseUrl}/documents/${docId}/`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                #{docId}
+                                <ExternalLink className="h-2.5 w-2.5" />
+                              </a>
+                            </TableCell>
+                            <TableCell>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={(e) => { e.stopPropagation(); handleReindex(docId); }}
+                                    disabled={reindexing.has(docId)}
+                                  >
+                                    {reindexing.has(docId) ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-3 w-3" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Reindex</TooltipContent>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                          {isExpanded && (
+                            <TableRow key={`${key}-detail`}>
+                              <TableCell colSpan={7} className="bg-accent/20 p-0">
+                                <div className="p-4">
+                                  {expanded[key]?.loading ? (
+                                    <div className="flex items-center gap-2 py-4 justify-center">
+                                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                      <span className="text-sm text-muted-foreground">Loading details...</span>
+                                    </div>
+                                  ) : expanded[key]?.node ? (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {Object.entries(
+                                        (expanded[key].node as { properties?: Record<string, unknown> })?.properties || {}
+                                      )
+                                        .filter(([k]) => !["uuid"].includes(k))
+                                        .map(([k, v]) => (
+                                          <div key={k} className="space-y-0.5">
+                                            <p className="text-[10px] uppercase text-muted-foreground tracking-wider">{k}</p>
+                                            <p className="text-sm break-all">
+                                              {typeof v === "object" ? JSON.stringify(v) : String(v || "—")}
+                                            </p>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground text-center py-2">No details available</p>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </>
+                      );
+                    })}
+                    {paginated.length === 0 && !loading && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                          <FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                          <p>No documents found</p>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t px-4 py-2">
+                  <p className="text-xs text-muted-foreground">
+                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(0)} disabled={page === 0}>
+                      <ChevronsLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p - 1)} disabled={page === 0}>
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="text-xs text-muted-foreground px-2">
+                      {page + 1} / {totalPages}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1}>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}>
+                      <ChevronsRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* Mobile pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t px-4 py-2">
+              <div className="md:hidden flex items-center justify-between pt-3">
                 <p className="text-xs text-muted-foreground">
                   {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
                 </p>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(0)} disabled={page === 0}>
-                    <ChevronsLeft className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p - 1)} disabled={page === 0}>
-                    <ChevronLeft className="h-3.5 w-3.5" />
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p - 1)} disabled={page === 0}>
+                    <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <span className="text-xs text-muted-foreground px-2">
-                    {page + 1} / {totalPages}
+                    {page + 1}/{totalPages}
                   </span>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1}>
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}>
-                    <ChevronsRight className="h-3.5 w-3.5" />
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1}>
+                    <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
             )}
-          </Card>
+          </>
         )}
       </div>
     </div>

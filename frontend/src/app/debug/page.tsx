@@ -110,7 +110,7 @@ export default function DebugPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Controls */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b bg-card/50 backdrop-blur-sm shrink-0">
+      <div className="flex flex-wrap items-center gap-2 md:gap-3 px-3 md:px-4 py-2 border-b bg-card/50 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-2">
           <span
             className={cn(
@@ -166,7 +166,7 @@ export default function DebugPage() {
       </div>
 
       {/* Log output */}
-      <div className="flex-1 overflow-auto bg-zinc-950 p-3 font-mono text-[13px] leading-5">
+      <div className="flex-1 overflow-auto bg-zinc-950 p-2 md:p-3 font-mono text-[11px] md:text-[13px] leading-5">
         {filtered.map((line, i) => (
           <div key={i} className={cn("whitespace-pre-wrap", LEVEL_COLORS[line.level] || "text-zinc-200")}>
             <span className="text-zinc-500">{formatTime(line.timestamp)}</span>{" "}

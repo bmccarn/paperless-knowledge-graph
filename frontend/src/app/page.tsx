@@ -310,7 +310,7 @@ export default function DashboardPage() {
   const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
 
   return (
-    <div className="space-y-6 p-6 lg:p-8">
+    <div className="space-y-4 p-4 md:space-y-6 md:p-6 lg:p-8">
       {/* Header with search */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>

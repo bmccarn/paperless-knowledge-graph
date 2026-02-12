@@ -513,6 +513,50 @@ def _repair_json(raw_text: str) -> dict:
     raise json.JSONDecodeError(f"Failed to repair JSON", raw_text[:200], 0)
 
 
+async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 2) -> dict:
+    """Call an LLM function expecting JSON, with type validation and retry."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = await retry_with_backoff(call_fn, operation=f"{operation}_attempt{attempt}")
+            
+            # Validate it's actually a dict
+            if isinstance(result, dict):
+                return result
+            elif isinstance(result, str):
+                # LLM returned a string — try to parse it as JSON
+                try:
+                    parsed = json.loads(result)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                logger.warning(f"{operation}: LLM returned string instead of dict (attempt {attempt+1}), retrying")
+                last_error = ValueError(f"Expected dict, got string: {str(result)[:100]}")
+                continue
+            elif result is None:
+                logger.warning(f"{operation}: LLM returned None (attempt {attempt+1}), retrying")
+                last_error = ValueError("LLM returned None")
+                continue
+            else:
+                logger.warning(f"{operation}: LLM returned {type(result).__name__} (attempt {attempt+1}), retrying")
+                last_error = ValueError(f"Expected dict, got {type(result).__name__}")
+                continue
+                
+        except json.JSONDecodeError as e:
+            logger.warning(f"{operation}: JSON parse failed (attempt {attempt+1}): {e}")
+            last_error = e
+            continue
+        except Exception as e:
+            logger.warning(f"{operation}: Unexpected error (attempt {attempt+1}): {e}")
+            last_error = e
+            continue
+    
+    # All retries exhausted — return empty dict instead of crashing
+    logger.error(f"{operation}: All {max_retries} attempts failed, using empty dict. Last error: {last_error}")
+    return {}
+
+
 class EntityExtractor:
     def __init__(self):
         self.client = AsyncOpenAI(
@@ -563,7 +607,7 @@ class EntityExtractor:
             )
             return _repair_json(response.choices[0].message.content)
 
-        return await retry_with_backoff(_call, operation=f"pass1_metadata:{doc_type}")
+        return await _extract_json_with_retry(_call, operation=f"pass1_metadata:{doc_type}")
 
     async def _pass2_entity_extraction(self, title: str, content: str, metadata: dict) -> dict:
         """Pass 2: Extract and type all entities."""
@@ -583,7 +627,7 @@ class EntityExtractor:
             )
             return _repair_json(response.choices[0].message.content)
 
-        return await retry_with_backoff(_call, operation="pass2_entities")
+        return await _extract_json_with_retry(_call, operation="pass2_entities")
 
     async def _pass3_relationship_extraction(self, title: str, content: str, entities: dict) -> dict:
         """Pass 3: Infer relationships between entities."""
@@ -603,7 +647,7 @@ class EntityExtractor:
             )
             return _repair_json(response.choices[0].message.content)
 
-        return await retry_with_backoff(_call, operation="pass3_relationships")
+        return await _extract_json_with_retry(_call, operation="pass3_relationships")
 
     async def _pass4_verification(self, title: str, entities: dict) -> dict:
         """Pass 4: Verify and filter extracted entities (Extract-Critique-Refine pattern)."""
@@ -630,7 +674,7 @@ class EntityExtractor:
             return _repair_json(response.choices[0].message.content)
 
         try:
-            verified = await retry_with_backoff(_call, operation="pass4_verification")
+            verified = await _extract_json_with_retry(_call, operation="pass4_verification")
             # Sanity check: verification should not ADD entities, only remove them
             verified_names = {e.get("name", "").lower() for e in verified.get("entities", [])}
             original_names = {e.get("name", "").lower() for e in entity_list}
@@ -646,7 +690,12 @@ class EntityExtractor:
 
     def _combine_results(self, metadata: dict, entities: dict, relationships: dict) -> dict:
         """Combine 3-pass results into format expected by pipeline.py."""
-        result = dict(metadata)  # Start with metadata
+        # Safely convert metadata — guard against non-dict returns from LLM
+        if isinstance(metadata, dict):
+            result = dict(metadata)
+        else:
+            logger.warning(f"Metadata extraction returned {type(metadata).__name__}, using empty dict")
+            result = {}
         
         # Convert entities to people/organizations format for backward compatibility
         people = []

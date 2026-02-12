@@ -460,7 +460,7 @@ Respond with ONLY: {{"same_entity": true}} or {{"same_entity": false}}"""
         return is_same
     
     except Exception as e:
-        logger.warning(f"LLM merge tiebreaker failed for '{name_a}' <-> '{name_b}': {{e}}")
+        logger.warning(f"LLM merge tiebreaker failed for '{name_a}' <-> '{name_b}': {e}")
         return False  # When in doubt, don't merge
 
 
@@ -492,6 +492,16 @@ class EntityResolver:
         normalized = normalize_name(name)
         if not normalized:
             return ""
+        
+        # Detect organizations misclassified as Person
+        # If name contains business suffixes, redirect to org resolver
+        name_lower = normalized.lower()
+        org_indicators = ["llc", "inc", "corp", "ltd", "company", "co.", "solutions",
+                         "services", "association", "foundation", "bank", "mortgage",
+                         "insurance", "financial", "trust", "group", "partners"]
+        if any(f" {ind}" in f" {name_lower} " or name_lower.endswith(f" {ind}") or name_lower.startswith(f"{ind} ") for ind in org_indicators):
+            logger.info(f"Redirecting org-as-person to org resolver: '{name}'")
+            return await self.resolve_organization(name, source_doc_id, description=description)
 
         # 1. Exact match
         existing = await graph_store.find_person(normalized)

@@ -203,12 +203,28 @@ async def process_document(doc: dict) -> dict:
         await _process_implied_relationships(doc_id, extracted)
 
         # Step 6: Store embeddings — chunk content for granular retrieval
-        chunks = chunk_text(content, chunk_size=4000, overlap=800)
+        # D: Filter boilerplate before chunking
+        filtered_content = _filter_boilerplate(content)
+        
+        chunks = chunk_text(filtered_content, chunk_size=4000, overlap=800)
+        
+        # C: Prefix each chunk with document metadata for better retrieval context
+        metadata_prefix = f"Document: {title}\nType: {doc_type}\nDate: {doc_date or 'unknown'}\n\n"
+        
         for i, chunk in enumerate(chunks):
+            prefixed_chunk = metadata_prefix + chunk
             await embeddings_store.store_document_embedding(
-                doc_id, chunk, chunk_index=i, title=title, doc_type=doc_type
+                doc_id, prefixed_chunk, chunk_index=i, title=title, doc_type=doc_type
             )
         logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
+        
+        # A: Generate document-level summary and store as special chunk (index 9999)
+        doc_summary = await _generate_document_summary(doc_id, title, doc_type, content, extracted)
+        if doc_summary:
+            await embeddings_store.store_document_embedding(
+                doc_id, doc_summary, chunk_index=9999, title=title, doc_type=doc_type
+            )
+            logger.info(f"Doc {doc_id}: stored document summary embedding")
 
         # Step 6b: Store entity embeddings for resolved entities (ALL entity types)
         await _store_entity_embeddings(doc_id, extracted)
@@ -360,6 +376,131 @@ def _is_full_address(name: str) -> bool:
     if re.search(r"\b\d{5}(-\d{4})?\b", name) and len(name) > 10:
         return True
     return False
+
+
+# --- Boilerplate Filter (Improvement D) ---
+_BOILERPLATE_PATTERNS = [
+    re.compile(r'(?:OMB Approved|Respondent Burden|Expiration Date).*', re.I),
+    re.compile(r'SERVES THE FOLLOWING STATES.*?(?=\n(?:---|#)|$)', re.S),
+    re.compile(r'\[QR [Cc]ode[^\]]*\]'),
+    re.compile(r'Veterans Crisis Line.*?(?:veteranscrisisisline\.net|838255).*?\n', re.S | re.I),
+    re.compile(r'(?:^|\n)\s*(?:\d+ of \d+|Page \d+)\s*(?:\n|$)', re.M),
+    re.compile(r'(?:^|\n)\s*SIGN HERE\s*.*$', re.M),
+    re.compile(r'(?:^|\n)\s*\d+\.\s*(?:SOCIAL SECURITY NUMBER|SEX OF APPLICANT|DATE OF BIRTH)\s*$', re.M),
+]
+
+def _filter_boilerplate(content: str) -> str:
+    """Remove boilerplate sections from document content before chunking."""
+    if not content:
+        return content
+    filtered = content
+    for pattern in _BOILERPLATE_PATTERNS:
+        filtered = pattern.sub('\n', filtered)
+    filtered = re.sub(r'\n{4,}', '\n\n\n', filtered)
+    filtered = re.sub(r'^[\s|:-]+$', '', filtered, flags=re.M)
+    original_len = len(content.strip())
+    filtered_len = len(filtered.strip())
+    stripped_pct = round((1 - filtered_len / original_len) * 100, 1) if original_len > 0 else 0
+    if stripped_pct > 60:
+        logger.warning(f'Boilerplate filter stripped {stripped_pct}% of content, using original')
+        return content
+    if stripped_pct > 5:
+        logger.info(f'Boilerplate filter: stripped {stripped_pct}% ({original_len - filtered_len} chars)')
+    return filtered.strip()
+
+
+# --- Document Summary Generator (Improvement A) ---
+async def _generate_document_summary(doc_id: int, title: str, doc_type: str,
+                                      content: str, extracted: dict) -> str:
+    """Generate a concise document summary capturing key facts for embedding."""
+    from app.config import settings as _settings
+    from app.retry import retry_with_backoff
+    from openai import AsyncOpenAI
+
+    try:
+        client = AsyncOpenAI(
+            base_url=_settings.litellm_url,
+            api_key=_settings.litellm_api_key,
+        )
+
+        extracted_facts = []
+        for key, val in extracted.items():
+            if key in ("confidence", "extraction_method", "implied_relationships", "all_entities"):
+                continue
+            if isinstance(val, str) and val:
+                extracted_facts.append(f"{key}: {val}")
+            elif isinstance(val, list) and val:
+                items = []
+                for item in val[:10]:
+                    if isinstance(item, dict):
+                        items.append(str({k: v for k, v in item.items() if v}))
+                    else:
+                        items.append(str(item))
+                extracted_facts.append(f"{key}: {', '.join(items)}")
+
+        facts_text = "\n".join(extracted_facts[:30]) if extracted_facts else "No structured data extracted."
+
+        prompt = f"""Summarize this document in 150-200 words. Focus on KEY FACTS: names, numbers, dates, amounts, ratings, percentages, decisions, and outcomes. Be specific and precise.
+
+If this is a government/VA/military document, explicitly state any disability ratings, combined rating percentages, effective dates, permanent/total status, and decisions made.
+If this is a financial document, state amounts, parties, account numbers, and dates.
+If this is a medical document, state diagnoses, test results, providers, and dates.
+
+Do NOT include boilerplate, instructions, or form descriptions. Only summarize the actual substantive content.
+
+Document title: {title}
+Document type: {doc_type}
+Extracted metadata:
+{facts_text}
+
+Document content (first 8000 chars):
+{content[:24000]}
+
+Summary:"""
+
+        async def _call():
+            response = await client.chat.completions.create(
+                model=_settings.gemini_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1500,
+                temperature=0.1,
+            )
+            text = response.choices[0].message.content
+            if text:
+                text = text.strip()
+            return text or ""
+
+        summary = await retry_with_backoff(_call, operation="generate_doc_summary")
+        
+        # If summary is suspiciously short, retry once with more explicit instruction
+        if len(summary) < 200:
+            logger.warning(f"Doc {doc_id}: summary too short ({len(summary)} chars), retrying with explicit prompt")
+            retry_prompt = f"Write a 150-200 word factual summary of this document. Include ALL key numbers, dates, percentages, names, and decisions.\n\nTitle: {title}\nContent (first 12000 chars):\n{content[:24000]}"
+            
+            async def _retry_call():
+                response = await client.chat.completions.create(
+                    model=_settings.gemini_model,
+                    messages=[{"role": "user", "content": retry_prompt}],
+                    max_tokens=1500,
+                    temperature=0.1,
+                )
+                text = response.choices[0].message.content
+                if text:
+                    text = text.strip()
+                return text or ""
+            
+            retry_summary = await retry_with_backoff(_retry_call, operation="generate_doc_summary_retry")
+            if len(retry_summary) > len(summary):
+                summary = retry_summary
+        
+        full_summary = f"DOCUMENT SUMMARY — {title} (Type: {doc_type}, Doc ID: {doc_id})\n\n{summary}"
+        logger.info(f"Doc {doc_id}: generated summary ({len(summary)} chars)")
+        return full_summary
+
+    except Exception as e:
+        logger.warning(f"Doc {doc_id}: summary generation failed: {e}")
+        return ""
+
 
 async def _store_entity_embeddings(doc_id: int, extracted: dict):
     """Store embeddings for ALL entity types from the 3-pass extraction."""
@@ -766,12 +907,9 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
 
 
 async def _process_military(doc_id, doc_node_id, data, source_props):
-    """Process military documents with service-specific relationships."""
-    # If 3-pass extraction provided all_entities, skip legacy processing
-    if data.get("all_entities"):
-        return
-
+    """Process military documents with service-specific relationships and VA rating data."""
     service_member = data.get("service_member")
+    person_uuid = None
     if service_member and _is_valid_entity_name(service_member):
         person_uuid = await entity_resolver.resolve_person(service_member, doc_id, role="service_member")
         if person_uuid:
@@ -798,6 +936,80 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
         if base_uuid:
             await graph_store.create_relationship(
                 doc_node_id, "Document", base_uuid, "Location", "STATIONED_AT", source_props)
+
+    # B: Process disability ratings as MedicalResult nodes
+    for rating in (data.get("disability_ratings") or []):
+        condition = rating.get("condition", "")
+        percentage = rating.get("percentage", "")
+        if not condition:
+            continue
+        result_uuid = await graph_store.create_node("MedicalResult", {
+            "test_name": condition,
+            "value": str(percentage) + "%" if percentage else "",
+            "unit": "percent",
+            "reference_range": "",
+            "flag": rating.get("status", ""),
+            "effective_date": rating.get("effective_date", ""),
+            "confidence": 1.0,
+        })
+        await graph_store.create_relationship(
+            doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
+        # Link person to condition
+        if person_uuid and condition and _is_valid_entity_name(condition):
+            condition_uuid = await _resolve_entity(condition, "Condition", doc_id)
+            if condition_uuid:
+                await graph_store.create_relationship(
+                    person_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION",
+                    {**source_props, "rating": str(percentage), "effective_date": rating.get("effective_date", "")})
+
+    # B: Process combined rating
+    combined = data.get("combined_rating")
+    if combined:
+        combined_uuid = await graph_store.create_node("MedicalResult", {
+            "test_name": "Combined VA Disability Rating",
+            "value": str(combined) + "%",
+            "unit": "percent",
+            "effective_date": data.get("combined_rating_effective_date", ""),
+            "flag": "permanent_and_total" if data.get("permanent_and_total") else "",
+            "confidence": 1.0,
+        })
+        await graph_store.create_relationship(
+            doc_node_id, "Document", combined_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
+        if person_uuid:
+            await graph_store.create_relationship(
+                person_uuid, "Person", combined_uuid, "MedicalResult", "RATED_AT",
+                {**source_props, "combined_rating": str(combined),
+                 "effective_date": data.get("combined_rating_effective_date", "")})
+
+    # B: Process conditions
+    for cond in (data.get("conditions") or []):
+        name = cond.get("name") if isinstance(cond, dict) else cond
+        if not name or not _is_valid_entity_name(name):
+            continue
+        condition_uuid = await _resolve_entity(name, "Condition", doc_id)
+        if condition_uuid:
+            await graph_store.create_relationship(
+                doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
+            if person_uuid:
+                status = cond.get("status", "") if isinstance(cond, dict) else ""
+                await graph_store.create_relationship(
+                    person_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION",
+                    {**source_props, "status": status})
+
+    # B: Process benefits (DEA, CHAMPVA, etc.)
+    for benefit in (data.get("benefits") or []):
+        benefit_type = benefit.get("benefit_type", "")
+        if not benefit_type:
+            continue
+        benefit_uuid = await graph_store.create_node("InsurancePolicy", {
+            "policy_number": "",
+            "provider": "Department of Veterans Affairs",
+            "coverage_type": benefit_type,
+            "effective_date": benefit.get("effective_date", ""),
+            "eligibility": benefit.get("eligibility", ""),
+        })
+        await graph_store.create_relationship(
+            doc_node_id, "Document", benefit_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
 
     for org in (data.get("organizations") or []):
         name = org.get("name") if isinstance(org, dict) else org

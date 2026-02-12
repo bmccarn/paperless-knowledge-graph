@@ -9,9 +9,10 @@ from app.graph import graph_store
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 85  # Auto-merge threshold (raised from 75)
-LLM_TIEBREAKER_LOW = 70   # Below this: definitely different entities
-LLM_TIEBREAKER_HIGH = 85  # 70-85 zone: would need LLM confirmation (skip for now)
+SIMILARITY_THRESHOLD = 85  # Auto-merge threshold
+LLM_MERGE_LOW = 70        # Below this: definitely different entities
+LLM_MERGE_HIGH = 85       # 70-85 zone: use LLM to decide
+_merge_llm_cache: dict[str, bool] = {}
 SHORT_NAME_THRESHOLD = 95  # Names ≤5 chars need this score or higher
 EMBEDDING_THRESHOLD = 0.88
 NAME_PARTS_THRESHOLD = 0.70
@@ -392,6 +393,77 @@ def advanced_match_score(name_a: str, name_b: str, entity_type: str = "Person") 
         return max(fuzzy_score, token_sort, parts_score, token_set * 0.95)
 
 
+
+
+async def _llm_should_merge(name_a: str, name_b: str, entity_type: str) -> bool:
+    """Ask LLM whether two entity names refer to the same real-world entity.
+    
+    Used in the gray zone (score 70-85) where fuzzy matching is uncertain.
+    Leverages LLM general knowledge for OCR typos, abbreviations, and aliases.
+    """
+    cache_key = f"{entity_type}:{name_a.lower()}:{name_b.lower()}"
+    rev_key = f"{entity_type}:{name_b.lower()}:{name_a.lower()}"
+    if cache_key in _merge_llm_cache:
+        return _merge_llm_cache[cache_key]
+    if rev_key in _merge_llm_cache:
+        return _merge_llm_cache[rev_key]
+    
+    try:
+        from app.config import settings
+        from app.retry import retry_with_backoff
+        from openai import AsyncOpenAI
+        import json as _json
+        
+        client = AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key)
+        
+        prompt = f"""Do these two names refer to the SAME real-world {entity_type.lower()}?
+
+Name A: "{name_a}"
+Name B: "{name_b}"
+
+Consider: OCR errors, typos, abbreviations, middle names/initials, nicknames, 
+alternate spellings, and your general knowledge.
+
+Examples of SAME entity:
+- "Blake T McCarn" and "Blake Thomas Mccarn" → same (middle initial = middle name)
+- "USAA Federal Savings Bank" and "USAA" → same (abbreviation)
+- "Blake McCarr" and "Blake McCarn" → same (OCR typo)
+
+Examples of DIFFERENT entities:
+- "Blake McCarn" and "Chelsea McCarn" → different (different first names, same family)
+- "Matthew Smith" and "Matthew Johnson" → different (different last names)
+- "RapidRoute Solutions" and "Rapid Transit Authority" → different (different companies)
+
+Respond with ONLY: {{"same_entity": true}} or {{"same_entity": false}}"""
+
+        async def _call():
+            response = await client.chat.completions.create(
+                model=settings.gemini_model,
+                messages=[{{"role": "user", "content": prompt}}],
+                response_format={{"type": "json_object"}},
+            )
+            raw = response.choices[0].message.content or ""
+            try:
+                return _json.loads(raw)
+            except _json.JSONDecodeError:
+                return {{"same_entity": False}}
+        
+        result = await retry_with_backoff(_call, operation="llm_merge_tiebreaker")
+        is_same = result.get("same_entity", False)
+        _merge_llm_cache[cache_key] = is_same
+        
+        if is_same:
+            logger.info(f"LLM confirmed merge: '{name_a}' <-> '{name_b}' ({entity_type})")
+        else:
+            logger.info(f"LLM blocked merge: '{name_a}' <-> '{name_b}' ({entity_type})")
+        
+        return is_same
+    
+    except Exception as e:
+        logger.warning(f"LLM merge tiebreaker failed for '{name_a}' <-> '{name_b}': {{e}}")
+        return False  # When in doubt, don't merge
+
+
 class EntityResolver:
     def __init__(self):
         self._cache = {}
@@ -444,11 +516,19 @@ class EntityResolver:
                     best_score = alias_score
                     best_match = person
 
-        if best_match and should_auto_merge(normalized, best_match["name"], best_score, "Person"):
-            logger.info(f"Matched '{name}' to '{best_match['name']}' (score={best_score:.3f})")
-            if name != best_match["name"] and name not in (best_match.get("aliases") or []):
-                await graph_store.add_person_alias(best_match["uuid"], name)
-            return best_match["uuid"]
+        if best_match and best_score >= (LLM_MERGE_LOW / 100.0):
+            if should_auto_merge(normalized, best_match["name"], best_score, "Person"):
+                logger.info(f"Matched '{name}' to '{best_match['name']}' (score={best_score:.3f})")
+                if name != best_match["name"] and name not in (best_match.get("aliases") or []):
+                    await graph_store.add_person_alias(best_match["uuid"], name)
+                return best_match["uuid"]
+            elif best_score >= (LLM_MERGE_LOW / 100.0) and best_score < (LLM_MERGE_HIGH / 100.0):
+                # Gray zone — ask LLM
+                if await _llm_should_merge(normalized, best_match["name"], "Person"):
+                    logger.info(f"LLM-confirmed match '{name}' to '{best_match['name']}' (score={best_score:.3f})")
+                    if name != best_match["name"] and name not in (best_match.get("aliases") or []):
+                        await graph_store.add_person_alias(best_match["uuid"], name)
+                    return best_match["uuid"]
 
         # 3. Embedding similarity
         if all_persons and best_score >= 0.5:

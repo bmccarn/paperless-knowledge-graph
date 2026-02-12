@@ -62,8 +62,9 @@ class QueryEngine:
         first_pass = await self._synthesize_with_gaps(question, initial_context)
         all_context = initial_context
 
+        # Up to 3 follow-up iterations for deeper retrieval
         follow_ups_used = []
-        for follow_up in first_pass.get("follow_up_queries", [])[:2]:
+        for follow_up in first_pass.get("follow_up_queries", [])[:3]:
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
             follow_ups_used.append(follow_up)
@@ -83,7 +84,7 @@ class QueryEngine:
             "sources": self._build_sources(all_context),
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
-                for e in entities_found[:20]
+                for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
@@ -98,7 +99,6 @@ class QueryEngine:
 
     async def query_stream(self, question: str):
         """Stream query response via SSE events."""
-        # Check cache first
         cache_key = normalize_query_key(question)
         cached = query_cache.get(cache_key)
         if cached is not None:
@@ -110,24 +110,25 @@ class QueryEngine:
         yield {"type": "status", "message": "Searching documents and knowledge graph..."}
         initial_context = await self._retrieve(question)
 
-        yield {"type": "status", "message": "Analyzing initial results..."}
+        yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
         first_pass = await self._synthesize_with_gaps(question, initial_context)
         all_context = initial_context
 
+        # Up to 3 follow-up iterations
         follow_ups_used = []
-        for follow_up in first_pass.get("follow_up_queries", [])[:2]:
-            yield {"type": "status", "message": f"Following up: {follow_up[:60]}..."}
+        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:3]):
+            yield {"type": "status", "message": f"Deep dive {i+1}/3: {follow_up[:60]}..."}
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
             follow_ups_used.append(follow_up)
 
         entities_found = first_pass.get("entities_found", [])
         if entities_found:
-            yield {"type": "status", "message": "Expanding knowledge graph..."}
+            yield {"type": "status", "message": f"Expanding knowledge graph ({len(entities_found)} entities)..."}
             graph_context = await self._expand_graph(entities_found)
             all_context = self._merge_context(all_context, graph_context)
 
-        yield {"type": "status", "message": "Generating answer..."}
+        yield {"type": "status", "message": "Synthesizing comprehensive answer..."}
 
         prompt = self._build_final_prompt(
             question,
@@ -151,7 +152,7 @@ class QueryEngine:
             "sources": sources,
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
-                for e in entities_found[:20]
+                for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
@@ -163,14 +164,15 @@ class QueryEngine:
         yield {"type": "complete", "sources": sources,
                "entities_found": result["entities_found"], "cached": False}
 
-    # ── Retrieval ───────────────────────────────────────────────────
+    # ── Retrieval (TUNED: wider net) ────────────────────────────────
 
     async def _retrieve(self, query_text: str) -> dict:
         """Hybrid retrieval: vector + keyword + entity search + graph."""
-        vector_results = await self._cached_vector_search(query_text, limit=10)
-        keyword_results = await embeddings_store.keyword_search(query_text, limit=8)
-        entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
-        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
+        # Wider retrieval: 20 vector, 15 keyword, 8 entity
+        vector_results = await self._cached_vector_search(query_text, limit=20)
+        keyword_results = await embeddings_store.keyword_search(query_text, limit=15)
+        entity_results = await embeddings_store.entity_vector_search(query_text, limit=8)
+        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=8)
         entity_names = await self._extract_entities_from_query(query_text)
 
         graph_nodes = []
@@ -181,7 +183,7 @@ class QueryEngine:
             if cached is not None:
                 results = cached
             else:
-                results = await graph_store.search_nodes(name, limit=5)
+                results = await graph_store.search_nodes(name, limit=8)
                 graph_cache.set(cache_key, results)
             for r in results:
                 uid = r.get("properties", {}).get("uuid", "")
@@ -189,8 +191,9 @@ class QueryEngine:
                     seen_uuids.add(uid)
                     graph_nodes.append(r)
 
+        # Expand entity connections from top 8 vector results (was 5)
         doc_entity_uuids = set()
-        for r in vector_results[:5]:
+        for r in vector_results[:8]:
             doc_id = r.get("document_id")
             if doc_id:
                 try:
@@ -205,16 +208,17 @@ class QueryEngine:
                 except Exception:
                     pass
 
+        # Wider subgraph: top 15 UUIDs, depth 3
         all_uuids = list(seen_uuids | doc_entity_uuids)
         subgraph = {}
         if all_uuids:
             try:
-                sg_key = f"sg:{hashlib.md5(':'.join(sorted(all_uuids[:10])).encode()).hexdigest()}"
+                sg_key = f"sg:{hashlib.md5(':'.join(sorted(all_uuids[:15])).encode()).hexdigest()}"
                 cached = graph_cache.get(sg_key)
                 if cached is not None:
                     subgraph = cached
                 else:
-                    subgraph = await graph_store.get_subgraph(all_uuids[:10], depth=2)
+                    subgraph = await graph_store.get_subgraph(all_uuids[:15], depth=3)
                     graph_cache.set(sg_key, subgraph)
             except Exception as e:
                 logger.warning(f"Subgraph traversal failed: {e}")
@@ -224,12 +228,12 @@ class QueryEngine:
             "keyword_results": keyword_results,
             "entity_results": entity_results,
             "entity_kw_results": entity_kw_results,
-            "graph_nodes": graph_nodes[:15],
+            "graph_nodes": graph_nodes[:25],
             "subgraph": subgraph,
             "entity_names": entity_names,
         }
 
-    # ── Gap analysis synthesis ──────────────────────────────────────
+    # ── Gap analysis (TUNED: smarter follow-ups) ────────────────────
 
     async def _synthesize_with_gaps(self, question: str, context: dict) -> dict:
         doc_context = self._format_doc_context(context)
@@ -243,15 +247,20 @@ Document context:
 {doc_context}
 {graph_text}
 
-Based on this context, provide:
-1. A draft answer (be specific, cite document titles when available)
-2. A confidence score (0-1)
-3. What information is MISSING? Generate 1-3 follow-up search queries.
-4. List all entity names mentioned in the context.
+Analyze the context and provide:
+1. A draft answer — be specific, cite document titles. Include ALL relevant details you can find.
+2. A confidence score (0-1) for completeness.
+3. What information is MISSING or could be more complete? Generate exactly 3 targeted follow-up search queries that would fill gaps. Think about:
+   - Are there MORE RECENT documents that might update/supersede what you found?
+   - Are there related topics not yet covered (e.g., if asked about a person, did you find medical, financial, military, legal, employment, property info)?
+   - Are there specific terms, dates, or reference numbers you could search for?
+4. List ALL entity names (people, organizations, places, conditions, etc.) mentioned.
+
+CRITICAL: When dealing with ratings, statuses, or values that change over time, ALWAYS note you need to find the MOST RECENT/FINAL version. Generate a follow-up query specifically for "most recent" or "latest" or "final" version.
 
 Important: The user is John Doe. "my" or "I" = John Doe.
 
-Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1"], "entities_found": ["Name1"]}}"""
+Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1", "query2", "query3"], "entities_found": ["Name1", "Name2"]}}"""
 
         try:
             result = await self._llm_json(prompt)
@@ -265,17 +274,18 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             logger.warning(f"Gap analysis failed: {e}")
             return {"draft_answer": "", "confidence": 0.0, "follow_up_queries": [], "entities_found": []}
 
-    # ── Graph expansion ─────────────────────────────────────────────
+    # ── Graph expansion (TUNED: wider, deeper) ──────────────────────
 
     async def _expand_graph(self, entity_names: list) -> dict:
         graph_nodes = []
         seen_uuids = set()
 
-        for name in entity_names[:8]:
+        # Expand up to 12 entities (was 8), get 5 results each (was 3)
+        for name in entity_names[:12]:
             if not isinstance(name, str):
                 name = str(name)
             try:
-                results = await graph_store.search_nodes(name, limit=3)
+                results = await graph_store.search_nodes(name, limit=5)
                 for r in results:
                     uid = r.get("properties", {}).get("uuid", "")
                     if uid and uid not in seen_uuids:
@@ -287,7 +297,8 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         subgraph = {}
         if seen_uuids:
             try:
-                subgraph = await graph_store.get_subgraph(list(seen_uuids)[:10], depth=3)
+                # Deeper traversal: 15 seeds, depth 3
+                subgraph = await graph_store.get_subgraph(list(seen_uuids)[:15], depth=3)
             except Exception as e:
                 logger.warning(f"Graph expansion failed: {e}")
 
@@ -297,39 +308,42 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             "graph_nodes": graph_nodes, "subgraph": subgraph, "entity_names": [],
         }
 
-    # ── Final synthesis prompts ─────────────────────────────────────
+    # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
     def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
 
-        return f"""You are a knowledge assistant with access to John Doe's personal document archive and knowledge graph.
+        return f"""You are a knowledge assistant with access to John Doe's personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
-- The user is John Doe
-- Documents include medical records, military records, financial documents, legal contracts, vehicle records, pet records, etc.
+- The user is John Doe (DOB: February 14, 1996)
+- Documents include: medical records, VA disability ratings, military service records (USAF), financial documents, mortgage statements, legal contracts, vehicle records, pet/veterinary records, insurance policies, tax documents, employment records, and more
 - When the user says "my", "I", "me" — they mean John Doe
-- Be thorough but concise
+- Additional owner context is provided via environment variables
 
 INSTRUCTIONS:
-- Answer comprehensively using ALL provided context
-- Cite sources using document TITLES, e.g. (Source: "Medical Record for John Doe")
-- If no title available, use document ID: (Document 305)
-- Include specific details: dates, amounts, names, medical terms
-- Format monetary values clearly ($1,234.56) and dates clearly (January 15, 2024)
-- If information conflicts between documents, note the discrepancy and cite both
-- Reference knowledge graph relationships when relevant
-- Structure complex answers with headers or bullet points
-- State what you DON'T know if relevant
+- Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
+- For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
+- For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
+- Cite sources using document TITLES: (Source: "Medical Record for John Doe")
+- If no title available, use: (Document 305)
+- Include ALL specific details: dates, amounts, percentages, names, medical terms, account numbers
+- Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
+- If information conflicts between documents, note BOTH and explain which is likely more current
+- Reference knowledge graph relationships when they add context
+- Structure complex answers with clear headers and bullet points
+- State what you could NOT find or what's missing from the archive
+- When multiple documents corroborate the same fact, cite all of them for completeness
 
 Question: {question}
 {draft_section}
-Document context (from multiple retrieval passes):
+Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
 {doc_context}
 {graph_text}
 
-Provide your comprehensive answer with inline citations:"""
+Provide your comprehensive, exhaustive answer with inline citations:"""
 
     async def _final_synthesis(self, question: str, context: dict, draft_answer: str) -> dict:
         doc_context = self._format_doc_context(context)
@@ -398,14 +412,15 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         ))
         return merged
 
-    # ── Formatting helpers ──────────────────────────────────────────
+    # ── Formatting (TUNED: more context to LLM) ────────────────────
 
     def _format_doc_context(self, context: dict) -> str:
         combined = self._merge_and_rank(
             context.get("vector_results", []),
             context.get("keyword_results", [])
         )
-        top = combined[:12]
+        # Feed top 20 chunks to LLM (was 12)
+        top = combined[:20]
 
         parts = []
         for r in top:
@@ -423,6 +438,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 header += f", chunk {r.get('chunk_index', 0)}]"
             parts.append(f"{header}:\n{r['content'][:3000]}")
 
+        # More entity context: 12 entities (was 8)
         entity_parts = []
         seen_entities = set()
         for r in context.get("entity_results", []) + context.get("entity_kw_results", []):
@@ -436,7 +452,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         result = "\n\n".join(parts)
         if entity_parts:
-            result += "\n\nEntity matches:\n" + "\n".join(entity_parts[:8])
+            result += "\n\nEntity matches:\n" + "\n".join(entity_parts[:12])
         return result
 
     def _format_graph_context(self, context: dict) -> str:
@@ -444,10 +460,11 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         subgraph = context.get("subgraph", {})
         if not graph_nodes and not subgraph:
             return ""
-        graph_data = {"nodes": graph_nodes[:15]}
+        # More graph context: 25 nodes, 10k chars (was 15 nodes, 6k)
+        graph_data = {"nodes": graph_nodes[:25]}
         if subgraph:
             graph_data["subgraph"] = subgraph
-        return "\n\nKnowledge Graph context:\n" + json.dumps(graph_data, indent=2, default=str)[:6000]
+        return "\n\nKnowledge Graph context:\n" + json.dumps(graph_data, indent=2, default=str)[:10000]
 
     def _build_sources(self, context: dict) -> list[dict]:
         """Build deduplicated source citations grouped by document."""
@@ -456,9 +473,9 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             context.get("keyword_results", [])
         )
 
-        # Group by document_id
         doc_groups = defaultdict(list)
-        for r in combined[:15]:
+        # Consider top 25 results for source grouping (was 15)
+        for r in combined[:25]:
             doc_groups[r["document_id"]].append(r)
 
         sources = []
@@ -481,11 +498,11 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             sources.append(source)
 
         sources.sort(key=lambda x: x["similarity"], reverse=True)
-        return sources[:10]
+        return sources[:15]  # Return up to 15 sources (was 10)
 
     # ── Existing helpers ────────────────────────────────────────────
 
-    async def _cached_vector_search(self, query: str, limit: int = 10) -> list[dict]:
+    async def _cached_vector_search(self, query: str, limit: int = 20) -> list[dict]:
         cache_key = f"vs:{hashlib.md5(query.encode()).hexdigest()}:{limit}"
         cached = vector_cache.get(cache_key)
         if cached is not None:
@@ -520,12 +537,13 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             prompt = f"""Extract person names, organization names, and key concepts/topics from this question.
 Return a JSON object with an "entities" key containing an array of strings — just the names and key terms, nothing else.
 If there are no specific entities, return the 2-3 most important search terms.
+For broad questions like "who am I" or "tell me about myself", return: ["John Doe", "John Doe"]
 
 Question: {question}"""
             result = await self._llm_json(prompt)
             entities = result.get("entities", [])
             if isinstance(entities, list):
-                return [str(e) for e in entities if e][:8]
+                return [str(e) for e in entities if e][:10]
         except Exception as e:
             logger.warning(f"Entity extraction from query failed: {e}")
         words = question.split()

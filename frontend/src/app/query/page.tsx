@@ -13,8 +13,7 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation,
-} from "@/lib/api";
+  deleteConversation, getConfig} from "@/lib/api";
 import {
   Send,
   Loader2,
@@ -163,6 +162,7 @@ function QueryContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
 
+  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -186,6 +186,8 @@ function QueryContent() {
       console.error("Failed to load conversations:", e);
     }
   }, []);
+
+  useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
 
   useEffect(() => {
     loadConversations();
@@ -514,7 +516,7 @@ function QueryContent() {
                       <div className="flex flex-wrap gap-1.5">
                         {msg.sources.map((s, j) => {
                           const docId = s.document_id;
-                          const url = s.paperless_url || (docId ? `http://your-paperless-host:8000/documents/${docId}/details` : "#");
+                          const url = s.paperless_url || (docId ? `${paperlessBaseUrl}/documents/${docId}/details` : "#");
                           const title = s.title || `Document #${docId}`;
                           const excerpts = s.excerpt_count && s.excerpt_count > 1 ? ` (${s.excerpt_count} excerpts)` : "";
                           return (

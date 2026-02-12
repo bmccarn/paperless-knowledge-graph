@@ -137,3 +137,18 @@ export async function resolveEntities() {
 export async function cancelTask(taskId: string) {
   return apiFetch(`/task/${taskId}/cancel`, { method: "POST" });
 }
+
+
+
+// Config (paperless URL, etc.)
+let _configCache: { paperless_url: string } | null = null;
+
+export async function getConfig(): Promise<{ paperless_url: string }> {
+  if (_configCache) return _configCache;
+  _configCache = await apiFetch("/config");
+  return _configCache!;
+}
+
+export function getPaperlessDocUrl(docId: number, paperlessUrl: string): string {
+  return `${paperlessUrl.replace(/\/$/, "")}/documents/${docId}/`;
+}

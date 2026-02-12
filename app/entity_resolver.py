@@ -686,7 +686,7 @@ class EntityResolver:
 def pick_canonical_name(name_a: str, name_b: str) -> str:
     """Pick the best canonical name: prefer longer, properly cased, most complete.
     
-    "John Doe" > "JOHN DOE" > "John" (longer, properly cased = better)
+    "John A Doe" > "JOHN DOE" > "John" (longer, properly cased = better)
     """
     def score_name(name: str) -> tuple:
         n = name.strip()

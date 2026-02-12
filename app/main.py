@@ -162,7 +162,13 @@ class TaskResponse(BaseModel):
 # --- Paperless URL ---
 
 def _get_paperless_url() -> str:
-    return os.getenv("PAPERLESS_EXTERNAL_URL", "http://your-paperless-host:8000")
+    from app.config import settings
+    return settings.effective_paperless_external_url
+
+
+@app.get("/config")
+async def get_config():
+    return {"paperless_url": _get_paperless_url()}
 
 
 # --- Health & Status ---

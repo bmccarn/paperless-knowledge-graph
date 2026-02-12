@@ -6,6 +6,12 @@ from collections import defaultdict
 from openai import AsyncOpenAI
 
 from app.config import settings
+
+def _owner_name():
+    return settings.owner_name or "the document owner"
+
+def _owner_context():
+    return settings.owner_context or ""
 from app.retry import retry_with_backoff
 from app.embeddings import embeddings_store
 from app.graph import graph_store
@@ -266,7 +272,7 @@ class QueryEngine:
             newline = "\n"
             conv_context = f"""\n\nPrevious conversation context:\n{newline.join(conv_lines)}\n"""
 
-        prompt = f"""You are a knowledge assistant analyzing personal documents belonging to John Doe.
+        prompt = f"""You are a knowledge assistant analyzing personal documents belonging to {_owner_name()}.
 {conv_context}
 Current question: {question}
 
@@ -286,7 +292,7 @@ Analyze the context and provide:
 
 CRITICAL: When dealing with ratings, statuses, or values that change over time, ALWAYS note you need to find the MOST RECENT/FINAL version. Generate a follow-up query specifically for "most recent" or "latest" or "final" version.
 
-Important: The user is John Doe. "my" or "I" = John Doe.
+Important: The user is {_owner_name()}. "my" or "I" = {_owner_name()}.
 
 Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["search query 1", "search query 2", "search query 3"], "entities_found": ["Name1", "Name2"], "follow_up_suggestions": ["What is my current VA disability rating?", "Tell me about my military deployments"]}}"""
 
@@ -353,19 +359,19 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             newline = "\n"
             conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
-        return f"""You are a knowledge assistant with access to John Doe's personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
+        return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
-- The user is John Doe (DOB: February 14, 1996)
-- Documents include: medical records, VA disability ratings, military service records (USAF), financial documents, mortgage statements, legal contracts, vehicle records, pet/veterinary records, insurance policies, tax documents, employment records, and more
-- When the user says "my", "I", "me" — they mean John Doe
-- Additional owner context is provided via environment variables
+- The user is {_owner_name()}
+- Documents include: medical records, VA disability ratings, military service records, financial documents, mortgage statements, legal contracts, vehicle records, pet/veterinary records, insurance policies, tax documents, employment records, and more
+- When the user says "my", "I", "me" — they mean {_owner_name()}
+- {("Additional context: " + _owner_context()) if _owner_context() else ""}
 
 INSTRUCTIONS:
 - Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
-- Cite sources using document TITLES: (Source: "Medical Record for John Doe")
+- Cite sources using document TITLES: (Source: "Document Title")
 - If no title available, use: (Document 305)
 - Include ALL specific details: dates, amounts, percentages, names, medical terms, account numbers
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
@@ -575,7 +581,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             prompt = f"""Extract person names, organization names, and key concepts/topics from this question.
 Return a JSON object with an "entities" key containing an array of strings — just the names and key terms, nothing else.
 If there are no specific entities, return the 2-3 most important search terms.
-For broad questions like "who am I" or "tell me about myself", return: ["John Doe", "John Doe"]
+For broad questions like "who am I" or "tell me about myself", return: {json.dumps(_owner_name().split() + [_owner_name()]) if _owner_name() != "the document owner" else '["owner"]'}
 
 Question: {question}"""
             result = await self._llm_json(prompt)

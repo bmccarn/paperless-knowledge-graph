@@ -34,7 +34,7 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 | `app/embeddings.py` | pgvector storage, chunking, vector/keyword search, dimension migration |
 | `app/entity_resolver.py` | Fuzzy match + embedding similarity entity deduplication |
 | `app/query.py` | Iterative hybrid query pipeline with gap analysis and LLM synthesis |
-| `app/cache.py` | TTL-based in-memory caching for queries, vectors, graph, entities |
+| `app/cache.py` | TTL-based caching for queries, vectors, graph, entities (Redis or in-memory) |
 | `app/retry.py` | Shared retry utilities — exponential backoff for LLM, shorter retry for DB |
 | `app/config.py` | Pydantic settings (env-based configuration) |
 
@@ -58,17 +58,23 @@ docker compose up -d
 
 ### Environment Variables
 
+See [`.env.example`](.env.example) for all available configuration options.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PAPERLESS_URL` | Paperless-ngx instance URL | `http://your-paperless-host:8000` |
+| `PAPERLESS_URL` | Paperless-ngx instance URL | `http://localhost:8000` |
 | `PAPERLESS_TOKEN` | Paperless API token | — |
-| `LITELLM_URL` | LiteLLM proxy URL | `http://your-server-host:4000` |
+| `PAPERLESS_EXTERNAL_URL` | External URL for Paperless links in frontend | Same as `PAPERLESS_URL` |
+| `LITELLM_URL` | LiteLLM proxy URL | `http://localhost:4000` |
 | `LITELLM_API_KEY` | LiteLLM API key | — |
 | `EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |
 | `GEMINI_MODEL` | LLM model for extraction | `gemini-2.5-flash` |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials | `neo4j` / — |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | pgvector credentials | `knowledge_graph` / `kguser` / — |
-| `MAX_CONCURRENT_DOCS` | Parallel doc processing limit | `5` |
+| `REDIS_URL` | Redis connection URL (optional) | `redis://localhost:6379` |
+| `OWNER_NAME` | Your name (used in query prompts) | — |
+| `OWNER_CONTEXT` | Brief context about yourself | — |
+| `MAX_CONCURRENT_DOCS` | Parallel doc processing limit | `10` |
 
 ## API Endpoints
 
@@ -78,6 +84,7 @@ docker compose up -d
 |----------|--------|-------------|
 | `/status` | GET | Node/relationship/embedding counts |
 | `/health` | GET | Component health check (Neo4j, pgvector, LiteLLM, cache stats) |
+| `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |
 | `/reindex` | POST | Full reindex — clears graph + embeddings, reprocesses all documents |
 | `/reindex/{doc_id}` | POST | Reindex a single document |
@@ -129,7 +136,7 @@ docker compose up -d
 3. **Build indexes:** `POST /create-indexes` — creates IVFFlat vector indexes (needs data first)
 4. **Entity resolution:** `POST /resolve-entities` — merges duplicate entities
 5. **Ongoing sync:** `POST /sync` — processes only new/changed documents
-6. **Query:** `POST /query {"question": "What invoices mention AllCloud?"}` — hybrid search + LLM answer
+6. **Query:** `POST /query {"question": "What invoices mention Acme Corp?"}` — hybrid search + LLM answer
 
 ## License
 

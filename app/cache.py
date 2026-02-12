@@ -155,17 +155,23 @@ def _init_caches():
     """Try Redis, fall back to in-memory."""
     try:
         import redis
+        from app.config import settings
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.redis_url)
+        r_host = parsed.hostname or "localhost"
+        r_port = parsed.port or 6379
+        r_db = int(parsed.path.lstrip("/") or 0)
         client = redis.Redis(
-            host="your-server-host",
-            port=6379,
-            db=0,
+            host=r_host,
+            port=r_port,
+            db=r_db,
             decode_responses=False,
             socket_connect_timeout=5,
             socket_timeout=5,
             retry_on_timeout=True,
         )
         client.ping()
-        logger.info("Redis cache connected (your-server-host:6379)")
+        logger.info(f"Redis cache connected ({r_host}:{r_port})")
         return (
             RedisCache(client, "kg:query", default_ttl=86400),   # 24h
             RedisCache(client, "kg:vector", default_ttl=7200),   # 2h

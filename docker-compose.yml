@@ -36,7 +36,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://your-server-host:8484
+      # NEXT_PUBLIC_API_URL removed - using /api rewrites for external access
       - BACKEND_URL=http://app:8000
     depends_on:
       - app

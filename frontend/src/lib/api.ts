@@ -34,19 +34,19 @@ export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
 
-export async function postQuery(question: string) {
+export async function postQuery(question: string, conversationId?: string) {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversation_id: conversationId }),
   });
 }
 
 // SSE streaming query
-export async function* postQueryStream(question: string) {
+export async function* postQueryStream(question: string, conversationId?: string) {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversation_id: conversationId }),
   });
 
   if (!response.ok) {
@@ -83,6 +83,33 @@ export async function* postQueryStream(question: string) {
   } finally {
     reader.releaseLock();
   }
+}
+
+// Conversation API
+export async function listConversations(limit = 50) {
+  return apiFetch(`/conversations?limit=${limit}`);
+}
+
+export async function createConversation(title = "New conversation") {
+  return apiFetch("/conversations", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function getConversation(id: string) {
+  return apiFetch(`/conversations/${id}`);
+}
+
+export async function renameConversation(id: string, title: string) {
+  return apiFetch(`/conversations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteConversation(id: string) {
+  return apiFetch(`/conversations/${id}`, { method: "DELETE" });
 }
 
 export async function graphSearch(q: string, type?: string, limit = 20) {

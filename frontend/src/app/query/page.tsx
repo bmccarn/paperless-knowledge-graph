@@ -617,21 +617,49 @@ function QueryContent() {
 
         {/* Input */}
         <div className="border-t p-4 bg-card/50 backdrop-blur-sm">
-          <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 max-w-3xl mx-auto items-end">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask a question... (Enter to send, Shift+Enter for newline)"
-              disabled={loading}
-              className="flex-1 min-h-[42px] max-h-[160px] text-sm"
-              rows={1}
-            />
-            <Button type="submit" disabled={loading || !input.trim()} size="icon" className="h-[42px] w-[42px] shrink-0">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
-          </form>
+          <div className="max-w-3xl mx-auto space-y-2">
+            {/* Model selector */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowModelDropdown(!showModelDropdown)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
+              >
+                <Bot className="h-3 w-3" />
+                <span>{models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select model'}</span>
+                <ChevronDown className={"h-3 w-3 transition-transform " + (showModelDropdown ? "rotate-180" : "")} />
+              </button>
+              {showModelDropdown && (
+                <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-lg shadow-lg py-1 z-50 min-w-[200px] max-h-[240px] overflow-y-auto">
+                  {models.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); }}
+                      className={"w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between " + (selectedModel === m.id ? "bg-accent/50 font-medium" : "")}
+                    >
+                      <span>{m.name}</span>
+                      {m.id === defaultModel && <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-2">default</Badge>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask a question... (Enter to send, Shift+Enter for newline)"
+                disabled={loading}
+                className="flex-1 min-h-[42px] max-h-[160px] text-sm"
+                rows={1}
+              />
+              <Button type="submit" disabled={loading || !input.trim()} size="icon" className="h-[42px] w-[42px] shrink-0">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </Button>
+            </form>
+          </div>
         </div>
       </div>
     </div>

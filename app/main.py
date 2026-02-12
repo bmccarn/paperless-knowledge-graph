@@ -459,6 +459,7 @@ def _normalize_model_name(model_id: str) -> str:
         "gpt-5.1": "GPT-5.1",
         "gpt-5-mini": "GPT-5 Mini",
         "gpt-5-nano": "GPT-5 Nano",
+        "gpt-5.2": "GPT-5.2",
         "claude-sonnet-4-5": "Claude Sonnet 4.5",
         "claude-haiku-4-5": "Claude Haiku 4.5",
         "claude-3-7-sonnet": "Claude 3.7 Sonnet",
@@ -468,6 +469,7 @@ def _normalize_model_name(model_id: str) -> str:
         "claude-opus-4-6": "Claude Opus 4",
         "grok-4-1-fast-non-reasoning": "Grok 4.1 Fast",
         "xai/grok-4-1-fast-reasoning": "Grok 4.1 Fast (Reasoning)",
+        "openrouter/moonshotai/kimi-k2.5": "Kimi K2.5",
     }
     if model_id in DISPLAY_NAMES:
         return DISPLAY_NAMES[model_id]

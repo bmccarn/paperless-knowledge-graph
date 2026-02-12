@@ -60,8 +60,11 @@ class QueryEngine:
 
     # ── Main query (non-streaming, backward compat) ─────────────────
 
-    async def query(self, question: str, conversation_history: list = None) -> dict:
+    async def query(self, question: str, conversation_history: list = None, model_override: str = None) -> dict:
         """Answer a question using iterative retrieval + synthesis."""
+        prev_override = self._model_override
+        if model_override:
+            self._model_override = model_override
         # Include conversation context in cache key for uniqueness
         conv_suffix = ""
         if conversation_history:
@@ -113,8 +116,11 @@ class QueryEngine:
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str, conversation_history: list = None):
+    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None):
         """Stream query response via SSE events."""
+        prev_override = self._model_override
+        if model_override:
+            self._model_override = model_override
         conv_suffix = ""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])

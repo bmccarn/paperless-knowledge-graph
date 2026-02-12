@@ -704,16 +704,16 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
     
     entity_type = entity_type.strip().title()
     
-    # LLM validation for suspicious entities — catches wrong types and junk
-    if _is_suspicious_entity(name, entity_type):
-        validation = await _validate_entity_with_llm(name, entity_type, doc_title)
-        if not validation.get("valid", True):
-            logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
-            return ""
-        correct_type = validation.get("correct_type", entity_type)
-        if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
-            logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
-            entity_type = correct_type
+    # LLM validation for ALL entities — validates existence and corrects types
+    # Cheap (Gemini Flash) + cached (same name+type = one call ever)
+    validation = await _validate_entity_with_llm(name, entity_type, doc_title)
+    if not validation.get("valid", True):
+        logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
+        return ""
+    correct_type = validation.get("correct_type", entity_type)
+    if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
+        logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
+        entity_type = correct_type
     
     if entity_type == "Organization":
         return await entity_resolver.resolve_organization(name, doc_id, description=description)

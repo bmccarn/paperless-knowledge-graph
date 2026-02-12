@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 
 from app.embeddings import embeddings_store
 from app.graph import graph_store
@@ -18,6 +19,7 @@ from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
+from app import conversations
 from starlette.responses import StreamingResponse
 
 # --- In-memory log buffer & SSE ---
@@ -120,11 +122,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     await graph_store.init()
     await embeddings_store.init()
+    await conversations.init()
     logger.info("Startup complete")
     yield
     logger.info("Shutting down...")
     await graph_store.close()
     await embeddings_store.close()
+    await conversations.close()
 
 
 app = FastAPI(
@@ -145,6 +149,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     question: str
+    conversation_id: Optional[str] = None
 
 
 class TaskResponse(BaseModel):
@@ -350,6 +355,45 @@ async def get_task(task_id: str):
     return {k: v for k, v in task.items() if not k.startswith("_")}
 
 
+
+
+# --- Conversations ---
+
+class ConversationCreate(BaseModel):
+    title: str = "New conversation"
+
+class ConversationRename(BaseModel):
+    title: str
+
+@app.get("/conversations")
+async def list_conversations(limit: int = 50, offset: int = 0):
+    return await conversations.list_conversations(limit=limit, offset=offset)
+
+@app.post("/conversations")
+async def create_conversation(req: ConversationCreate):
+    return await conversations.create_conversation(title=req.title)
+
+@app.get("/conversations/{conv_id}")
+async def get_conversation(conv_id: str):
+    conv = await conversations.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+@app.patch("/conversations/{conv_id}")
+async def rename_conversation(conv_id: str, req: ConversationRename):
+    result = await conversations.rename_conversation(conv_id, req.title)
+    if not result:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return result
+
+@app.delete("/conversations/{conv_id}")
+async def delete_conversation(conv_id: str):
+    ok = await conversations.delete_conversation(conv_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted"}
+
 # --- Query ---
 
 @app.post("/task/{task_id}/cancel")
@@ -368,11 +412,28 @@ async def cancel_task(task_id: str):
 @app.post("/query")
 async def query(req: QueryRequest):
     try:
-        result = await query_engine.query(req.question)
+        # Get conversation history if conversation_id provided
+        conv_history = None
+        if req.conversation_id:
+            conv_history = await conversations.get_conversation_history(req.conversation_id)
+
+        result = await query_engine.query(req.question, conversation_history=conv_history)
         paperless_base = _get_paperless_url()
         for source in result.get("sources", []):
             if source.get("document_id"):
                 source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
+
+        # Save to conversation if conversation_id provided
+        if req.conversation_id:
+            await conversations.add_message(req.conversation_id, "user", req.question)
+            await conversations.add_message(
+                req.conversation_id, "assistant", result["answer"],
+                sources=result.get("sources"),
+                entities=result.get("entities_found"),
+                confidence=result.get("confidence"),
+                follow_ups=result.get("follow_up_suggestions"),
+            )
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -381,15 +442,49 @@ async def query(req: QueryRequest):
 @app.post("/query/stream")
 async def query_stream(req: QueryRequest):
     """Streaming query endpoint with Server-Sent Events."""
+    # Get conversation history before entering generator
+    conv_history = None
+    if req.conversation_id:
+        conv_history = await conversations.get_conversation_history(req.conversation_id)
+        # Save user message immediately
+        await conversations.add_message(req.conversation_id, "user", req.question)
+
     async def event_generator():
         try:
             paperless_base = _get_paperless_url()
-            async for event in query_engine.query_stream(req.question):
+            full_answer_chunks = []
+            final_sources = None
+            final_entities = None
+            final_confidence = None
+            final_follow_ups = None
+
+            async for event in query_engine.query_stream(req.question, conversation_history=conv_history):
+                # Collect answer for saving
+                if event.get("type") == "answer_chunk":
+                    full_answer_chunks.append(event.get("content", ""))
                 if event.get("type") == "complete" and event.get("sources"):
                     for source in event["sources"]:
                         if source.get("document_id"):
                             source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
+                # Capture metadata from complete event
+                if event.get("type") == "complete":
+                    final_sources = event.get("sources")
+                    final_entities = event.get("entities_found")
+                    final_follow_ups = event.get("follow_up_suggestions")
+
                 yield f"data: {json.dumps(event)}" + "\n\n"
+
+                # Save assistant message after complete
+                if event.get("type") == "complete" and req.conversation_id:
+                    full_answer = "".join(full_answer_chunks)
+                    await conversations.add_message(
+                        req.conversation_id, "assistant", full_answer,
+                        sources=final_sources,
+                        entities=final_entities,
+                        confidence=final_confidence,
+                        follow_ups=final_follow_ups,
+                    )
+
         except Exception as e:
             err = {"type": "error", "message": str(e)}
             yield f"data: {json.dumps(err)}" + "\n\n"

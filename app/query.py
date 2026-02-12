@@ -50,16 +50,21 @@ class QueryEngine:
 
     # ── Main query (non-streaming, backward compat) ─────────────────
 
-    async def query(self, question: str) -> dict:
+    async def query(self, question: str, conversation_history: list = None) -> dict:
         """Answer a question using iterative retrieval + synthesis."""
-        cache_key = normalize_query_key(question)
+        # Include conversation context in cache key for uniqueness
+        conv_suffix = ""
+        if conversation_history:
+            conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
+            conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
+        cache_key = normalize_query_key(question + conv_suffix)
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
         initial_context = await self._retrieve(question)
-        first_pass = await self._synthesize_with_gaps(question, initial_context)
+        first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
 
         # Up to 3 follow-up iterations for deeper retrieval
@@ -74,7 +79,7 @@ class QueryEngine:
         all_context = self._merge_context(all_context, graph_context)
 
         final = await self._final_synthesis(
-            question, all_context, first_pass.get("draft_answer", "")
+            question, all_context, first_pass.get("draft_answer", ""), conversation_history
         )
 
         result = {
@@ -89,6 +94,7 @@ class QueryEngine:
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
             "iterations": 1 + len(follow_ups_used),
+            "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
 
@@ -97,21 +103,27 @@ class QueryEngine:
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str):
+    async def query_stream(self, question: str, conversation_history: list = None):
         """Stream query response via SSE events."""
-        cache_key = normalize_query_key(question)
+        conv_suffix = ""
+        if conversation_history:
+            conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
+            conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
+        cache_key = normalize_query_key(question + conv_suffix)
         cached = query_cache.get(cache_key)
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}
             yield {"type": "complete", "sources": cached["sources"],
-                   "entities_found": cached.get("entities_found", []), "cached": True}
+                   "entities_found": cached.get("entities_found", []),
+                   "follow_up_suggestions": cached.get("follow_up_suggestions", []),
+                   "cached": True}
             return
 
         yield {"type": "status", "message": "Searching documents and knowledge graph..."}
         initial_context = await self._retrieve(question)
 
         yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
-        first_pass = await self._synthesize_with_gaps(question, initial_context)
+        first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
 
         # Up to 3 follow-up iterations
@@ -135,6 +147,7 @@ class QueryEngine:
             self._format_doc_context(all_context),
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
+            conversation_history,
         )
 
         answer_chunks = []
@@ -156,13 +169,16 @@ class QueryEngine:
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
+            "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "iterations": 1 + len(follow_ups_used),
             "cached": False,
         }
         query_cache.set(cache_key, result)
 
         yield {"type": "complete", "sources": sources,
-               "entities_found": result["entities_found"], "cached": False}
+               "entities_found": result["entities_found"],
+               "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
+               "cached": False}
 
     # ── Retrieval (TUNED: wider net) ────────────────────────────────
 
@@ -235,32 +251,42 @@ class QueryEngine:
 
     # ── Gap analysis (TUNED: smarter follow-ups) ────────────────────
 
-    async def _synthesize_with_gaps(self, question: str, context: dict) -> dict:
+    async def _synthesize_with_gaps(self, question: str, context: dict, conversation_history: list = None) -> dict:
         doc_context = self._format_doc_context(context)
         graph_text = self._format_graph_context(context)
 
-        prompt = f"""You are a knowledge assistant analyzing personal documents belonging to John Doe.
+        conv_context = ""
+        if conversation_history:
+            conv_lines = []
+            for msg in conversation_history[-6:]:  # Last 6 messages (3 Q&A pairs)
+                role = "User" if msg.get("role") == "user" else "Assistant"
+                conv_lines.append(f"{role}: {msg['content'][:500]}")
+            newline = "\n"
+            conv_context = f"""\n\nPrevious conversation context:\n{newline.join(conv_lines)}\n"""
 
-Question: {question}
+        prompt = f"""You are a knowledge assistant analyzing personal documents belonging to John Doe.
+{conv_context}
+Current question: {question}
 
 Document context:
 {doc_context}
 {graph_text}
 
 Analyze the context and provide:
-1. A draft answer — be specific, cite document titles. Include ALL relevant details you can find.
+1. A draft answer — be specific, cite document titles. Include ALL relevant details you can find. If this is a follow-up question, use the conversation context to understand what "it", "that", "more details", etc. refer to.
 2. A confidence score (0-1) for completeness.
-3. What information is MISSING or could be more complete? Generate exactly 3 targeted follow-up search queries that would fill gaps. Think about:
+3. What information is MISSING or could be more complete? Generate exactly 3 targeted follow-up SEARCH queries to fill gaps:
    - Are there MORE RECENT documents that might update/supersede what you found?
-   - Are there related topics not yet covered (e.g., if asked about a person, did you find medical, financial, military, legal, employment, property info)?
+   - Are there related topics not yet covered?
    - Are there specific terms, dates, or reference numbers you could search for?
 4. List ALL entity names (people, organizations, places, conditions, etc.) mentioned.
+5. Suggest 3-4 natural follow-up questions the user might want to ask next, based on what you found. Make them specific and interesting, not generic.
 
 CRITICAL: When dealing with ratings, statuses, or values that change over time, ALWAYS note you need to find the MOST RECENT/FINAL version. Generate a follow-up query specifically for "most recent" or "latest" or "final" version.
 
 Important: The user is John Doe. "my" or "I" = John Doe.
 
-Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1", "query2", "query3"], "entities_found": ["Name1", "Name2"]}}"""
+Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["search query 1", "search query 2", "search query 3"], "entities_found": ["Name1", "Name2"], "follow_up_suggestions": ["What is my current VA disability rating?", "Tell me about my military deployments"]}}"""
 
         try:
             result = await self._llm_json(prompt)
@@ -269,6 +295,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
                 "confidence": float(result.get("confidence", 0.5)),
                 "follow_up_queries": result.get("follow_up_queries", []),
                 "entities_found": result.get("entities_found", []),
+                "follow_up_suggestions": result.get("follow_up_suggestions", []),
             }
         except Exception as e:
             logger.warning(f"Gap analysis failed: {e}")
@@ -310,10 +337,19 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
     # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
-    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str) -> str:
+    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
+
+        conv_section = ""
+        if conversation_history:
+            conv_lines = []
+            for msg in conversation_history[-6:]:
+                role = "User" if msg.get("role") == "user" else "Assistant"
+                conv_lines.append(f"{role}: {msg['content'][:800]}")
+            newline = "\n"
+            conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
         return f"""You are a knowledge assistant with access to John Doe's personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
@@ -338,17 +374,17 @@ INSTRUCTIONS:
 - When multiple documents corroborate the same fact, cite all of them for completeness
 
 Question: {question}
-{draft_section}
+{conv_section}{draft_section}
 Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
 {doc_context}
 {graph_text}
 
 Provide your comprehensive, exhaustive answer with inline citations:"""
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str) -> dict:
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None) -> dict:
         doc_context = self._format_doc_context(context)
         graph_text = self._format_graph_context(context)
-        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer)
+        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer, conversation_history)
 
         try:
             answer = await self._llm_generate(prompt)

@@ -326,10 +326,12 @@ def should_auto_merge(name_a: str, name_b: str, score: float,
         parts_a = get_name_parts(name_a)
         parts_b = get_name_parts(name_b)
         
-        # Word-count mismatch protection
-        if (len(parts_a) == 1 and len(parts_b) >= 3) or (len(parts_b) == 1 and len(parts_a) >= 3):
-            logger.debug(
-                f"Word count mismatch blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
+        # Word-count mismatch protection: single-word names are too ambiguous
+        # to merge with multi-word names. "Matthew" != "Matthew Smith".
+        if (len(parts_a) == 1) != (len(parts_b) == 1):
+            # One is single-word, the other is not — block merge
+            logger.info(
+                f"Single vs multi-word blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
             )
             return False
         

@@ -1,3 +1,4 @@
+import re
 import asyncio
 import json
 import logging
@@ -150,6 +151,7 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = None
+    model: Optional[str] = None
 
 
 class TaskResponse(BaseModel):
@@ -415,6 +417,67 @@ async def cancel_task(task_id: str):
     return {"status": "cancelled", "task_id": task_id}
 
 
+
+@app.get("/models")
+async def list_models():
+    """List available LLM models from LiteLLM (excludes embedding models)."""
+    from app.config import settings
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{settings.litellm_url}/v1/models",
+                headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Filter out embedding models
+            EMBEDDING_KEYWORDS = {"embed", "embedding", "titan-embed"}
+            models = []
+            for m in data.get("data", []):
+                model_id = m.get("id", "")
+                if any(kw in model_id.lower() for kw in EMBEDDING_KEYWORDS):
+                    continue
+                models.append({"id": model_id, "name": _normalize_model_name(model_id)})
+            # Sort by name
+            models.sort(key=lambda x: x["name"])
+            return {"models": models, "default": settings.gemini_model}
+    except Exception as e:
+        logger.error(f"Failed to list models: {e}")
+        return {"models": [{"id": settings.gemini_model, "name": _normalize_model_name(settings.gemini_model)}], "default": settings.gemini_model}
+
+
+def _normalize_model_name(model_id: str) -> str:
+    """Convert model IDs to human-friendly display names."""
+    DISPLAY_NAMES = {
+        "gemini-2.5-flash": "Gemini 2.5 Flash",
+        "gemini-2.5-pro": "Gemini 2.5 Pro",
+        "gemini-2.0-flash": "Gemini 2.0 Flash",
+        "gpt-4o": "GPT-4o",
+        "gpt-4o-mini": "GPT-4o Mini",
+        "gpt-5.1": "GPT-5.1",
+        "gpt-5-mini": "GPT-5 Mini",
+        "gpt-5-nano": "GPT-5 Nano",
+        "claude-sonnet-4-5": "Claude Sonnet 4.5",
+        "claude-haiku-4-5": "Claude Haiku 4.5",
+        "claude-3-7-sonnet": "Claude 3.7 Sonnet",
+        "claude-opus-4": "Claude Opus 4",
+        "claude-haiku-4-5-20250929": "Claude Haiku 4.5",
+        "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5",
+        "claude-opus-4-6": "Claude Opus 4",
+        "grok-4-1-fast-non-reasoning": "Grok 4.1 Fast",
+        "xai/grok-4-1-fast-reasoning": "Grok 4.1 Fast (Reasoning)",
+    }
+    if model_id in DISPLAY_NAMES:
+        return DISPLAY_NAMES[model_id]
+    # Auto-normalize: strip provider prefix, replace hyphens, title case
+    name = model_id.split("/")[-1]  # Remove provider prefix
+    name = re.sub(r'-(\d)', r' ', name)  # "claude-3" -> "claude 3"
+    name = re.sub(r'(\d)-(\d)', r'.', name)  # "3-7" -> "3.7"  
+    name = name.replace("-", " ").title()
+    return name
+
 @app.post("/query")
 async def query(req: QueryRequest):
     try:
@@ -423,7 +486,7 @@ async def query(req: QueryRequest):
         if req.conversation_id:
             conv_history = await conversations.get_conversation_history(req.conversation_id)
 
-        result = await query_engine.query(req.question, conversation_history=conv_history)
+        result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model)
         paperless_base = _get_paperless_url()
         for source in result.get("sources", []):
             if source.get("document_id"):
@@ -464,7 +527,7 @@ async def query_stream(req: QueryRequest):
             final_confidence = None
             final_follow_ups = None
 
-            async for event in query_engine.query_stream(req.question, conversation_history=conv_history):
+            async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model):
                 # Collect answer for saving
                 if event.get("type") == "answer_chunk":
                     full_answer_chunks.append(event.get("content", ""))

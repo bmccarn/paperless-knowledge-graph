@@ -34,19 +34,19 @@ export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
 
-export async function postQuery(question: string, conversationId?: string) {
+export async function postQuery(question: string, conversationId?: string, model?: string) {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ question, conversation_id: conversationId }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model }),
   });
 }
 
 // SSE streaming query
-export async function* postQueryStream(question: string, conversationId?: string) {
+export async function* postQueryStream(question: string, conversationId?: string, model?: string) {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, conversation_id: conversationId }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model }),
   });
 
   if (!response.ok) {
@@ -139,6 +139,17 @@ export async function cancelTask(taskId: string) {
 }
 
 
+
+
+// Models API
+export interface ModelInfo {
+  id: string;
+  name: string;
+}
+
+export async function getModels(): Promise<{ models: ModelInfo[]; default: string }> {
+  return apiFetch("/models");
+}
 
 // Config (paperless URL, etc.)
 let _configCache: { paperless_url: string } | null = null;

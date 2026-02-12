@@ -27,17 +27,21 @@ class QueryEngine:
             api_key=settings.litellm_api_key,
         )
         self.model = settings.gemini_model
+        self._model_override = None
+
+    def _active_model(self, model_override=None):
+        return model_override or self._model_override or self.model
 
     async def _llm_generate(self, prompt: str) -> str:
         response = await self.client.chat.completions.create(
-            model=self.model,
+            model=self._active_model(),
             messages=[{"role": "user", "content": prompt}],
         )
         return response.choices[0].message.content
 
     async def _llm_json(self, prompt: str) -> any:
         response = await self.client.chat.completions.create(
-            model=self.model,
+            model=self._active_model(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -46,7 +50,7 @@ class QueryEngine:
     async def _llm_generate_stream(self, prompt: str):
         """Yield answer chunks via streaming."""
         stream = await self.client.chat.completions.create(
-            model=self.model,
+            model=self._active_model(),
             messages=[{"role": "user", "content": prompt}],
             stream=True,
         )

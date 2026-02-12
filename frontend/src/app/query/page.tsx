@@ -13,7 +13,7 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation, getConfig} from "@/lib/api";
+  deleteConversation, getConfig, getModels, ModelInfo} from "@/lib/api";
 import {
   Send,
   Loader2,
@@ -33,6 +33,7 @@ import {
   Pencil,
   Search,
   Gauge,
+  Bot,
 } from "lucide-react";
 
 interface Source {
@@ -174,6 +175,10 @@ function QueryContent() {
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState("");
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [defaultModel, setDefaultModel] = useState<string>("");
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -188,6 +193,13 @@ function QueryContent() {
   }, []);
 
   useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
+  useEffect(() => {
+    getModels().then(data => {
+      setModels(data.models);
+      setDefaultModel(data.default);
+      if (!selectedModel) setSelectedModel(data.default);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadConversations();
@@ -246,7 +258,7 @@ function QueryContent() {
       let confidence: number | undefined;
       let followUps: string[] = [];
 
-      for await (const event of postQueryStream(q, convId || undefined)) {
+      for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined)) {
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");

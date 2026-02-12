@@ -185,56 +185,67 @@ def _looks_like_person_name(text: str) -> bool:
 
 
 def detect_joint_name(name: str) -> list[str]:
-    """Detect if a name string contains multiple people (joint names)."""
+    """Detect if a name string contains multiple people (joint names).
+    
+    Handles patterns like:
+    - "Blake & Chelsea McCarn"
+    - "Blake T & Chelsea J McCarn"
+    - "BLAKE T MCCARN CHELSEA J MCCARN" (two full names concatenated)
+    - "MCCARN BLAKE THOMAS & MCCARN CHELSEA JOYCE"
+    """
     parts = normalize_name(name).split()
     if len(parts) <= 3:
         return [name]
     
-    # Only attempt joint name detection on strings that look like names
-    if not _looks_like_person_name(name):
-        return [name]
+    joined = " ".join(parts)
     
-    # Check for "X AND Y" pattern
-    and_indices = [i for i, p in enumerate(parts) if p.upper() == "AND"]
-    if and_indices and len(parts) >= 4:
-        # Try splitting on AND
-        idx = and_indices[0]
-        if idx > 0 and idx < len(parts) - 1:
-            name_a = " ".join(parts[:idx])
-            name_b = " ".join(parts[idx+1:])
-            # Both sides must look like names
-            if _looks_like_person_name(name_a) and _looks_like_person_name(name_b):
-                if len(name_a.split()) >= 2 or len(name_b.split()) >= 2:
-                    return [name_a, name_b]
+    # Pattern: "First [M] & First [M] Last" or "First [M] Last & First [M] Last"
+    # Match on & or "and"
+    and_patterns = [
+        r'^(.+?)\s+(?:&|and)\s+(.+)$',
+    ]
+    for pat in and_patterns:
+        m = re.match(pat, joined, re.IGNORECASE)
+        if m:
+            left = m.group(1).strip()
+            right = m.group(2).strip()
+            # If left has no last name, borrow from right
+            left_parts = left.split()
+            right_parts = right.split()
+            if len(left_parts) <= 2 and len(right_parts) >= 2:
+                # Assume last word of right is shared surname
+                surname = right_parts[-1]
+                if not any(w.lower() == surname.lower() for w in left_parts):
+                    left = left + " " + surname
+            return [left, right]
     
-    part_counts = {}
-    for p in parts:
-        pl = p.lower()
-        part_counts[pl] = part_counts.get(pl, 0) + 1
+    # Pattern: Two full names concatenated without separator
+    # e.g., "BLAKE T MCCARN CHELSEA J MCCARN" — 6 parts, two 3-part names
+    # Heuristic: if last name appears twice, split there
+    if len(parts) >= 5:
+        # Check if any word appears twice (likely a shared surname)
+        lower_parts = [p.lower() for p in parts]
+        for i, word in enumerate(lower_parts):
+            if len(word) < 3:
+                continue
+            # Find second occurrence
+            try:
+                j = lower_parts.index(word, i + 1)
+            except ValueError:
+                continue
+            # Split: parts[0:j] and parts[j:]
+            # But only if both halves look like names (2-4 parts each)
+            left = parts[0:j+1] if j < len(parts) - 1 else parts[0:j]
+            right = parts[j+1:] if j < len(parts) - 1 else parts[j:]
+            # Actually split at the boundary: first name ends at first occurrence of surname
+            left = parts[0:i+1]
+            right = parts[i+1:]
+            if 2 <= len(left) <= 4 and 2 <= len(right) <= 4:
+                logger.info(f"Detected concatenated names: '{name}' -> {[' '.join(left), ' '.join(right)]}")
+                return [" ".join(left), " ".join(right)]
     
-    repeated = [p for p, c in part_counts.items() if c >= 2]
-    if repeated:
-        surname = repeated[0]
-        remaining = []
-        current_group = []
-        for p in parts:
-            if p.lower() == surname and current_group:
-                remaining.append(current_group)
-                current_group = []
-            else:
-                current_group.append(p)
-        if current_group:
-            remaining.append(current_group)
-        
-        if len(remaining) >= 2:
-            names = []
-            for group in remaining:
-                given = " ".join(group)
-                names.append(f"{given} {surname.title()}")
-            return names
-    
-    if len(parts) > 5:
-        return [name]
+    # Pattern: "LAST FIRST MIDDLE & LAST FIRST MIDDLE" (inverted with &)
+    # Already handled by & pattern above
     
     return [name]
 
@@ -256,6 +267,47 @@ def org_distinctive_match(name_a: str, name_b: str) -> bool:
     return len(overlap) > 0
 
 
+def _first_names_compatible(name_a: str, name_b: str) -> bool:
+    """Check if two person names have compatible first names.
+    
+    Blocks merges where first names are clearly different people
+    (e.g., "Blake McCarn" vs "Chelsea McCarn").
+    """
+    parts_a = get_name_parts(name_a)
+    parts_b = get_name_parts(name_b)
+    
+    if not parts_a or not parts_b:
+        return True  # Can't determine, allow
+    
+    first_a = parts_a[0].lower().rstrip(".")
+    first_b = parts_b[0].lower().rstrip(".")
+    
+    # Exact match
+    if first_a == first_b:
+        return True
+    
+    # Initial match (e.g., "B" matches "Blake")
+    if len(first_a) == 1 and first_b.startswith(first_a):
+        return True
+    if len(first_b) == 1 and first_a.startswith(first_b):
+        return True
+    
+    # Abbreviation match
+    expanded_a = ABBREVIATIONS.get(first_a, first_a)
+    expanded_b = ABBREVIATIONS.get(first_b, first_b)
+    if expanded_a == expanded_b:
+        return True
+    
+    # OCR typo tolerance: very similar first names (e.g., "Mccar" vs "Mccarn" in last name,
+    # or "Blake" vs "Blak" in first name)
+    if len(first_a) > 2 and len(first_b) > 2:
+        ratio = fuzz.ratio(first_a, first_b)
+        if ratio >= 80:
+            return True
+    
+    return False
+
+
 def should_auto_merge(name_a: str, name_b: str, score: float,
                       entity_type: str = "Person") -> bool:
     """Determine if two entities should be auto-merged based on safeguards.
@@ -269,15 +321,27 @@ def should_auto_merge(name_a: str, name_b: str, score: float,
         )
         return False
 
-    # Person word-count mismatch protection
+    # Person-specific safeguards
     if entity_type == "Person":
         parts_a = get_name_parts(name_a)
         parts_b = get_name_parts(name_b)
+        
+        # Word-count mismatch protection
         if (len(parts_a) == 1 and len(parts_b) >= 3) or (len(parts_b) == 1 and len(parts_a) >= 3):
             logger.debug(
                 f"Word count mismatch blocked merge: '{name_a}' ({len(parts_a)} parts) <-> '{name_b}' ({len(parts_b)} parts)"
             )
             return False
+        
+        # CRITICAL: First name must be compatible
+        # Prevents "Blake McCarn" from merging with "Chelsea McCarn"
+        if len(parts_a) >= 2 and len(parts_b) >= 2:
+            if not _first_names_compatible(name_a, name_b):
+                logger.info(
+                    f"First name mismatch blocked merge: '{name_a}' <-> '{name_b}' "
+                    f"(different first names)"
+                )
+                return False
 
     # Short name protection
     if is_short_name(name_a) or is_short_name(name_b):
@@ -304,21 +368,26 @@ def should_auto_merge(name_a: str, name_b: str, score: float,
     return True
 
 
-def advanced_match_score(name_a: str, name_b: str) -> float:
-    """Combined matching score using multiple strategies."""
+def advanced_match_score(name_a: str, name_b: str, entity_type: str = "Person") -> float:
+    """Combined matching score using multiple strategies.
+    
+    For Person entities, does NOT use token_set_ratio (it gives false positives
+    when names share a surname, e.g. "Blake McCarn" vs "Chelsea McCarn").
+    """
     norm_a = normalize_name(name_a).lower()
     norm_b = normalize_name(name_b).lower()
     fuzzy_score = fuzz.ratio(norm_a, norm_b) / 100.0
     token_sort = fuzz.token_sort_ratio(norm_a, norm_b) / 100.0
     parts_score = name_parts_match_score(name_a, name_b)
-    token_set = fuzz.token_set_ratio(norm_a, norm_b) / 100.0
     
-    return max(
-        fuzzy_score,
-        token_sort,
-        parts_score,
-        token_set * 0.95,
-    )
+    if entity_type == "Person":
+        # For persons, only use fuzzy_score, token_sort, and parts_score.
+        # token_set_ratio is too dangerous — it matches any name sharing a surname.
+        return max(fuzzy_score, token_sort, parts_score)
+    else:
+        # For orgs and other types, token_set is useful (e.g. "RapidRoute Solutions LLC" vs "LLC RapidRoute Solutions")
+        token_set = fuzz.token_set_ratio(norm_a, norm_b) / 100.0
+        return max(fuzzy_score, token_sort, parts_score, token_set * 0.95)
 
 
 class EntityResolver:
@@ -363,12 +432,12 @@ class EntityResolver:
         best_score = 0.0
 
         for person in all_persons:
-            score = advanced_match_score(normalized, person["name"] or "")
+            score = advanced_match_score(normalized, person["name"] or "", entity_type="Person")
             if score > best_score:
                 best_score = score
                 best_match = person
             for alias in (person.get("aliases") or []):
-                alias_score = advanced_match_score(normalized, alias)
+                alias_score = advanced_match_score(normalized, alias, entity_type="Person")
                 if alias_score > best_score:
                     best_score = alias_score
                     best_match = person
@@ -434,12 +503,12 @@ class EntityResolver:
         best_score = 0.0
 
         for org in all_orgs:
-            score = advanced_match_score(normalized, org["name"] or "")
+            score = advanced_match_score(normalized, org["name"] or "", entity_type="Organization")
             if score > best_score:
                 best_score = score
                 best_match = org
             for alias in (org.get("aliases") or []):
-                alias_score = advanced_match_score(normalized, alias)
+                alias_score = advanced_match_score(normalized, alias, entity_type="Organization")
                 if alias_score > best_score:
                     best_score = alias_score
                     best_match = org

@@ -10,3 +10,4 @@ pydantic
 pydantic-settings
 python-dotenv
 numpy
+redis>=5.0.1

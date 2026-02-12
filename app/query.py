@@ -1,6 +1,7 @@
 import json
 import logging
 import hashlib
+from collections import defaultdict
 
 from openai import AsyncOpenAI
 
@@ -8,7 +9,7 @@ from app.config import settings
 from app.retry import retry_with_backoff
 from app.embeddings import embeddings_store
 from app.graph import graph_store
-from app.cache import query_cache, vector_cache, graph_cache
+from app.cache import query_cache, vector_cache, graph_cache, normalize_query_key
 
 logger = logging.getLogger(__name__)
 
@@ -36,38 +37,41 @@ class QueryEngine:
         )
         return json.loads(response.choices[0].message.content)
 
-    # ── Main query entry point (iterative multi-step) ───────────────
+    async def _llm_generate_stream(self, prompt: str):
+        """Yield answer chunks via streaming."""
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    # ── Main query (non-streaming, backward compat) ─────────────────
 
     async def query(self, question: str) -> dict:
         """Answer a question using iterative retrieval + synthesis."""
-        # Check cache
-        cache_key = f"q:{hashlib.md5(question.encode()).hexdigest()}"
+        cache_key = normalize_query_key(question)
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
-        # Step 1: Initial retrieval
         initial_context = await self._retrieve(question)
-
-        # Step 2: First synthesis + gap analysis
         first_pass = await self._synthesize_with_gaps(question, initial_context)
-
         all_context = initial_context
 
-        # Step 3: Follow-up iterations (max 2)
         follow_ups_used = []
         for follow_up in first_pass.get("follow_up_queries", [])[:2]:
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
             follow_ups_used.append(follow_up)
 
-        # Graph expansion from found entities
         entities_found = first_pass.get("entities_found", [])
         graph_context = await self._expand_graph(entities_found)
         all_context = self._merge_context(all_context, graph_context)
 
-        # Step 4: Final synthesis
         final = await self._final_synthesis(
             question, all_context, first_pass.get("draft_answer", "")
         )
@@ -90,26 +94,85 @@ class QueryEngine:
         query_cache.set(cache_key, result)
         return result
 
+    # ── Streaming query (SSE) ───────────────────────────────────────
+
+    async def query_stream(self, question: str):
+        """Stream query response via SSE events."""
+        # Check cache first
+        cache_key = normalize_query_key(question)
+        cached = query_cache.get(cache_key)
+        if cached is not None:
+            yield {"type": "answer_chunk", "content": cached["answer"]}
+            yield {"type": "complete", "sources": cached["sources"],
+                   "entities_found": cached.get("entities_found", []), "cached": True}
+            return
+
+        yield {"type": "status", "message": "Searching documents and knowledge graph..."}
+        initial_context = await self._retrieve(question)
+
+        yield {"type": "status", "message": "Analyzing initial results..."}
+        first_pass = await self._synthesize_with_gaps(question, initial_context)
+        all_context = initial_context
+
+        follow_ups_used = []
+        for follow_up in first_pass.get("follow_up_queries", [])[:2]:
+            yield {"type": "status", "message": f"Following up: {follow_up[:60]}..."}
+            extra_context = await self._retrieve(follow_up)
+            all_context = self._merge_context(all_context, extra_context)
+            follow_ups_used.append(follow_up)
+
+        entities_found = first_pass.get("entities_found", [])
+        if entities_found:
+            yield {"type": "status", "message": "Expanding knowledge graph..."}
+            graph_context = await self._expand_graph(entities_found)
+            all_context = self._merge_context(all_context, graph_context)
+
+        yield {"type": "status", "message": "Generating answer..."}
+
+        prompt = self._build_final_prompt(
+            question,
+            self._format_doc_context(all_context),
+            self._format_graph_context(all_context),
+            first_pass.get("draft_answer", ""),
+        )
+
+        answer_chunks = []
+        async for chunk in self._llm_generate_stream(prompt):
+            answer_chunks.append(chunk)
+            yield {"type": "answer_chunk", "content": chunk}
+
+        full_answer = "".join(answer_chunks)
+        sources = self._build_sources(all_context)
+
+        result = {
+            "question": question,
+            "answer": full_answer,
+            "confidence": first_pass.get("confidence", 0.7),
+            "sources": sources,
+            "entities_found": [
+                {"name": e} if isinstance(e, str) else e
+                for e in entities_found[:20]
+            ],
+            "graph_nodes_used": len(all_context.get("graph_nodes", [])),
+            "follow_up_queries_used": follow_ups_used,
+            "iterations": 1 + len(follow_ups_used),
+            "cached": False,
+        }
+        query_cache.set(cache_key, result)
+
+        yield {"type": "complete", "sources": sources,
+               "entities_found": result["entities_found"], "cached": False}
+
     # ── Retrieval ───────────────────────────────────────────────────
 
     async def _retrieve(self, query_text: str) -> dict:
         """Hybrid retrieval: vector + keyword + entity search + graph."""
-        # Vector search (documents)
         vector_results = await self._cached_vector_search(query_text, limit=10)
-
-        # Keyword search (documents)
         keyword_results = await embeddings_store.keyword_search(query_text, limit=8)
-
-        # Entity vector search
         entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
-
-        # Entity keyword search
         entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
-
-        # LLM entity extraction from query
         entity_names = await self._extract_entities_from_query(query_text)
 
-        # Graph search for named entities
         graph_nodes = []
         seen_uuids = set()
         for name in entity_names:
@@ -126,7 +189,6 @@ class QueryEngine:
                     seen_uuids.add(uid)
                     graph_nodes.append(r)
 
-        # Get document-entity connections for top vector results
         doc_entity_uuids = set()
         for r in vector_results[:5]:
             doc_id = r.get("document_id")
@@ -143,7 +205,6 @@ class QueryEngine:
                 except Exception:
                     pass
 
-        # Multi-hop subgraph
         all_uuids = list(seen_uuids | doc_entity_uuids)
         subgraph = {}
         if all_uuids:
@@ -171,11 +232,10 @@ class QueryEngine:
     # ── Gap analysis synthesis ──────────────────────────────────────
 
     async def _synthesize_with_gaps(self, question: str, context: dict) -> dict:
-        """First-pass synthesis that identifies gaps."""
         doc_context = self._format_doc_context(context)
         graph_text = self._format_graph_context(context)
 
-        prompt = f"""You are a knowledge assistant analyzing retrieved documents and a knowledge graph.
+        prompt = f"""You are a knowledge assistant analyzing personal documents belonging to John Doe.
 
 Question: {question}
 
@@ -184,12 +244,14 @@ Document context:
 {graph_text}
 
 Based on this context, provide:
-1. A draft answer to the question (be specific, cite details from documents)
-2. A confidence score (0-1) for how complete your answer is
-3. What information is MISSING that would improve the answer? Generate 1-3 specific follow-up search queries.
-4. List all entity names (people, organizations, places, etc.) mentioned in the context.
+1. A draft answer (be specific, cite document titles when available)
+2. A confidence score (0-1)
+3. What information is MISSING? Generate 1-3 follow-up search queries.
+4. List all entity names mentioned in the context.
 
-Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1", "query2"], "entities_found": ["Entity Name 1", "Entity Name 2"]}}"""
+Important: The user is John Doe. "my" or "I" = John Doe.
+
+Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["query1"], "entities_found": ["Name1"]}}"""
 
         try:
             result = await self._llm_json(prompt)
@@ -201,17 +263,11 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             }
         except Exception as e:
             logger.warning(f"Gap analysis failed: {e}")
-            return {
-                "draft_answer": "",
-                "confidence": 0.0,
-                "follow_up_queries": [],
-                "entities_found": [],
-            }
+            return {"draft_answer": "", "confidence": 0.0, "follow_up_queries": [], "entities_found": []}
 
     # ── Graph expansion ─────────────────────────────────────────────
 
     async def _expand_graph(self, entity_names: list) -> dict:
-        """Expand graph from found entity names (2-3 hops)."""
         graph_nodes = []
         seen_uuids = set()
 
@@ -236,37 +292,36 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
                 logger.warning(f"Graph expansion failed: {e}")
 
         return {
-            "vector_results": [],
-            "keyword_results": [],
-            "entity_results": [],
-            "entity_kw_results": [],
-            "graph_nodes": graph_nodes,
-            "subgraph": subgraph,
-            "entity_names": [],
+            "vector_results": [], "keyword_results": [],
+            "entity_results": [], "entity_kw_results": [],
+            "graph_nodes": graph_nodes, "subgraph": subgraph, "entity_names": [],
         }
 
-    # ── Final synthesis ─────────────────────────────────────────────
+    # ── Final synthesis prompts ─────────────────────────────────────
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str) -> dict:
-        """Final comprehensive synthesis with all accumulated context."""
-        doc_context = self._format_doc_context(context)
-        graph_text = self._format_graph_context(context)
-
+    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
 
-        prompt = f"""You are a knowledge assistant with access to a personal document archive and knowledge graph.
-Answer the following question using ALL provided context.
+        return f"""You are a knowledge assistant with access to John Doe's personal document archive and knowledge graph.
 
-Guidelines:
-- Be comprehensive and detailed
-- Cite specific documents by title when available, otherwise by document ID
-- Include dates, amounts, names — be specific
-- If information conflicts between documents, note it
-- Structure the answer with headers if it's complex
-- State what you DON'T know / couldn't find
+CONTEXT ABOUT THE USER:
+- The user is John Doe
+- Documents include medical records, military records, financial documents, legal contracts, vehicle records, pet records, etc.
+- When the user says "my", "I", "me" — they mean John Doe
+- Be thorough but concise
+
+INSTRUCTIONS:
+- Answer comprehensively using ALL provided context
+- Cite sources using document TITLES, e.g. (Source: "Medical Record for John Doe")
+- If no title available, use document ID: (Document 305)
+- Include specific details: dates, amounts, names, medical terms
+- Format monetary values clearly ($1,234.56) and dates clearly (January 15, 2024)
+- If information conflicts between documents, note the discrepancy and cite both
 - Reference knowledge graph relationships when relevant
+- Structure complex answers with headers or bullet points
+- State what you DON'T know if relevant
 
 Question: {question}
 {draft_section}
@@ -274,7 +329,12 @@ Document context (from multiple retrieval passes):
 {doc_context}
 {graph_text}
 
-Provide your answer. Be thorough and cite your sources."""
+Provide your comprehensive answer with inline citations:"""
+
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str) -> dict:
+        doc_context = self._format_doc_context(context)
+        graph_text = self._format_graph_context(context)
+        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer)
 
         try:
             answer = await self._llm_generate(prompt)
@@ -282,7 +342,6 @@ Provide your answer. Be thorough and cite your sources."""
             logger.error(f"Final synthesis failed: {e}")
             answer = draft_answer if draft_answer else f"Error generating answer: {e}"
 
-        # Try to get a confidence score
         confidence = 0.7
         try:
             conf_prompt = f"""Rate your confidence (0-1) in how completely the following answer addresses the question.
@@ -299,7 +358,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
     # ── Context merging ─────────────────────────────────────────────
 
     def _merge_context(self, ctx1: dict, ctx2: dict) -> dict:
-        """Merge two context dicts, deduplicating by document_id+chunk_index."""
         merged = {}
 
         for key in ("vector_results", "keyword_results"):
@@ -322,7 +380,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     combined.append(r)
             merged[key] = combined
 
-        # Graph nodes
         seen_uuids = set()
         merged_nodes = []
         for n in ctx1.get("graph_nodes", []) + ctx2.get("graph_nodes", []):
@@ -332,26 +389,18 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 merged_nodes.append(n)
         merged["graph_nodes"] = merged_nodes
 
-        # Merge subgraphs (take the larger one or combine)
         sg1 = ctx1.get("subgraph", {})
         sg2 = ctx2.get("subgraph", {})
-        if sg2 and (not sg1 or len(str(sg2)) > len(str(sg1))):
-            merged["subgraph"] = sg2
-        else:
-            merged["subgraph"] = sg1
+        merged["subgraph"] = sg2 if (sg2 and (not sg1 or len(str(sg2)) > len(str(sg1)))) else sg1
 
-        # Entity names
         merged["entity_names"] = list(set(
             ctx1.get("entity_names", []) + ctx2.get("entity_names", [])
         ))
-
         return merged
 
     # ── Formatting helpers ──────────────────────────────────────────
 
     def _format_doc_context(self, context: dict) -> str:
-        """Format document results for LLM consumption."""
-        # Combine and rank
         combined = self._merge_and_rank(
             context.get("vector_results", []),
             context.get("keyword_results", [])
@@ -362,15 +411,18 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         for r in top:
             title = r.get("title", "")
             doc_type = r.get("doc_type", "")
-            header = f"[Document {r['document_id']}"
             if title:
-                header += f" - {title}"
-            if doc_type:
-                header += f" ({doc_type})"
-            header += f" chunk {r.get('chunk_index', 0)} (score={r.get('combined_score', r.get('similarity', 0)):.3f})]"
+                header = f'[Source: "{title}"'
+                if doc_type:
+                    header += f" ({doc_type})"
+                header += f" — Document {r['document_id']}, chunk {r.get('chunk_index', 0)}]"
+            else:
+                header = f"[Document {r['document_id']}"
+                if doc_type:
+                    header += f" ({doc_type})"
+                header += f", chunk {r.get('chunk_index', 0)}]"
             parts.append(f"{header}:\n{r['content'][:3000]}")
 
-        # Entity results
         entity_parts = []
         seen_entities = set()
         for r in context.get("entity_results", []) + context.get("entity_kw_results", []):
@@ -388,7 +440,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return result
 
     def _format_graph_context(self, context: dict) -> str:
-        """Format graph context for LLM consumption."""
         graph_nodes = context.get("graph_nodes", [])
         subgraph = context.get("subgraph", {})
         if not graph_nodes and not subgraph:
@@ -399,26 +450,38 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return "\n\nKnowledge Graph context:\n" + json.dumps(graph_data, indent=2, default=str)[:6000]
 
     def _build_sources(self, context: dict) -> list[dict]:
-        """Build source citations from context."""
+        """Build deduplicated source citations grouped by document."""
         combined = self._merge_and_rank(
             context.get("vector_results", []),
             context.get("keyword_results", [])
         )
+
+        # Group by document_id
+        doc_groups = defaultdict(list)
+        for r in combined[:15]:
+            doc_groups[r["document_id"]].append(r)
+
         sources = []
-        for r in combined[:10]:
+        for doc_id, chunks in doc_groups.items():
+            chunks.sort(key=lambda x: x.get("combined_score", x.get("similarity", 0)), reverse=True)
+            best = chunks[0]
+
             source = {
-                "document_id": r["document_id"],
-                "chunk_index": r.get("chunk_index", 0),
-                "similarity": float(r.get("combined_score", r.get("similarity", 0))),
+                "document_id": doc_id,
+                "chunk_index": best.get("chunk_index", 0),
+                "similarity": float(best.get("combined_score", best.get("similarity", 0))),
             }
-            if r.get("title"):
-                source["title"] = r["title"]
-            if r.get("doc_type"):
-                source["doc_type"] = r["doc_type"]
-            # Include a snippet
-            source["excerpt"] = r.get("content", "")[:300]
+            if best.get("title"):
+                source["title"] = best["title"]
+            if best.get("doc_type"):
+                source["doc_type"] = best["doc_type"]
+            if len(chunks) > 1:
+                source["excerpt_count"] = len(chunks)
+            source["excerpt"] = best.get("content", "")[:300]
             sources.append(source)
-        return sources
+
+        sources.sort(key=lambda x: x["similarity"], reverse=True)
+        return sources[:10]
 
     # ── Existing helpers ────────────────────────────────────────────
 

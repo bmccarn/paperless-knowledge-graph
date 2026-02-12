@@ -41,6 +41,50 @@ export async function postQuery(question: string) {
   });
 }
 
+// SSE streaming query
+export async function* postQueryStream(question: string) {
+  const response = await fetch(`${API_URL}/query/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Stream error: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body reader");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        if (!event.trim()) continue;
+        const match = event.match(/^data: (.+)$/m);
+        if (match) {
+          try {
+            yield JSON.parse(match[1]);
+          } catch {
+            console.warn("SSE parse error:", event);
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function graphSearch(q: string, type?: string, limit = 20) {
   const params = new URLSearchParams({ q, limit: String(limit) });
   if (type) params.set("type", type);

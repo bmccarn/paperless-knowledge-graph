@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { postQuery } from "@/lib/api";
+import { postQuery, postQueryStream } from "@/lib/api";
 import {
   Send,
   Loader2,
@@ -23,6 +23,7 @@ import {
   Clock,
   MessageSquare,
   ChevronDown,
+  Zap,
 } from "lucide-react";
 
 interface EntityReport {
@@ -32,16 +33,21 @@ interface EntityReport {
   uuid?: string;
 }
 
+interface Source {
+  document_id?: number;
+  paperless_id?: number;
+  doc_id?: number;
+  title?: string;
+  doc_type?: string;
+  excerpt_count?: number;
+  similarity?: number;
+  paperless_url?: string;
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
-  sources?: Array<{
-    paperless_id?: number;
-    doc_id?: number;
-    title?: string;
-    doc_type?: string;
-    date?: string;
-  }>;
+  sources?: Source[];
   entities?: EntityReport[];
   graph_context?: {
     nodes?: Array<{ labels: string[]; props: Record<string, unknown> }>;
@@ -49,6 +55,9 @@ interface Message {
   };
   timestamp: number;
   queryTime?: number;
+  cached?: boolean;
+  streaming?: boolean;
+  statusMessage?: string;
 }
 
 interface Conversation {
@@ -74,7 +83,6 @@ function saveConversations(c: Conversation[]) {
 }
 
 function renderMarkdownContent(text: string) {
-  // Process markdown line by line
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
   let inCodeBlock = false;
@@ -103,7 +111,6 @@ function renderMarkdownContent(text: string) {
       continue;
     }
 
-    // Headers
     if (line.startsWith("### ")) {
       elements.push(<h3 key={i} className="text-sm font-semibold mt-3 mb-1">{line.slice(4)}</h3>);
     } else if (line.startsWith("## ")) {
@@ -153,6 +160,8 @@ function QueryContent() {
   const [input, setInput] = useState(initialQuery);
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(true);
+  const [streamingContent, setStreamingContent] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -167,9 +176,8 @@ function QueryContent() {
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, streamingContent]);
 
-  // Auto-submit initial query from URL
   useEffect(() => {
     if (initialQuery) {
       handleSubmit(initialQuery);
@@ -178,7 +186,7 @@ function QueryContent() {
   }, []);
 
   const saveCurrentConversation = (msgs: Message[], convId?: string) => {
-    const id = convId || activeConvId || crypto.randomUUID();
+    const id = convId || activeConvId || (crypto.randomUUID?.() ?? (Math.random().toString(36).slice(2) + Date.now().toString(36)));
     const firstUserMsg = msgs.find((m) => m.role === "user");
     const title = firstUserMsg?.content.slice(0, 60) || "New conversation";
 
@@ -209,6 +217,8 @@ function QueryContent() {
     const q = question || input.trim();
     if (!q || loading) return;
     setInput("");
+    setStreamingContent("");
+    setStatusMessage("");
 
     const userMsg: Message = { role: "user", content: q, timestamp: Date.now() };
     const newMessages = [...messages, userMsg];
@@ -217,39 +227,47 @@ function QueryContent() {
 
     const startTime = Date.now();
     try {
-      const result = await postQuery(q);
-      const contextNodes = result.graph_context?.nodes || result.context?.nodes || [];
-      const entities: EntityReport[] = contextNodes
-        .filter((n: Record<string, unknown>) => {
-          const p = (n.props || n.properties || {}) as Record<string, unknown>;
-          return p.description || p.name;
-        })
-        .map((n: Record<string, unknown>) => {
-          const p = (n.props || n.properties || {}) as Record<string, unknown>;
-          const labels = n.labels as string[] | undefined;
-          return {
-            name: (p.name as string) || (p.title as string) || "Unknown",
-            label: labels?.[0] || "Entity",
-            description: p.description as string | undefined,
-            uuid: p.uuid as string | undefined,
-          };
-        });
+      // Use streaming endpoint
+      let fullAnswer = "";
+      let sources: Source[] = [];
+      let entitiesFound: EntityReport[] = [];
+      let cached = false;
 
-      const explicitEntities = result.entities || result.entity_reports || [];
+      for await (const event of postQueryStream(q)) {
+        switch (event.type) {
+          case "status":
+            setStatusMessage(event.message || "");
+            break;
+          case "answer_chunk":
+            fullAnswer += event.content;
+            setStreamingContent(fullAnswer);
+            setStatusMessage("");
+            break;
+          case "complete":
+            sources = event.sources || [];
+            entitiesFound = event.entities_found || [];
+            cached = event.cached || false;
+            break;
+          case "error":
+            throw new Error(event.message || "Stream error");
+        }
+      }
+
       const queryTime = Date.now() - startTime;
-
       const assistantMsg: Message = {
         role: "assistant",
-        content: result.answer || result.response || JSON.stringify(result),
-        sources: result.sources || result.citations || [],
-        entities: [...entities, ...explicitEntities],
-        graph_context: result.graph_context || result.context,
+        content: fullAnswer,
+        sources,
+        entities: entitiesFound,
         timestamp: Date.now(),
         queryTime,
+        cached,
       };
 
       const allMessages = [...newMessages, assistantMsg];
       setMessages(allMessages);
+      setStreamingContent("");
+      setStatusMessage("");
       saveCurrentConversation(allMessages);
     } catch (e) {
       const errMsg: Message = {
@@ -259,6 +277,8 @@ function QueryContent() {
       };
       const allMessages = [...newMessages, errMsg];
       setMessages(allMessages);
+      setStreamingContent("");
+      setStatusMessage("");
       saveCurrentConversation(allMessages);
     } finally {
       setLoading(false);
@@ -286,8 +306,6 @@ function QueryContent() {
       setMessages([]);
     }
   };
-
-  const paperlessUrl = (id: number) => `http://your-paperless-host:8000/documents/${id}/`;
 
   return (
     <div className="flex h-full">
@@ -350,7 +368,12 @@ function QueryContent() {
       {/* Chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="border-b px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
-          <h1 className="text-base font-semibold">Knowledge Query</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold">Knowledge Query</h1>
+            <Badge variant="secondary" className="text-[9px] gap-1 py-0">
+              <Zap className="h-2.5 w-2.5" /> Streaming
+            </Badge>
+          </div>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -366,9 +389,9 @@ function QueryContent() {
           </Tooltip>
         </div>
 
-        <ScrollArea className="flex-1">
+        <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-            {messages.length === 0 && (
+            {messages.length === 0 && !streamingContent && (
               <div className="text-center py-16 space-y-3">
                 <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
                   <MessageSquare className="h-6 w-6 text-primary" />
@@ -407,11 +430,14 @@ function QueryContent() {
                     )}
                   </div>
 
-                  {/* Query time */}
+                  {/* Query time + cached indicator */}
                   {msg.queryTime && (
                     <p className="text-[10px] text-muted-foreground flex items-center gap-1 px-1">
                       <Clock className="h-2.5 w-2.5" />
                       {(msg.queryTime / 1000).toFixed(1)}s
+                      {msg.cached && (
+                        <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">cached</Badge>
+                      )}
                     </p>
                   )}
 
@@ -430,14 +456,14 @@ function QueryContent() {
                             className="text-xs gap-1 py-1 font-normal"
                           >
                             <span className="font-medium">{ent.name}</span>
-                            <span className="text-muted-foreground">· {ent.label}</span>
+                            {ent.label && <span className="text-muted-foreground">· {ent.label}</span>}
                           </Badge>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  {/* Sources */}
+                  {/* Sources with clickable Paperless links */}
                   {msg.sources && msg.sources.length > 0 && (
                     <div className="space-y-1.5 px-1">
                       <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
@@ -446,18 +472,23 @@ function QueryContent() {
                       </p>
                       <div className="flex flex-wrap gap-1.5">
                         {msg.sources.map((s, j) => {
-                          const docId = s.paperless_id || s.doc_id;
+                          const docId = s.document_id || s.paperless_id || s.doc_id;
+                          const url = s.paperless_url || (docId ? `http://your-paperless-host:8000/documents/${docId}/details` : "#");
+                          const displayTitle = s.title || `Document #${docId}`;
+                          const excerptNote = s.excerpt_count && s.excerpt_count > 1
+                            ? ` (${s.excerpt_count} excerpts)`
+                            : "";
                           return (
                             <a
                               key={j}
-                              href={docId ? paperlessUrl(docId) : "#"}
+                              href={url}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors"
                             >
                               <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
                               <span className="truncate max-w-[200px]">
-                                {s.title || `Doc #${docId}`}
+                                {displayTitle}{excerptNote}
                               </span>
                               {s.doc_type && (
                                 <Badge variant="secondary" className="text-[9px] px-1 py-0">
@@ -486,14 +517,39 @@ function QueryContent() {
                 </div>
                 {msg.role === "user" && (
                   <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center shrink-0 mt-1">
-                    <span className="text-xs font-bold text-primary-foreground">U</span>
+                    <span className="text-xs font-bold text-primary-foreground">B</span>
                   </div>
                 )}
               </div>
             ))}
 
-            {/* Typing indicator */}
-            {loading && (
+            {/* Streaming in-progress message */}
+            {(streamingContent || statusMessage) && (
+              <div className="flex gap-3 justify-start">
+                <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
+                  <Network className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <div className="max-w-[85%] space-y-2">
+                  {statusMessage && !streamingContent && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {statusMessage}
+                    </div>
+                  )}
+                  {streamingContent && (
+                    <div className="rounded-2xl rounded-bl-md bg-card border px-4 py-3">
+                      <div className="space-y-1">
+                        {renderMarkdownContent(streamingContent)}
+                        <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Simple typing indicator (no streaming content yet) */}
+            {loading && !streamingContent && !statusMessage && (
               <div className="flex gap-3">
                 <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                   <Network className="h-3.5 w-3.5 text-primary" />
@@ -509,7 +565,7 @@ function QueryContent() {
             )}
             <div ref={scrollRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Input */}
         <div className="border-t p-4 bg-card/50 backdrop-blur-sm">

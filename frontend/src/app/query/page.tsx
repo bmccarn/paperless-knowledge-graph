@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   postQueryStream,
   listConversations,
@@ -169,7 +170,8 @@ function QueryContent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState(initialQuery);
   const [loading, setLoading] = useState(false);
-  const [showHistory, setShowHistory] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showHistoryDesktop, setShowHistoryDesktop] = useState(true);
   const [streamingContent, setStreamingContent] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
@@ -182,7 +184,6 @@ function QueryContent() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load conversations from API
   const loadConversations = useCallback(async () => {
     try {
       const convs = await listConversations();
@@ -221,6 +222,7 @@ function QueryContent() {
     setMessages([]);
     setInput("");
     setFollowUpSuggestions([]);
+    setShowHistory(false);
     textareaRef.current?.focus();
   };
 
@@ -232,7 +234,6 @@ function QueryContent() {
     setStatusMessage("");
     setFollowUpSuggestions([]);
 
-    // Create conversation if needed
     let convId = activeConvId;
     if (!convId) {
       try {
@@ -298,7 +299,6 @@ function QueryContent() {
       setStreamingContent("");
       setStatusMessage("");
       setFollowUpSuggestions(followUps);
-      // Refresh conversation list
       loadConversations();
     } catch (e) {
       const errMsg: Message = {
@@ -327,7 +327,7 @@ function QueryContent() {
       setActiveConvId(conv.id);
       setMessages(full.messages || []);
       setFollowUpSuggestions([]);
-      // Show follow-ups from last assistant message
+      setShowHistory(false);
       const lastAssistant = [...(full.messages || [])].reverse().find((m: Message) => m.role === "assistant");
       if (lastAssistant?.follow_ups) {
         setFollowUpSuggestions(lastAssistant.follow_ups);
@@ -362,81 +362,105 @@ function QueryContent() {
     }
   };
 
+  // Conversation list component (shared between desktop sidebar and mobile sheet)
+  const ConversationList = () => (
+    <>
+      <div className="p-2">
+        <Button variant="outline" size="sm" className="w-full gap-2 text-xs min-h-[44px] md:min-h-0" onClick={handleNewConversation}>
+          <Plus className="h-3.5 w-3.5" /> New Conversation
+        </Button>
+      </div>
+      <ScrollArea className="flex-1">
+        <div className="px-2 pb-2 space-y-0.5">
+          {conversations.map((conv) => (
+            <div
+              key={conv.id}
+              className={`group flex items-center gap-0.5 rounded-md text-xs transition-colors ${
+                activeConvId === conv.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {editingTitle === conv.id ? (
+                <input
+                  autoFocus
+                  className="flex-1 px-2 py-1.5 text-xs bg-background border rounded"
+                  value={editTitleValue}
+                  onChange={(e) => setEditTitleValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleRename(conv.id); if (e.key === "Escape") setEditingTitle(null); }}
+                  onBlur={() => handleRename(conv.id)}
+                />
+              ) : (
+                <button className="flex-1 text-left px-2.5 py-3 md:py-2 truncate min-h-[44px] md:min-h-0" onClick={() => loadConversation(conv)}>
+                  <MessageSquare className="h-3 w-3 inline mr-1.5 opacity-50" />
+                  {conv.title}
+                </button>
+              )}
+              <Button
+                variant="ghost" size="icon"
+                className="h-8 w-8 md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100 shrink-0"
+                onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
+              >
+                <Pencil className="h-3 w-3 md:h-2.5 md:w-2.5" />
+              </Button>
+              <Button
+                variant="ghost" size="icon"
+                className="h-8 w-8 md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100 shrink-0 mr-0.5"
+                onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
+              >
+                <Trash2 className="h-3 w-3 md:h-2.5 md:w-2.5" />
+              </Button>
+            </div>
+          ))}
+          {conversations.length === 0 && (
+            <p className="text-xs text-muted-foreground/60 text-center py-6">No conversations yet</p>
+          )}
+        </div>
+      </ScrollArea>
+    </>
+  );
+
   return (
     <div className="flex h-full">
-      {/* History sidebar */}
-      {showHistory && (
-        <div className="w-64 border-r flex flex-col bg-card/30">
+      {/* Desktop history sidebar */}
+      {showHistoryDesktop && (
+        <div className="hidden md:flex w-64 border-r flex-col bg-card/30">
           <div className="flex items-center justify-between border-b px-3 py-2.5">
             <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
               <History className="h-3.5 w-3.5" /> Conversations
             </span>
           </div>
-          <div className="p-2">
-            <Button variant="outline" size="sm" className="w-full gap-2 text-xs" onClick={handleNewConversation}>
-              <Plus className="h-3.5 w-3.5" /> New Conversation
-            </Button>
-          </div>
-          <ScrollArea className="flex-1">
-            <div className="px-2 pb-2 space-y-0.5">
-              {conversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  className={`group flex items-center gap-0.5 rounded-md text-xs transition-colors ${
-                    activeConvId === conv.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {editingTitle === conv.id ? (
-                    <input
-                      autoFocus
-                      className="flex-1 px-2 py-1.5 text-xs bg-background border rounded"
-                      value={editTitleValue}
-                      onChange={(e) => setEditTitleValue(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleRename(conv.id); if (e.key === "Escape") setEditingTitle(null); }}
-                      onBlur={() => handleRename(conv.id)}
-                    />
-                  ) : (
-                    <button className="flex-1 text-left px-2.5 py-2 truncate" onClick={() => loadConversation(conv)}>
-                      <MessageSquare className="h-3 w-3 inline mr-1.5 opacity-50" />
-                      {conv.title}
-                    </button>
-                  )}
-                  <Button
-                    variant="ghost" size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
-                  >
-                    <Pencil className="h-2.5 w-2.5" />
-                  </Button>
-                  <Button
-                    variant="ghost" size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0 mr-0.5"
-                    onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
-                  >
-                    <Trash2 className="h-2.5 w-2.5" />
-                  </Button>
-                </div>
-              ))}
-              {conversations.length === 0 && (
-                <p className="text-xs text-muted-foreground/60 text-center py-6">No conversations yet</p>
-              )}
-            </div>
-          </ScrollArea>
+          <ConversationList />
         </div>
       )}
 
+      {/* Mobile history sheet */}
+      <Sheet open={showHistory} onOpenChange={setShowHistory}>
+        <SheetContent side="left" className="w-[300px] p-0 flex flex-col">
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="text-sm flex items-center gap-1.5">
+              <History className="h-4 w-4" /> Conversations
+            </SheetTitle>
+          </SheetHeader>
+          <ConversationList />
+        </SheetContent>
+      </Sheet>
+
       {/* Chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="border-b px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
+        <div className="border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold">Knowledge Query</h1>
-            <Badge variant="secondary" className="text-[9px] gap-1 py-0">
+            {/* Mobile: show history button */}
+            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" onClick={() => setShowHistory(true)}>
+              <History className="h-4 w-4" />
+            </Button>
+            <h1 className="text-sm md:text-base font-semibold">Knowledge Query</h1>
+            <Badge variant="secondary" className="text-[9px] gap-1 py-0 hidden sm:inline-flex">
               <Zap className="h-2.5 w-2.5" /> Streaming
             </Badge>
           </div>
+          {/* Desktop: toggle history */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowHistory(!showHistory)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 hidden md:inline-flex" onClick={() => setShowHistoryDesktop(!showHistoryDesktop)}>
                 <History className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -445,30 +469,30 @@ function QueryContent() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+          <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
             {messages.length === 0 && !streamingContent && (
-              <div className="text-center py-16 space-y-3">
+              <div className="text-center py-12 md:py-16 space-y-3">
                 <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
                   <MessageSquare className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <p className="text-lg font-medium">Ask anything about your documents</p>
+                  <p className="text-base md:text-lg font-medium">Ask anything about your documents</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Conversations are saved automatically. Ask follow-up questions naturally.
+                    Conversations are saved automatically.
                   </p>
                 </div>
               </div>
             )}
 
             {messages.map((msg, i) => (
-              <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex gap-2 md:gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 {msg.role === "assistant" && (
                   <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                     <Network className="h-3.5 w-3.5 text-primary" />
                   </div>
                 )}
-                <div className={`max-w-[85%] space-y-2 ${msg.role === "user" ? "items-end" : ""}`}>
-                  <div className={`rounded-2xl px-4 py-3 ${
+                <div className={`max-w-[90%] md:max-w-[85%] space-y-2 ${msg.role === "user" ? "items-end" : ""}`}>
+                  <div className={`rounded-2xl px-3 md:px-4 py-2.5 md:py-3 ${
                     msg.role === "user"
                       ? "bg-primary text-primary-foreground rounded-br-md"
                       : "bg-card border rounded-bl-md"
@@ -480,9 +504,8 @@ function QueryContent() {
                     )}
                   </div>
 
-                  {/* Meta row: time, confidence, cached, copy */}
                   {msg.role === "assistant" && (msg.queryTime || msg.confidence) && (
-                    <div className="flex items-center gap-2 px-1">
+                    <div className="flex flex-wrap items-center gap-2 px-1">
                       {msg.queryTime && (
                         <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                           <Clock className="h-2.5 w-2.5" />
@@ -497,7 +520,6 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {/* Entities — clickable to search graph */}
                   {msg.entities && msg.entities.length > 0 && (
                     <div className="space-y-1.5 px-1">
                       <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
@@ -508,7 +530,7 @@ function QueryContent() {
                           <a
                             key={j}
                             href={`/graph?q=${encodeURIComponent(ent.name || "")}`}
-                            className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-xs hover:bg-accent transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1.5 text-xs hover:bg-accent transition-colors cursor-pointer min-h-[36px]"
                           >
                             <Search className="h-2.5 w-2.5 text-muted-foreground" />
                             <span className="font-medium">{ent.name}</span>
@@ -519,7 +541,6 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {/* Sources — clickable Paperless links */}
                   {msg.sources && msg.sources.length > 0 && (
                     <div className="space-y-1.5 px-1">
                       <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
@@ -533,10 +554,10 @@ function QueryContent() {
                           const excerpts = s.excerpt_count && s.excerpt_count > 1 ? ` (${s.excerpt_count} excerpts)` : "";
                           return (
                             <a key={j} href={url} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors">
+                              className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors min-h-[36px]">
                               <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className="truncate max-w-[200px]">{title}{excerpts}</span>
-                              {s.doc_type && <Badge variant="secondary" className="text-[9px] px-1 py-0">{s.doc_type}</Badge>}
+                              <span className="truncate max-w-[180px] md:max-w-[200px]">{title}{excerpts}</span>
+                              {s.doc_type && <Badge variant="secondary" className="text-[9px] px-1 py-0 hidden sm:inline-flex">{s.doc_type}</Badge>}
                             </a>
                           );
                         })}
@@ -552,20 +573,19 @@ function QueryContent() {
               </div>
             ))}
 
-            {/* Streaming in-progress */}
             {(streamingContent || statusMessage) && (
-              <div className="flex gap-3 justify-start">
+              <div className="flex gap-2 md:gap-3 justify-start">
                 <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                   <Network className="h-3.5 w-3.5 text-primary" />
                 </div>
-                <div className="max-w-[85%] space-y-2">
+                <div className="max-w-[90%] md:max-w-[85%] space-y-2">
                   {statusMessage && !streamingContent && (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
                       <Loader2 className="h-3 w-3 animate-spin" /> {statusMessage}
                     </div>
                   )}
                   {streamingContent && (
-                    <div className="rounded-2xl rounded-bl-md bg-card border px-4 py-3">
+                    <div className="rounded-2xl rounded-bl-md bg-card border px-3 md:px-4 py-2.5 md:py-3">
                       <div className="space-y-1">
                         {renderMarkdownContent(streamingContent)}
                         <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
@@ -602,7 +622,7 @@ function QueryContent() {
                     <button
                       key={i}
                       onClick={() => handleSubmit(suggestion)}
-                      className="text-left text-xs border rounded-lg px-3 py-2 hover:bg-accent transition-colors max-w-[300px] truncate"
+                      className="text-left text-xs border rounded-lg px-3 py-2.5 hover:bg-accent transition-colors max-w-full md:max-w-[300px] break-words min-h-[44px] flex items-center"
                     >
                       {suggestion}
                     </button>
@@ -616,26 +636,26 @@ function QueryContent() {
         </div>
 
         {/* Input */}
-        <div className="border-t p-4 bg-card/50 backdrop-blur-sm">
+        <div className="border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
             {/* Model selector */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-1 min-h-[36px] md:min-h-0"
               >
                 <Bot className="h-3 w-3" />
-                <span>{models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select model'}</span>
+                <span className="truncate max-w-[200px]">{models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select model'}</span>
                 <ChevronDown className={"h-3 w-3 transition-transform " + (showModelDropdown ? "rotate-180" : "")} />
               </button>
               {showModelDropdown && (
-                <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-lg shadow-lg py-1 z-50 min-w-[200px] max-h-[240px] overflow-y-auto">
+                <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-lg shadow-lg py-1 z-50 min-w-[200px] max-w-[calc(100vw-2rem)] max-h-[240px] overflow-y-auto">
                   {models.map((m) => (
                     <button
                       key={m.id}
                       onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); }}
-                      className={"w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between " + (selectedModel === m.id ? "bg-accent/50 font-medium" : "")}
+                      className={"w-full text-left px-3 py-2.5 md:py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between min-h-[44px] md:min-h-0 " + (selectedModel === m.id ? "bg-accent/50 font-medium" : "")}
                     >
                       <span>{m.name}</span>
                       {m.id === defaultModel && <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-2">default</Badge>}
@@ -650,12 +670,12 @@ function QueryContent() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask a question... (Enter to send, Shift+Enter for newline)"
+                placeholder="Ask a question..."
                 disabled={loading}
-                className="flex-1 min-h-[42px] max-h-[160px] text-sm"
+                className="flex-1 min-h-[44px] max-h-[160px] text-sm resize-none"
                 rows={1}
               />
-              <Button type="submit" disabled={loading || !input.trim()} size="icon" className="h-[42px] w-[42px] shrink-0">
+              <Button type="submit" disabled={loading || !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </form>

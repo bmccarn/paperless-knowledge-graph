@@ -10,6 +10,7 @@ import { GraphControls } from './graph-controls';
 import { GraphLegend } from './graph-legend';
 import { getGraphInitial, getGraphNeighbors, graphSearch } from '@/lib/api';
 import { NodeDetailPanel } from '@/components/node-detail-panel';
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 const ForceGraphClient = dynamic(
   () => import('./force-graph-client').then((mod) => mod.ForceGraphClient),
@@ -596,9 +597,9 @@ function GraphContent() {
         </div>
       )}
 
-      {/* Node detail sidebar */}
+      {/* Node detail panel - desktop sidebar, mobile bottom sheet */}
       {selectedNode && (
-        <div className="absolute right-0 top-0 bottom-0 w-[600px] max-w-[60vw] border-l flex flex-col bg-card overflow-y-auto z-40 shadow-2xl p-4">
+        <div className="absolute right-0 top-0 bottom-0 w-[600px] max-w-[60vw] border-l flex-col bg-card overflow-y-auto z-40 shadow-2xl p-4 hidden md:flex">
           <NodeDetailPanel
             node={selectedNode}
             onClose={() => selectNode(null)}
@@ -606,6 +607,19 @@ function GraphContent() {
           />
         </div>
       )}
+
+      {/* Mobile node detail bottom sheet */}
+      <Sheet open={!!selectedNode} onOpenChange={(open) => { if (!open) selectNode(null); }}>
+        <SheetContent side="bottom" className="md:hidden h-[70vh] overflow-y-auto p-0" showCloseButton={false}>
+          {selectedNode && (
+            <NodeDetailPanel
+              node={selectedNode}
+              onClose={() => selectNode(null)}
+              onExpandNeighbors={addNeighbors}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

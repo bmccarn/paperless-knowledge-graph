@@ -55,7 +55,7 @@ export function GraphControls({
     <>
       {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 z-20 border-b px-4 py-2.5 flex items-center gap-3 bg-card/80 backdrop-blur-sm">
-        <h1 className="text-base font-semibold whitespace-nowrap hidden md:block">Graph Explorer</h1>
+        <h1 className="text-sm md:text-base font-semibold whitespace-nowrap hidden sm:block">Graph Explorer</h1>
         <div className="flex-1 flex gap-2 max-w-md ml-2 relative">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -130,7 +130,7 @@ export function GraphControls({
       </div>
 
       {/* Node limit slider (top-right) */}
-      <div className="absolute top-14 right-3 z-20 bg-card/90 backdrop-blur-md border rounded-lg px-3 py-2.5 shadow-lg w-48">
+      <div className="absolute top-14 right-3 z-20 bg-card/90 backdrop-blur-md border rounded-lg px-3 py-2.5 shadow-lg w-40 md:w-48 hidden md:block">
         <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">Node Limit: {nodeLimit}</p>
         <Slider
           value={[nodeLimit]}
@@ -148,7 +148,7 @@ export function GraphControls({
 
       {/* Legend overlay (top-left) */}
       {showLegend && nodeTypes.size > 0 && (
-        <div className="absolute top-14 left-3 z-20 bg-card/90 backdrop-blur-md border rounded-lg px-3 py-2.5 shadow-lg">
+        <div className="absolute top-14 left-3 z-20 bg-card/90 backdrop-blur-md border rounded-lg px-3 py-2.5 shadow-lg hidden md:block">
           <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">Legend</p>
           <div className="space-y-1">
             {[...nodeTypes].sort().map((type) => (

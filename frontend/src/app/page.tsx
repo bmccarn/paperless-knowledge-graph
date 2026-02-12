@@ -627,7 +627,7 @@ export default function DashboardPage() {
       {/* Toast notification */}
       {toast && (
         <div
-          className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg transition-all animate-in slide-in-from-bottom-4 fade-in ${
+          className={`fixed bottom-20 md:bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg transition-all animate-in slide-in-from-bottom-4 fade-in ${
             toast.type === "success"
               ? "bg-emerald-500/90 text-white"
               : "bg-destructive/90 text-destructive-foreground"

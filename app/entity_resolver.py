@@ -338,14 +338,14 @@ class EntityResolver:
             logger.info(f"Detected joint name: '{name}' -> {individual_names}")
             uuids = []
             for ind_name in individual_names:
-                uid = await self._resolve_single_person(ind_name.strip(), source_doc_id, role)
+                uid = await self._resolve_single_person(ind_name.strip(), source_doc_id, role, description)
                 if uid:
                     uuids.append(uid)
             return uuids[0] if uuids else ""
 
-        return await self._resolve_single_person(name, source_doc_id, role)
+        return await self._resolve_single_person(name, source_doc_id, role, description)
 
-    async def _resolve_single_person(self, name: str, source_doc_id: int, role: str = None) -> str:
+    async def _resolve_single_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         normalized = normalize_name(name)
         if not normalized:
             return ""

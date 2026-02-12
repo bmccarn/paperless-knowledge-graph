@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 import time
+import os
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -152,6 +153,13 @@ class TaskResponse(BaseModel):
     message: str
 
 
+
+# --- Paperless URL ---
+
+def _get_paperless_url() -> str:
+    return os.getenv("PAPERLESS_EXTERNAL_URL", "http://your-paperless-host:8000")
+
+
 # --- Health & Status ---
 
 @app.get("/status")
@@ -172,6 +180,7 @@ async def status():
                 "docs_with_embeddings": docs_w_embeds,
             },
             "last_sync": last_sync.isoformat() if last_sync else None,
+            "paperless_url": _get_paperless_url(),
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
             "cache": cache_stats,
         }
@@ -360,9 +369,36 @@ async def cancel_task(task_id: str):
 async def query(req: QueryRequest):
     try:
         result = await query_engine.query(req.question)
+        paperless_base = _get_paperless_url()
+        for source in result.get("sources", []):
+            if source.get("document_id"):
+                source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query/stream")
+async def query_stream(req: QueryRequest):
+    """Streaming query endpoint with Server-Sent Events."""
+    async def event_generator():
+        try:
+            paperless_base = _get_paperless_url()
+            async for event in query_engine.query_stream(req.question):
+                if event.get("type") == "complete" and event.get("sources"):
+                    for source in event["sources"]:
+                        if source.get("document_id"):
+                            source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
+                yield f"data: {json.dumps(event)}" + "\n\n"
+        except Exception as e:
+            err = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(err)}" + "\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 # --- Graph Browsing ---

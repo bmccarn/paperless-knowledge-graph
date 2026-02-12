@@ -301,9 +301,25 @@ function QueryContent() {
       setFollowUpSuggestions(followUps);
       loadConversations();
     } catch (e) {
+      // Stream broke - try recovering from conversation history
+      if (convId) {
+        try {
+          const full = await getConversation(convId);
+          if (full.messages && full.messages.length > newMessages.length) {
+            setMessages(full.messages);
+            const lastA = [...full.messages].reverse().find((m: Message) => m.role === "assistant");
+            if (lastA?.follow_ups) setFollowUpSuggestions(lastA.follow_ups);
+            setStreamingContent("");
+            setStatusMessage("");
+            loadConversations();
+            setLoading(false);
+            return;
+          }
+        } catch { /* recovery failed */ }
+      }
       const errMsg: Message = {
         role: "assistant",
-        content: `Sorry, something went wrong.\n\n*Error: ${(e as Error).message}*`,
+        content: "Connection lost. The answer may still be processing \u2014 try refreshing in a moment.",
         timestamp: Date.now(),
       };
       setMessages([...newMessages, errMsg]);

@@ -512,15 +512,22 @@ async def query(req: QueryRequest):
 
 @app.post("/query/stream")
 async def query_stream(req: QueryRequest):
-    """Streaming query endpoint with Server-Sent Events."""
-    # Get conversation history before entering generator
+    """Streaming query endpoint with Server-Sent Events.
+    
+    Uses background task + queue so the query completes and saves
+    even if the client disconnects (e.g. mobile tab backgrounded).
+    """
+    import asyncio
+
     conv_history = None
     if req.conversation_id:
         conv_history = await conversations.get_conversation_history(req.conversation_id)
-        # Save user message immediately
         await conversations.add_message(req.conversation_id, "user", req.question)
 
-    async def event_generator():
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _run_query():
+        """Background task: runs query to completion, saves result regardless of client."""
         try:
             paperless_base = _get_paperless_url()
             full_answer_chunks = []
@@ -530,23 +537,20 @@ async def query_stream(req: QueryRequest):
             final_follow_ups = None
 
             async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model):
-                # Collect answer for saving
                 if event.get("type") == "answer_chunk":
                     full_answer_chunks.append(event.get("content", ""))
                 if event.get("type") == "complete" and event.get("sources"):
                     for source in event["sources"]:
                         if source.get("document_id"):
                             source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
-                # Capture metadata from complete event
                 if event.get("type") == "complete":
                     final_sources = event.get("sources")
                     final_entities = event.get("entities_found")
                     final_confidence = event.get("confidence")
                     final_follow_ups = event.get("follow_up_suggestions")
 
-                yield f"data: {json.dumps(event)}" + "\n\n"
+                await queue.put(event)
 
-                # Save assistant message after complete
                 if event.get("type") == "complete" and req.conversation_id:
                     full_answer = "".join(full_answer_chunks)
                     await conversations.add_message(
@@ -556,17 +560,29 @@ async def query_stream(req: QueryRequest):
                         confidence=final_confidence,
                         follow_ups=final_follow_ups,
                     )
-
         except Exception as e:
-            err = {"type": "error", "message": str(e)}
-            yield f"data: {json.dumps(err)}" + "\n\n"
+            await queue.put({"type": "error", "message": str(e)})
+        finally:
+            await queue.put(None)  # sentinel
+
+    # Start query as background task — runs to completion even if client disconnects
+    asyncio.create_task(_run_query())
+
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event)}" + "\n\n"
+        except asyncio.CancelledError:
+            pass  # Client disconnected — query task still running in background
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache, no-store, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
-
 
 # --- Graph Browsing ---
 

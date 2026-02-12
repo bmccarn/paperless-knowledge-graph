@@ -123,7 +123,21 @@ async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str)
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
-            return _json.loads(response.choices[0].message.content)
+            raw = response.choices[0].message.content or ""
+            try:
+                parsed = _json.loads(raw)
+                return parsed if isinstance(parsed, dict) else {"valid": True}
+            except _json.JSONDecodeError:
+                # Try basic repair: strip markdown fences
+                import re as _re
+                cleaned = _re.sub(r'^```(?:json)?\s*\n?', '', raw.strip(), flags=_re.MULTILINE)
+                cleaned = _re.sub(r'\n?```\s*$', '', cleaned, flags=_re.MULTILINE).strip()
+                try:
+                    parsed = _json.loads(cleaned)
+                    return parsed if isinstance(parsed, dict) else {"valid": True}
+                except _json.JSONDecodeError:
+                    logger.warning(f"Entity validation JSON parse failed for '{name}', allowing entity")
+                    return {"valid": True}
         
         result = await retry_with_backoff(_call, operation="validate_entity")
         is_valid = result.get("valid", True)

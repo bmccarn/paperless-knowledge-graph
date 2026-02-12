@@ -60,12 +60,21 @@ Respond with ONLY a JSON object: {"valid": true} or {"valid": false}"""
 
 
 def _is_suspicious_entity(name: str, entity_type: str) -> bool:
-    """Determine if an entity name is borderline and needs LLM validation."""
+    """Determine if an entity name is borderline and needs LLM validation.
+    
+    The LLM's general knowledge can catch type mismatches (e.g., "Trane" as Person
+    when it's actually a company) and junk entities that slip past the blocklist.
+    """
     name_clean = name.strip()
     words = name_clean.split()
     
     # Always validate Event entities (most error-prone type)
     if entity_type == "Event":
+        return True
+    
+    # Single-word entities of ANY type are suspicious — validate with LLM
+    # Catches: "Trane" as Person (it's a company), "Builders" as Person, etc.
+    if len(words) == 1:
         return True
     
     # Person names that don't follow typical patterns
@@ -76,9 +85,19 @@ def _is_suspicious_entity(name: str, entity_type: str) -> bool:
         # Contains numbers (usually not a person)
         if any(c.isdigit() for c in name_clean):
             return True
-        # Very short single word
-        if len(words) == 1 and len(name_clean) <= 4:
-            return True
+        # Two words but doesn't look like a name (e.g., "Rating Decision")
+        if len(words) == 2:
+            # If neither word is capitalized like a proper noun, suspicious
+            lower_words = [w for w in words if w[0].islower()]
+            if lower_words:
+                return True
+            # If it contains common non-name words
+            non_name_words = {"decision", "request", "statement", "record", "form",
+                             "notice", "summary", "report", "letter", "order",
+                             "agreement", "certificate", "rating", "review",
+                             "service", "services", "system", "total", "amount"}
+            if any(w.lower() in non_name_words for w in words):
+                return True
     
     # Product entities are often junk from invoices
     if entity_type == "Product":
@@ -688,6 +707,13 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
             if entity_type == "Event" and _is_date_string(name):
                 logger.debug(f"Skipping date-as-event entity: '{name}'")
                 continue
+            
+            # LLM validation for suspicious entities (wrong type, junk names, etc.)
+            if _is_suspicious_entity(name, entity_type):
+                is_valid = await _validate_entity_with_llm(name, entity_type, title)
+                if not is_valid:
+                    logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
+                    continue
                 
             # Resolve the entity and create document relationships
             entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title, description=description)

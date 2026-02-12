@@ -129,14 +129,41 @@ Document content:
   "unit": "assigned unit or squadron",
   "base": "military installation or base name",
   "date": "document date (YYYY-MM-DD if possible)",
-  "document_type": "specific type (DD-214, PCS orders, EPR/OPR, training record, medical, promotion, etc.)",
+  "document_type": "specific type (DD-214, PCS orders, EPR/OPR, training record, medical, promotion, VA rating decision, VA benefits letter, etc.)",
   "afsc_mos": "AFSC or MOS code if mentioned",
   "period_of_service": "service dates if mentioned",
-  "key_details": "brief summary of the document's key information",
+  "key_details": "brief summary of the document's key information — include any disability rating percentages and decisions",
+  "disability_ratings": [
+    {{
+      "condition": "name of the disability/condition",
+      "percentage": "individual rating percentage as a number (e.g. 50)",
+      "effective_date": "effective date (YYYY-MM-DD if possible)",
+      "status": "service-connected, non-service-connected, permanent, etc."
+    }}
+  ],
+  "combined_rating": "combined/overall disability rating percentage if stated (number only, e.g. 100)",
+  "combined_rating_effective_date": "effective date of combined rating (YYYY-MM-DD if possible)",
+  "permanent_and_total": "true if the document states permanent and total disability status, false otherwise, null if not mentioned",
+  "rating_decisions": [
+    {{
+      "decision": "brief description of the rating decision",
+      "effective_date": "effective date",
+      "previous_rating": "previous rating if mentioned",
+      "new_rating": "new rating if mentioned"
+    }}
+  ],
+  "benefits": [
+    {{
+      "benefit_type": "type of benefit (DEA/Chapter 35, CHAMPVA, pension, etc.)",
+      "eligibility": "eligible/not eligible",
+      "effective_date": "effective date"
+    }}
+  ],
+  "monthly_payment": "monthly payment amount if stated",
   "organizations": [
     {{
       "name": "military organization name",
-      "type": "type (squadron, wing, division, command, etc.)"
+      "type": "type (squadron, wing, division, command, VA regional office, etc.)"
     }}
   ],
   "locations": [
@@ -144,8 +171,27 @@ Document content:
       "name": "location name (base, city, country)",
       "context": "context (stationed, deployed, TDY, etc.)"
     }}
+  ],
+  "conditions": [
+    {{
+      "name": "medical condition or disability name",
+      "status": "service-connected/non-service-connected/pending",
+      "details": "any additional details (permanent, static, etc.)"
+    }}
   ]
 }}
+
+CRITICAL extraction rules for VA/military documents:
+- The COMBINED/TOTAL disability rating is the most important field. Search the ENTIRE document for it.
+- Look for: "increased your rating to X percent", "combined evaluation of X percent", "total disability rating of X percent", "rating to 100 percent"
+- If the document mentions "permanent and total disability status" or "DEA/Chapter 35 eligibility", the combined rating is almost certainly 100%.
+- Extract INDIVIDUAL condition ratings separately in disability_ratings array.
+- The combined_rating field should be the FINAL overall combined percentage, NOT an individual condition percentage.
+- If a document says a condition was increased to 50% AND that this increased the overall rating to 100%, then combined_rating = "100", NOT "50".
+- "Permanent and total" status is critical — set permanent_and_total to "true" if mentioned ANYWHERE in the document.
+- Effective dates for all ratings and benefit changes.
+- Monthly payment amounts.
+- Any CHANGES to ratings (increases, decreases, new grants).
 
 Extract all information present. Use null for missing fields. Military abbreviations should be preserved as-is.
 
@@ -506,7 +552,7 @@ class EntityExtractor:
     async def _pass1_metadata_extraction(self, title: str, content: str, doc_type: str) -> dict:
         """Pass 1: Extract structured metadata specific to document type."""
         prompt_template = METADATA_EXTRACTION_PROMPTS.get(doc_type, GENERIC_METADATA_PROMPT)
-        truncated = content[:8000]
+        truncated = content[:30000]
         prompt = prompt_template.format(title=title, content=truncated)
 
         async def _call():
@@ -521,7 +567,7 @@ class EntityExtractor:
 
     async def _pass2_entity_extraction(self, title: str, content: str, metadata: dict) -> dict:
         """Pass 2: Extract and type all entities."""
-        truncated = content[:8000] 
+        truncated = content[:30000]
         metadata_str = json.dumps(metadata, indent=2)
         prompt = ENTITY_EXTRACTION_PROMPT.format(
             title=title, 
@@ -541,7 +587,7 @@ class EntityExtractor:
 
     async def _pass3_relationship_extraction(self, title: str, content: str, entities: dict) -> dict:
         """Pass 3: Infer relationships between entities."""
-        truncated = content[:6000]  # Leave room for entity list
+        truncated = content[:20000]  # Leave room for entity list
         entities_str = json.dumps(entities.get("entities", []), indent=2)
         prompt = RELATIONSHIP_EXTRACTION_PROMPT.format(
             title=title,

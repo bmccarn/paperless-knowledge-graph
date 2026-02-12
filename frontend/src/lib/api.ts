@@ -34,11 +34,82 @@ export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
 
-export async function postQuery(question: string) {
+export async function postQuery(question: string, conversationId?: string) {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversation_id: conversationId }),
   });
+}
+
+// SSE streaming query
+export async function* postQueryStream(question: string, conversationId?: string) {
+  const response = await fetch(`${API_URL}/query/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, conversation_id: conversationId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Stream error: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body reader");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        if (!event.trim()) continue;
+        const match = event.match(/^data: (.+)$/m);
+        if (match) {
+          try {
+            yield JSON.parse(match[1]);
+          } catch {
+            console.warn("SSE parse error:", event);
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// Conversation API
+export async function listConversations(limit = 50) {
+  return apiFetch(`/conversations?limit=${limit}`);
+}
+
+export async function createConversation(title = "New conversation") {
+  return apiFetch("/conversations", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function getConversation(id: string) {
+  return apiFetch(`/conversations/${id}`);
+}
+
+export async function renameConversation(id: string, title: string) {
+  return apiFetch(`/conversations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteConversation(id: string) {
+  return apiFetch(`/conversations/${id}`, { method: "DELETE" });
 }
 
 export async function graphSearch(q: string, type?: string, limit = 20) {

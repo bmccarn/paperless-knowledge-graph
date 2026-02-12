@@ -174,23 +174,34 @@ class EmbeddingsStore:
             entity_count = await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
             
             if doc_count > 0:
-                # HNSW index for high-dimensional vectors (3072-dim)
-                await conn.execute("""
-                    CREATE INDEX idx_embeddings_hnsw
-                    ON document_embeddings
-                    USING hnsw (embedding vector_cosine_ops)
-                    WITH (m = 16, ef_construction = 64)
-                """)
-                logger.info(f"Created HNSW index on document_embeddings ({doc_count} rows)")
+                try:
+                    await conn.execute("""
+                        CREATE INDEX idx_embeddings_hnsw
+                        ON document_embeddings
+                        USING hnsw (embedding vector_cosine_ops)
+                        WITH (m = 16, ef_construction = 64)
+                    """)
+                    logger.info(f"Created HNSW index on document_embeddings ({doc_count} rows)")
+                except Exception as e:
+                    if "2000 dimensions" in str(e):
+                        logger.warning(f"Skipping document embeddings index — pgvector version doesn't support >2000 dims. Upgrade to pgvector 0.9+ for HNSW indexing of 3072-dim vectors. Sequential scan will be used.")
+                    else:
+                        raise
             
             if entity_count > 0:
-                await conn.execute("""
-                    CREATE INDEX idx_entity_embeddings_hnsw
-                    ON entity_embeddings
-                    USING hnsw (embedding vector_cosine_ops)
-                    WITH (m = 16, ef_construction = 64)
-                """)
-                logger.info(f"Created HNSW index on entity_embeddings ({entity_count} rows)")
+                try:
+                    await conn.execute("""
+                        CREATE INDEX idx_entity_embeddings_hnsw
+                        ON entity_embeddings
+                        USING hnsw (embedding vector_cosine_ops)
+                        WITH (m = 16, ef_construction = 64)
+                    """)
+                    logger.info(f"Created HNSW index on entity_embeddings ({entity_count} rows)")
+                except Exception as e:
+                    if "2000 dimensions" in str(e):
+                        logger.warning(f"Skipping entity embeddings index — pgvector version doesn't support >2000 dims. Sequential scan will be used.")
+                    else:
+                        raise
 
     async def close(self):
         if self.pool:

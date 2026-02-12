@@ -7,7 +7,6 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_PUBLIC_API_URL=http://your-server-host:8484
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

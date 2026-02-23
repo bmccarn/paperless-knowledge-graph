@@ -1236,6 +1236,28 @@ async def sync_documents(progress_callback=None, cancel_event=None):
             clean_results.append(result)
     results = clean_results
 
+    # Detect and remove deleted documents
+    deleted_count = 0
+    try:
+        paperless_ids = {doc["id"] for doc in await paperless_client.get_all_documents()}
+        graph_ids = await graph_store.get_all_document_ids()
+        deleted_ids = graph_ids - paperless_ids
+        if deleted_ids:
+            logger.info(f"Detected {len(deleted_ids)} deleted documents: {deleted_ids}")
+            if progress_callback:
+                progress_callback("current", {"title": f"Removing {len(deleted_ids)} deleted documents..."})
+            for del_id in deleted_ids:
+                try:
+                    await graph_store.delete_document_graph(del_id)
+                    await embeddings_store.delete_document_embeddings(del_id)
+                    await embeddings_store.delete_doc_hash(del_id)
+                    logger.info(f"Removed deleted document {del_id} from knowledge graph")
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to remove deleted doc {del_id}: {e}")
+    except Exception as e:
+        logger.error(f"Deletion detection failed: {e}")
+
     now = datetime.now(timezone.utc)
     await embeddings_store.set_last_sync(now)
 
@@ -1250,7 +1272,7 @@ async def sync_documents(progress_callback=None, cancel_event=None):
         avg_entities = total_entities / processed
 
     logger.info(
-        f"Sync complete: {processed} processed, {skipped} skipped, {errors} errors "
+        f"Sync complete: {processed} processed, {skipped} skipped, {errors} errors, {deleted_count} deleted "
         f"| {elapsed:.1f}s | {docs_per_minute:.1f} docs/min | {avg_entities:.1f} entities/doc avg"
     )
     return {
@@ -1258,6 +1280,7 @@ async def sync_documents(progress_callback=None, cancel_event=None):
         "processed": processed,
         "skipped": skipped,
         "errors": errors,
+        "deleted": deleted_count,
         "elapsed_seconds": round(elapsed, 1),
         "docs_per_minute": round(docs_per_minute, 1),
         "avg_entities_per_doc": round(avg_entities, 1),

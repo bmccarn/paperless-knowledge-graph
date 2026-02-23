@@ -1,4 +1,4 @@
-version: "3.8"
+
 
 services:
   app:
@@ -16,6 +16,7 @@ services:
 
   neo4j:
     image: neo4j:5-community
+    mem_limit: 2g
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -44,6 +45,7 @@ services:
 
   pgvector:
     image: pgvector/pgvector:pg16
+    mem_limit: 1g
     ports:
       - "5433:5432"
     environment:

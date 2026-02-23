@@ -288,6 +288,15 @@ class GraphStore:
                 return {"nodes": [], "relationships": []}
             return {"nodes": record["nodes"][:50], "relationships": record["rels"][:100]}
 
+    async def get_all_document_ids(self) -> set[int]:
+        """Return all paperless_id values for Document nodes in the graph."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                "MATCH (d:Document) WHERE d.paperless_id IS NOT NULL RETURN d.paperless_id AS pid"
+            )
+            records = await result.data()
+            return {r["pid"] for r in records}
+
     async def delete_document_graph(self, paperless_id: int):
         """Remove all nodes and relationships sourced from a document."""
         async with self.driver.session() as session:

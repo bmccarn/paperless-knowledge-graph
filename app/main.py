@@ -66,6 +66,15 @@ _tasks: dict[str, dict] = {}
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 
 
+def _schedule_task_cleanup(task_id: str, delay: int = 300):
+    """Remove a completed task from _tasks after `delay` seconds."""
+    async def _cleanup():
+        await asyncio.sleep(delay)
+        _tasks.pop(task_id, None)
+        _cancel_events.pop(task_id, None)
+    asyncio.create_task(_cleanup())
+
+
 def _make_progress_callback(task_id: str):
     """Create a progress callback that updates _tasks[task_id] in place."""
     def callback(event: str, data: dict):
@@ -261,6 +270,7 @@ async def sync():
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
         "status": "running",
+        "type": "sync",
         "started": now.isoformat(),
         "_start_time": time.time(),
         "total_docs": 0,
@@ -293,6 +303,8 @@ async def sync():
             _tasks[task_id]["status"] = "failed"
             _tasks[task_id]["error"] = str(e)
             _tasks[task_id]["current_doc"] = ""
+        finally:
+            _schedule_task_cleanup(task_id)
 
     asyncio.create_task(_run())
     return TaskResponse(task_id=task_id, status="started", message="Sync started in background")
@@ -308,6 +320,7 @@ async def reindex():
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
         "status": "running",
+        "type": "reindex",
         "started": now.isoformat(),
         "_start_time": time.time(),
         "total_docs": 0,
@@ -340,6 +353,8 @@ async def reindex():
             _tasks[task_id]["status"] = "failed"
             _tasks[task_id]["error"] = str(e)
             _tasks[task_id]["current_doc"] = ""
+        finally:
+            _schedule_task_cleanup(task_id)
 
     asyncio.create_task(_run())
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
@@ -350,6 +365,20 @@ async def reindex_single(doc_id: int):
     try:
         result = await reindex_document(doc_id)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/document/{doc_id}")
+async def delete_document(doc_id: int):
+    """Remove a document and all its entities/relationships from the knowledge graph."""
+    try:
+        await graph_store.delete_document_graph(doc_id)
+        await embeddings_store.delete_document_embeddings(doc_id)
+        await embeddings_store.delete_doc_hash(doc_id)
+        invalidate_on_sync()
+        logger.info(f"Deleted document {doc_id} from knowledge graph")
+        return {"status": "deleted", "doc_id": doc_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

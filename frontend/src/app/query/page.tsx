@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -437,25 +437,17 @@ function QueryContent() {
   );
 
   return (
-    <ResizablePanelGroup orientation="horizontal" className="h-full">
+    <div className="flex h-full overflow-hidden">
       {/* Desktop history sidebar */}
       {showHistoryDesktop && (
-        <>
-          <ResizablePanel
-            defaultSize="22%"
-            minSize="15%"
-            maxSize="35%"
-            className="flex flex-col bg-card/30"
-          >
-            <div className="flex items-center justify-between border-b px-3 py-2.5">
-              <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
-                <History className="h-3.5 w-3.5" /> Conversations
-              </span>
-            </div>
-            <ConversationList />
-          </ResizablePanel>
-          <ResizableHandle className="hidden md:flex" />
-        </>
+        <div className="hidden md:flex w-64 min-w-[180px] max-w-[400px] resize-x overflow-hidden border-r flex-col bg-card/30 shrink-0">
+          <div className="flex items-center justify-between border-b px-3 py-2.5 flex-none">
+            <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
+              <History className="h-3.5 w-3.5" /> Conversations
+            </span>
+          </div>
+          <ConversationList />
+        </div>
       )}
 
       {/* Mobile history sheet */}
@@ -471,7 +463,7 @@ function QueryContent() {
       </Sheet>
 
       {/* Chat area */}
-      <ResizablePanel defaultSize="78%" className="flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-none border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             {/* Mobile: show history button */}
@@ -707,8 +699,8 @@ function QueryContent() {
             </form>
           </div>
         </div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+      </div>
+    </div>
   );
 }
 

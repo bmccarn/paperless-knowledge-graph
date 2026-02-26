@@ -300,6 +300,8 @@ function QueryContent() {
       setStatusMessage("");
       setFollowUpSuggestions(followUps);
       loadConversations();
+      // Re-fetch after delay to pick up AI-generated title
+      setTimeout(() => loadConversations(), 3000);
     } catch (e) {
       // Stream broke - try recovering from conversation history
       if (convId) {

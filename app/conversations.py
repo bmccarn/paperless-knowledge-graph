@@ -33,23 +33,28 @@ async def _generate_title(question: str, answer: str) -> str:
             model=settings.gemini_model,
             messages=[
                 {
-                    "role": "system",
-                    "content": (
-                        "Generate a short, descriptive title (max 6 words) for a conversation. "
-                        "Return ONLY the title, no quotes, no punctuation at the end."
-                    ),
-                },
-                {
                     "role": "user",
-                    "content": f"Question: {question[:200]}\nAnswer summary: {answer[:300]}",
+                    "content": (
+                        "Create a concise title (3-6 words) that summarizes this conversation topic.\n\n"
+                        f"User asked: {question[:300]}\n\n"
+                        f"The answer discussed: {answer[:500]}\n\n"
+                        "Rules:\n"
+                        "- 3 to 6 words, no more\n"
+                        "- Descriptive and specific to the topic\n"
+                        "- No quotes, no trailing punctuation\n"
+                        "- Example: 'GMC Sierra Service Plan Coverage'\n"
+                        "- Example: 'Home Insurance Deductibles and Claims'\n"
+                        "- Example: 'Monthly HOA Payment History'\n\n"
+                        "Title:"
+                    ),
                 },
             ],
             max_tokens=30,
             temperature=0.3,
         )
-        title = resp.choices[0].message.content.strip().strip('"\'')
-        # Sanity check: if too long or empty, fall back
-        if not title or len(title) > 80:
+        title = resp.choices[0].message.content.strip().strip('"\'').strip('.')
+        # Sanity check: must be 2+ words and reasonable length
+        if not title or len(title.split()) < 2 or len(title) > 80:
             return question[:80].strip() + ("..." if len(question) > 80 else "")
         return title
     except Exception as e:

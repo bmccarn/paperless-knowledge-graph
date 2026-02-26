@@ -14,7 +14,7 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation, getConfig, getModels, generateTitle, renameConversation, ModelInfo} from "@/lib/api";
+  deleteConversation, getConfig, getModels, generateTitle, ModelInfo} from "@/lib/api";
 import {
   Send,
   Loader2,

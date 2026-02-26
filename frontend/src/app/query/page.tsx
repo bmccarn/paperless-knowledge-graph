@@ -2,6 +2,53 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+
+// --- Resizable sidebar hook ---
+const SIDEBAR_WIDTH_KEY = "kg-sidebar-width";
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 400;
+const SIDEBAR_DEFAULT = 256;
+
+function useSidebarResize() {
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (parsed >= SIDEBAR_MIN && parsed <= SIDEBAR_MAX) setWidth(parsed);
+      }
+    } catch {}
+  }, []);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, [width]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    const delta = e.clientX - startX.current;
+    const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth.current + delta));
+    setWidth(newWidth);
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    isDragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch {}
+  }, [width]);
+
+  return { width, onPointerDown, onPointerMove, onPointerUp, isDragging };
+}
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -412,14 +459,14 @@ function QueryContent() {
               )}
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100 shrink-0"
+                className="h-8 w-8 md:h-6 md:w-6 shrink-0 text-muted-foreground/40 hover:text-foreground"
                 onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
               >
                 <Pencil className="h-3 w-3 md:h-2.5 md:w-2.5" />
               </Button>
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100 shrink-0 mr-0.5"
+                className="h-8 w-8 md:h-6 md:w-6 shrink-0 mr-0.5 text-muted-foreground/40 hover:text-destructive"
                 onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
               >
                 <Trash2 className="h-3 w-3 md:h-2.5 md:w-2.5" />
@@ -434,17 +481,29 @@ function QueryContent() {
     </>
   );
 
+  const sidebar = useSidebarResize();
+
   return (
-    <div className="flex h-full">
+    <div className="flex absolute inset-0 overflow-hidden">
       {/* Desktop history sidebar */}
       {showHistoryDesktop && (
-        <div className="hidden md:flex w-64 border-r flex-col bg-card/30">
+        <div
+          className="hidden md:flex border-r flex-col bg-card/30 relative shrink-0"
+          style={{ width: sidebar.width }}
+        >
           <div className="flex items-center justify-between border-b px-3 py-2.5">
             <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
               <History className="h-3.5 w-3.5" /> Conversations
             </span>
           </div>
           <ConversationList />
+          {/* Resize handle */}
+          <div
+            className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
+            onPointerDown={sidebar.onPointerDown}
+            onPointerMove={sidebar.onPointerMove}
+            onPointerUp={sidebar.onPointerUp}
+          />
         </div>
       )}
 

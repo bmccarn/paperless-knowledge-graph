@@ -445,7 +445,7 @@ function QueryContent() {
             defaultSize={20}
             minSize={15}
             maxSize={30}
-            className="hidden md:flex flex-col bg-card/30"
+            className="flex flex-col bg-card/30"
           >
             <div className="flex items-center justify-between border-b px-3 py-2.5">
               <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">

@@ -438,40 +438,40 @@ function QueryContent() {
           {conversations.map((conv) => (
             <div
               key={conv.id}
-              className={`group flex items-center gap-0.5 rounded-md text-xs transition-colors ${
+              className={`group flex items-center rounded-md text-xs transition-colors overflow-hidden ${
                 activeConvId === conv.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
               }`}
             >
               {editingTitle === conv.id ? (
                 <input
                   autoFocus
-                  className="flex-1 px-2 py-1.5 text-xs bg-background border rounded"
+                  className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-background border rounded"
                   value={editTitleValue}
                   onChange={(e) => setEditTitleValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleRename(conv.id); if (e.key === "Escape") setEditingTitle(null); }}
                   onBlur={() => handleRename(conv.id)}
                 />
               ) : (
-                <button className="flex-1 text-left px-2.5 py-3 md:py-2 truncate min-h-[44px] md:min-h-0" onClick={() => loadConversation(conv)}>
+                <button className="flex-1 min-w-0 text-left px-2.5 py-3 md:py-2 truncate min-h-[44px] md:min-h-0" onClick={() => loadConversation(conv)}>
                   <MessageSquare className="h-3 w-3 inline mr-1.5 opacity-50" />
                   {conv.title}
                 </button>
               )}
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent"
+                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent"
                 onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
                 title="Rename"
               >
-                <Pencil className="h-3 w-3 md:h-2.5 md:w-2.5" />
+                <Pencil className="h-3 w-3" />
               </Button>
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 shrink-0 mr-0.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
+                className="h-7 w-7 shrink-0 mr-0.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
                 onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
                 title="Delete"
               >
-                <Trash2 className="h-3 w-3 md:h-2.5 md:w-2.5" />
+                <Trash2 className="h-3 w-3" />
               </Button>
             </div>
           ))}

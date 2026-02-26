@@ -25,7 +25,7 @@ def _get_llm_client():
     return _llm_client
 
 
-async def _generate_title(question: str, answer: str) -> str:
+async def _generate_title(message: str, _answer: str = "") -> str:
     """Generate a short, descriptive conversation title using the LLM."""
     try:
         client = _get_llm_client()
@@ -35,26 +35,28 @@ async def _generate_title(question: str, answer: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "Generate a short, descriptive title (max 6 words) for a conversation. "
-                        "Return ONLY the title, no quotes, no punctuation at the end."
+                        "Generate a very short, descriptive title (3-6 words max) for a chat "
+                        "conversation based on the user's message. Return ONLY the title, "
+                        "no quotes, no punctuation at the end, no explanation."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"Question: {question[:200]}\nAnswer summary: {answer[:300]}",
+                    "content": message,
                 },
             ],
             max_tokens=30,
-            temperature=0.3,
+            temperature=0.7,
         )
-        title = resp.choices[0].message.content.strip().strip('"\'')
-        # Sanity check: if too long or empty, fall back
-        if not title or len(title) > 80:
-            return question[:80].strip() + ("..." if len(question) > 80 else "")
+        title = resp.choices[0].message.content.strip().strip('"\'').strip('.')
+        if len(title) > 60:
+            title = title[:57] + "..."
+        if not title:
+            return message[:40].strip() + ("..." if len(message) > 40 else "")
         return title
     except Exception as e:
         logger.warning(f"Failed to generate conversation title: {e}")
-        return question[:80].strip() + ("..." if len(question) > 80 else "")
+        return message[:40].strip() + ("..." if len(message) > 40 else "")
 
 # We share the same Postgres as embeddings (knowledge_graph DB)
 _pool = None
@@ -237,30 +239,20 @@ async def add_message(
             json.dumps(follow_ups) if follow_ups else None,
         )
 
-        # Auto-title: generate smart title after first assistant response
-        if role == "assistant":
+        # Set placeholder title from first user message (will be replaced by AI title from frontend)
+        if role == "user":
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1 AND role = 'assistant'",
+                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1 AND role = 'user'",
                 uuid.UUID(conv_id),
             )
-            if count == 1:  # First assistant response — generate title in background
-                first_user_msg = await conn.fetchval(
-                    "SELECT content FROM conversation_messages WHERE conversation_id = $1 AND role = 'user' ORDER BY created_at ASC LIMIT 1",
-                    uuid.UUID(conv_id),
+            if count == 1:  # First user message — set placeholder
+                title = content[:80].strip()
+                if len(content) > 80:
+                    title += "..."
+                await conn.execute(
+                    "UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1",
+                    uuid.UUID(conv_id), title,
                 )
-                if first_user_msg:
-                    async def _update_title():
-                        try:
-                            title = await _generate_title(first_user_msg, content)
-                            async with _pool.acquire() as c:
-                                await c.execute(
-                                    "UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1",
-                                    uuid.UUID(conv_id), title,
-                                )
-                            logger.info(f"Auto-titled conversation {conv_id}: {title}")
-                        except Exception as e:
-                            logger.warning(f"Failed to auto-title conversation: {e}")
-                    asyncio.create_task(_update_title())
 
         # Update conversation timestamp
         await conn.execute(

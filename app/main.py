@@ -431,6 +431,17 @@ async def delete_conversation(conv_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"status": "deleted"}
 
+
+class GenerateTitleRequest(BaseModel):
+    message: str
+
+
+@app.post("/generate-title")
+async def generate_title(req: GenerateTitleRequest):
+    """Generate a short, descriptive chat title from the user's message."""
+    title = await conversations._generate_title(req.message, "")
+    return {"title": title}
+
 # --- Query ---
 
 @app.post("/task/{task_id}/cancel")

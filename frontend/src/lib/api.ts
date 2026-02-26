@@ -112,6 +112,14 @@ export async function deleteConversation(id: string) {
   return apiFetch(`/conversations/${id}`, { method: "DELETE" });
 }
 
+export async function generateTitle(message: string): Promise<string> {
+  const resp = await apiFetch("/generate-title", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  return resp.title;
+}
+
 export async function graphSearch(q: string, type?: string, limit = 20) {
   const params = new URLSearchParams({ q, limit: String(limit) });
   if (type) params.set("type", type);

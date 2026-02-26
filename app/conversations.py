@@ -39,7 +39,7 @@ async def _generate_title(message: str, _answer: str = "") -> str:
                             "content": message,
                         },
                     ],
-                    "max_tokens": 30,
+                    "max_tokens": 256,
                     "temperature": 0.7,
                 },
             )

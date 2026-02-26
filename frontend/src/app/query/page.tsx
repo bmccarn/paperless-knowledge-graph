@@ -52,7 +52,7 @@ function useSidebarResize() {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -433,12 +433,12 @@ function QueryContent() {
           <Plus className="h-3.5 w-3.5" /> New Conversation
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="px-2 pb-2 space-y-0.5">
           {conversations.map((conv) => (
             <div
               key={conv.id}
-              className={`group flex items-center rounded-md text-xs transition-colors overflow-hidden ${
+              className={`flex items-center rounded-md text-xs transition-colors ${
                 activeConvId === conv.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -479,7 +479,7 @@ function QueryContent() {
             <p className="text-xs text-muted-foreground/60 text-center py-6">No conversations yet</p>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </>
   );
 

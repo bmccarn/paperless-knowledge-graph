@@ -459,15 +459,17 @@ function QueryContent() {
               )}
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 shrink-0 text-muted-foreground/40 hover:text-foreground"
+                className="h-8 w-8 md:h-6 md:w-6 shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent"
                 onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
+                title="Rename"
               >
                 <Pencil className="h-3 w-3 md:h-2.5 md:w-2.5" />
               </Button>
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 md:h-6 md:w-6 shrink-0 mr-0.5 text-muted-foreground/40 hover:text-destructive"
+                className="h-8 w-8 md:h-6 md:w-6 shrink-0 mr-0.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
                 onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
+                title="Delete"
               >
                 <Trash2 className="h-3 w-3 md:h-2.5 md:w-2.5" />
               </Button>
@@ -484,7 +486,7 @@ function QueryContent() {
   const sidebar = useSidebarResize();
 
   return (
-    <div className="flex absolute inset-0 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Desktop history sidebar */}
       {showHistoryDesktop && (
         <div

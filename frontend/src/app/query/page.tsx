@@ -14,7 +14,7 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation, getConfig, getModels, ModelInfo} from "@/lib/api";
+  deleteConversation, getConfig, getModels, generateTitle, renameConversation, ModelInfo} from "@/lib/api";
 import {
   Send,
   Loader2,
@@ -300,8 +300,24 @@ function QueryContent() {
       setStatusMessage("");
       setFollowUpSuggestions(followUps);
       loadConversations();
-      // Re-fetch after delay to pick up AI-generated title
-      setTimeout(() => loadConversations(), 3000);
+
+      // Generate AI title after first assistant response
+      const userMsgCount = allMessages.filter((m: Message) => m.role === "user").length;
+      const assistantMsgCount = allMessages.filter((m: Message) => m.role === "assistant").length;
+      if (userMsgCount === 1 && assistantMsgCount === 1 && convId) {
+        const firstUserMsg = allMessages.find((m: Message) => m.role === "user")?.content;
+        if (firstUserMsg) {
+          generateTitle(firstUserMsg).then(async (title) => {
+            try {
+              await renameConversation(convId, title);
+              // Update sidebar immediately
+              setConversations(prev => prev.map(c => c.id === convId ? { ...c, title } : c));
+            } catch (e) {
+              console.error("Failed to set AI title:", e);
+            }
+          }).catch(() => {});
+        }
+      }
     } catch (e) {
       // Stream broke - try recovering from conversation history
       if (convId) {

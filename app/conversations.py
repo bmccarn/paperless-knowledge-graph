@@ -1,14 +1,60 @@
 """Persistent conversation storage using pgvector Postgres."""
 
+import asyncio
 import logging
 import uuid
 import json
 from datetime import datetime, timezone
 from typing import Optional
 
+from openai import AsyncOpenAI
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_llm_client = None
+
+
+def _get_llm_client():
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = AsyncOpenAI(
+            base_url=settings.litellm_url,
+            api_key=settings.litellm_api_key or "unused",
+        )
+    return _llm_client
+
+
+async def _generate_title(question: str, answer: str) -> str:
+    """Generate a short, descriptive conversation title using the LLM."""
+    try:
+        client = _get_llm_client()
+        resp = await client.chat.completions.create(
+            model=settings.gemini_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Generate a short, descriptive title (max 6 words) for a conversation. "
+                        "Return ONLY the title, no quotes, no punctuation at the end."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Question: {question[:200]}\nAnswer summary: {answer[:300]}",
+                },
+            ],
+            max_tokens=30,
+            temperature=0.3,
+        )
+        title = resp.choices[0].message.content.strip().strip('"\'')
+        # Sanity check: if too long or empty, fall back
+        if not title or len(title) > 80:
+            return question[:80].strip() + ("..." if len(question) > 80 else "")
+        return title
+    except Exception as e:
+        logger.warning(f"Failed to generate conversation title: {e}")
+        return question[:80].strip() + ("..." if len(question) > 80 else "")
 
 # We share the same Postgres as embeddings (knowledge_graph DB)
 _pool = None
@@ -191,20 +237,30 @@ async def add_message(
             json.dumps(follow_ups) if follow_ups else None,
         )
 
-        # Auto-title from first user message
-        if role == "user":
+        # Auto-title: generate smart title after first assistant response
+        if role == "assistant":
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1 AND role = 'user'",
+                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1 AND role = 'assistant'",
                 uuid.UUID(conv_id),
             )
-            if count == 1:  # This was the first user message
-                title = content[:80].strip()
-                if len(content) > 80:
-                    title += "..."
-                await conn.execute(
-                    "UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1",
-                    uuid.UUID(conv_id), title,
+            if count == 1:  # First assistant response — generate title in background
+                first_user_msg = await conn.fetchval(
+                    "SELECT content FROM conversation_messages WHERE conversation_id = $1 AND role = 'user' ORDER BY created_at ASC LIMIT 1",
+                    uuid.UUID(conv_id),
                 )
+                if first_user_msg:
+                    async def _update_title():
+                        try:
+                            title = await _generate_title(first_user_msg, content)
+                            async with _pool.acquire() as c:
+                                await c.execute(
+                                    "UPDATE conversations SET title = $2, updated_at = NOW() WHERE id = $1",
+                                    uuid.UUID(conv_id), title,
+                                )
+                            logger.info(f"Auto-titled conversation {conv_id}: {title}")
+                        except Exception as e:
+                            logger.warning(f"Failed to auto-title conversation: {e}")
+                    asyncio.create_task(_update_title())
 
         # Update conversation timestamp
         await conn.execute(

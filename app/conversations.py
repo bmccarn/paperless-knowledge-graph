@@ -7,56 +7,57 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from openai import AsyncOpenAI
+import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-_llm_client = None
-
-
-def _get_llm_client():
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = AsyncOpenAI(
-            base_url=settings.litellm_url,
-            api_key=settings.litellm_api_key or "unused",
-        )
-    return _llm_client
 
 
 async def _generate_title(message: str, _answer: str = "") -> str:
     """Generate a short, descriptive conversation title using the LLM."""
     try:
-        client = _get_llm_client()
-        resp = await client.chat.completions.create(
-            model=settings.gemini_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Generate a very short, descriptive title (3-6 words max) for a chat "
-                        "conversation based on the user's message. Return ONLY the title, "
-                        "no quotes, no punctuation at the end, no explanation."
-                    ),
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{settings.litellm_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.litellm_api_key or 'unused'}",
+                    "Content-Type": "application/json",
                 },
-                {
-                    "role": "user",
-                    "content": message,
+                json={
+                    "model": settings.gemini_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Generate a very short, descriptive title (3-6 words max) for a chat "
+                                "conversation based on the user's message. Return ONLY the title, "
+                                "no quotes, no punctuation at the end, no explanation."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": message,
+                        },
+                    ],
+                    "max_tokens": 30,
+                    "temperature": 0.7,
                 },
-            ],
-            max_tokens=30,
-            temperature=0.7,
-        )
-        title = resp.choices[0].message.content.strip().strip('"\'').strip('.')
-        if len(title) > 60:
-            title = title[:57] + "..."
-        if not title:
-            return message[:40].strip() + ("..." if len(message) > 40 else "")
-        return title
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                title = data["choices"][0]["message"]["content"].strip()
+                title = title.strip('"\'').strip('.')
+                if len(title) > 60:
+                    title = title[:57] + "..."
+                logger.info(f"Generated title: {title}")
+                return title
+            else:
+                logger.warning(f"LLM title generation failed: {response.status_code} {response.text[:200]}")
     except Exception as e:
         logger.warning(f"Failed to generate conversation title: {e}")
-        return message[:40].strip() + ("..." if len(message) > 40 else "")
+
+    return message[:40].strip() + ("..." if len(message) > 40 else "")
 
 # We share the same Postgres as embeddings (knowledge_graph DB)
 _pool = None

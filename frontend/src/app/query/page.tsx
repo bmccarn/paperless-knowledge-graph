@@ -2,57 +2,10 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-
-// --- Resizable sidebar hook ---
-const SIDEBAR_WIDTH_KEY = "kg-sidebar-width";
-const SIDEBAR_MIN = 180;
-const SIDEBAR_MAX = 400;
-const SIDEBAR_DEFAULT = 256;
-
-function useSidebarResize() {
-  const [width, setWidth] = useState(SIDEBAR_DEFAULT);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const startWidth = useRef(0);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (parsed >= SIDEBAR_MIN && parsed <= SIDEBAR_MAX) setWidth(parsed);
-      }
-    } catch {}
-  }, []);
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    isDragging.current = true;
-    startX.current = e.clientX;
-    startWidth.current = width;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    e.preventDefault();
-  }, [width]);
-
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!isDragging.current) return;
-    const delta = e.clientX - startX.current;
-    const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth.current + delta));
-    setWidth(newWidth);
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent) => {
-    if (!isDragging.current) return;
-    isDragging.current = false;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch {}
-  }, [width]);
-
-  return { width, onPointerDown, onPointerMove, onPointerUp, isDragging };
-}
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -483,30 +436,26 @@ function QueryContent() {
     </>
   );
 
-  const sidebar = useSidebarResize();
-
   return (
-    <div className="flex h-full overflow-hidden">
+    <ResizablePanelGroup orientation="horizontal" className="h-full">
       {/* Desktop history sidebar */}
       {showHistoryDesktop && (
-        <div
-          className="hidden md:flex border-r flex-col bg-card/30 relative shrink-0"
-          style={{ width: sidebar.width }}
-        >
-          <div className="flex items-center justify-between border-b px-3 py-2.5">
-            <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
-              <History className="h-3.5 w-3.5" /> Conversations
-            </span>
-          </div>
-          <ConversationList />
-          {/* Resize handle */}
-          <div
-            className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
-            onPointerDown={sidebar.onPointerDown}
-            onPointerMove={sidebar.onPointerMove}
-            onPointerUp={sidebar.onPointerUp}
-          />
-        </div>
+        <>
+          <ResizablePanel
+            defaultSize={20}
+            minSize={15}
+            maxSize={30}
+            className="hidden md:flex flex-col bg-card/30"
+          >
+            <div className="flex items-center justify-between border-b px-3 py-2.5">
+              <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
+                <History className="h-3.5 w-3.5" /> Conversations
+              </span>
+            </div>
+            <ConversationList />
+          </ResizablePanel>
+          <ResizableHandle className="hidden md:flex" />
+        </>
       )}
 
       {/* Mobile history sheet */}
@@ -522,8 +471,8 @@ function QueryContent() {
       </Sheet>
 
       {/* Chat area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
+      <ResizablePanel defaultSize={80} className="flex flex-col min-w-0">
+        <div className="flex-none border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             {/* Mobile: show history button */}
             <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" onClick={() => setShowHistory(true)}>
@@ -713,7 +662,7 @@ function QueryContent() {
         </div>
 
         {/* Input */}
-        <div className="border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
+        <div className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
             {/* Model selector */}
             <div className="relative">
@@ -758,8 +707,8 @@ function QueryContent() {
             </form>
           </div>
         </div>
-      </div>
-    </div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }
 

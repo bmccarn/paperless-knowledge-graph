@@ -37,11 +37,12 @@ export async function POST(req: NextRequest) {
         "X-Accel-Buffering": "no",
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     clearTimeout(timeout);
-    if (e.name === "AbortError") {
+    if (e instanceof DOMException && e.name === "AbortError") {
       return new Response("Query timed out", { status: 504 });
     }
-    return new Response(e.message || "Internal error", { status: 500 });
+    const message = e instanceof Error ? e.message : "Internal error";
+    return new Response(message, { status: 500 });
   }
 }

@@ -168,6 +168,17 @@ class TaskResponse(BaseModel):
     message: str
 
 
+class EntityDecisionRequest(BaseModel):
+    left_uuid: str
+    right_uuid: str
+    note: str = ""
+
+
+class EntityMergeRequest(BaseModel):
+    primary_uuid: str
+    duplicate_uuid: str
+
+
 
 # --- Paperless URL ---
 
@@ -682,6 +693,47 @@ async def resolve_entities():
         return report
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/entity-review/candidates")
+async def entity_review_candidates(limit: int = 50):
+    decisions = await embeddings_store.get_entity_review_decisions()
+    ignored_pairs = {
+        tuple(sorted([d["left_uuid"], d["right_uuid"]]))
+        for d in decisions
+        if d["decision"] in {"ignore", "split"}
+    }
+    candidates = await graph_store.get_entity_review_candidates(ignored_pairs, limit=limit)
+    return {"candidates": candidates, "ignored_count": len(ignored_pairs)}
+
+
+@app.post("/entity-review/ignore")
+async def entity_review_ignore(req: EntityDecisionRequest):
+    decision = await embeddings_store.add_entity_review_decision(
+        req.left_uuid, req.right_uuid, "ignore", req.note
+    )
+    return {"status": "ignored", "decision": decision}
+
+
+@app.post("/entity-review/split")
+async def entity_review_split(req: EntityDecisionRequest):
+    decision = await embeddings_store.add_entity_review_decision(
+        req.left_uuid, req.right_uuid, "split", req.note
+    )
+    return {"status": "split_requested", "decision": decision}
+
+
+@app.post("/entity-review/merge")
+async def entity_review_merge(req: EntityMergeRequest):
+    try:
+        merged = await graph_store.merge_entities(req.primary_uuid, req.duplicate_uuid)
+        await embeddings_store.add_entity_review_decision(
+            req.primary_uuid, req.duplicate_uuid, "merged", ""
+        )
+        return {"status": "merged", "entity": merged}
+    except Exception as e:
+        logger.error("Entity merge failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

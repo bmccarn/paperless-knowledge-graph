@@ -142,6 +142,31 @@ export async function resolveEntities() {
   return apiFetch("/resolve-entities", { method: "POST" });
 }
 
+export async function getEntityReviewCandidates(limit = 50) {
+  return apiFetch(`/entity-review/candidates?limit=${limit}`);
+}
+
+export async function ignoreEntityCandidate(left_uuid: string, right_uuid: string, note = "") {
+  return apiFetch("/entity-review/ignore", {
+    method: "POST",
+    body: JSON.stringify({ left_uuid, right_uuid, note }),
+  });
+}
+
+export async function splitEntityCandidate(left_uuid: string, right_uuid: string, note = "") {
+  return apiFetch("/entity-review/split", {
+    method: "POST",
+    body: JSON.stringify({ left_uuid, right_uuid, note }),
+  });
+}
+
+export async function mergeEntityCandidate(primary_uuid: string, duplicate_uuid: string) {
+  return apiFetch("/entity-review/merge", {
+    method: "POST",
+    body: JSON.stringify({ primary_uuid, duplicate_uuid }),
+  });
+}
+
 export async function cancelTask(taskId: string) {
   return apiFetch(`/task/${taskId}/cancel`, { method: "POST" });
 }

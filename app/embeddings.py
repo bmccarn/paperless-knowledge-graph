@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS document_hashes (
     processed_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS entity_review_decisions (
+    id SERIAL PRIMARY KEY,
+    left_uuid TEXT NOT NULL,
+    right_uuid TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(left_uuid, right_uuid, decision)
+);
+
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
@@ -467,6 +477,26 @@ class EmbeddingsStore:
     async def delete_doc_hash(self, doc_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_hashes WHERE document_id = $1", doc_id)
+
+    async def add_entity_review_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "") -> dict:
+        ordered = sorted([left_uuid, right_uuid])
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
+                SET note = EXCLUDED.note, created_at = NOW()
+                RETURNING id, left_uuid, right_uuid, decision, note, created_at
+                """,
+                ordered[0], ordered[1], decision, note,
+            )
+            return dict(row)
+
+    async def get_entity_review_decisions(self) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT left_uuid, right_uuid, decision, note, created_at FROM entity_review_decisions")
+            return [dict(r) for r in rows]
 
     async def clear_all(self):
         async with self.pool.acquire() as conn:

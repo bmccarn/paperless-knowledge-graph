@@ -9,6 +9,25 @@ export interface StatusResponse {
   embeddings: { document_chunks: number; entity_embeddings: number; docs_with_embeddings: number; };
   last_sync: string | null;
   active_tasks: Record<string, string | { status: string; type: string }>;
+  freshness?: FreshnessStatus;
+}
+
+export interface FreshnessStatus {
+  stale: boolean;
+  paperless_documents: number;
+  indexed_documents: number;
+  missing_documents: number;
+  last_sync: string | null;
+  latest_paperless_modified: string | null;
+  latest_paperless_id: number | null;
+  latest_paperless_title: string | null;
+  last_failed_extraction: {
+    doc_id?: number;
+    title?: string;
+    error?: string;
+    task_id?: string;
+    at?: string;
+  } | null;
 }
 
 export interface TaskResponse {

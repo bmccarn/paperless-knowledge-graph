@@ -16,6 +16,7 @@ from typing import Optional
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
+from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
@@ -63,6 +64,8 @@ logger = logging.getLogger(__name__)
 # Track background tasks
 _tasks: dict[str, dict] = {}
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
+_last_failed_extraction: dict | None = None
+_auto_sync_task: asyncio.Task | None = None
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -119,6 +122,14 @@ def _make_progress_callback(task_id: str):
                 recent_entry["relationships"] = result.get("chunks", 0)
             elif result.get("status") == "error":
                 recent_entry["error"] = result.get("error", "")
+                global _last_failed_extraction
+                _last_failed_extraction = {
+                    "doc_id": result.get("doc_id"),
+                    "title": task.get("current_doc", ""),
+                    "error": result.get("error", ""),
+                    "task_id": task_id,
+                    "at": datetime.now(timezone.utc).isoformat(),
+                }
             recent = task.get("recent_results", [])
             recent.append(recent_entry)
             task["recent_results"] = recent[-10:]
@@ -126,15 +137,120 @@ def _make_progress_callback(task_id: str):
     return callback
 
 
+async def _freshness_snapshot() -> dict:
+    """Compare Paperless source state with the indexed knowledge graph."""
+    paperless = await paperless_client.get_document_summary()
+    counts = await graph_store.get_counts()
+    last_sync = await embeddings_store.get_last_sync()
+    indexed_docs = counts.get("documents", 0)
+    paperless_docs = paperless.get("count", 0)
+    missing_docs = max(paperless_docs - indexed_docs, 0)
+
+    latest_modified = paperless.get("latest_modified")
+    stale = bool(missing_docs)
+    if latest_modified and last_sync:
+        try:
+            latest_dt = datetime.fromisoformat(latest_modified.replace("Z", "+00:00"))
+            stale = stale or latest_dt > last_sync
+        except ValueError:
+            stale = True
+    elif latest_modified and not last_sync:
+        stale = True
+
+    return {
+        "stale": stale,
+        "paperless_documents": paperless_docs,
+        "indexed_documents": indexed_docs,
+        "missing_documents": missing_docs,
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "latest_paperless_modified": latest_modified,
+        "latest_paperless_id": paperless.get("latest_id"),
+        "latest_paperless_title": paperless.get("latest_title"),
+        "last_failed_extraction": _last_failed_extraction,
+    }
+
+
+async def _run_sync_task(task_type: str = "sync") -> str:
+    running = [t for t in _tasks.values() if t["status"] == "running"]
+    if running:
+        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
+
+    task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "type": task_type,
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "total_docs": 0,
+        "processed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "current_doc": "",
+        "elapsed_seconds": 0,
+        "docs_per_minute": 0,
+        "estimated_remaining_seconds": 0,
+        "recent_results": [],
+    }
+
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
+    progress_cb = _make_progress_callback(task_id)
+
+    async def _run():
+        try:
+            invalidate_on_sync()
+            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
+            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = result
+            _tasks[task_id]["current_doc"] = ""
+            elapsed = time.time() - _tasks[task_id]["_start_time"]
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except Exception as e:
+            logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
+        finally:
+            _schedule_task_cleanup(task_id)
+
+    asyncio.create_task(_run())
+    return task_id
+
+
+async def _auto_sync_loop():
+    from app.config import settings
+
+    interval = max(settings.auto_sync_interval_minutes, 0)
+    if interval <= 0:
+        return
+
+    logger.info("Auto sync enabled: every %s minutes", interval)
+    while True:
+        await asyncio.sleep(interval * 60)
+        if any(t["status"] == "running" for t in _tasks.values()):
+            logger.info("Auto sync skipped because a task is already running")
+            continue
+        try:
+            await _run_sync_task(task_type="scheduled-sync")
+        except Exception as e:
+            logger.error("Auto sync failed to start: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _auto_sync_task
     logger.info("Starting up...")
     await graph_store.init()
     await embeddings_store.init()
     await conversations.init()
+    _auto_sync_task = asyncio.create_task(_auto_sync_loop())
     logger.info("Startup complete")
     yield
     logger.info("Shutting down...")
+    if _auto_sync_task:
+        _auto_sync_task.cancel()
     await graph_store.close()
     await embeddings_store.close()
     await conversations.close()
@@ -160,6 +276,7 @@ class QueryRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = None
     model: Optional[str] = None
+    mode: str = "deep"
 
 
 class TaskResponse(BaseModel):
@@ -167,6 +284,21 @@ class TaskResponse(BaseModel):
     status: str
     message: str
 
+
+class DocumentFeedbackRequest(BaseModel):
+    reason: str = "extraction_wrong"
+    note: str = ""
+
+
+class EntityDecisionRequest(BaseModel):
+    left_uuid: str
+    right_uuid: str
+    note: str = ""
+
+
+class EntityMergeRequest(BaseModel):
+    primary_uuid: str
+    duplicate_uuid: str
 
 
 # --- Paperless URL ---
@@ -204,9 +336,15 @@ async def status():
             "paperless_url": _get_paperless_url(),
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
             "cache": cache_stats,
+            "freshness": await _freshness_snapshot(),
         }
     except Exception as e:
         return {"status": "degraded", "error": str(e)}
+
+
+@app.get("/freshness")
+async def freshness():
+    return await _freshness_snapshot()
 
 
 @app.get("/health")
@@ -257,55 +395,76 @@ async def health():
     return {"status": overall, "components": components}
 
 
+@app.get("/ops/guardrails")
+async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 0):
+    """Machine-readable guardrail checks for monitoring."""
+    alerts = []
+    counts = await graph_store.get_counts()
+    last_sync = await embeddings_store.get_last_sync()
+    health_status = await health()
+
+    if last_sync:
+        age_hours = (datetime.now(timezone.utc) - last_sync.astimezone(timezone.utc)).total_seconds() / 3600
+    else:
+        age_hours = None
+        alerts.append({"type": "sync_never_ran", "severity": "warning", "message": "Knowledge graph has never synced"})
+
+    if age_hours is not None and age_hours > max_sync_age_hours:
+        alerts.append({
+            "type": "sync_stale",
+            "severity": "warning",
+            "message": f"Last sync is {age_hours:.1f} hours old",
+        })
+
+    try:
+        source = await paperless_client.get_document_summary()
+        drift = int(source.get("count", 0)) - int(counts.get("documents", 0))
+        if drift > allowed_doc_drift:
+            alerts.append({
+                "type": "doc_count_drift",
+                "severity": "warning",
+                "message": f"Paperless has {drift} more documents than the graph",
+            })
+    except Exception as e:
+        source = {"error": str(e)}
+        drift = None
+        alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
+
+    litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
+    if litellm_status != "healthy":
+        alerts.append({
+            "type": "model_route_health",
+            "severity": "critical",
+            "message": f"LiteLLM health is {litellm_status or 'unknown'}",
+        })
+
+    error_logs = [
+        line for line in list(_log_buffer)[-200:]
+        if line.get("level") == "ERROR" or "confidence=0." in line.get("message", "")
+    ]
+    if error_logs:
+        alerts.append({
+            "type": "recent_extraction_or_runtime_errors",
+            "severity": "warning",
+            "message": f"{len(error_logs)} recent error/low-confidence log lines",
+        })
+
+    return {
+        "status": "ok" if not alerts else "alerting",
+        "alerts": alerts,
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "sync_age_hours": round(age_hours, 2) if age_hours is not None else None,
+        "graph_documents": counts.get("documents", 0),
+        "paperless": source,
+        "document_drift": drift,
+    }
+
+
 # --- Sync & Reindex ---
 
 @app.post("/sync", response_model=TaskResponse)
 async def sync():
-    # Prevent concurrent reindex/sync
-    running = [t for t in _tasks.values() if t["status"] == "running"]
-    if running:
-        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
-    task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
-        "status": "running",
-        "type": "sync",
-        "started": now.isoformat(),
-        "_start_time": time.time(),
-        "total_docs": 0,
-        "processed": 0,
-        "skipped": 0,
-        "errors": 0,
-        "current_doc": "",
-        "elapsed_seconds": 0,
-        "docs_per_minute": 0,
-        "estimated_remaining_seconds": 0,
-        "recent_results": [],
-    }
-
-    cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
-    progress_cb = _make_progress_callback(task_id)
-
-    async def _run():
-        try:
-            invalidate_on_sync()
-            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
-            _tasks[task_id]["status"] = "completed"
-            _tasks[task_id]["result"] = result
-            _tasks[task_id]["current_doc"] = ""
-            elapsed = time.time() - _tasks[task_id]["_start_time"]
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-        except Exception as e:
-            logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
-        finally:
-            _schedule_task_cleanup(task_id)
-
-    asyncio.create_task(_run())
+    task_id = await _run_sync_task()
     return TaskResponse(task_id=task_id, status="started", message="Sync started in background")
 
 
@@ -364,6 +523,35 @@ async def reindex_single(doc_id: int):
     try:
         result = await reindex_document(doc_id)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/document/{doc_id}/detail")
+async def document_detail(doc_id: int):
+    """Full inspection payload for one Paperless document."""
+    try:
+        paperless_doc = await paperless_client.get_document(doc_id)
+        graph_detail = await graph_store.get_document_detail_graph(doc_id)
+        chunks = await embeddings_store.get_document_chunks(doc_id)
+        processing = await embeddings_store.get_document_processing_status(doc_id)
+        return {
+            "paperless": paperless_doc,
+            "graph": graph_detail,
+            "chunks": chunks,
+            "processing": processing,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/document/{doc_id}/feedback")
+async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
+    """Record that a document extraction needs human review."""
+    try:
+        result = await embeddings_store.add_document_feedback(doc_id, req.reason, req.note)
+        logger.warning("Document %s marked for extraction review: %s", doc_id, req.reason)
+        return {"status": "recorded", "feedback": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -544,7 +732,7 @@ async def query(req: QueryRequest):
         if req.conversation_id:
             conv_history = await conversations.get_conversation_history(req.conversation_id)
 
-        result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model)
+        result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode)
         paperless_base = _get_paperless_url()
         for source in result.get("sources", []):
             if source.get("document_id"):
@@ -592,7 +780,7 @@ async def query_stream(req: QueryRequest):
             final_confidence = None
             final_follow_ups = None
 
-            async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model):
+            async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode):
                 if event.get("type") == "answer_chunk":
                     full_answer_chunks.append(event.get("content", ""))
                 if event.get("type") == "complete" and event.get("sources"):
@@ -687,6 +875,47 @@ async def resolve_entities():
         return report
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/entity-review/candidates")
+async def entity_review_candidates(limit: int = 50):
+    decisions = await embeddings_store.get_entity_review_decisions()
+    ignored_pairs = {
+        tuple(sorted([d["left_uuid"], d["right_uuid"]]))
+        for d in decisions
+        if d["decision"] in {"ignore", "split"}
+    }
+    candidates = await graph_store.get_entity_review_candidates(ignored_pairs, limit=limit)
+    return {"candidates": candidates, "ignored_count": len(ignored_pairs)}
+
+
+@app.post("/entity-review/ignore")
+async def entity_review_ignore(req: EntityDecisionRequest):
+    decision = await embeddings_store.add_entity_review_decision(
+        req.left_uuid, req.right_uuid, "ignore", req.note
+    )
+    return {"status": "ignored", "decision": decision}
+
+
+@app.post("/entity-review/split")
+async def entity_review_split(req: EntityDecisionRequest):
+    decision = await embeddings_store.add_entity_review_decision(
+        req.left_uuid, req.right_uuid, "split", req.note
+    )
+    return {"status": "split_requested", "decision": decision}
+
+
+@app.post("/entity-review/merge")
+async def entity_review_merge(req: EntityMergeRequest):
+    try:
+        merged = await graph_store.merge_entities(req.primary_uuid, req.duplicate_uuid)
+        await embeddings_store.add_entity_review_decision(
+            req.primary_uuid, req.duplicate_uuid, "merged", ""
+        )
+        return {"status": "merged", "entity": merged}
+    except Exception as e:
+        logger.error("Entity merge failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

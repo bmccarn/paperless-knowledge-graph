@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     owner_context: str = ""
 
     max_concurrent_docs: int = 10
+    auto_sync_interval_minutes: int = 0
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

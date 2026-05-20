@@ -1,13 +1,14 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Loader2, Maximize2 } from 'lucide-react';
 import { useGraphStore } from '@/lib/stores/graph-store';
-import { getNodeColor, DEFAULT_NODE_COLOR, NODE_PALETTE } from './graph-legend';
+import { getNodeColor, NODE_PALETTE } from './graph-legend';
 import { GraphControls } from './graph-controls';
-import { GraphLegend } from './graph-legend';
 import { getGraphInitial, getGraphNeighbors, graphSearch } from '@/lib/api';
 import { NodeDetailPanel } from '@/components/node-detail-panel';
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -72,7 +73,7 @@ function GraphContent() {
   const [searchResults, setSearchResults] = useState<Array<{ labels: string[]; properties: Record<string, unknown> }>>([]);
   const [nodeLimit, setNodeLimit] = useState(200);
 
-  const { selectedNodeId, hoveredNodeId, is3DMode, selectNode, setHoveredNode, searchQuery, setSearchQuery } = useGraphStore();
+  const { selectedNodeId, hoveredNodeId, is3DMode, selectNode, setHoveredNode, setSearchQuery } = useGraphStore();
 
   // Connection counts
   const connectionCounts = useMemo(() => {

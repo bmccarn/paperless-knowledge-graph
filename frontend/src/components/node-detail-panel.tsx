@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { getGraphNode, getConfig } from "@/lib/api";
 import {
@@ -81,21 +80,36 @@ function renderMarkdown(text: string) {
 }
 
 export function NodeDetailPanel({ node, onClose, onExpandNeighbors }: NodeDetailPanelProps) {
-  const [detail, setDetail] = useState<NodeDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<{
+    nodeId: string;
+    detail: NodeDetail | null;
+    error: string | null;
+  }>({ nodeId: "", detail: null, error: null });
   const [showRelationships, setShowRelationships] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setDetail(null);
+    let cancelled = false;
     getGraphNode(node.id)
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((detail) => {
+        if (!cancelled) setDetailState({ nodeId: node.id, detail, error: null });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setDetailState({
+            nodeId: node.id,
+            detail: null,
+            error: e instanceof Error ? e.message : "Failed to load node details",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [node.id]);
 
+  const detail = detailState.nodeId === node.id ? detailState.detail : null;
+  const error = detailState.nodeId === node.id ? detailState.error : null;
+  const loading = detailState.nodeId !== node.id;
   const relationships = detail?.relationships || [];
   const description =
     (detail?.properties?.description as string) ||

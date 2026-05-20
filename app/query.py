@@ -2,11 +2,11 @@ import asyncio
 import json
 import logging
 import hashlib
-import time
+import re
+from datetime import datetime, timezone
 from collections import defaultdict
-from openai import RateLimitError
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from app.config import settings
 
@@ -141,89 +141,89 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             logger.warning(f"Query decomposition failed: {e}")
         return []
 
-    # ── Main query ──────────────────────────────────────────────────
-
-    async def query(self, question: str, conversation_history: list = None, model_override: str = None) -> dict:
+    async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep") -> dict:
         """Answer a question using iterative retrieval + synthesis."""
-        prev_override = self._model_override
-        if model_override:
-            self._model_override = model_override
+        mode = self._normalize_mode(mode)
+        self._model_override = model_override
         conv_suffix = ""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
-        # Phase 1: Initial retrieval + broad decomposition in parallel
-        is_broad = self._is_broad_query(question)
+        latest_check_used = False
+        sub_queries = []
+        is_broad = mode != "quick" and self._is_broad_query(question)
+
         if is_broad:
-            # Decompose, graph retrieve, and vector retrieve concurrently
             decompose_task = asyncio.create_task(self._decompose_query(question))
             graph_docs_task = asyncio.create_task(self._retrieve_graph_documents(question))
             initial_context = await self._retrieve(question)
+            if self._requires_latest_check(question):
+                latest_context = await self._retrieve(self._latest_check_query(question))
+                initial_context = self._merge_context(initial_context, latest_context)
+                latest_check_used = True
             sub_queries = await decompose_task
             logger.info(f"Broad query: {len(sub_queries)} sub-queries: {sub_queries}")
-
-            # Retrieve ALL sub-queries in parallel (light — no LLM entity extraction)
             if sub_queries:
                 sub_results = await asyncio.gather(
                     *[self._retrieve_light(sq) for sq in sub_queries],
-                    return_exceptions=True
+                    return_exceptions=True,
                 )
                 for sr in sub_results:
                     if isinstance(sr, dict):
                         initial_context = self._merge_context(initial_context, sr)
-
-            # Merge graph-driven document chunks
             graph_doc_context = await graph_docs_task
             if graph_doc_context:
                 initial_context = self._merge_context(initial_context, graph_doc_context)
         else:
             initial_context = await self._retrieve(question)
+            if self._requires_latest_check(question):
+                latest_context = await self._retrieve(self._latest_check_query(question))
+                initial_context = self._merge_context(initial_context, latest_context)
+                latest_check_used = True
 
-        # Phase 2: Gap analysis
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
+        follow_ups_used = []
 
-        # Phase 3: Follow-up retrievals in parallel (light — no LLM entity extraction)
-        follow_up_queries = first_pass.get("follow_up_queries", [])[:5]
-
-        # For broad queries, inject guaranteed follow-ups for known high-value gaps.
-        # Mortgage payment changes live in separate "Payment Change Notice" docs that
-        # don't score well against "bills" queries — inject them at the front so they
-        # always run, displacing lower-priority LLM-generated follow-ups if needed.
         if is_broad:
+            follow_up_queries = first_pass.get("follow_up_queries", [])[:5]
             q_lower = question.lower()
             injected = []
             if any(s in q_lower for s in ["mortgage", "payment", "bill", "obligation", "financial"]):
                 injected.append("PHH Mortgage current monthly payment amount payment change notice 2025 2026")
-            # Prepend injected queries, cap total at 7 for broad queries
             if injected:
                 follow_up_queries = injected + [q for q in follow_up_queries if q not in injected]
                 follow_up_queries = follow_up_queries[:7]
             logger.info(f"Follow-up queries (incl. {len(injected)} injected): {follow_up_queries}")
 
-        if follow_up_queries:
-            follow_results = await asyncio.gather(
-                *[self._retrieve_light(fq) for fq in follow_up_queries],
-                return_exceptions=True
-            )
-            for fr in follow_results:
-                if isinstance(fr, dict):
-                    all_context = self._merge_context(all_context, fr)
+            if follow_up_queries:
+                follow_results = await asyncio.gather(
+                    *[self._retrieve_light(fq) for fq in follow_up_queries],
+                    return_exceptions=True,
+                )
+                for fr in follow_results:
+                    if isinstance(fr, dict):
+                        all_context = self._merge_context(all_context, fr)
+                follow_ups_used = follow_up_queries
+        else:
+            follow_up_limit = 0 if mode == "quick" else 3
+            for follow_up in first_pass.get("follow_up_queries", [])[:follow_up_limit]:
+                extra_context = await self._retrieve(follow_up)
+                all_context = self._merge_context(all_context, extra_context)
+                follow_ups_used.append(follow_up)
 
-        # Phase 4: Graph expansion
         entities_found = first_pass.get("entities_found", [])
         graph_context = await self._expand_graph(entities_found)
         all_context = self._merge_context(all_context, graph_context)
 
-        # Phase 5: Final synthesis
         final = await self._final_synthesis(
-            question, all_context, first_pass.get("draft_answer", ""), conversation_history, broad=is_broad
+            question, all_context, first_pass.get("draft_answer", ""), conversation_history, mode=mode, broad=is_broad
         )
 
         result = {
@@ -231,13 +231,15 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "answer": final.get("answer", ""),
             "confidence": final.get("confidence", first_pass.get("confidence", 0.5)),
             "sources": self._build_sources(all_context),
+            "source_summary": self._build_source_summary(all_context, latest_check_used),
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
-            "follow_up_queries_used": follow_up_queries,
-            "iterations": 1 + len(follow_up_queries) + (len(sub_queries) if is_broad else 0),
+            "follow_up_queries_used": follow_ups_used,
+            "iterations": 1 + len(follow_ups_used) + len(sub_queries),
+            "mode": mode,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
@@ -247,62 +249,70 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None):
+    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep"):
         """Stream query response via SSE events."""
-        prev_override = self._model_override
-        if model_override:
-            self._model_override = model_override
+        mode = self._normalize_mode(mode)
+        self._model_override = model_override
         conv_suffix = ""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}
             yield {"type": "complete", "sources": cached["sources"],
+                   "source_summary": cached.get("source_summary", {}),
                    "entities_found": cached.get("entities_found", []),
                    "confidence": cached.get("confidence", 0.7),
                    "follow_up_suggestions": cached.get("follow_up_suggestions", []),
                    "cached": True}
             return
 
-        # Broad query decomposition + parallel retrieval
-        is_broad = self._is_broad_query(question)
+        latest_check_used = False
+        sub_queries = []
+        is_broad = mode != "quick" and self._is_broad_query(question)
+
         if is_broad:
-            yield {"type": "status", "message": "Broad query detected — decomposing into focused searches..."}
+            yield {"type": "status", "message": "Broad query detected - decomposing into focused searches..."}
             decompose_task = asyncio.create_task(self._decompose_query(question))
             graph_docs_task = asyncio.create_task(self._retrieve_graph_documents(question))
             initial_context = await self._retrieve(question)
+            if self._requires_latest_check(question):
+                yield {"type": "status", "message": "Checking for latest/current documents..."}
+                latest_context = await self._retrieve(self._latest_check_query(question))
+                initial_context = self._merge_context(initial_context, latest_context)
+                latest_check_used = True
             sub_queries = await decompose_task
             if sub_queries:
                 yield {"type": "status", "message": f"Running {len(sub_queries)} parallel sub-searches..."}
                 sub_results = await asyncio.gather(
                     *[self._retrieve_light(sq) for sq in sub_queries],
-                    return_exceptions=True
+                    return_exceptions=True,
                 )
                 for sr in sub_results:
                     if isinstance(sr, dict):
                         initial_context = self._merge_context(initial_context, sr)
-
-            # Graph-driven retrieval: get docs linked to key entity types
             graph_doc_context = await graph_docs_task
             if graph_doc_context:
-                yield {"type": "status", "message": f"Adding graph-linked documents for coverage..."}
+                yield {"type": "status", "message": "Adding graph-linked documents for coverage..."}
                 initial_context = self._merge_context(initial_context, graph_doc_context)
         else:
             yield {"type": "status", "message": "Searching documents and knowledge graph..."}
             initial_context = await self._retrieve(question)
+            if self._requires_latest_check(question):
+                yield {"type": "status", "message": "Checking for latest/current documents..."}
+                latest_context = await self._retrieve(self._latest_check_query(question))
+                initial_context = self._merge_context(initial_context, latest_context)
+                latest_check_used = True
 
         yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
+        follow_ups_used = []
 
-        # Parallel follow-up retrievals (light)
-        follow_up_queries = first_pass.get("follow_up_queries", [])[:5]
-
-        # Inject guaranteed follow-ups for known high-value gaps on broad queries
         if is_broad:
+            follow_up_queries = first_pass.get("follow_up_queries", [])[:5]
             q_lower = question.lower()
             injected = []
             if any(s in q_lower for s in ["mortgage", "payment", "bill", "obligation", "financial"]):
@@ -311,15 +321,23 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                 follow_up_queries = injected + [q for q in follow_up_queries if q not in injected]
                 follow_up_queries = follow_up_queries[:7]
 
-        if follow_up_queries:
-            yield {"type": "status", "message": f"Running {len(follow_up_queries)} follow-up searches in parallel..."}
-            follow_results = await asyncio.gather(
-                *[self._retrieve_light(fq) for fq in follow_up_queries],
-                return_exceptions=True
-            )
-            for fr in follow_results:
-                if isinstance(fr, dict):
-                    all_context = self._merge_context(all_context, fr)
+            if follow_up_queries:
+                yield {"type": "status", "message": f"Running {len(follow_up_queries)} follow-up searches in parallel..."}
+                follow_results = await asyncio.gather(
+                    *[self._retrieve_light(fq) for fq in follow_up_queries],
+                    return_exceptions=True,
+                )
+                for fr in follow_results:
+                    if isinstance(fr, dict):
+                        all_context = self._merge_context(all_context, fr)
+                follow_ups_used = follow_up_queries
+        else:
+            follow_up_limit = 0 if mode == "quick" else 3
+            for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:follow_up_limit]):
+                yield {"type": "status", "message": f"Deep dive {i+1}/3: {follow_up[:60]}..."}
+                extra_context = await self._retrieve(follow_up)
+                all_context = self._merge_context(all_context, extra_context)
+                follow_ups_used.append(follow_up)
 
         entities_found = first_pass.get("entities_found", [])
         if entities_found:
@@ -331,7 +349,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         prompt = self._build_final_prompt(
             question,
-            self._format_doc_context(all_context, broad=is_broad),
+            mode,
+            self._format_doc_context(all_context, question=question, broad=is_broad),
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
             conversation_history,
@@ -344,219 +363,35 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         full_answer = "".join(answer_chunks)
         sources = self._build_sources(all_context)
+        source_summary = self._build_source_summary(all_context, latest_check_used)
 
         result = {
             "question": question,
             "answer": full_answer,
             "confidence": first_pass.get("confidence", 0.7),
             "sources": sources,
+            "source_summary": source_summary,
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
-            "follow_up_queries_used": follow_up_queries,
+            "follow_up_queries_used": follow_ups_used,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
-            "iterations": 1 + len(follow_up_queries),
+            "iterations": 1 + len(follow_ups_used) + len(sub_queries),
+            "mode": mode,
             "cached": False,
         }
         query_cache.set(cache_key, result)
 
         yield {"type": "complete", "sources": sources,
+               "source_summary": source_summary,
                "entities_found": result["entities_found"],
                "confidence": result.get("confidence", 0.7),
                "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
                "cached": False}
 
     # ── Retrieval (TUNED: wider net) ────────────────────────────────
-
-    async def _retrieve_light(self, query_text: str) -> dict:
-        """Fast retrieval: vector + keyword only, no LLM entity extraction."""
-        vector_results = await self._cached_vector_search(query_text, limit=15)
-        keyword_results = await embeddings_store.keyword_search(query_text, limit=10)
-        entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
-        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
-        return {
-            "vector_results": vector_results,
-            "keyword_results": keyword_results,
-            "entity_results": entity_results,
-            "entity_kw_results": entity_kw_results,
-            "graph_nodes": [],
-            "subgraph": {},
-            "entity_names": [],
-        }
-
-    async def _retrieve_graph_documents(self, question: str) -> dict:
-        """Graph-driven retrieval using two complementary strategies:
-        1. Organization-centric: most recent doc per Organization (ensures every payee represented)
-        2. Entity-type-driven: docs linked to relevant entity types (financial, insurance, etc.)
-        Both run in parallel, merge, and deduplicate.
-        Chunks are tagged with _org_rank (1=first doc per org, 2=second) so tier 2
-        selection prioritizes coverage (one doc per org) before depth (second docs)."""
-        entity_types = await self._get_relevant_entity_types(question)
-
-        # Run both strategies in parallel
-        tasks = []
-        tasks.append(self._graph_retrieve_by_org(entity_types=entity_types))
-        if entity_types:
-            tasks.append(self._graph_retrieve_by_entity_type(entity_types))
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Merge doc IDs from both strategies, deduplicate
-        all_doc_ids = set()
-        org_count = 0
-        for r in results:
-            if isinstance(r, dict):
-                for did in r.get("doc_ids", []):
-                    all_doc_ids.add(did)
-                org_count = max(org_count, r.get("org_count", 0))
-
-        if not all_doc_ids:
-            return {}
-
-        # Use vector similarity to find the most relevant chunks among graph-discovered docs.
-        # Instead of blindly picking by recency, we search the query embedding against ONLY
-        # the graph-discovered doc IDs. This ensures Starlink invoices (semantically similar
-        # to "recurring bills") beat out irrelevant recent docs.
-        doc_ids_list = list(all_doc_ids)
-        try:
-            chunks = await embeddings_store.vector_search_by_doc_ids(
-                query=question, doc_ids=doc_ids_list, limit=len(doc_ids_list)
-            )
-        except Exception as e:
-            logger.warning(f"Graph-scoped vector search failed, falling back to batch retrieval: {e}")
-            try:
-                chunks = await embeddings_store.get_chunks_for_documents(doc_ids_list, chunks_per_doc=1)
-            except Exception as e2:
-                logger.warning(f"Batch chunk retrieval also failed: {e2}")
-                chunks = []
-
-        for chunk in chunks:
-            chunk["_source"] = "graph_driven"
-
-        logger.info(f"Graph-driven retrieval: {org_count} orgs + {len(entity_types)} entity types → {len(all_doc_ids)} unique docs → {len(chunks)} chunks")
-        return {
-            "vector_results": chunks,
-            "keyword_results": [],
-            "entity_results": [],
-            "entity_kw_results": [],
-            "graph_nodes": [],
-            "subgraph": {},
-            "entity_names": [],
-        }
-
-    async def _graph_retrieve_by_org(self, entity_types: list[str] = None) -> dict:
-        """Get the most recent documents for each Organization in the graph.
-        When entity_types is provided, only returns orgs connected to entities
-        of those types (e.g., financial orgs for financial queries, medical
-        providers for medical queries). Pulls 2 docs per org for temporal coverage.
-        Returns org_docs with rank info so tier 2 can prioritize 1st-per-org docs."""
-        try:
-            if entity_types:
-                org_docs = await graph_store.get_recent_docs_per_organization_filtered(
-                    entity_types=entity_types, limit_per_org=3
-                )
-            else:
-                org_docs = await graph_store.get_recent_docs_per_organization(limit_per_org=3)
-
-            # Assign rank: for each org, first doc = rank 1, second = rank 2
-            org_seen = {}
-            ranked_docs = []
-            for d in org_docs:
-                org = d["org_name"]
-                if org not in org_seen:
-                    org_seen[org] = 1
-                else:
-                    org_seen[org] += 1
-                ranked_docs.append({
-                    "doc_id": d["doc_id"],
-                    "org_name": org,
-                    "rank": org_seen[org],
-                })
-
-            doc_ids = [d["doc_id"] for d in ranked_docs]
-            orgs = set(d["org_name"] for d in ranked_docs)
-            logger.info(f"Org-centric retrieval: {len(orgs)} organizations → {len(doc_ids)} docs (filtered by {entity_types})")
-            return {"doc_ids": doc_ids, "org_count": len(orgs), "org_docs": ranked_docs}
-        except Exception as e:
-            logger.warning(f"Org-centric graph retrieval failed: {e}")
-            return {"doc_ids": [], "org_count": 0, "org_docs": []}
-
-    async def _graph_retrieve_by_entity_type(self, entity_types: list[str]) -> dict:
-        """Get recent docs linked to specific entity types."""
-        try:
-            doc_ids = await graph_store.get_documents_by_entity_types(entity_types, limit=40)
-            return {"doc_ids": doc_ids, "org_count": 0}
-        except Exception as e:
-            logger.warning(f"Entity-type graph retrieval failed: {e}")
-            return {"doc_ids": [], "org_count": 0}
-
-    async def _get_relevant_entity_types(self, question: str) -> list[str]:
-        """Determine which entity types to query from the graph based on the question.
-        Query-agnostic: covers financial, medical, equipment, legal, location, and more."""
-        q_lower = question.lower()
-        types = []
-
-        financial_signals = ["bill", "payment", "financial", "obligation", "recurring", "monthly", "expense",
-                           "mortgage", "loan", "subscription", "utility", "owe", "pay", "cost", "fee",
-                           "charge", "balance", "statement", "account", "bank", "credit"]
-        if any(s in q_lower for s in financial_signals):
-            types.extend(["FinancialItem", "Contract"])
-
-        insurance_signals = ["insurance", "policy", "coverage", "premium", "deductible", "claim",
-                           "insured", "underwriter", "liability"]
-        if any(s in q_lower for s in insurance_signals):
-            types.extend(["InsurancePolicy"])
-
-        medical_signals = ["medical", "health", "diagnosis", "condition", "disability", "medication",
-                         "treatment", "doctor", "hospital", "va ", "veteran", "rating", "vaccine",
-                         "immunization", "lab", "blood", "test result", "prescription", "surgery",
-                         "dental", "vision", "therapy", "physical"]
-        if any(s in q_lower for s in medical_signals):
-            types.extend(["MedicalResult", "Condition"])
-
-        equipment_signals = ["mower", "vehicle", "car", "truck", "device", "appliance", "manual",
-                           "instructions", "oil change", "maintenance", "repair", "equipment",
-                           "tool", "machine", "model", "serial number", "warranty"]
-        if any(s in q_lower for s in equipment_signals):
-            types.extend(["Product", "System"])
-
-        legal_signals = ["contract", "agreement", "lease", "terms", "deed", "legal",
-                        "court", "attorney", "settlement", "notarized", "signed"]
-        if any(s in q_lower for s in legal_signals):
-            types.extend(["Contract", "DocumentRef"])
-
-        event_signals = ["when did", "date", "timeline", "history", "deployment", "service record",
-                        "stationed", "assigned", "milestone", "ceremony", "graduation"]
-        if any(s in q_lower for s in event_signals):
-            types.extend(["DateEvent", "Event"])
-
-        location_signals = ["where", "location", "address", "stationed", "deployed", "lived",
-                          "moved", "residence", "city", "state", "base"]
-        if any(s in q_lower for s in location_signals):
-            types.extend(["Location", "Address"])
-
-        property_signals = ["property", "house", "home", "real estate", "mortgage", "escrow",
-                          "hoa", "homeowner"]
-        if any(s in q_lower for s in property_signals):
-            types.extend(["Address", "Contract", "FinancialItem"])
-
-        people_signals = ["who", "person", "people", "family", "contact", "employee",
-                        "spouse", "dependent", "beneficiary"]
-        if any(s in q_lower for s in people_signals):
-            types.extend(["Person"])
-
-        org_signals = ["company", "employer", "provider", "vendor", "agency", "organization"]
-        if any(s in q_lower for s in org_signals):
-            types.extend(["Organization"])
-
-        # For broad queries: ensure minimum type coverage
-        is_broad = any(w in q_lower for w in ["all", "every", "everything", "comprehensive", "complete"])
-        if is_broad and len(set(types)) < 3:
-            types.extend(["FinancialItem", "InsurancePolicy", "Contract", "MedicalResult"])
-
-        return list(set(types))
 
     async def _retrieve(self, query_text: str) -> dict:
         """Hybrid retrieval: vector + keyword + entity search + graph."""
@@ -625,10 +460,178 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "entity_names": entity_names,
         }
 
+    async def _retrieve_light(self, query_text: str) -> dict:
+        """Fast retrieval: vector + keyword only, no LLM entity extraction."""
+        vector_results = await self._cached_vector_search(query_text, limit=15)
+        keyword_results = await embeddings_store.keyword_search(query_text, limit=10)
+        entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
+        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
+        return {
+            "vector_results": vector_results,
+            "keyword_results": keyword_results,
+            "entity_results": entity_results,
+            "entity_kw_results": entity_kw_results,
+            "graph_nodes": [],
+            "subgraph": {},
+            "entity_names": [],
+        }
+
+    async def _retrieve_graph_documents(self, question: str) -> dict:
+        """Retrieve graph-linked documents for broad coverage."""
+        entity_types = await self._get_relevant_entity_types(question)
+
+        tasks = [self._graph_retrieve_by_org(entity_types=entity_types)]
+        if entity_types:
+            tasks.append(self._graph_retrieve_by_entity_type(entity_types))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_doc_ids = set()
+        org_count = 0
+        for r in results:
+            if isinstance(r, dict):
+                for did in r.get("doc_ids", []):
+                    all_doc_ids.add(did)
+                org_count = max(org_count, r.get("org_count", 0))
+
+        if not all_doc_ids:
+            return {}
+
+        doc_ids_list = list(all_doc_ids)
+        try:
+            chunks = await embeddings_store.vector_search_by_doc_ids(
+                query=question, doc_ids=doc_ids_list, limit=len(doc_ids_list)
+            )
+        except Exception as e:
+            logger.warning(f"Graph-scoped vector search failed, falling back to batch retrieval: {e}")
+            try:
+                chunks = await embeddings_store.get_chunks_for_documents(doc_ids_list, chunks_per_doc=1)
+            except Exception as e2:
+                logger.warning(f"Batch chunk retrieval also failed: {e2}")
+                chunks = []
+
+        for chunk in chunks:
+            chunk["_source"] = "graph_driven"
+
+        logger.info(
+            f"Graph-driven retrieval: {org_count} orgs + {len(entity_types)} entity types -> "
+            f"{len(all_doc_ids)} unique docs -> {len(chunks)} chunks"
+        )
+        return {
+            "vector_results": chunks,
+            "keyword_results": [],
+            "entity_results": [],
+            "entity_kw_results": [],
+            "graph_nodes": [],
+            "subgraph": {},
+            "entity_names": [],
+        }
+
+    async def _graph_retrieve_by_org(self, entity_types: list[str] = None) -> dict:
+        """Get the most recent documents for each relevant Organization in the graph."""
+        try:
+            if entity_types:
+                org_docs = await graph_store.get_recent_docs_per_organization_filtered(
+                    entity_types=entity_types, limit_per_org=3
+                )
+            else:
+                org_docs = await graph_store.get_recent_docs_per_organization(limit_per_org=3)
+
+            org_seen = {}
+            ranked_docs = []
+            for d in org_docs:
+                org = d["org_name"]
+                org_seen[org] = org_seen.get(org, 0) + 1
+                ranked_docs.append({
+                    "doc_id": d["doc_id"],
+                    "org_name": org,
+                    "rank": org_seen[org],
+                })
+
+            doc_ids = [d["doc_id"] for d in ranked_docs]
+            orgs = {d["org_name"] for d in ranked_docs}
+            logger.info(f"Org-centric retrieval: {len(orgs)} organizations -> {len(doc_ids)} docs")
+            return {"doc_ids": doc_ids, "org_count": len(orgs), "org_docs": ranked_docs}
+        except Exception as e:
+            logger.warning(f"Org-centric graph retrieval failed: {e}")
+            return {"doc_ids": [], "org_count": 0, "org_docs": []}
+
+    async def _graph_retrieve_by_entity_type(self, entity_types: list[str]) -> dict:
+        """Get recent docs linked to specific entity types."""
+        try:
+            doc_ids = await graph_store.get_documents_by_entity_types(entity_types, limit=40)
+            return {"doc_ids": doc_ids, "org_count": 0}
+        except Exception as e:
+            logger.warning(f"Entity-type graph retrieval failed: {e}")
+            return {"doc_ids": [], "org_count": 0}
+
+    async def _get_relevant_entity_types(self, question: str) -> list[str]:
+        """Determine which entity types to query from the graph based on the question."""
+        q_lower = question.lower()
+        types = []
+
+        financial_signals = [
+            "bill", "payment", "financial", "obligation", "recurring", "monthly", "expense",
+            "mortgage", "loan", "subscription", "utility", "owe", "pay", "cost", "fee",
+            "charge", "balance", "statement", "account", "bank", "credit",
+        ]
+        if any(s in q_lower for s in financial_signals):
+            types.extend(["FinancialItem", "Contract"])
+
+        insurance_signals = ["insurance", "policy", "coverage", "premium", "deductible", "claim", "insured", "underwriter", "liability"]
+        if any(s in q_lower for s in insurance_signals):
+            types.extend(["InsurancePolicy"])
+
+        medical_signals = [
+            "medical", "health", "diagnosis", "condition", "disability", "medication",
+            "treatment", "doctor", "hospital", "va ", "veteran", "rating", "vaccine",
+            "immunization", "lab", "blood", "test result", "prescription", "surgery",
+            "dental", "vision", "therapy", "physical",
+        ]
+        if any(s in q_lower for s in medical_signals):
+            types.extend(["MedicalResult", "Condition"])
+
+        equipment_signals = [
+            "mower", "vehicle", "car", "truck", "device", "appliance", "manual",
+            "instructions", "oil change", "maintenance", "repair", "equipment",
+            "tool", "machine", "model", "serial number", "warranty",
+        ]
+        if any(s in q_lower for s in equipment_signals):
+            types.extend(["Product", "System"])
+
+        legal_signals = ["contract", "agreement", "lease", "terms", "deed", "legal", "court", "attorney", "settlement", "notarized", "signed"]
+        if any(s in q_lower for s in legal_signals):
+            types.extend(["Contract", "DocumentRef"])
+
+        event_signals = ["when did", "date", "timeline", "history", "deployment", "service record", "stationed", "assigned", "milestone", "ceremony", "graduation"]
+        if any(s in q_lower for s in event_signals):
+            types.extend(["DateEvent", "Event"])
+
+        location_signals = ["where", "location", "address", "stationed", "deployed", "lived", "moved", "residence", "city", "state", "base"]
+        if any(s in q_lower for s in location_signals):
+            types.extend(["Location", "Address"])
+
+        property_signals = ["property", "house", "home", "real estate", "mortgage", "escrow", "hoa", "homeowner"]
+        if any(s in q_lower for s in property_signals):
+            types.extend(["Address", "Contract", "FinancialItem"])
+
+        people_signals = ["who", "person", "people", "family", "contact", "employee", "spouse", "dependent", "beneficiary"]
+        if any(s in q_lower for s in people_signals):
+            types.extend(["Person"])
+
+        org_signals = ["company", "employer", "provider", "vendor", "agency", "organization"]
+        if any(s in q_lower for s in org_signals):
+            types.extend(["Organization"])
+
+        is_broad = any(w in q_lower for w in ["all", "every", "everything", "comprehensive", "complete"])
+        if is_broad and len(set(types)) < 3:
+            types.extend(["FinancialItem", "InsurancePolicy", "Contract", "MedicalResult"])
+
+        return list(set(types))
+
     # ── Gap analysis (TUNED: smarter follow-ups) ────────────────────
 
     async def _synthesize_with_gaps(self, question: str, context: dict, conversation_history: list = None) -> dict:
-        doc_context = self._format_doc_context(context)
+        doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
 
         conv_context = ""
@@ -669,7 +672,7 @@ CRITICAL TEMPORAL AWARENESS:
 
 Important: The user is {_owner_name()}. "my" or "I" = {_owner_name()}.
 
-Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["search query 1", "search query 2", "search query 3"], "entities_found": ["Name1", "Name2"], "follow_up_suggestions": ["What is my current VA disability rating?", "Tell me about my military deployments"]}}"""
+Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries": ["search query 1", "search query 2", "search query 3", "search query 4", "search query 5"], "entities_found": ["Name1", "Name2"], "follow_up_suggestions": ["What is my current VA disability rating?", "Tell me about my military deployments"]}}"""
 
         try:
             result = await self._llm_json(prompt)
@@ -720,7 +723,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
     # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
-    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
+    def _build_final_prompt(self, question: str, mode: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
@@ -734,6 +737,12 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             newline = "\n"
             conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
+        mode_instruction = {
+            "quick": "Answer concisely. Use the strongest available sources and avoid unnecessary expansion.",
+            "deep": "Answer comprehensively. Use all relevant details and cite the strongest sources.",
+            "timeline": "Answer chronologically. Compare dates, revisions, current vs superseded records, and explain how the facts changed over time.",
+        }[mode]
+
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
@@ -743,6 +752,7 @@ CONTEXT ABOUT THE USER:
 - {("Additional context: " + _owner_context()) if _owner_context() else ""}
 
 INSTRUCTIONS:
+- Query mode: {mode}. {mode_instruction}
 - Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
@@ -773,10 +783,10 @@ Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passe
 
 Provide your comprehensive, exhaustive answer with inline citations:"""
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None, broad: bool = False) -> dict:
-        doc_context = self._format_doc_context(context, broad=broad)
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None, mode: str = "deep", broad: bool = False) -> dict:
+        doc_context = self._format_doc_context(context, question=question, broad=broad)
         graph_text = self._format_graph_context(context)
-        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer, conversation_history)
+        prompt = self._build_final_prompt(question, self._normalize_mode(mode), doc_context, graph_text, draft_answer, conversation_history)
 
         try:
             answer = await self._llm_generate(prompt)
@@ -796,6 +806,10 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             pass
 
         return {"answer": answer, "confidence": confidence}
+
+    def _normalize_mode(self, mode: str) -> str:
+        mode = (mode or "deep").lower()
+        return mode if mode in {"quick", "deep", "timeline"} else "deep"
 
     # ── Context merging ─────────────────────────────────────────────
 
@@ -842,14 +856,14 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
 
-    def _format_doc_context(self, context: dict, broad: bool = False) -> str:
+    def _format_doc_context(self, context: dict, question: str = "", broad: bool = False) -> str:
         combined = self._merge_and_rank(
             context.get("vector_results", []),
-            context.get("keyword_results", [])
+            context.get("keyword_results", []),
+            question=question,
         )
-        # Broad queries get more chunks for category coverage (75 vs 25)
+        # Broad queries get more chunks for category coverage.
         chunk_limit = 75 if broad else 25
-        # For broad queries, ensure document diversity: max 2 chunks per document
         if broad:
             top = self._diversify_chunks(combined, limit=chunk_limit, max_per_doc=2)
         else:
@@ -883,7 +897,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 f"[Entity: {r.get('entity_name', '')} ({r.get('entity_type', '')})] {r.get('content', '')[:500]}"
             )
 
-        unique_doc_ids = set(r.get("document_id") for r in top)
+        unique_doc_ids = {r.get("document_id") for r in top}
         logger.info(f"Synthesis context: {len(top)} chunks from {len(unique_doc_ids)} unique documents (broad={broad})")
 
         result = "\n\n".join(parts)
@@ -928,6 +942,9 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 source["title"] = best["title"]
             if best.get("doc_type"):
                 source["doc_type"] = best["doc_type"]
+            source_date = self._extract_source_date(best)
+            if source_date:
+                source["date"] = source_date
             if len(chunks) > 1:
                 source["excerpt_count"] = len(chunks)
             source["excerpt"] = best.get("content", "")[:300]
@@ -935,6 +952,39 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         sources.sort(key=lambda x: x["similarity"], reverse=True)
         return sources[:15]  # Return up to 15 sources (was 10)
+
+    def _build_source_summary(self, context: dict, latest_check_used: bool) -> dict:
+        sources = self._build_sources(context)
+        dates = [s["date"] for s in sources if s.get("date")]
+        latest_date = max(dates) if dates else None
+        return {
+            "latest_source_date": latest_date,
+            "latest_check_used": latest_check_used,
+            "source_count": len(sources),
+            "newer_docs_may_exist": not latest_check_used,
+        }
+
+    def _requires_latest_check(self, question: str) -> bool:
+        sensitive_terms = (
+            "insurance", "policy", "coverage", "premium", "deductible",
+            "medical", "health", "doctor", "diagnosis", "medication", "prescription",
+            "tax", "irs", "return", "w2", "1099", "mortgage", "loan", "balance",
+            "finance", "financial", "bank", "account", "contract", "legal", "lease",
+            "rating", "disability", "va",
+        )
+        q = question.lower()
+        return any(term in q for term in sensitive_terms)
+
+    def _latest_check_query(self, question: str) -> str:
+        return f"{question} latest current final most recent updated revised declaration statement policy"
+
+    def _extract_source_date(self, result: dict) -> str | None:
+        content = result.get("content", "") or ""
+        match = re.search(r"^Date:\s*([^\n]+)", content, flags=re.MULTILINE)
+        if match:
+            value = match.group(1).strip()
+            return value if value and value.lower() != "unknown" else None
+        return None
 
     # ── Existing helpers ────────────────────────────────────────────
 
@@ -948,11 +998,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return results
 
     def _diversify_chunks(self, ranked_chunks: list[dict], limit: int = 40, max_per_doc: int = 2) -> list[dict]:
-        """Select chunks ensuring document diversity — max N chunks per document.
-        Uses two-tier selection: vector/keyword results fill first half,
-        graph-driven results fill second half, ensuring structural coverage
-        doesn't get drowned out by semantic similarity scores."""
-        # Separate graph-driven from vector/keyword results
+        """Select chunks with document diversity while preserving high-scoring matches."""
         vector_chunks = [c for c in ranked_chunks if c.get("_source") != "graph_driven"]
         graph_chunks = [c for c in ranked_chunks if c.get("_source") == "graph_driven"]
 
@@ -962,7 +1008,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         seen_doc_ids = set()
         doc_counts = defaultdict(int)
 
-        # Tier 1: Top vector/keyword results (up to 50% of limit)
         tier1_limit = int(limit * 0.5)
         for chunk in vector_chunks:
             doc_id = chunk.get("document_id")
@@ -973,18 +1018,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             if len(selected) >= tier1_limit:
                 break
 
-        tier1_doc_ids = set(c.get("document_id") for c in selected)
-        logger.info(f"Tier 1 (vector): {len(selected)} chunks from {len(tier1_doc_ids)} unique docs — IDs: {sorted(tier1_doc_ids)}")
-
-        # Tier 2: Graph-driven results, sorted by SEMANTIC SIMILARITY to the query.
-        # Graph retrieval already ran a vector search scoped to graph-discovered docs,
-        # so these chunks are pre-ranked by relevance. Just maintain that order.
-        tier2_start = len(selected)
-        graph_sorted = sorted(
-            graph_chunks,
-            key=lambda c: c.get("similarity", 0),
-            reverse=True
-        )
+        graph_sorted = sorted(graph_chunks, key=lambda c: c.get("similarity", 0), reverse=True)
         for chunk in graph_sorted:
             doc_id = chunk.get("document_id")
             if doc_id not in seen_doc_ids and doc_counts[doc_id] < max_per_doc:
@@ -994,28 +1028,21 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             if len(selected) >= limit:
                 break
 
-        tier2_doc_ids = set(c.get("document_id") for c in selected[tier2_start:])
-        logger.info(f"Tier 2 (graph): {len(selected) - tier2_start} chunks from {len(tier2_doc_ids)} unique docs — IDs: {sorted(tier2_doc_ids)}")
-
-        # Tier 3: Fill remaining with any unchosen chunks (vector or graph)
         if len(selected) < limit:
-            tier3_start = len(selected)
             remaining = [c for c in ranked_chunks if c not in selected]
             for chunk in remaining:
                 doc_id = chunk.get("document_id")
                 if doc_counts[doc_id] < max_per_doc:
                     selected.append(chunk)
                     doc_counts[doc_id] += 1
+                    seen_doc_ids.add(doc_id)
                 if len(selected) >= limit:
                     break
-            if len(selected) > tier3_start:
-                tier3_doc_ids = set(c.get("document_id") for c in selected[tier3_start:])
-                logger.info(f"Tier 3 (fill): {len(selected) - tier3_start} chunks from {len(tier3_doc_ids)} unique docs")
 
         logger.info(f"Final selection: {len(selected)} chunks from {len(seen_doc_ids)} unique documents")
         return selected
 
-    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict]) -> list[dict]:
+    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict], question: str = "") -> list[dict]:
         scored = {}
         for r in vector_results:
             key = (r["document_id"], r.get("chunk_index", 0))
@@ -1023,7 +1050,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 scored[key] = {**r, "vector_score": float(r.get("similarity", 0)), "keyword_score": 0.0}
             else:
                 scored[key]["vector_score"] = max(scored[key].get("vector_score", 0), float(r.get("similarity", 0)))
-                # Preserve graph_driven source tag if present
                 if r.get("_source") == "graph_driven":
                     scored[key]["_source"] = "graph_driven"
 
@@ -1036,8 +1062,58 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         for key, r in scored.items():
             r["combined_score"] = 0.7 * r.get("vector_score", 0) + 0.3 * r.get("keyword_score", 0)
+            r["rerank_score"] = self._rerank_score(r, question)
 
-        return sorted(scored.values(), key=lambda x: x["combined_score"], reverse=True)
+        return sorted(scored.values(), key=lambda x: x["rerank_score"], reverse=True)
+
+    def _rerank_score(self, result: dict, question: str) -> float:
+        base = float(result.get("combined_score", 0))
+        query = question.lower()
+        doc_type = (result.get("doc_type") or "").lower()
+        content = (result.get("content") or "").lower()
+
+        score = base + self._doc_type_boost(query, doc_type) + self._recency_boost(result)
+        if self._looks_superseded(content):
+            score -= 0.18
+        return score
+
+    def _doc_type_boost(self, query: str, doc_type: str) -> float:
+        mappings = [
+            (("insurance", "policy", "coverage", "premium"), ("insurance", "policy"), 0.12),
+            (("tax", "irs", "return", "w-2", "1099"), ("tax", "financial"), 0.12),
+            (("medical", "doctor", "diagnosis", "medication", "lab"), ("medical",), 0.12),
+            (("mortgage", "loan", "escrow", "home"), ("mortgage", "statement", "contract"), 0.10),
+            (("vehicle", "auto", "car", "truck", "vin"), ("vehicle", "registration", "insurance"), 0.10),
+        ]
+        for terms, types, boost in mappings:
+            if any(term in query for term in terms) and any(t in doc_type for t in types):
+                return boost
+        return 0.0
+
+    def _recency_boost(self, result: dict) -> float:
+        date_value = self._extract_indexed_date(result.get("content", ""))
+        if not date_value:
+            return 0.0
+        try:
+            dt = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        age_days = max((datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).days, 0)
+        if age_days <= 90:
+            return 0.12
+        if age_days <= 365:
+            return 0.08
+        if age_days <= 730:
+            return 0.04
+        return 0.0
+
+    def _extract_indexed_date(self, content: str) -> str | None:
+        match = re.search(r"^Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)", content, flags=re.MULTILINE)
+        return match.group(1).strip() if match else None
+
+    def _looks_superseded(self, content: str) -> bool:
+        terms = ("superseded", "replaced by", "cancelled", "canceled", "expired", "void", "prior version")
+        return any(term in content for term in terms)
 
     async def _extract_entities_from_query(self, question: str) -> list[str]:
         try:

@@ -138,6 +138,16 @@ See [`.env.example`](.env.example) for all available configuration options.
 5. **Ongoing sync:** `POST /sync` — processes only new/changed documents
 6. **Query:** `POST /query {"question": "What invoices mention Acme Corp?"}` — hybrid search + LLM answer
 
+## Evaluation Harness
+
+Run the canonical document QA checks after prompt, model, retrieval, or indexing changes:
+
+```bash
+python3 scripts/eval_harness.py --base-url http://localhost:8484
+```
+
+The cases live in `evals/canonical_questions.json`. Each case can require answer terms, minimum confidence, and specific source document IDs. Use `--json` in CI or automation.
+
 ## License
 
 MIT

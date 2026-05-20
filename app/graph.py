@@ -490,9 +490,15 @@ class GraphStore:
             result = await session.run(
                 """
                 MATCH (primary)
-                WHERE toString(primary.uuid) CONTAINS $primary_uuid
+                WHERE any(
+                  value IN apoc.convert.toList(primary.uuid)
+                  WHERE toString(value) CONTAINS $primary_uuid
+                )
                 MATCH (duplicate)
-                WHERE toString(duplicate.uuid) CONTAINS $duplicate_uuid
+                WHERE any(
+                  value IN apoc.convert.toList(duplicate.uuid)
+                  WHERE toString(value) CONTAINS $duplicate_uuid
+                )
                 WITH primary, duplicate
                 WHERE elementId(primary) <> elementId(duplicate)
                 CALL apoc.refactor.mergeNodes([primary, duplicate], {

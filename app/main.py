@@ -627,7 +627,12 @@ async def query_stream(req: QueryRequest):
     async def event_generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Send SSE comment as keepalive to prevent connection timeout
+                    yield ": keepalive\n\n"
+                    continue
                 if event is None:
                     break
                 yield f"data: {json.dumps(event)}" + "\n\n"

@@ -75,6 +75,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `OWNER_NAME` | Your name (used in query prompts) | — |
 | `OWNER_CONTEXT` | Brief context about yourself | — |
 | `MAX_CONCURRENT_DOCS` | Parallel doc processing limit | `10` |
+| `AUTO_SYNC_INTERVAL_MINUTES` | Optional in-process incremental sync interval. `0` disables scheduling. | `0` |
 
 ## API Endpoints
 
@@ -83,7 +84,9 @@ See [`.env.example`](.env.example) for all available configuration options.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/status` | GET | Node/relationship/embedding counts |
+| `/freshness` | GET | Compares Paperless count/latest modified document against the indexed graph |
 | `/health` | GET | Component health check (Neo4j, pgvector, LiteLLM, cache stats) |
+| `/ops/guardrails` | GET | Machine-readable sync age, doc drift, model health, and recent error alerts |
 | `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |
 | `/reindex` | POST | Full reindex — clears graph + embeddings, reprocesses all documents |
@@ -137,6 +140,30 @@ See [`.env.example`](.env.example) for all available configuration options.
 4. **Entity resolution:** `POST /resolve-entities` — merges duplicate entities
 5. **Ongoing sync:** `POST /sync` — processes only new/changed documents
 6. **Query:** `POST /query {"question": "What invoices mention Acme Corp?"}` — hybrid search + LLM answer
+
+## Evaluation Harness
+
+Run the canonical document QA checks after prompt, model, retrieval, or indexing changes:
+
+```bash
+python3 scripts/eval_harness.py --base-url http://localhost:8484
+```
+
+The cases live in `evals/canonical_questions.json`. Each case can require answer terms, minimum confidence, and specific source document IDs. Use `--json` in CI or automation.
+
+## Operational Guardrails
+
+Run a non-mutating API smoke test:
+
+```bash
+python3 scripts/api_smoke_tests.py --base-url http://localhost:8484
+```
+
+Export graph/vector state before risky changes:
+
+```bash
+bash scripts/export_state.sh
+```
 
 ## License
 

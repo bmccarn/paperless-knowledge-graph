@@ -1,8 +1,10 @@
 import logging
 import uuid
+from collections import defaultdict
 from typing import Any, Optional
 
 from neo4j import AsyncGraphDatabase
+from rapidfuzz import fuzz
 
 from app.config import settings
 from app.retry import retry_db
@@ -235,6 +237,42 @@ class GraphStore:
                 entities.append(entity)
             return entities
 
+    async def get_document_detail_graph(self, paperless_id: int) -> dict:
+        """Return a document node with extracted entities and relationships."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (d:Document {paperless_id: $pid})
+                OPTIONAL MATCH (d)-[r]-(n)
+                RETURN properties(d) AS document,
+                       collect({
+                         rel_type: type(r),
+                         rel_props: properties(r),
+                         direction: CASE WHEN startNode(r) = d THEN 'out' ELSE 'in' END,
+                         labels: labels(n),
+                         props: properties(n)
+                       }) AS relationships
+                """,
+                pid=paperless_id,
+            )
+            record = await result.single()
+            if not record:
+                return {"document": None, "entities": [], "relationships": []}
+            rels = [r for r in record["relationships"] if r.get("rel_type")]
+            entities = []
+            seen = set()
+            for rel in rels:
+                props = rel.get("props") or {}
+                key = props.get("uuid") or props.get("paperless_id") or props.get("name")
+                if key and key not in seen:
+                    seen.add(key)
+                    entities.append({"labels": rel.get("labels") or [], "properties": props})
+            return {
+                "document": record["document"],
+                "entities": entities,
+                "relationships": rels,
+            }
+
     async def get_subgraph(self, entity_uuids: list[str], depth: int = 2) -> dict:
         """Get a connected subgraph within N hops of any of the input entities."""
         if not entity_uuids:
@@ -343,6 +381,73 @@ class GraphStore:
                 "relationships": rel_record["count"] if rel_record else 0,
                 "documents": docs,
             }
+
+    async def get_entity_review_candidates(self, ignored_pairs: set[tuple[str, str]], limit: int = 50) -> list[dict]:
+        """Find likely duplicate entities for human review."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (n)
+                WHERE n.uuid IS NOT NULL
+                  AND NOT n:Document
+                  AND (n.name IS NOT NULL OR n.title IS NOT NULL)
+                RETURN n.uuid AS uuid, labels(n) AS labels,
+                       coalesce(n.name, n.title) AS name,
+                       properties(n) AS properties
+                LIMIT 2000
+                """
+            )
+            entities = [dict(r) async for r in result]
+
+        by_label: dict[str, list[dict]] = defaultdict(list)
+        for entity in entities:
+            label = (entity.get("labels") or ["Unknown"])[0]
+            by_label[label].append(entity)
+
+        candidates = []
+        for label, group in by_label.items():
+            for i, left in enumerate(group):
+                left_name = left.get("name") or ""
+                if len(left_name) < 3:
+                    continue
+                for right in group[i + 1:]:
+                    pair = tuple(sorted([left["uuid"], right["uuid"]]))
+                    if pair in ignored_pairs:
+                        continue
+                    right_name = right.get("name") or ""
+                    score = fuzz.token_sort_ratio(left_name, right_name)
+                    if score >= 82:
+                        candidates.append({
+                            "score": score,
+                            "label": label,
+                            "left": left,
+                            "right": right,
+                        })
+
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        return candidates[:limit]
+
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str) -> dict:
+        """Merge two entity nodes using APOC refactor, preserving relationships."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (primary {uuid: $primary_uuid})
+                MATCH (duplicate {uuid: $duplicate_uuid})
+                CALL apoc.refactor.mergeNodes([primary, duplicate], {
+                  properties: 'combine',
+                  mergeRels: true
+                })
+                YIELD node
+                RETURN labels(node) AS labels, properties(node) AS properties
+                """,
+                primary_uuid=primary_uuid,
+                duplicate_uuid=duplicate_uuid,
+            )
+            record = await result.single()
+            if not record:
+                raise ValueError("Entity pair not found")
+            return {"labels": record["labels"], "properties": record["properties"]}
 
     async def search_nodes(self, query: str, node_type: str = None, limit: int = 20) -> list[dict]:
         type_filter = f":{node_type}" if node_type else ""

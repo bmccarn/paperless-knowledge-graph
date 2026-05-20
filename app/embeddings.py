@@ -49,6 +49,24 @@ CREATE TABLE IF NOT EXISTS document_hashes (
     processed_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS document_feedback (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS entity_review_decisions (
+    id SERIAL PRIMARY KEY,
+    left_uuid TEXT NOT NULL,
+    right_uuid TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(left_uuid, right_uuid, decision)
+);
+
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
@@ -468,6 +486,73 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_hashes WHERE document_id = $1", doc_id)
 
+    async def get_document_chunks(self, doc_id: int) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT chunk_index, title, doc_type, content, created_at
+                FROM document_embeddings
+                WHERE document_id = $1
+                ORDER BY chunk_index
+                """,
+                doc_id,
+            )
+            return [dict(r) for r in rows]
+
+    async def get_document_processing_status(self, doc_id: int) -> dict:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT content_hash, processed_at FROM document_hashes WHERE document_id = $1",
+                doc_id,
+            )
+            chunk_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_embeddings WHERE document_id = $1",
+                doc_id,
+            )
+            feedback_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_feedback WHERE document_id = $1",
+                doc_id,
+            )
+            return {
+                "processed": bool(row),
+                "content_hash": row["content_hash"] if row else None,
+                "processed_at": row["processed_at"].isoformat() if row else None,
+                "chunk_count": chunk_count,
+                "feedback_count": feedback_count,
+            }
+
+    async def add_document_feedback(self, doc_id: int, reason: str, note: str = "") -> dict:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO document_feedback (document_id, reason, note)
+                VALUES ($1, $2, $3)
+                RETURNING id, document_id, reason, note, created_at
+                """,
+                doc_id, reason, note,
+            )
+            return dict(row)
+
+    async def add_entity_review_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "") -> dict:
+        ordered = sorted([left_uuid, right_uuid])
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
+                SET note = EXCLUDED.note, created_at = NOW()
+                RETURNING id, left_uuid, right_uuid, decision, note, created_at
+                """,
+                ordered[0], ordered[1], decision, note,
+            )
+            return dict(row)
+
+    async def get_entity_review_decisions(self) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT left_uuid, right_uuid, decision, note, created_at FROM entity_review_decisions")
+            return [dict(r) for r in rows]
+
     async def clear_all(self):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings")
@@ -482,11 +567,6 @@ class EmbeddingsStore:
     async def get_entity_embedding_count(self) -> int:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
-
-    async def get_docs_with_embeddings_count(self) -> int:
-        """Count distinct documents that have at least one embedding."""
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval("SELECT COUNT(DISTINCT document_id) FROM document_embeddings")
 
     async def get_docs_with_embeddings_count(self) -> int:
         """Count distinct documents that have at least one embedding."""

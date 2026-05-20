@@ -308,6 +308,8 @@ export default function DashboardPage() {
   const isDone = tp?.status === "completed" || tp?.status === "failed" || tp?.status === "cancelled";
   const totalDone = (tp?.processed || 0) + (tp?.skipped || 0) + (tp?.errors || 0);
   const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
+  const freshness = status.freshness;
+  const lastFailedExtraction = freshness?.last_failed_extraction;
 
   return (
     <div className="space-y-4 p-4 md:space-y-6 md:p-6 lg:p-8 h-full overflow-y-auto">
@@ -338,6 +340,41 @@ export default function DashboardPage() {
           </Button>
         </form>
       </div>
+
+      {freshness?.stale && (
+        <Card className="border-amber-500/30 bg-amber-500/10">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium">Knowledge graph may be stale</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Paperless has {freshness.paperless_documents.toLocaleString()} documents and the graph has {freshness.indexed_documents.toLocaleString()}.
+                    {freshness.missing_documents > 0 && (
+                      <span> {freshness.missing_documents.toLocaleString()} document{freshness.missing_documents === 1 ? "" : "s"} appear missing from the index.</span>
+                    )}
+                  </p>
+                  {freshness.latest_paperless_title && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Latest Paperless change: {freshness.latest_paperless_title}
+                      {freshness.latest_paperless_modified && ` (${new Date(freshness.latest_paperless_modified).toLocaleString()})`}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button onClick={handleSync} disabled={!!activeTaskId && isRunning} size="sm" className="gap-2 shrink-0">
+                {activeTaskType === "Sync" && isRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                Sync now
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -579,6 +616,33 @@ export default function DashboardPage() {
                   {Object.keys(status.active_tasks).length}
                 </span>
               </div>
+              {freshness && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Paperless Documents</span>
+                    <span className="text-sm font-medium">
+                      {freshness.paperless_documents.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Missing From Graph</span>
+                    <span className={freshness.missing_documents > 0 ? "text-sm font-medium text-amber-400" : "text-sm font-medium"}>
+                      {freshness.missing_documents.toLocaleString()}
+                    </span>
+                  </div>
+                </>
+              )}
+              {lastFailedExtraction && (
+                <div className="rounded-lg border border-red-500/25 bg-red-500/10 p-3">
+                  <p className="text-xs font-medium text-red-300">Last failed extraction</p>
+                  <p className="text-xs text-muted-foreground mt-1 truncate">
+                    {lastFailedExtraction.title || `Document #${lastFailedExtraction.doc_id}`}
+                  </p>
+                  {lastFailedExtraction.error && (
+                    <p className="text-xs text-red-300/80 mt-1 line-clamp-2">{lastFailedExtraction.error}</p>
+                  )}
+                </div>
+              )}
               {status.graph.documents > 0 && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground mb-2">Embedding Coverage</p>

@@ -18,6 +18,10 @@ export async function getStatus() {
   return apiFetch("/status");
 }
 
+export async function getFreshness() {
+  return apiFetch("/freshness");
+}
+
 export async function postSync() {
   return apiFetch("/sync", { method: "POST" });
 }
@@ -30,23 +34,34 @@ export async function postReindexDoc(docId: number) {
   return apiFetch(`/reindex/${docId}`, { method: "POST" });
 }
 
+export async function getDocumentDetail(docId: number) {
+  return apiFetch(`/document/${docId}/detail`);
+}
+
+export async function postDocumentFeedback(docId: number, reason: string, note = "") {
+  return apiFetch(`/document/${docId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ reason, note }),
+  });
+}
+
 export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
 
-export async function postQuery(question: string, conversationId?: string, model?: string) {
+export async function postQuery(question: string, conversationId?: string, model?: string, mode = "deep") {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ question, conversation_id: conversationId, model }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
   });
 }
 
 // SSE streaming query
-export async function* postQueryStream(question: string, conversationId?: string, model?: string) {
+export async function* postQueryStream(question: string, conversationId?: string, model?: string, mode = "deep") {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, conversation_id: conversationId, model }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
   });
 
   if (!response.ok) {
@@ -140,6 +155,31 @@ export async function getGraphInitial(limit = 300) {
 
 export async function resolveEntities() {
   return apiFetch("/resolve-entities", { method: "POST" });
+}
+
+export async function getEntityReviewCandidates(limit = 50) {
+  return apiFetch(`/entity-review/candidates?limit=${limit}`);
+}
+
+export async function ignoreEntityCandidate(left_uuid: string, right_uuid: string, note = "") {
+  return apiFetch("/entity-review/ignore", {
+    method: "POST",
+    body: JSON.stringify({ left_uuid, right_uuid, note }),
+  });
+}
+
+export async function splitEntityCandidate(left_uuid: string, right_uuid: string, note = "") {
+  return apiFetch("/entity-review/split", {
+    method: "POST",
+    body: JSON.stringify({ left_uuid, right_uuid, note }),
+  });
+}
+
+export async function mergeEntityCandidate(primary_uuid: string, duplicate_uuid: string) {
+  return apiFetch("/entity-review/merge", {
+    method: "POST",
+    body: JSON.stringify({ primary_uuid, duplicate_uuid }),
+  });
 }
 
 export async function cancelTask(taskId: string) {

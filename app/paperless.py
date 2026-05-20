@@ -33,6 +33,18 @@ class PaperlessClient:
             params["modified__gt"] = modified_after.isoformat()
         return await self._get("/api/documents/", params=params)
 
+    async def get_document_summary(self) -> dict:
+        """Return Paperless document count and most recent document metadata."""
+        data = await self.get_documents(page=1, page_size=1)
+        latest = (data.get("results") or [None])[0]
+        return {
+            "count": data.get("count", 0),
+            "latest": latest,
+            "latest_modified": latest.get("modified") if latest else None,
+            "latest_id": latest.get("id") if latest else None,
+            "latest_title": latest.get("title") if latest else None,
+        }
+
     async def get_document(self, doc_id: int) -> dict:
         """Fetch a single document by ID."""
         return await self._get(f"/api/documents/{doc_id}/")

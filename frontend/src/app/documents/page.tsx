@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -72,7 +73,6 @@ export default function DocumentsPage() {
   const [reindexing, setReindexing] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [batchReindexing, setBatchReindexing] = useState(false);
-  const [docTypes, setDocTypes] = useState<string[]>([]);
   const [sortField, setSortField] = useState<string>("title");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
@@ -85,10 +85,6 @@ export default function DocumentsPage() {
         r.labels?.includes("Document")
       );
       setDocuments(docs);
-      const types = [
-        ...new Set(docs.map((d: DocResult) => d.properties?.doc_type as string).filter(Boolean)),
-      ] as string[];
-      setDocTypes(types.sort());
       setPage(0);
     } catch (e) {
       console.error("Failed to load documents:", e);
@@ -290,7 +286,9 @@ export default function DocumentsPage() {
                         />
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm truncate">
-                            {(p.title as string) || `Document #${docId}`}
+                            <Link href={`/documents/${docId}`} className="hover:underline">
+                              {(p.title as string) || `Document #${docId}`}
+                            </Link>
                           </p>
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                             <Badge
@@ -414,7 +412,13 @@ export default function DocumentsPage() {
                             </TableCell>
                             <TableCell className="font-medium max-w-md">
                               <span className="truncate block">
-                                {(p.title as string) || `Document #${docId}`}
+                                <Link
+                                  href={`/documents/${docId}`}
+                                  className="hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {(p.title as string) || `Document #${docId}`}
+                                </Link>
                               </span>
                             </TableCell>
                             <TableCell>

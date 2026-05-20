@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 
@@ -84,14 +86,14 @@ export function ForceGraphClient({ fgRef, is3DMode, graphData, ...props }: Force
       }
       try {
         if (is3DMode) {
-          const [module, THREE] = await Promise.all([
+          const [graphModule, THREE] = await Promise.all([
             import('react-force-graph-3d'),
             import('three'),
           ]);
-          if (mounted) { threeRef.current = THREE; setGraphComponent(() => module.default); }
+          if (mounted) { threeRef.current = THREE; setGraphComponent(() => graphModule.default); }
         } else {
-          const module = await import('react-force-graph-2d');
-          if (mounted) setGraphComponent(() => module.default);
+          const graphModule = await import('react-force-graph-2d');
+          if (mounted) setGraphComponent(() => graphModule.default);
         }
         if (mounted) setIsLoading(false);
       } catch (err) {

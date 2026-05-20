@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { Search, Loader2, Box, Square, Maximize2, Minimize2, Focus, RotateCcw, Settings2, ChevronUp, ChevronDown, Tag, Atom } from 'lucide-react';
+import { Search, Loader2, Box, Square, Maximize2, Minimize2, Focus, Tag, Atom } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -45,7 +44,6 @@ export function GraphControls({
   nodeLimit, onNodeLimitChange,
 }: GraphControlsProps) {
   const { is3DMode, toggle3DMode, searchQuery, setSearchQuery } = useGraphStore();
-  const [mobileExpanded, setMobileExpanded] = useState(false);
 
   const handleSearchSubmit = () => {
     if (searchQuery.trim()) onSearch(searchQuery);

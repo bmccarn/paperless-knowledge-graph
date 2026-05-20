@@ -884,7 +884,7 @@ async def entity_review_candidates(limit: int = 50):
     ignored_pairs = {
         tuple(sorted([d["left_uuid"], d["right_uuid"]]))
         for d in decisions
-        if d["decision"] in {"ignore", "split"}
+        if d["decision"] in {"ignore", "split", "merged"}
     }
     candidates = await graph_store.get_entity_review_candidates(ignored_pairs, limit=limit)
     return {"candidates": candidates, "ignored_count": len(ignored_pairs)}

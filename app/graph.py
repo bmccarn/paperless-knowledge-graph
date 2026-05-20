@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from collections import defaultdict
 from typing import Any, Optional
@@ -65,6 +66,32 @@ class GraphStore:
     @staticmethod
     def new_uuid() -> str:
         return str(uuid.uuid4())
+
+    @staticmethod
+    def _first_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            for item in value:
+                text = GraphStore._first_text(item)
+                if text:
+                    return text
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _searchable_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return " ".join(GraphStore._searchable_text(item) for item in value)
+        if isinstance(value, dict):
+            return " ".join(GraphStore._searchable_text(item) for item in value.values())
+        return str(value)
+
+    @staticmethod
+    def _search_terms(query: str) -> list[str]:
+        return [term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 2]
 
     async def create_document_node(self, paperless_id: int, title: str, doc_type: str,
                                     date: str, content_hash: str) -> str:
@@ -422,20 +449,29 @@ class GraphStore:
 
         by_label: dict[str, list[dict]] = defaultdict(list)
         for entity in entities:
+            entity_uuid = self._first_text(entity.get("uuid"))
+            entity_name = self._first_text(entity.get("name"))
+            if not entity_uuid or len(entity_name) < 3:
+                continue
+            entity["uuid"] = entity_uuid
+            entity["name"] = entity_name
+            properties = entity.get("properties") or {}
+            properties["uuid"] = entity_uuid
+            entity["properties"] = properties
             label = (entity.get("labels") or ["Unknown"])[0]
             by_label[label].append(entity)
 
         candidates = []
         for label, group in by_label.items():
             for i, left in enumerate(group):
-                left_name = left.get("name") or ""
-                if len(left_name) < 3:
-                    continue
+                left_name = left["name"]
                 for right in group[i + 1:]:
-                    pair = tuple(sorted([left["uuid"], right["uuid"]]))
+                    pair = tuple(sorted([str(left["uuid"]), str(right["uuid"])]))
+                    if pair[0] == pair[1]:
+                        continue
                     if pair in ignored_pairs:
                         continue
-                    right_name = right.get("name") or ""
+                    right_name = right["name"]
                     score = fuzz.token_sort_ratio(left_name, right_name)
                     if score >= 82:
                         candidates.append({
@@ -453,13 +489,18 @@ class GraphStore:
         async with self.driver.session() as session:
             result = await session.run(
                 """
-                MATCH (primary {uuid: $primary_uuid})
-                MATCH (duplicate {uuid: $duplicate_uuid})
+                MATCH (primary)
+                WHERE toString(primary.uuid) CONTAINS $primary_uuid
+                MATCH (duplicate)
+                WHERE toString(duplicate.uuid) CONTAINS $duplicate_uuid
+                WITH primary, duplicate
+                WHERE elementId(primary) <> elementId(duplicate)
                 CALL apoc.refactor.mergeNodes([primary, duplicate], {
-                  properties: 'combine',
+                  properties: 'discard',
                   mergeRels: true
                 })
                 YIELD node
+                SET node.uuid = $primary_uuid
                 RETURN labels(node) AS labels, properties(node) AS properties
                 """,
                 primary_uuid=primary_uuid,
@@ -471,20 +512,38 @@ class GraphStore:
             return {"labels": record["labels"], "properties": record["properties"]}
 
     async def search_nodes(self, query: str, node_type: str = None, limit: int = 20) -> list[dict]:
+        if node_type and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", node_type):
+            raise ValueError(f"Invalid node type: {node_type}")
         type_filter = f":{node_type}" if node_type else ""
+        terms = self._search_terms(query)
+        if not terms:
+            return []
+
         async with self.driver.session() as session:
             result = await session.run(
                 f"""
                 MATCH (n{type_filter})
-                WHERE toLower(n.name) CONTAINS toLower($q)
-                   OR toLower(n.title) CONTAINS toLower($q)
-                   OR any(a IN n.aliases WHERE toLower(a) CONTAINS toLower($q))
                 RETURN labels(n) AS labels, properties(n) AS props
-                LIMIT $limit
+                LIMIT 5000
                 """,
-                q=query, limit=limit,
             )
-            return [{"labels": r["labels"], "properties": r["props"]} async for r in result]
+            rows = [{"labels": r["labels"], "properties": r["props"]} async for r in result]
+
+        scored: list[tuple[int, str, dict]] = []
+        for row in rows:
+            props = row.get("properties") or {}
+            searchable = " ".join(
+                self._searchable_text(props.get(field))
+                for field in ("title", "name", "doc_type", "date", "aliases")
+            ).lower()
+            if not searchable:
+                searchable = self._searchable_text(props).lower()
+            matched = sum(1 for term in terms if term in searchable)
+            if matched:
+                scored.append((matched, self._first_text(props.get("date")), row))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [row for _, _, row in scored[:limit]]
 
     async def get_node(self, node_uuid: str) -> Optional[dict]:
         async with self.driver.session() as session:

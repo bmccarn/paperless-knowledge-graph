@@ -16,6 +16,7 @@ from typing import Optional
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
+from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
@@ -166,6 +167,11 @@ class TaskResponse(BaseModel):
     task_id: str
     status: str
     message: str
+
+
+class DocumentFeedbackRequest(BaseModel):
+    reason: str = "extraction_wrong"
+    note: str = ""
 
 
 
@@ -364,6 +370,35 @@ async def reindex_single(doc_id: int):
     try:
         result = await reindex_document(doc_id)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/document/{doc_id}/detail")
+async def document_detail(doc_id: int):
+    """Full inspection payload for one Paperless document."""
+    try:
+        paperless_doc = await paperless_client.get_document(doc_id)
+        graph_detail = await graph_store.get_document_detail_graph(doc_id)
+        chunks = await embeddings_store.get_document_chunks(doc_id)
+        processing = await embeddings_store.get_document_processing_status(doc_id)
+        return {
+            "paperless": paperless_doc,
+            "graph": graph_detail,
+            "chunks": chunks,
+            "processing": processing,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/document/{doc_id}/feedback")
+async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
+    """Record that a document extraction needs human review."""
+    try:
+        result = await embeddings_store.add_document_feedback(doc_id, req.reason, req.note)
+        logger.warning("Document %s marked for extraction review: %s", doc_id, req.reason)
+        return {"status": "recorded", "feedback": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

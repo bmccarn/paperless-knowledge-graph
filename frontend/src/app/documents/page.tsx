@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -290,7 +291,9 @@ export default function DocumentsPage() {
                         />
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm truncate">
-                            {(p.title as string) || `Document #${docId}`}
+                            <Link href={`/documents/${docId}`} className="hover:underline">
+                              {(p.title as string) || `Document #${docId}`}
+                            </Link>
                           </p>
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                             <Badge
@@ -414,7 +417,13 @@ export default function DocumentsPage() {
                             </TableCell>
                             <TableCell className="font-medium max-w-md">
                               <span className="truncate block">
-                                {(p.title as string) || `Document #${docId}`}
+                                <Link
+                                  href={`/documents/${docId}`}
+                                  className="hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {(p.title as string) || `Document #${docId}`}
+                                </Link>
                               </span>
                             </TableCell>
                             <TableCell>

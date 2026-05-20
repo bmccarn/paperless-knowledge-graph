@@ -30,6 +30,17 @@ export async function postReindexDoc(docId: number) {
   return apiFetch(`/reindex/${docId}`, { method: "POST" });
 }
 
+export async function getDocumentDetail(docId: number) {
+  return apiFetch(`/document/${docId}/detail`);
+}
+
+export async function postDocumentFeedback(docId: number, reason: string, note = "") {
+  return apiFetch(`/document/${docId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ reason, note }),
+  });
+}
+
 export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }

@@ -235,6 +235,42 @@ class GraphStore:
                 entities.append(entity)
             return entities
 
+    async def get_document_detail_graph(self, paperless_id: int) -> dict:
+        """Return a document node with extracted entities and relationships."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (d:Document {paperless_id: $pid})
+                OPTIONAL MATCH (d)-[r]-(n)
+                RETURN properties(d) AS document,
+                       collect({
+                         rel_type: type(r),
+                         rel_props: properties(r),
+                         direction: CASE WHEN startNode(r) = d THEN 'out' ELSE 'in' END,
+                         labels: labels(n),
+                         props: properties(n)
+                       }) AS relationships
+                """,
+                pid=paperless_id,
+            )
+            record = await result.single()
+            if not record:
+                return {"document": None, "entities": [], "relationships": []}
+            rels = [r for r in record["relationships"] if r.get("rel_type")]
+            entities = []
+            seen = set()
+            for rel in rels:
+                props = rel.get("props") or {}
+                key = props.get("uuid") or props.get("paperless_id") or props.get("name")
+                if key and key not in seen:
+                    seen.add(key)
+                    entities.append({"labels": rel.get("labels") or [], "properties": props})
+            return {
+                "document": record["document"],
+                "entities": entities,
+                "relationships": rels,
+            }
+
     async def get_subgraph(self, entity_uuids: list[str], depth: int = 2) -> dict:
         """Get a connected subgraph within N hops of any of the input entities."""
         if not entity_uuids:

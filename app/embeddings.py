@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS document_hashes (
     processed_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS document_feedback (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
@@ -467,6 +475,53 @@ class EmbeddingsStore:
     async def delete_doc_hash(self, doc_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_hashes WHERE document_id = $1", doc_id)
+
+    async def get_document_chunks(self, doc_id: int) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT chunk_index, title, doc_type, content, created_at
+                FROM document_embeddings
+                WHERE document_id = $1
+                ORDER BY chunk_index
+                """,
+                doc_id,
+            )
+            return [dict(r) for r in rows]
+
+    async def get_document_processing_status(self, doc_id: int) -> dict:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT content_hash, processed_at FROM document_hashes WHERE document_id = $1",
+                doc_id,
+            )
+            chunk_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_embeddings WHERE document_id = $1",
+                doc_id,
+            )
+            feedback_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_feedback WHERE document_id = $1",
+                doc_id,
+            )
+            return {
+                "processed": bool(row),
+                "content_hash": row["content_hash"] if row else None,
+                "processed_at": row["processed_at"].isoformat() if row else None,
+                "chunk_count": chunk_count,
+                "feedback_count": feedback_count,
+            }
+
+    async def add_document_feedback(self, doc_id: int, reason: str, note: str = "") -> dict:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO document_feedback (document_id, reason, note)
+                VALUES ($1, $2, $3)
+                RETURNING id, document_id, reason, note, created_at
+                """,
+                doc_id, reason, note,
+            )
+            return dict(row)
 
     async def clear_all(self):
         async with self.pool.acquire() as conn:

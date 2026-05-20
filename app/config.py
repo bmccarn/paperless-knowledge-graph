@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     paperless_external_url: str = ""
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
 
     litellm_url: str = "http://localhost:4000"
     litellm_api_key: str = ""

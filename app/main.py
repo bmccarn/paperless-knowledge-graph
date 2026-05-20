@@ -1,4 +1,3 @@
-import re
 import asyncio
 import json
 import logging
@@ -460,65 +459,82 @@ async def cancel_task(task_id: str):
 
 @app.get("/models")
 async def list_models():
-    """List available LLM models from LiteLLM (excludes embedding models)."""
+    """List available chat models from LiteLLM."""
     from app.config import settings
     import httpx
+
+    base_url = settings.litellm_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {settings.litellm_api_key}"}
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{settings.litellm_url}/v1/models",
-                headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
+                f"{base_url}/model/info",
+                headers=headers,
                 timeout=10,
             )
             resp.raise_for_status()
-            data = resp.json()
-            # Filter out embedding models
-            EMBEDDING_KEYWORDS = {"embed", "embedding", "titan-embed"}
-            models = []
-            for m in data.get("data", []):
-                model_id = m.get("id", "")
-                if any(kw in model_id.lower() for kw in EMBEDDING_KEYWORDS):
-                    continue
-                models.append({"id": model_id, "name": _normalize_model_name(model_id)})
-            # Sort by name
-            models.sort(key=lambda x: x["name"])
+            models = _models_from_litellm_info(resp.json())
+            if not models:
+                raise ValueError("LiteLLM /model/info returned no chat models")
             return {"models": models, "default": settings.gemini_model}
     except Exception as e:
-        logger.error(f"Failed to list models: {e}")
-        return {"models": [{"id": settings.gemini_model, "name": _normalize_model_name(settings.gemini_model)}], "default": settings.gemini_model}
+        logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{base_url}/v1/models",
+                headers=headers,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            models = _models_from_openai_models(resp.json())
+            if not models:
+                raise ValueError("LiteLLM /v1/models returned no chat models")
+            return {"models": models, "default": settings.gemini_model}
+    except Exception as e:
+        logger.error(f"Failed to list models from LiteLLM fallback: {e}")
+        return {"models": [_model_option(settings.gemini_model)], "default": settings.gemini_model}
 
 
-def _normalize_model_name(model_id: str) -> str:
-    """Convert model IDs to human-friendly display names."""
-    DISPLAY_NAMES = {
-        "gemini-2.5-flash": "Gemini 2.5 Flash",
-        "gemini-2.5-pro": "Gemini 2.5 Pro",
-        "gemini-2.0-flash": "Gemini 2.0 Flash",
-        "gpt-4o": "GPT-4o",
-        "gpt-4o-mini": "GPT-4o Mini",
-        "gpt-5.1": "GPT-5.1",
-        "gpt-5-mini": "GPT-5 Mini",
-        "gpt-5-nano": "GPT-5 Nano",
-        "gpt-5.2": "GPT-5.2",
-        "claude-sonnet-4-5": "Claude Sonnet 4.5",
-        "claude-haiku-4-5": "Claude Haiku 4.5",
-        "claude-3-7-sonnet": "Claude 3.7 Sonnet",
-        "claude-opus-4": "Claude Opus 4",
-        "claude-haiku-4-5-20250929": "Claude Haiku 4.5",
-        "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5",
-        "claude-opus-4-6": "Claude Opus 4",
-        "grok-4-1-fast-non-reasoning": "Grok 4.1 Fast",
-        "xai/grok-4-1-fast-reasoning": "Grok 4.1 Fast (Reasoning)",
-        "openrouter/moonshotai/kimi-k2.5": "Kimi K2.5",
-    }
-    if model_id in DISPLAY_NAMES:
-        return DISPLAY_NAMES[model_id]
-    # Auto-normalize: strip provider prefix, replace hyphens, title case
-    name = model_id.split("/")[-1]  # Remove provider prefix
-    name = re.sub(r'-(\d)', r' ', name)  # "claude-3" -> "claude 3"
-    name = re.sub(r'(\d)-(\d)', r'.', name)  # "3-7" -> "3.7"  
-    name = name.replace("-", " ").title()
-    return name
+def _models_from_litellm_info(data: dict) -> list[dict]:
+    models = []
+    for item in data.get("data", []):
+        model_id = item.get("model_name") or item.get("id") or item.get("model")
+        if not model_id or _is_embedding_model(model_id, item):
+            continue
+        models.append(_model_option(model_id))
+    return _unique_sorted_models(models)
+
+
+def _models_from_openai_models(data: dict) -> list[dict]:
+    models = []
+    for item in data.get("data", []):
+        model_id = item.get("id") or item.get("model_name") or item.get("model")
+        if not model_id or _is_embedding_model(model_id, item):
+            continue
+        models.append(_model_option(model_id))
+    return _unique_sorted_models(models)
+
+
+def _is_embedding_model(model_id: str, item: dict) -> bool:
+    mode = (item.get("mode") or item.get("model_info", {}).get("mode") or "").lower()
+    if mode in {"embedding", "embeddings"}:
+        return True
+    model_text = f"{model_id} {item.get('litellm_params', {}).get('model', '')}".lower()
+    return any(keyword in model_text for keyword in ("embed", "embedding", "titan-embed"))
+
+
+def _model_option(model_id: str) -> dict:
+    # Display the LiteLLM route ID exactly as returned so provider prefixes,
+    # decimals, and version strings are not mangled in the chat selector.
+    return {"id": model_id, "name": model_id}
+
+
+def _unique_sorted_models(models: list[dict]) -> list[dict]:
+    unique = {model["id"]: model for model in models}
+    return sorted(unique.values(), key=lambda model: model["name"].lower())
 
 @app.post("/query")
 async def query(req: QueryRequest):

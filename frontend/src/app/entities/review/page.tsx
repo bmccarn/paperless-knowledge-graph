@@ -23,12 +23,16 @@ export default function EntityReviewPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState("");
+  const [error, setError] = useState("");
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
       const data = await getEntityReviewCandidates(75);
       setCandidates(data.candidates || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load review candidates.");
     } finally {
       setLoading(false);
     }
@@ -40,7 +44,8 @@ export default function EntityReviewPage() {
     setBusyKey(key);
     try {
       await fn();
-      await load();
+      setCandidates((prev) => prev.filter((candidate) => `${candidate.left.uuid}:${candidate.right.uuid}` !== key));
+      load();
     } finally {
       setBusyKey("");
     }
@@ -61,6 +66,8 @@ export default function EntityReviewPage() {
 
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading candidates...</div>
+      ) : error ? (
+        <Card><CardContent className="py-10 text-center text-destructive">{error}</CardContent></Card>
       ) : candidates.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-muted-foreground">No review candidates found.</CardContent></Card>
       ) : (

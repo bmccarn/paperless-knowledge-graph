@@ -1,6 +1,8 @@
 import json
 import logging
 import hashlib
+import re
+from datetime import datetime, timezone
 from collections import defaultdict
 
 from openai import AsyncOpenAI
@@ -60,29 +62,34 @@ class QueryEngine:
 
     # ── Main query (non-streaming, backward compat) ─────────────────
 
-    async def query(self, question: str, conversation_history: list = None, model_override: str = None) -> dict:
+    async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep") -> dict:
         """Answer a question using iterative retrieval + synthesis."""
-        prev_override = self._model_override
-        if model_override:
-            self._model_override = model_override
+        mode = self._normalize_mode(mode)
+        self._model_override = model_override
         # Include conversation context in cache key for uniqueness
         conv_suffix = ""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
         initial_context = await self._retrieve(question)
+        latest_check_used = False
+        if self._requires_latest_check(question):
+            latest_context = await self._retrieve(self._latest_check_query(question))
+            initial_context = self._merge_context(initial_context, latest_context)
+            latest_check_used = True
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
 
         # Up to 3 follow-up iterations for deeper retrieval
         follow_ups_used = []
-        for follow_up in first_pass.get("follow_up_queries", [])[:3]:
+        follow_up_limit = 0 if mode == "quick" else 3
+        for follow_up in first_pass.get("follow_up_queries", [])[:follow_up_limit]:
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
             follow_ups_used.append(follow_up)
@@ -92,7 +99,7 @@ class QueryEngine:
         all_context = self._merge_context(all_context, graph_context)
 
         final = await self._final_synthesis(
-            question, all_context, first_pass.get("draft_answer", ""), conversation_history
+            question, all_context, first_pass.get("draft_answer", ""), conversation_history, mode=mode
         )
 
         result = {
@@ -100,6 +107,7 @@ class QueryEngine:
             "answer": final.get("answer", ""),
             "confidence": final.get("confidence", first_pass.get("confidence", 0.5)),
             "sources": self._build_sources(all_context),
+            "source_summary": self._build_source_summary(all_context, latest_check_used),
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
@@ -107,6 +115,7 @@ class QueryEngine:
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
             "iterations": 1 + len(follow_ups_used),
+            "mode": mode,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
@@ -116,20 +125,20 @@ class QueryEngine:
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None):
+    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep"):
         """Stream query response via SSE events."""
-        prev_override = self._model_override
-        if model_override:
-            self._model_override = model_override
+        mode = self._normalize_mode(mode)
+        self._model_override = model_override
         conv_suffix = ""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}
             yield {"type": "complete", "sources": cached["sources"],
+                   "source_summary": cached.get("source_summary", {}),
                    "entities_found": cached.get("entities_found", []),
                    "confidence": cached.get("confidence", 0.7),
                    "follow_up_suggestions": cached.get("follow_up_suggestions", []),
@@ -138,6 +147,12 @@ class QueryEngine:
 
         yield {"type": "status", "message": "Searching documents and knowledge graph..."}
         initial_context = await self._retrieve(question)
+        latest_check_used = False
+        if self._requires_latest_check(question):
+            yield {"type": "status", "message": "Checking for latest/current documents..."}
+            latest_context = await self._retrieve(self._latest_check_query(question))
+            initial_context = self._merge_context(initial_context, latest_context)
+            latest_check_used = True
 
         yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
@@ -145,7 +160,8 @@ class QueryEngine:
 
         # Up to 3 follow-up iterations
         follow_ups_used = []
-        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:3]):
+        follow_up_limit = 0 if mode == "quick" else 3
+        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:follow_up_limit]):
             yield {"type": "status", "message": f"Deep dive {i+1}/3: {follow_up[:60]}..."}
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
@@ -161,7 +177,8 @@ class QueryEngine:
 
         prompt = self._build_final_prompt(
             question,
-            self._format_doc_context(all_context),
+            mode,
+            self._format_doc_context(all_context, question=question),
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
             conversation_history,
@@ -174,12 +191,14 @@ class QueryEngine:
 
         full_answer = "".join(answer_chunks)
         sources = self._build_sources(all_context)
+        source_summary = self._build_source_summary(all_context, latest_check_used)
 
         result = {
             "question": question,
             "answer": full_answer,
             "confidence": first_pass.get("confidence", 0.7),
             "sources": sources,
+            "source_summary": source_summary,
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
@@ -188,11 +207,13 @@ class QueryEngine:
             "follow_up_queries_used": follow_ups_used,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "iterations": 1 + len(follow_ups_used),
+            "mode": mode,
             "cached": False,
         }
         query_cache.set(cache_key, result)
 
         yield {"type": "complete", "sources": sources,
+               "source_summary": source_summary,
                "entities_found": result["entities_found"],
                "confidence": result.get("confidence", 0.7),
                "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
@@ -270,7 +291,7 @@ class QueryEngine:
     # ── Gap analysis (TUNED: smarter follow-ups) ────────────────────
 
     async def _synthesize_with_gaps(self, question: str, context: dict, conversation_history: list = None) -> dict:
-        doc_context = self._format_doc_context(context)
+        doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
 
         conv_context = ""
@@ -355,7 +376,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
     # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
-    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
+    def _build_final_prompt(self, question: str, mode: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
@@ -369,6 +390,12 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             newline = "\n"
             conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
+        mode_instruction = {
+            "quick": "Answer concisely. Use the strongest available sources and avoid unnecessary expansion.",
+            "deep": "Answer comprehensively. Use all relevant details and cite the strongest sources.",
+            "timeline": "Answer chronologically. Compare dates, revisions, current vs superseded records, and explain how the facts changed over time.",
+        }[mode]
+
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
@@ -378,6 +405,7 @@ CONTEXT ABOUT THE USER:
 - {("Additional context: " + _owner_context()) if _owner_context() else ""}
 
 INSTRUCTIONS:
+- Query mode: {mode}. {mode_instruction}
 - Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
@@ -399,10 +427,10 @@ Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passe
 
 Provide your comprehensive, exhaustive answer with inline citations:"""
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None) -> dict:
-        doc_context = self._format_doc_context(context)
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None, mode: str = "deep") -> dict:
+        doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
-        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer, conversation_history)
+        prompt = self._build_final_prompt(question, self._normalize_mode(mode), doc_context, graph_text, draft_answer, conversation_history)
 
         try:
             answer = await self._llm_generate(prompt)
@@ -422,6 +450,10 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             pass
 
         return {"answer": answer, "confidence": confidence}
+
+    def _normalize_mode(self, mode: str) -> str:
+        mode = (mode or "deep").lower()
+        return mode if mode in {"quick", "deep", "timeline"} else "deep"
 
     # ── Context merging ─────────────────────────────────────────────
 
@@ -468,10 +500,11 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
 
-    def _format_doc_context(self, context: dict) -> str:
+    def _format_doc_context(self, context: dict, question: str = "") -> str:
         combined = self._merge_and_rank(
             context.get("vector_results", []),
-            context.get("keyword_results", [])
+            context.get("keyword_results", []),
+            question=question,
         )
         # Feed top 20 chunks to LLM (was 12)
         top = combined[:20]
@@ -546,6 +579,9 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 source["title"] = best["title"]
             if best.get("doc_type"):
                 source["doc_type"] = best["doc_type"]
+            source_date = self._extract_source_date(best)
+            if source_date:
+                source["date"] = source_date
             if len(chunks) > 1:
                 source["excerpt_count"] = len(chunks)
             source["excerpt"] = best.get("content", "")[:300]
@@ -553,6 +589,39 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         sources.sort(key=lambda x: x["similarity"], reverse=True)
         return sources[:15]  # Return up to 15 sources (was 10)
+
+    def _build_source_summary(self, context: dict, latest_check_used: bool) -> dict:
+        sources = self._build_sources(context)
+        dates = [s["date"] for s in sources if s.get("date")]
+        latest_date = max(dates) if dates else None
+        return {
+            "latest_source_date": latest_date,
+            "latest_check_used": latest_check_used,
+            "source_count": len(sources),
+            "newer_docs_may_exist": not latest_check_used,
+        }
+
+    def _requires_latest_check(self, question: str) -> bool:
+        sensitive_terms = (
+            "insurance", "policy", "coverage", "premium", "deductible",
+            "medical", "health", "doctor", "diagnosis", "medication", "prescription",
+            "tax", "irs", "return", "w2", "1099", "mortgage", "loan", "balance",
+            "finance", "financial", "bank", "account", "contract", "legal", "lease",
+            "rating", "disability", "va",
+        )
+        q = question.lower()
+        return any(term in q for term in sensitive_terms)
+
+    def _latest_check_query(self, question: str) -> str:
+        return f"{question} latest current final most recent updated revised declaration statement policy"
+
+    def _extract_source_date(self, result: dict) -> str | None:
+        content = result.get("content", "") or ""
+        match = re.search(r"^Date:\s*([^\n]+)", content, flags=re.MULTILINE)
+        if match:
+            value = match.group(1).strip()
+            return value if value and value.lower() != "unknown" else None
+        return None
 
     # ── Existing helpers ────────────────────────────────────────────
 
@@ -565,7 +634,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         vector_cache.set(cache_key, results)
         return results
 
-    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict]) -> list[dict]:
+    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict], question: str = "") -> list[dict]:
         scored = {}
         for r in vector_results:
             key = (r["document_id"], r.get("chunk_index", 0))
@@ -583,8 +652,58 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         for key, r in scored.items():
             r["combined_score"] = 0.7 * r.get("vector_score", 0) + 0.3 * r.get("keyword_score", 0)
+            r["rerank_score"] = self._rerank_score(r, question)
 
-        return sorted(scored.values(), key=lambda x: x["combined_score"], reverse=True)
+        return sorted(scored.values(), key=lambda x: x["rerank_score"], reverse=True)
+
+    def _rerank_score(self, result: dict, question: str) -> float:
+        base = float(result.get("combined_score", 0))
+        query = question.lower()
+        doc_type = (result.get("doc_type") or "").lower()
+        content = (result.get("content") or "").lower()
+
+        score = base + self._doc_type_boost(query, doc_type) + self._recency_boost(result)
+        if self._looks_superseded(content):
+            score -= 0.18
+        return score
+
+    def _doc_type_boost(self, query: str, doc_type: str) -> float:
+        mappings = [
+            (("insurance", "policy", "coverage", "premium"), ("insurance", "policy"), 0.12),
+            (("tax", "irs", "return", "w-2", "1099"), ("tax", "financial"), 0.12),
+            (("medical", "doctor", "diagnosis", "medication", "lab"), ("medical",), 0.12),
+            (("mortgage", "loan", "escrow", "home"), ("mortgage", "statement", "contract"), 0.10),
+            (("vehicle", "auto", "car", "truck", "vin"), ("vehicle", "registration", "insurance"), 0.10),
+        ]
+        for terms, types, boost in mappings:
+            if any(term in query for term in terms) and any(t in doc_type for t in types):
+                return boost
+        return 0.0
+
+    def _recency_boost(self, result: dict) -> float:
+        date_value = self._extract_indexed_date(result.get("content", ""))
+        if not date_value:
+            return 0.0
+        try:
+            dt = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        age_days = max((datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).days, 0)
+        if age_days <= 90:
+            return 0.12
+        if age_days <= 365:
+            return 0.08
+        if age_days <= 730:
+            return 0.04
+        return 0.0
+
+    def _extract_indexed_date(self, content: str) -> str | None:
+        match = re.search(r"^Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)", content, flags=re.MULTILINE)
+        return match.group(1).strip() if match else None
+
+    def _looks_superseded(self, content: str) -> bool:
+        terms = ("superseded", "replaced by", "cancelled", "canceled", "expired", "void", "prior version")
+        return any(term in content for term in terms)
 
     async def _extract_entities_from_query(self, question: str) -> list[str]:
         try:

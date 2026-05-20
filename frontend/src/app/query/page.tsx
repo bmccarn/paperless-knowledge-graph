@@ -181,6 +181,7 @@ function QueryContent() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline">("deep");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -259,7 +260,7 @@ function QueryContent() {
       let confidence: number | undefined;
       let followUps: string[] = [];
 
-      for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined)) {
+      for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
@@ -675,6 +676,26 @@ function QueryContent() {
         <div className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
             {/* Model selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border bg-background p-0.5">
+                {[
+                  ["quick", "Quick"],
+                  ["deep", "Deep"],
+                  ["timeline", "Timeline"],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline")}
+                    className={
+                      "rounded-md px-2.5 py-1.5 text-xs transition-colors " +
+                      (queryMode === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             <div className="relative">
               <button
                 type="button"
@@ -699,6 +720,7 @@ function QueryContent() {
                   ))}
                 </div>
               )}
+            </div>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
               <Textarea

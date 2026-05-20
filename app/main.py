@@ -160,6 +160,7 @@ class QueryRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = None
     model: Optional[str] = None
+    mode: str = "deep"
 
 
 class TaskResponse(BaseModel):
@@ -544,7 +545,7 @@ async def query(req: QueryRequest):
         if req.conversation_id:
             conv_history = await conversations.get_conversation_history(req.conversation_id)
 
-        result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model)
+        result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode)
         paperless_base = _get_paperless_url()
         for source in result.get("sources", []):
             if source.get("document_id"):
@@ -592,7 +593,7 @@ async def query_stream(req: QueryRequest):
             final_confidence = None
             final_follow_ups = None
 
-            async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model):
+            async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode):
                 if event.get("type") == "answer_chunk":
                     full_answer_chunks.append(event.get("content", ""))
                 if event.get("type") == "complete" and event.get("sources"):

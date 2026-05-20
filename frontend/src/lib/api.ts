@@ -34,19 +34,19 @@ export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
 
-export async function postQuery(question: string, conversationId?: string, model?: string) {
+export async function postQuery(question: string, conversationId?: string, model?: string, mode = "deep") {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ question, conversation_id: conversationId, model }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
   });
 }
 
 // SSE streaming query
-export async function* postQueryStream(question: string, conversationId?: string, model?: string) {
+export async function* postQueryStream(question: string, conversationId?: string, model?: string, mode = "deep") {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, conversation_id: conversationId, model }),
+    body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
   });
 
   if (!response.ok) {

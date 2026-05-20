@@ -60,8 +60,9 @@ class QueryEngine:
 
     # ── Main query (non-streaming, backward compat) ─────────────────
 
-    async def query(self, question: str, conversation_history: list = None, model_override: str = None) -> dict:
+    async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep") -> dict:
         """Answer a question using iterative retrieval + synthesis."""
+        mode = self._normalize_mode(mode)
         prev_override = self._model_override
         if model_override:
             self._model_override = model_override
@@ -70,7 +71,7 @@ class QueryEngine:
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
@@ -82,7 +83,8 @@ class QueryEngine:
 
         # Up to 3 follow-up iterations for deeper retrieval
         follow_ups_used = []
-        for follow_up in first_pass.get("follow_up_queries", [])[:3]:
+        follow_up_limit = 0 if mode == "quick" else 3
+        for follow_up in first_pass.get("follow_up_queries", [])[:follow_up_limit]:
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
             follow_ups_used.append(follow_up)
@@ -92,7 +94,7 @@ class QueryEngine:
         all_context = self._merge_context(all_context, graph_context)
 
         final = await self._final_synthesis(
-            question, all_context, first_pass.get("draft_answer", ""), conversation_history
+            question, all_context, first_pass.get("draft_answer", ""), conversation_history, mode=mode
         )
 
         result = {
@@ -107,6 +109,7 @@ class QueryEngine:
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
             "follow_up_queries_used": follow_ups_used,
             "iterations": 1 + len(follow_ups_used),
+            "mode": mode,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
@@ -116,8 +119,9 @@ class QueryEngine:
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None):
+    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep"):
         """Stream query response via SSE events."""
+        mode = self._normalize_mode(mode)
         prev_override = self._model_override
         if model_override:
             self._model_override = model_override
@@ -125,7 +129,7 @@ class QueryEngine:
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(question + conv_suffix)
+        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}
@@ -145,7 +149,8 @@ class QueryEngine:
 
         # Up to 3 follow-up iterations
         follow_ups_used = []
-        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:3]):
+        follow_up_limit = 0 if mode == "quick" else 3
+        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:follow_up_limit]):
             yield {"type": "status", "message": f"Deep dive {i+1}/3: {follow_up[:60]}..."}
             extra_context = await self._retrieve(follow_up)
             all_context = self._merge_context(all_context, extra_context)
@@ -161,6 +166,7 @@ class QueryEngine:
 
         prompt = self._build_final_prompt(
             question,
+            mode,
             self._format_doc_context(all_context),
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
@@ -188,6 +194,7 @@ class QueryEngine:
             "follow_up_queries_used": follow_ups_used,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "iterations": 1 + len(follow_ups_used),
+            "mode": mode,
             "cached": False,
         }
         query_cache.set(cache_key, result)
@@ -355,7 +362,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
     # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
-    def _build_final_prompt(self, question: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
+    def _build_final_prompt(self, question: str, mode: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
@@ -369,6 +376,12 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             newline = "\n"
             conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
+        mode_instruction = {
+            "quick": "Answer concisely. Use the strongest available sources and avoid unnecessary expansion.",
+            "deep": "Answer comprehensively. Use all relevant details and cite the strongest sources.",
+            "timeline": "Answer chronologically. Compare dates, revisions, current vs superseded records, and explain how the facts changed over time.",
+        }[mode]
+
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
@@ -378,6 +391,7 @@ CONTEXT ABOUT THE USER:
 - {("Additional context: " + _owner_context()) if _owner_context() else ""}
 
 INSTRUCTIONS:
+- Query mode: {mode}. {mode_instruction}
 - Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
@@ -399,10 +413,10 @@ Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passe
 
 Provide your comprehensive, exhaustive answer with inline citations:"""
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None) -> dict:
+    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None, mode: str = "deep") -> dict:
         doc_context = self._format_doc_context(context)
         graph_text = self._format_graph_context(context)
-        prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer, conversation_history)
+        prompt = self._build_final_prompt(question, self._normalize_mode(mode), doc_context, graph_text, draft_answer, conversation_history)
 
         try:
             answer = await self._llm_generate(prompt)
@@ -422,6 +436,10 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             pass
 
         return {"answer": answer, "confidence": confidence}
+
+    def _normalize_mode(self, mode: str) -> str:
+        mode = (mode or "deep").lower()
+        return mode if mode in {"quick", "deep", "timeline"} else "deep"
 
     # ── Context merging ─────────────────────────────────────────────
 

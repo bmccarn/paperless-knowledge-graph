@@ -12,6 +12,7 @@ import {
   Sun,
   Zap,
   Terminal,
+  FolderKanban,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/query", label: "Query", icon: MessageSquare },
   { href: "/graph", label: "Graph", icon: Network },
   { href: "/documents", label: "Docs", icon: FileText },
+  { href: "/hubs", label: "Hubs", icon: FolderKanban },
   { href: "/debug", label: "Debug", icon: Terminal },
 ];
 

@@ -1,6 +1,8 @@
 import json
 import logging
 import hashlib
+import re
+from datetime import datetime, timezone
 from collections import defaultdict
 
 from openai import AsyncOpenAI
@@ -161,7 +163,7 @@ class QueryEngine:
 
         prompt = self._build_final_prompt(
             question,
-            self._format_doc_context(all_context),
+            self._format_doc_context(all_context, question=question),
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
             conversation_history,
@@ -270,7 +272,7 @@ class QueryEngine:
     # ── Gap analysis (TUNED: smarter follow-ups) ────────────────────
 
     async def _synthesize_with_gaps(self, question: str, context: dict, conversation_history: list = None) -> dict:
-        doc_context = self._format_doc_context(context)
+        doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
 
         conv_context = ""
@@ -400,7 +402,7 @@ Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passe
 Provide your comprehensive, exhaustive answer with inline citations:"""
 
     async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None) -> dict:
-        doc_context = self._format_doc_context(context)
+        doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
         prompt = self._build_final_prompt(question, doc_context, graph_text, draft_answer, conversation_history)
 
@@ -468,10 +470,11 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
 
-    def _format_doc_context(self, context: dict) -> str:
+    def _format_doc_context(self, context: dict, question: str = "") -> str:
         combined = self._merge_and_rank(
             context.get("vector_results", []),
-            context.get("keyword_results", [])
+            context.get("keyword_results", []),
+            question=question,
         )
         # Feed top 20 chunks to LLM (was 12)
         top = combined[:20]
@@ -565,7 +568,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         vector_cache.set(cache_key, results)
         return results
 
-    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict]) -> list[dict]:
+    def _merge_and_rank(self, vector_results: list[dict], keyword_results: list[dict], question: str = "") -> list[dict]:
         scored = {}
         for r in vector_results:
             key = (r["document_id"], r.get("chunk_index", 0))
@@ -583,8 +586,58 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         for key, r in scored.items():
             r["combined_score"] = 0.7 * r.get("vector_score", 0) + 0.3 * r.get("keyword_score", 0)
+            r["rerank_score"] = self._rerank_score(r, question)
 
-        return sorted(scored.values(), key=lambda x: x["combined_score"], reverse=True)
+        return sorted(scored.values(), key=lambda x: x["rerank_score"], reverse=True)
+
+    def _rerank_score(self, result: dict, question: str) -> float:
+        base = float(result.get("combined_score", 0))
+        query = question.lower()
+        doc_type = (result.get("doc_type") or "").lower()
+        content = (result.get("content") or "").lower()
+
+        score = base + self._doc_type_boost(query, doc_type) + self._recency_boost(result)
+        if self._looks_superseded(content):
+            score -= 0.18
+        return score
+
+    def _doc_type_boost(self, query: str, doc_type: str) -> float:
+        mappings = [
+            (("insurance", "policy", "coverage", "premium"), ("insurance", "policy"), 0.12),
+            (("tax", "irs", "return", "w-2", "1099"), ("tax", "financial"), 0.12),
+            (("medical", "doctor", "diagnosis", "medication", "lab"), ("medical",), 0.12),
+            (("mortgage", "loan", "escrow", "home"), ("mortgage", "statement", "contract"), 0.10),
+            (("vehicle", "auto", "car", "truck", "vin"), ("vehicle", "registration", "insurance"), 0.10),
+        ]
+        for terms, types, boost in mappings:
+            if any(term in query for term in terms) and any(t in doc_type for t in types):
+                return boost
+        return 0.0
+
+    def _recency_boost(self, result: dict) -> float:
+        date_value = self._extract_indexed_date(result.get("content", ""))
+        if not date_value:
+            return 0.0
+        try:
+            dt = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        age_days = max((datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).days, 0)
+        if age_days <= 90:
+            return 0.12
+        if age_days <= 365:
+            return 0.08
+        if age_days <= 730:
+            return 0.04
+        return 0.0
+
+    def _extract_indexed_date(self, content: str) -> str | None:
+        match = re.search(r"^Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)", content, flags=re.MULTILINE)
+        return match.group(1).strip() if match else None
+
+    def _looks_superseded(self, content: str) -> bool:
+        terms = ("superseded", "replaced by", "cancelled", "canceled", "expired", "void", "prior version")
+        return any(term in content for term in terms)
 
     async def _extract_entities_from_query(self, question: str) -> list[str]:
         try:

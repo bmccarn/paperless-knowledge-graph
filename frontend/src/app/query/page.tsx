@@ -44,6 +44,16 @@ interface Source {
   excerpt_count?: number;
   similarity?: number;
   paperless_url?: string;
+  chunk_index?: number;
+  excerpt?: string;
+  date?: string;
+}
+
+interface SourceSummary {
+  latest_source_date?: string | null;
+  latest_check_used?: boolean;
+  source_count?: number;
+  newer_docs_may_exist?: boolean;
 }
 
 interface Message {
@@ -57,6 +67,7 @@ interface Message {
   cached?: boolean;
   confidence?: number;
   follow_ups?: string[];
+  source_summary?: SourceSummary;
 }
 
 interface Conversation {
@@ -181,6 +192,7 @@ function QueryContent() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -258,6 +270,7 @@ function QueryContent() {
       let cached = false;
       let confidence: number | undefined;
       let followUps: string[] = [];
+      let sourceSummary: SourceSummary | undefined;
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined)) {
         switch (event.type) {
@@ -275,6 +288,7 @@ function QueryContent() {
             cached = event.cached || false;
             confidence = event.confidence;
             followUps = event.follow_up_suggestions || [];
+            sourceSummary = event.source_summary || undefined;
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -292,6 +306,7 @@ function QueryContent() {
         cached,
         confidence,
         follow_ups: followUps,
+        source_summary: sourceSummary,
       };
 
       const allMessages = [...newMessages, assistantMsg];
@@ -480,6 +495,48 @@ function QueryContent() {
         </SheetContent>
       </Sheet>
 
+      <Sheet open={!!selectedSource} onOpenChange={(open) => !open && setSelectedSource(null)}>
+        <SheetContent side="right" className="w-[380px] sm:w-[460px] p-0 flex flex-col">
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="text-sm flex items-center gap-1.5">
+              <FileText className="h-4 w-4" /> Source detail
+            </SheetTitle>
+          </SheetHeader>
+          {selectedSource && (
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div>
+                <p className="text-sm font-medium">{selectedSource.title || `Document #${selectedSource.document_id}`}</p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {selectedSource.doc_type && <Badge variant="secondary" className="text-[10px]">{selectedSource.doc_type}</Badge>}
+                  {selectedSource.date && <Badge variant="outline" className="text-[10px]">{selectedSource.date}</Badge>}
+                  {selectedSource.similarity != null && (
+                    <Badge variant="outline" className="text-[10px]">{Math.round(selectedSource.similarity * 100)}% match</Badge>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg border bg-card p-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                  Retrieved excerpt
+                </p>
+                <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                  {selectedSource.excerpt || "No excerpt was returned for this source."}
+                </p>
+              </div>
+              {selectedSource.document_id && (
+                <a
+                  href={selectedSource.paperless_url || `${paperlessBaseUrl}/documents/${selectedSource.document_id}/details`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" /> Open in Paperless
+                </a>
+              )}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
       {/* Chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-none border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
@@ -556,6 +613,29 @@ function QueryContent() {
                     </div>
                   )}
 
+                  {msg.role === "assistant" && msg.source_summary && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">Trust check</span>
+                        {msg.source_summary.latest_check_used ? (
+                          <Badge variant="secondary" className="text-[9px]">latest-pass run</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px]">latest-pass not needed</Badge>
+                        )}
+                        {msg.source_summary.latest_source_date && (
+                          <span className="text-muted-foreground">
+                            Latest source: {msg.source_summary.latest_source_date}
+                          </span>
+                        )}
+                      </div>
+                      {msg.source_summary.newer_docs_may_exist && (
+                        <p className="text-muted-foreground">
+                          This answer did not require a sensitive-domain latest-document pass; newer documents may still exist.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {msg.entities && msg.entities.length > 0 && (
                     <div className="space-y-1.5 px-1">
                       <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
@@ -585,16 +665,15 @@ function QueryContent() {
                       <div className="flex flex-wrap gap-1.5">
                         {msg.sources.map((s, j) => {
                           const docId = s.document_id;
-                          const url = s.paperless_url || (docId ? `${paperlessBaseUrl}/documents/${docId}/details` : "#");
                           const title = s.title || `Document #${docId}`;
                           const excerpts = s.excerpt_count && s.excerpt_count > 1 ? ` (${s.excerpt_count} excerpts)` : "";
                           return (
-                            <a key={j} href={url} target="_blank" rel="noopener noreferrer"
+                            <button key={j} type="button" onClick={() => setSelectedSource(s)}
                               className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors min-h-[36px]">
-                              <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
                               <span className="truncate max-w-[180px] md:max-w-[200px]">{title}{excerpts}</span>
                               {s.doc_type && <Badge variant="secondary" className="text-[9px] px-1 py-0 hidden sm:inline-flex">{s.doc_type}</Badge>}
-                            </a>
+                            </button>
                           );
                         })}
                       </div>

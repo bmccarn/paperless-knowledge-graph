@@ -1,6 +1,7 @@
 import json
 import logging
 import hashlib
+import re
 from collections import defaultdict
 
 from openai import AsyncOpenAI
@@ -77,6 +78,11 @@ class QueryEngine:
             return cached
 
         initial_context = await self._retrieve(question)
+        latest_check_used = False
+        if self._requires_latest_check(question):
+            latest_context = await self._retrieve(self._latest_check_query(question))
+            initial_context = self._merge_context(initial_context, latest_context)
+            latest_check_used = True
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
         all_context = initial_context
 
@@ -100,6 +106,7 @@ class QueryEngine:
             "answer": final.get("answer", ""),
             "confidence": final.get("confidence", first_pass.get("confidence", 0.5)),
             "sources": self._build_sources(all_context),
+            "source_summary": self._build_source_summary(all_context, latest_check_used),
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
@@ -130,6 +137,7 @@ class QueryEngine:
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}
             yield {"type": "complete", "sources": cached["sources"],
+                   "source_summary": cached.get("source_summary", {}),
                    "entities_found": cached.get("entities_found", []),
                    "confidence": cached.get("confidence", 0.7),
                    "follow_up_suggestions": cached.get("follow_up_suggestions", []),
@@ -138,6 +146,12 @@ class QueryEngine:
 
         yield {"type": "status", "message": "Searching documents and knowledge graph..."}
         initial_context = await self._retrieve(question)
+        latest_check_used = False
+        if self._requires_latest_check(question):
+            yield {"type": "status", "message": "Checking for latest/current documents..."}
+            latest_context = await self._retrieve(self._latest_check_query(question))
+            initial_context = self._merge_context(initial_context, latest_context)
+            latest_check_used = True
 
         yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
         first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
@@ -174,12 +188,14 @@ class QueryEngine:
 
         full_answer = "".join(answer_chunks)
         sources = self._build_sources(all_context)
+        source_summary = self._build_source_summary(all_context, latest_check_used)
 
         result = {
             "question": question,
             "answer": full_answer,
             "confidence": first_pass.get("confidence", 0.7),
             "sources": sources,
+            "source_summary": source_summary,
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
@@ -193,6 +209,7 @@ class QueryEngine:
         query_cache.set(cache_key, result)
 
         yield {"type": "complete", "sources": sources,
+               "source_summary": source_summary,
                "entities_found": result["entities_found"],
                "confidence": result.get("confidence", 0.7),
                "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
@@ -546,6 +563,9 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 source["title"] = best["title"]
             if best.get("doc_type"):
                 source["doc_type"] = best["doc_type"]
+            source_date = self._extract_source_date(best)
+            if source_date:
+                source["date"] = source_date
             if len(chunks) > 1:
                 source["excerpt_count"] = len(chunks)
             source["excerpt"] = best.get("content", "")[:300]
@@ -553,6 +573,39 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
 
         sources.sort(key=lambda x: x["similarity"], reverse=True)
         return sources[:15]  # Return up to 15 sources (was 10)
+
+    def _build_source_summary(self, context: dict, latest_check_used: bool) -> dict:
+        sources = self._build_sources(context)
+        dates = [s["date"] for s in sources if s.get("date")]
+        latest_date = max(dates) if dates else None
+        return {
+            "latest_source_date": latest_date,
+            "latest_check_used": latest_check_used,
+            "source_count": len(sources),
+            "newer_docs_may_exist": not latest_check_used,
+        }
+
+    def _requires_latest_check(self, question: str) -> bool:
+        sensitive_terms = (
+            "insurance", "policy", "coverage", "premium", "deductible",
+            "medical", "health", "doctor", "diagnosis", "medication", "prescription",
+            "tax", "irs", "return", "w2", "1099", "mortgage", "loan", "balance",
+            "finance", "financial", "bank", "account", "contract", "legal", "lease",
+            "rating", "disability", "va",
+        )
+        q = question.lower()
+        return any(term in q for term in sensitive_terms)
+
+    def _latest_check_query(self, question: str) -> str:
+        return f"{question} latest current final most recent updated revised declaration statement policy"
+
+    def _extract_source_date(self, result: dict) -> str | None:
+        content = result.get("content", "") or ""
+        match = re.search(r"^Date:\s*([^\n]+)", content, flags=re.MULTILINE)
+        if match:
+            value = match.group(1).strip()
+            return value if value and value.lower() != "unknown" else None
+        return None
 
     # ── Existing helpers ────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ from typing import Optional
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
+from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
@@ -255,6 +256,71 @@ async def health():
             overall = "degraded"
 
     return {"status": overall, "components": components}
+
+
+@app.get("/ops/guardrails")
+async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 0):
+    """Machine-readable guardrail checks for monitoring."""
+    alerts = []
+    counts = await graph_store.get_counts()
+    last_sync = await embeddings_store.get_last_sync()
+    health_status = await health()
+
+    if last_sync:
+        age_hours = (datetime.now(timezone.utc) - last_sync.astimezone(timezone.utc)).total_seconds() / 3600
+    else:
+        age_hours = None
+        alerts.append({"type": "sync_never_ran", "severity": "warning", "message": "Knowledge graph has never synced"})
+
+    if age_hours is not None and age_hours > max_sync_age_hours:
+        alerts.append({
+            "type": "sync_stale",
+            "severity": "warning",
+            "message": f"Last sync is {age_hours:.1f} hours old",
+        })
+
+    try:
+        source = await paperless_client.get_document_summary()
+        drift = int(source.get("count", 0)) - int(counts.get("documents", 0))
+        if drift > allowed_doc_drift:
+            alerts.append({
+                "type": "doc_count_drift",
+                "severity": "warning",
+                "message": f"Paperless has {drift} more documents than the graph",
+            })
+    except Exception as e:
+        source = {"error": str(e)}
+        drift = None
+        alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
+
+    litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
+    if litellm_status != "healthy":
+        alerts.append({
+            "type": "model_route_health",
+            "severity": "critical",
+            "message": f"LiteLLM health is {litellm_status or 'unknown'}",
+        })
+
+    error_logs = [
+        line for line in list(_log_buffer)[-200:]
+        if line.get("level") == "ERROR" or "confidence=0." in line.get("message", "")
+    ]
+    if error_logs:
+        alerts.append({
+            "type": "recent_extraction_or_runtime_errors",
+            "severity": "warning",
+            "message": f"{len(error_logs)} recent error/low-confidence log lines",
+        })
+
+    return {
+        "status": "ok" if not alerts else "alerting",
+        "alerts": alerts,
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "sync_age_hours": round(age_hours, 2) if age_hours is not None else None,
+        "graph_documents": counts.get("documents", 0),
+        "paperless": source,
+        "document_drift": drift,
+    }
 
 
 # --- Sync & Reindex ---

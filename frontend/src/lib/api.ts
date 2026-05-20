@@ -18,6 +18,10 @@ export async function getStatus() {
   return apiFetch("/status");
 }
 
+export async function getFreshness() {
+  return apiFetch("/freshness");
+}
+
 export async function postSync() {
   return apiFetch("/sync", { method: "POST" });
 }

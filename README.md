@@ -75,6 +75,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `OWNER_NAME` | Your name (used in query prompts) | — |
 | `OWNER_CONTEXT` | Brief context about yourself | — |
 | `MAX_CONCURRENT_DOCS` | Parallel doc processing limit | `10` |
+| `AUTO_SYNC_INTERVAL_MINUTES` | Optional in-process incremental sync interval. `0` disables scheduling. | `0` |
 
 ## API Endpoints
 
@@ -83,6 +84,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/status` | GET | Node/relationship/embedding counts |
+| `/freshness` | GET | Compares Paperless count/latest modified document against the indexed graph |
 | `/health` | GET | Component health check (Neo4j, pgvector, LiteLLM, cache stats) |
 | `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |

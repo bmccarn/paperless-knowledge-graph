@@ -16,6 +16,7 @@ from typing import Optional
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document
+from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
@@ -63,6 +64,8 @@ logger = logging.getLogger(__name__)
 # Track background tasks
 _tasks: dict[str, dict] = {}
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
+_last_failed_extraction: dict | None = None
+_auto_sync_task: asyncio.Task | None = None
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -119,6 +122,14 @@ def _make_progress_callback(task_id: str):
                 recent_entry["relationships"] = result.get("chunks", 0)
             elif result.get("status") == "error":
                 recent_entry["error"] = result.get("error", "")
+                global _last_failed_extraction
+                _last_failed_extraction = {
+                    "doc_id": result.get("doc_id"),
+                    "title": task.get("current_doc", ""),
+                    "error": result.get("error", ""),
+                    "task_id": task_id,
+                    "at": datetime.now(timezone.utc).isoformat(),
+                }
             recent = task.get("recent_results", [])
             recent.append(recent_entry)
             task["recent_results"] = recent[-10:]
@@ -126,15 +137,120 @@ def _make_progress_callback(task_id: str):
     return callback
 
 
+async def _freshness_snapshot() -> dict:
+    """Compare Paperless source state with the indexed knowledge graph."""
+    paperless = await paperless_client.get_document_summary()
+    counts = await graph_store.get_counts()
+    last_sync = await embeddings_store.get_last_sync()
+    indexed_docs = counts.get("documents", 0)
+    paperless_docs = paperless.get("count", 0)
+    missing_docs = max(paperless_docs - indexed_docs, 0)
+
+    latest_modified = paperless.get("latest_modified")
+    stale = bool(missing_docs)
+    if latest_modified and last_sync:
+        try:
+            latest_dt = datetime.fromisoformat(latest_modified.replace("Z", "+00:00"))
+            stale = stale or latest_dt > last_sync
+        except ValueError:
+            stale = True
+    elif latest_modified and not last_sync:
+        stale = True
+
+    return {
+        "stale": stale,
+        "paperless_documents": paperless_docs,
+        "indexed_documents": indexed_docs,
+        "missing_documents": missing_docs,
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "latest_paperless_modified": latest_modified,
+        "latest_paperless_id": paperless.get("latest_id"),
+        "latest_paperless_title": paperless.get("latest_title"),
+        "last_failed_extraction": _last_failed_extraction,
+    }
+
+
+async def _run_sync_task(task_type: str = "sync") -> str:
+    running = [t for t in _tasks.values() if t["status"] == "running"]
+    if running:
+        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
+
+    task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "type": task_type,
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "total_docs": 0,
+        "processed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "current_doc": "",
+        "elapsed_seconds": 0,
+        "docs_per_minute": 0,
+        "estimated_remaining_seconds": 0,
+        "recent_results": [],
+    }
+
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
+    progress_cb = _make_progress_callback(task_id)
+
+    async def _run():
+        try:
+            invalidate_on_sync()
+            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
+            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = result
+            _tasks[task_id]["current_doc"] = ""
+            elapsed = time.time() - _tasks[task_id]["_start_time"]
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except Exception as e:
+            logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
+        finally:
+            _schedule_task_cleanup(task_id)
+
+    asyncio.create_task(_run())
+    return task_id
+
+
+async def _auto_sync_loop():
+    from app.config import settings
+
+    interval = max(settings.auto_sync_interval_minutes, 0)
+    if interval <= 0:
+        return
+
+    logger.info("Auto sync enabled: every %s minutes", interval)
+    while True:
+        await asyncio.sleep(interval * 60)
+        if any(t["status"] == "running" for t in _tasks.values()):
+            logger.info("Auto sync skipped because a task is already running")
+            continue
+        try:
+            await _run_sync_task(task_type="scheduled-sync")
+        except Exception as e:
+            logger.error("Auto sync failed to start: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _auto_sync_task
     logger.info("Starting up...")
     await graph_store.init()
     await embeddings_store.init()
     await conversations.init()
+    _auto_sync_task = asyncio.create_task(_auto_sync_loop())
     logger.info("Startup complete")
     yield
     logger.info("Shutting down...")
+    if _auto_sync_task:
+        _auto_sync_task.cancel()
     await graph_store.close()
     await embeddings_store.close()
     await conversations.close()
@@ -204,9 +320,15 @@ async def status():
             "paperless_url": _get_paperless_url(),
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
             "cache": cache_stats,
+            "freshness": await _freshness_snapshot(),
         }
     except Exception as e:
         return {"status": "degraded", "error": str(e)}
+
+
+@app.get("/freshness")
+async def freshness():
+    return await _freshness_snapshot()
 
 
 @app.get("/health")
@@ -261,51 +383,7 @@ async def health():
 
 @app.post("/sync", response_model=TaskResponse)
 async def sync():
-    # Prevent concurrent reindex/sync
-    running = [t for t in _tasks.values() if t["status"] == "running"]
-    if running:
-        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
-    task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
-        "status": "running",
-        "type": "sync",
-        "started": now.isoformat(),
-        "_start_time": time.time(),
-        "total_docs": 0,
-        "processed": 0,
-        "skipped": 0,
-        "errors": 0,
-        "current_doc": "",
-        "elapsed_seconds": 0,
-        "docs_per_minute": 0,
-        "estimated_remaining_seconds": 0,
-        "recent_results": [],
-    }
-
-    cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
-    progress_cb = _make_progress_callback(task_id)
-
-    async def _run():
-        try:
-            invalidate_on_sync()
-            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
-            _tasks[task_id]["status"] = "completed"
-            _tasks[task_id]["result"] = result
-            _tasks[task_id]["current_doc"] = ""
-            elapsed = time.time() - _tasks[task_id]["_start_time"]
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-        except Exception as e:
-            logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
-        finally:
-            _schedule_task_cleanup(task_id)
-
-    asyncio.create_task(_run())
+    task_id = await _run_sync_task()
     return TaskResponse(task_id=task_id, status="started", message="Sync started in background")
 
 

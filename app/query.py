@@ -47,7 +47,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v8"
+QUERY_CACHE_VERSION = "evidence-v9"
 
 
 class QueryEngine:
@@ -1680,7 +1680,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         verification = verification or {}
         evidence_pack = evidence_pack or {}
         claim_ledger = claim_ledger or {}
-        supporting_dates = self._supporting_evidence_dates(evidence_pack)
+        supporting_dates = self._supporting_evidence_dates(evidence_pack, question)
         latest_supporting_date = max(supporting_dates) if supporting_dates else None
         current = current_state_summary(plan, sources)
         return {
@@ -1704,10 +1704,14 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             "timeline_event_count": len(timeline_events or []),
         }
 
-    def _supporting_evidence_dates(self, evidence_pack: dict) -> list[str]:
+    def _supporting_evidence_dates(self, evidence_pack: dict, question: str) -> list[str]:
+        focus_terms = self._supporting_focus_terms(question)
         dates = []
         for item in evidence_pack.get("items") or []:
             if not item.get("exact_term_hits"):
+                continue
+            text = f"{item.get('title') or ''} {item.get('doc_type') or ''} {item.get('excerpt') or ''}".lower()
+            if focus_terms and not any(term in text for term in focus_terms):
                 continue
             signals = item.get("date_signals") or {}
             for key in ("reported_date", "document_date", "specimen_date", "service_date"):
@@ -1716,6 +1720,28 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     if normalized:
                         dates.append(normalized)
         return list(dict.fromkeys(dates))
+
+    def _supporting_focus_terms(self, question: str) -> set[str]:
+        short_signal_terms = {
+            "a1c", "alt", "ast", "bun", "cbc", "crp", "fsh", "ggt", "hcg", "hdl",
+            "hmg", "igf", "ldl", "lh", "psa", "tsh",
+        }
+        generic_terms = {
+            "about", "answer", "blood", "bloodwork", "current", "document", "documents",
+            "does", "from", "have", "last", "latest", "level", "levels", "source",
+            "sources", "what", "when", "where", "which", "with",
+        }
+        terms = {
+            term
+            for term in re.findall(r"[a-z0-9]{4,}", question.lower())
+            if term not in generic_terms
+        }
+        terms.update(
+            term
+            for term in re.findall(r"[a-z0-9]{2,3}", question.lower())
+            if term in short_signal_terms
+        )
+        return terms
 
     def _normalize_summary_date(self, value: str) -> str | None:
         iso_match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", value)

@@ -149,7 +149,7 @@ Rules:
                 "doc_type": s.get("doc_type"),
                 "excerpt": s.get("excerpt"),
             }
-            for s in sources[:15]
+            for s in sources[:12]
         ]
         prompt = f"""Verify this answer against the provided source context.
 
@@ -157,13 +157,13 @@ Question: {question}
 Plan: {json.dumps(plan, default=str)[:3000]}
 
 Answer:
-{answer[:8000]}
+{answer[:6000]}
 
 Sources:
-{json.dumps(source_list, default=str)[:8000]}
+{json.dumps(source_list, default=str)[:6000]}
 
 Source context:
-{source_context[:12000]}
+{source_context[:8000]}
 
 Return only JSON:
 {{
@@ -180,6 +180,8 @@ Rules:
 - Flag any claim that is not clearly supported by the sources.
 - For current-state questions, flag old/expired/superseded sources used as current.
 - Do not judge writing style; only evidence support.
+- Be compact: maximum 8 supported claims, 8 unsupported claims, 8 stale/conflicting claims, 5 missing evidence items, and 3 notes.
+- Use short phrases, not paragraphs.
 """
         return await self._json_agent(
             name="evidence_verifier",
@@ -188,7 +190,7 @@ Rules:
                 "and return compact JSON. You do not rewrite the answer."
             ),
             prompt=prompt,
-            max_tokens=2200,
+            max_tokens=3600,
         )
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str, max_tokens: int) -> dict[str, Any]:

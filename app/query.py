@@ -36,6 +36,7 @@ from app.evidence import (
     build_evidence_pack,
     claim_ledger_from_verification,
     extract_date_signals,
+    exact_term_hits as evidence_exact_term_hits,
     format_evidence_pack_for_llm,
     infer_source_quality,
     is_high_stakes_query,
@@ -45,7 +46,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v2"
+QUERY_CACHE_VERSION = "evidence-v3"
 
 
 class QueryEngine:
@@ -1374,6 +1375,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 )
             except Exception as e:
                 logger.warning("Evidence neighbor chunk expansion failed: %s", e)
+        selected = self._rank_evidence_chunks(selected, question, sources)
 
         return build_evidence_pack(
             question=question,
@@ -1382,6 +1384,27 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
+
+    def _rank_evidence_chunks(self, chunks: list[dict], question: str, sources: list[dict]) -> list[dict]:
+        source_rank = {
+            int(source["document_id"]): idx
+            for idx, source in enumerate(sources)
+            if source.get("document_id") is not None
+        }
+
+        def score(chunk: dict) -> float:
+            doc_id = chunk.get("document_id")
+            base = float(chunk.get("rerank_score", chunk.get("combined_score", chunk.get("similarity", 0))) or 0)
+            title = str(chunk.get("title") or "")
+            content = str(chunk.get("content") or "")
+            title_hits = evidence_exact_term_hits(question, title)
+            content_hits = evidence_exact_term_hits(question, content[:2500])
+            source_boost = 0.0
+            if doc_id is not None and int(doc_id) in source_rank:
+                source_boost = max(0.0, 0.35 - 0.025 * source_rank[int(doc_id)])
+            return base + 0.18 * title_hits + 0.05 * content_hits + source_boost
+
+        return sorted(chunks, key=score, reverse=True)
 
     def _format_doc_context(self, context: dict, question: str = "", broad: bool = False) -> str:
         combined = self._merge_and_rank(

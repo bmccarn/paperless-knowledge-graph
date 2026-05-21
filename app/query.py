@@ -47,7 +47,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v6"
+QUERY_CACHE_VERSION = "evidence-v7"
 
 
 class QueryEngine:
@@ -1674,15 +1674,19 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
     ) -> dict:
         sources = self._build_sources(context, question=question)
         dates = [s["date"] for s in sources if s.get("date")]
-        latest_date = max(dates) if dates else None
+        latest_retrieved_date = max(dates) if dates else None
         plan = plan or {}
         evidence = evidence or {}
         verification = verification or {}
         evidence_pack = evidence_pack or {}
         claim_ledger = claim_ledger or {}
+        supporting_dates = self._supporting_evidence_dates(evidence_pack)
+        latest_supporting_date = max(supporting_dates) if supporting_dates else None
         current = current_state_summary(plan, sources)
         return {
-            "latest_source_date": latest_date,
+            "latest_source_date": latest_supporting_date or latest_retrieved_date,
+            "latest_retrieved_source_date": latest_retrieved_date,
+            "latest_supporting_source_date": latest_supporting_date,
             "latest_check_used": latest_check_used,
             "source_count": len(sources),
             "newer_docs_may_exist": not latest_check_used,
@@ -1699,6 +1703,37 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             "current_state": current,
             "timeline_event_count": len(timeline_events or []),
         }
+
+    def _supporting_evidence_dates(self, evidence_pack: dict) -> list[str]:
+        dates = []
+        for item in evidence_pack.get("items") or []:
+            if not item.get("exact_term_hits"):
+                continue
+            signals = item.get("date_signals") or {}
+            for key in ("reported_date", "document_date", "specimen_date", "service_date", "mentioned_date"):
+                for value in signals.get(key) or []:
+                    normalized = self._normalize_summary_date(str(value))
+                    if normalized:
+                        dates.append(normalized)
+        return list(dict.fromkeys(dates))
+
+    def _normalize_summary_date(self, value: str) -> str | None:
+        iso_match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", value)
+        if iso_match:
+            return "-".join(iso_match.groups())
+        slash_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", value)
+        if slash_match:
+            month, day, year = slash_match.groups()
+            return f"{year}-{int(month):02d}-{int(day):02d}"
+        long_match = re.search(r"\b([A-Z][a-z]+) (\d{1,2}), (20\d{2})\b", value)
+        if long_match:
+            month_name, day, year = long_match.groups()
+            try:
+                month = datetime.strptime(month_name, "%B").month
+            except ValueError:
+                return None
+            return f"{year}-{month:02d}-{int(day):02d}"
+        return None
 
     def _public_evidence_pack(self, evidence_pack: dict | None) -> dict:
         """Return UI-safe evidence metadata without sending full chunk bodies."""

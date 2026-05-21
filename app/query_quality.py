@@ -426,7 +426,12 @@ def _dedupe_subqueries(subqueries: list[dict[str, str]]) -> list[dict[str, str]]
 
 
 def _exact_term_hits(question: str, sources: list[dict[str, Any]]) -> int:
+    short_signal_terms = {
+        "a1c", "alt", "ast", "bun", "cbc", "crp", "fsh", "ggt", "hcg", "hdl",
+        "hmg", "igf", "ldl", "lh", "psa", "tsh",
+    }
     terms = [t for t in re.findall(r"[a-z0-9]{4,}", question.lower()) if t not in {"what", "with", "from", "about", "documents"}]
+    terms.extend(t for t in re.findall(r"[a-z0-9]{2,3}", question.lower()) if t in short_signal_terms)
     source_text = " ".join(
         f"{s.get('title', '')} {s.get('doc_type', '')} {s.get('excerpt', '')}".lower()
         for s in sources

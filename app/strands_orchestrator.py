@@ -286,9 +286,10 @@ Rules:
 - Preserve supported details that answer the user's question.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
-- Add a short "Evidence limits" note when relevant.
+- Add a short "Evidence limits" note only when missing evidence materially limits the direct answer. Omit it when the answer already provides the requested facts with support.
 - Do not add new facts unless they are directly supported by the evidence context and relevant to the question.
 - Remove source/admin details, account/client identifiers, logistics, or adjacent facts when they are merely evidence context and not part of the answer requested.
+- Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.
 """
         return await self._json_agent(
             name="answer_editor",

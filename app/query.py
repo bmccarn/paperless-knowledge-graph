@@ -50,7 +50,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v12"
+QUERY_CACHE_VERSION = "evidence-v13"
 
 
 class QueryEngine:

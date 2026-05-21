@@ -256,7 +256,7 @@ def infer_source_quality(title: str, doc_type: str, content: str) -> dict[str, A
     if doc_type:
         score += 0.03
         reasons.append(f"typed as {doc_type}")
-    if re.search(r"\|.*\|", content[:2000]) or re.search(r"\b\d+(?:\.\d+)?\s*(mg/dl|ng/ml|%|iu/ml|pg/ml|mcg/dl|u/l)\b", content[:2000], flags=re.I):
+    if re.search(r"\|.*\|", content[:2000]) or structured_fact_count(content[:3000]) > 0:
         score += 0.06
         reasons.append("contains structured values")
 
@@ -295,9 +295,42 @@ def structured_fact_count(content: str) -> int:
     if not content:
         return 0
     table_rows = sum(1 for line in content.splitlines() if line.strip().startswith("|") and line.count("|") >= 2)
-    numeric_facts = len(re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:mg/dl|ng/ml|pg/ml|mcg/dl|u/l|iu/ml|%|dollars?|\$|months?|years?)\b", content, flags=re.I))
+    numeric_facts = len(re.findall(
+        r"""
+        (?:
+            \$\s*\d[\d,]*(?:\.\d+)?
+          | \b\d[\d,]*(?:\.\d+)?\s*
+            (?:
+                %
+              | [a-z]{1,8}(?:/[a-z]{1,8})?
+              | months?
+              | years?
+              | days?
+              | miles?
+              | gallons?
+              | kwh
+              | sq\.?\s*ft\.?
+            )\b
+        )
+        """,
+        content,
+        flags=re.I | re.X,
+    ))
+    identifier_facts = len(re.findall(
+        r"""
+        \b(?:
+            (?:account|acct|policy|invoice|claim|case|reference|ref|serial|vin|ein|ssn|routing|member|customer|order|id)
+            \s*(?:number|no\.?|\#)?\s*[:\#-]?\s*
+            [a-z0-9][a-z0-9-]{2,}
+          | [a-z]{1,6}[- ]?\d{2,}[a-z0-9-]*
+          | (?=[a-hj-npr-z0-9]{8,17}\b)(?=[a-hj-npr-z0-9]*\d)[a-hj-npr-z0-9]+
+        )\b
+        """,
+        content,
+        flags=re.I | re.X,
+    ))
     labeled_values = len(re.findall(r"\b[A-Za-z][A-Za-z0-9 /()%.-]{2,50}:\s*\$?\d", content))
-    return min(80, table_rows + numeric_facts + labeled_values)
+    return min(80, table_rows + numeric_facts + identifier_facts + labeled_values)
 
 
 def exact_term_hits(question: str, text: str) -> int:

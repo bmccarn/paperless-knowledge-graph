@@ -45,11 +45,12 @@ from app.evidence import (
     normalize_claim_ledger,
     query_terms as evidence_query_terms,
     repair_queries_from_verification,
+    structured_fact_count,
 )
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v10"
+QUERY_CACHE_VERSION = "evidence-v11"
 
 
 class QueryEngine:
@@ -373,10 +374,35 @@ class QueryEngine:
         plan: dict,
         mode: str,
         broad: bool = False,
+        progress_callback: Any | None = None,
     ) -> tuple[str, dict, dict, list[dict], dict, dict, list[dict], dict]:
         verification = None
         trace = []
         evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
+
+        async def emit(stage: str, **payload: Any) -> None:
+            if not progress_callback:
+                return
+            payload.setdefault("stage", stage)
+            payload.setdefault("answer", answer)
+            payload.setdefault("verification", verification or {})
+            payload.setdefault("trace", list(trace))
+            payload.setdefault("evidence_pack", evidence_pack)
+            payload.setdefault("sources", sources)
+            payload.setdefault("context", context)
+            await progress_callback(payload)
+
+        preliminary_evidence = compute_evidence_grade(
+            question,
+            plan,
+            sources,
+            context,
+            {"status": "checking", "unsupported_claims": [], "stale_or_conflicting_claims": []},
+            evidence_pack=evidence_pack,
+            claim_ledger={},
+        )
+        await emit("evidence_pack", evidence=preliminary_evidence)
+
         if normalize_mode(mode) != "quick":
             evidence_context = format_evidence_pack_for_llm(evidence_pack)
             verification = await strands_orchestrator.verify_answer(
@@ -396,6 +422,16 @@ class QueryEngine:
                     f"Verifier status: {status}",
                     {"unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
                 ))
+                interim_evidence = compute_evidence_grade(
+                    question,
+                    plan,
+                    sources,
+                    context,
+                    verification,
+                    evidence_pack=evidence_pack,
+                    claim_ledger={},
+                )
+                await emit("verifier", evidence=interim_evidence)
                 repair_queries = repair_queries_from_verification(question, verification, limit=5)
                 if repair_queries and (unsupported or verification.get("missing_evidence")):
                     repaired_context = context
@@ -414,9 +450,19 @@ class QueryEngine:
                     trace.append(trace_step(
                         "verification_retrieval_repair",
                         "ok" if not unsupported and not stale else "needs_review",
-                        f"Ran {len(used)} targeted searches for verifier gaps",
+                        f"Ran {len(used)} focused follow-up searches for verifier gaps",
                         {"queries": used, "unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
                     ))
+                    interim_evidence = compute_evidence_grade(
+                        question,
+                        plan,
+                        sources,
+                        context,
+                        verification,
+                        evidence_pack=evidence_pack,
+                        claim_ledger={},
+                    )
+                    await emit("verification_retrieval_repair", evidence=interim_evidence)
                 if answer_needs_repair(verification):
                     repaired = await strands_orchestrator.repair_answer(question, answer, evidence_context, verification)
                     repaired_answer = (repaired or {}).get("answer") if isinstance(repaired, dict) else None
@@ -429,9 +475,29 @@ class QueryEngine:
                             {"notes": (repaired or {}).get("notes", [])[:4]},
                         ))
                         verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
+                        interim_evidence = compute_evidence_grade(
+                            question,
+                            plan,
+                            sources,
+                            context,
+                            verification,
+                            evidence_pack=evidence_pack,
+                            claim_ledger={},
+                        )
+                        await emit("answer_editor", answer=answer, evidence=interim_evidence)
                     else:
                         trace.append(trace_step("answer_editor", "skipped", "No answer repair returned"))
                         answer = self._append_evidence_limits(answer, verification)
+                        interim_evidence = compute_evidence_grade(
+                            question,
+                            plan,
+                            sources,
+                            context,
+                            verification,
+                            evidence_pack=evidence_pack,
+                            claim_ledger={},
+                        )
+                        await emit("answer_editor", answer=answer, evidence=interim_evidence)
             else:
                 verification = {
                     "status": "not_run",
@@ -443,6 +509,7 @@ class QueryEngine:
                     "confidence_adjustment": 0,
                 }
                 trace.append(trace_step("verifier", "fallback", "Verifier unavailable; used computed evidence score only"))
+                await emit("verifier", evidence=preliminary_evidence)
 
         claim_ledger_raw = None
         if normalize_mode(mode) != "quick":
@@ -480,6 +547,7 @@ class QueryEngine:
             f"{evidence['level']} trust score ({evidence['score']:.2f})",
             {"reasons": evidence.get("reasons", []), "penalties": evidence.get("penalties", [])},
         ))
+        await emit("evidence_grade", evidence=evidence, claim_ledger=claim_ledger)
         return answer, verification or {}, evidence, trace, claim_ledger, evidence_pack, sources, context
 
     def _append_evidence_limits(self, answer: str, verification: dict[str, Any]) -> str:
@@ -737,6 +805,23 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             yield {"type": "answer_chunk", "content": chunk}
 
         full_answer = "".join(answer_chunks)
+        preliminary_verification = {
+            "status": "checking",
+            "supported_claims": [],
+            "unsupported_claims": [],
+            "stale_or_conflicting_claims": [],
+            "missing_evidence": [],
+            "notes": ["Source support verification is still running."],
+        }
+        preliminary_evidence = compute_evidence_grade(
+            question,
+            plan,
+            sources,
+            all_context,
+            preliminary_verification,
+            evidence_pack=evidence_pack,
+            claim_ledger={},
+        )
         yield {"type": "answer_done",
                "answer": full_answer,
                "sources": sources,
@@ -745,6 +830,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                    latest_check_used,
                    question=question,
                    plan=plan,
+                   evidence=preliminary_evidence,
+                   verification=preliminary_verification,
                    evidence_pack=evidence_pack,
                    timeline_events=timeline_events,
                ),
@@ -759,7 +846,43 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                "timeline_events": timeline_events}
 
         yield {"type": "status", "message": "Verifying source support and trust score..."}
-        repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await self._verify_repair_and_grade(
+        base_trace = list(trace)
+        progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def progress_callback(payload: dict[str, Any]) -> None:
+            await progress_queue.put(payload)
+
+        def metadata_update_event(payload: dict[str, Any]) -> dict[str, Any]:
+            event_context = payload.get("context") or all_context
+            event_sources = payload.get("sources") or sources
+            event_evidence_pack = payload.get("evidence_pack") or evidence_pack
+            event_verification = payload.get("verification") or {}
+            event_evidence = payload.get("evidence") or preliminary_evidence
+            event_claim_ledger = payload.get("claim_ledger") or {}
+            event_trace = base_trace + list(payload.get("trace") or [])
+            return {
+                "type": "metadata_update",
+                "stage": payload.get("stage"),
+                "sources": event_sources,
+                "source_summary": self._build_source_summary(
+                    event_context,
+                    latest_check_used,
+                    question=question,
+                    plan=plan,
+                    evidence=event_evidence,
+                    verification=event_verification,
+                    timeline_events=timeline_events,
+                    evidence_pack=event_evidence_pack,
+                    claim_ledger=event_claim_ledger,
+                ),
+                "trace": event_trace,
+                "verification": event_verification,
+                "evidence": event_evidence,
+                "claim_ledger": event_claim_ledger,
+                "evidence_pack": self._public_evidence_pack(event_evidence_pack),
+            }
+
+        verification_task = asyncio.create_task(self._verify_repair_and_grade(
             question,
             full_answer,
             all_context,
@@ -767,7 +890,18 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             plan,
             mode,
             broad=is_broad,
-        )
+            progress_callback=progress_callback,
+        ))
+        while not verification_task.done():
+            try:
+                payload = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            yield metadata_update_event(payload)
+        while not progress_queue.empty():
+            yield metadata_update_event(progress_queue.get_nowait())
+
+        repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await verification_task
         if repaired_answer != full_answer:
             full_answer = repaired_answer
             yield {"type": "answer_replace", "content": full_answer}
@@ -1495,13 +1629,13 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return expanded
 
     def _rank_full_document_chunks(self, question: str, chunks: list[str]) -> list[tuple[int, str]]:
-        query_terms = self._query_terms_with_domain_expansion(question)
+        query_terms = self._query_terms_with_concept_expansion(question)
 
         def score(index_and_text: tuple[int, str]) -> float:
             idx, text = index_and_text
             lower = text.lower()
             hits = sum(1 for term in query_terms if term in lower)
-            structured = 1 if re.search(r"\b\d+(?:\.\d+)?\s*(mg/dl|ng/ml|%|iu/ml|pg/ml|mcg/dl|u/l|mmol/l|\$)\b", lower, flags=re.I) else 0
+            structured = min(1.0, structured_fact_count(text[:4000]) / 3)
             table = 1 if "|" in text[:2500] and text.count("|") >= 4 else 0
             date = 1 if re.search(r"\b(19|20)\d{2}\b", lower) else 0
             return hits + 0.75 * structured + 0.5 * table + 0.25 * date - (idx * 0.01)
@@ -1509,25 +1643,34 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         indexed = list(enumerate(chunks))
         return sorted(indexed, key=score, reverse=True)
 
-    def _query_terms_with_domain_expansion(self, question: str) -> set[str]:
+    def _query_terms_with_concept_expansion(self, question: str) -> set[str]:
         terms = {
             term
             for term in re.findall(r"[a-z0-9$]+", question.lower())
             if len(term) >= 3
         }
-        expansions = {
-            "bloodwork": {"blood", "lab", "labs", "laboratory", "result", "reference", "glucose", "cholesterol", "testosterone", "cbc", "cmp"},
-            "labs": {"lab", "laboratory", "result", "reference"},
-            "lab": {"laboratory", "result", "reference"},
-            "payment": {"amount", "balance", "installment", "schedule", "due"},
-            "premium": {"policy", "payment", "amount", "balance"},
-            "policy": {"coverage", "declarations", "effective", "premium"},
-            "tax": {"return", "income", "w-2", "1099", "k-1"},
-            "mortgage": {"payment", "escrow", "principal", "interest", "balance"},
-        }
         expanded = set(terms)
-        for term in terms:
-            expanded.update(expansions.get(term, set()))
+        for term in list(terms):
+            if term.endswith("s") and len(term) > 3:
+                expanded.add(term[:-1])
+            else:
+                expanded.add(f"{term}s")
+
+        # Domain-neutral concept groups. If the user asks for a result, amount,
+        # status, date, identifier, obligation, or governing document, nearby
+        # source language often uses a sibling word instead of the query token.
+        concept_groups = [
+            {"level", "levels", "result", "results", "value", "values", "amount", "amounts", "balance", "total", "score", "range", "status"},
+            {"latest", "last", "recent", "current", "newest", "final", "updated", "revised", "effective", "expiration", "expires"},
+            {"payment", "payments", "installment", "installments", "due", "premium", "charge", "fee", "invoice", "receipt", "statement"},
+            {"coverage", "policy", "contract", "agreement", "declaration", "terms", "benefit", "benefits"},
+            {"identifier", "number", "id", "account", "policy", "claim", "case", "reference", "serial", "vin", "ein", "ssn", "sku"},
+            {"income", "tax", "return", "w2", "1099", "k1", "schedule"},
+            {"record", "report", "summary", "document", "source", "form", "notice"},
+        ]
+        for group in concept_groups:
+            if expanded & group:
+                expanded.update(group)
         return expanded
 
     def _rank_evidence_chunks(self, chunks: list[dict], question: str, sources: list[dict]) -> list[dict]:

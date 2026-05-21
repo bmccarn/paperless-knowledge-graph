@@ -47,7 +47,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v7"
+QUERY_CACHE_VERSION = "evidence-v8"
 
 
 class QueryEngine:
@@ -1710,7 +1710,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             if not item.get("exact_term_hits"):
                 continue
             signals = item.get("date_signals") or {}
-            for key in ("reported_date", "document_date", "specimen_date", "service_date", "mentioned_date"):
+            for key in ("reported_date", "document_date", "specimen_date", "service_date"):
                 for value in signals.get(key) or []:
                     normalized = self._normalize_summary_date(str(value))
                     if normalized:

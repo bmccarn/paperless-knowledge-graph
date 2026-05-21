@@ -35,6 +35,8 @@ import {
   Search,
   Gauge,
   Bot,
+  Route,
+  ShieldCheck,
 } from "lucide-react";
 
 interface Source {
@@ -47,6 +49,8 @@ interface Source {
   chunk_index?: number;
   excerpt?: string;
   date?: string;
+  date_signals?: Record<string, string[]>;
+  source_quality?: { score?: number; tier?: string; reasons?: string[] };
 }
 
 interface SourceSummary {
@@ -54,6 +58,94 @@ interface SourceSummary {
   latest_check_used?: boolean;
   source_count?: number;
   newer_docs_may_exist?: boolean;
+  trust_score?: number;
+  trust_level?: string;
+  trust_reasons?: string[];
+  trust_penalties?: string[];
+  trust_dimensions?: Record<string, number>;
+  claim_summary?: Record<string, number>;
+  evidence_coverage?: Record<string, unknown>;
+  verification_status?: string;
+  unsupported_claim_count?: number;
+  stale_or_conflicting_claim_count?: number;
+  timeline_event_count?: number;
+}
+
+interface QueryPlan {
+  mode?: string;
+  intent?: string;
+  domain?: string;
+  requires_current?: boolean;
+  needs_timeline?: boolean;
+  strategy?: string;
+  planner?: string;
+  subqueries?: Array<{ role?: string; query?: string }>;
+}
+
+interface TraceStep {
+  step: string;
+  status?: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+}
+
+interface Verification {
+  status?: string;
+  supported_claims?: string[];
+  unsupported_claims?: string[];
+  stale_or_conflicting_claims?: string[];
+  missing_evidence?: string[];
+  notes?: string[];
+}
+
+interface ClaimLedger {
+  summary?: Record<string, number>;
+  claims?: Array<{
+    claim?: string;
+    support_status?: string;
+    document_id?: number;
+    source_title?: string;
+    evidence_id?: string;
+    evidence_excerpt?: string;
+    date?: string;
+    source_quality?: string;
+    notes?: string;
+  }>;
+}
+
+interface EvidencePack {
+  coverage?: Record<string, unknown>;
+  source_documents?: Array<{
+    document_id?: number;
+    title?: string;
+    doc_type?: string;
+    chunks?: number;
+    best_quality_score?: number;
+    best_quality_tier?: string;
+    structured_fact_count?: number;
+    date_signals?: Record<string, string[]>;
+  }>;
+  items?: Array<{
+    id?: string;
+    document_id?: number;
+    chunk_index?: number;
+    title?: string;
+    doc_type?: string;
+    source_quality?: { score?: number; tier?: string; reasons?: string[] };
+    date_signals?: Record<string, string[]>;
+    structured_fact_count?: number;
+    exact_term_hits?: number;
+    excerpt?: string;
+  }>;
+}
+
+interface TimelineEvent {
+  date?: string;
+  title?: string;
+  summary?: string;
+  document_id?: number;
+  source_title?: string;
+  status?: string;
 }
 
 interface Message {
@@ -68,6 +160,12 @@ interface Message {
   confidence?: number;
   follow_ups?: string[];
   source_summary?: SourceSummary;
+  query_plan?: QueryPlan;
+  trace?: TraceStep[];
+  verification?: Verification;
+  claim_ledger?: ClaimLedger;
+  evidence_pack?: EvidencePack;
+  timeline_events?: TimelineEvent[];
 }
 
 interface Conversation {
@@ -185,6 +283,7 @@ function QueryContent() {
   const [showHistoryDesktop, setShowHistoryDesktop] = useState(true);
   const [streamingContent, setStreamingContent] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
+  const [activitySteps, setActivitySteps] = useState<TraceStep[]>([]);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState("");
@@ -193,7 +292,7 @@ function QueryContent() {
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
-  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline">("deep");
+  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("deep");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -262,6 +361,7 @@ function QueryContent() {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setLoading(true);
+    setActivitySteps([{ step: "start", status: "running", detail: "Starting query workflow..." }]);
 
     const startTime = Date.now();
     try {
@@ -272,24 +372,57 @@ function QueryContent() {
       let confidence: number | undefined;
       let followUps: string[] = [];
       let sourceSummary: SourceSummary | undefined;
+      let queryPlan: QueryPlan | undefined;
+      let trace: TraceStep[] = [];
+      let verification: Verification | undefined;
+      let claimLedger: ClaimLedger | undefined;
+      let evidencePack: EvidencePack | undefined;
+      let timelineEvents: TimelineEvent[] = [];
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
+            if (event.message) {
+              setActivitySteps(prev => [
+                ...prev,
+                { step: "status", status: "running", detail: event.message },
+              ].slice(-8));
+            }
+            break;
+          case "trace":
+            if (event.step) {
+              trace = [...trace, event.step];
+              setActivitySteps(prev => [...prev, event.step].slice(-8));
+            }
             break;
           case "answer_chunk":
             fullAnswer += event.content;
             setStreamingContent(fullAnswer);
             setStatusMessage("");
             break;
+          case "answer_replace":
+            fullAnswer = event.content || "";
+            setStreamingContent(fullAnswer);
+            setStatusMessage("");
+            break;
           case "complete":
+            if (event.answer) {
+              fullAnswer = event.answer;
+              setStreamingContent(fullAnswer);
+            }
             sources = event.sources || [];
             entitiesFound = event.entities_found || [];
             cached = event.cached || false;
             confidence = event.confidence;
             followUps = event.follow_up_suggestions || [];
             sourceSummary = event.source_summary || undefined;
+            queryPlan = event.query_plan || undefined;
+            trace = event.trace || trace;
+            verification = event.verification || undefined;
+            claimLedger = event.claim_ledger || undefined;
+            evidencePack = event.evidence_pack || undefined;
+            timelineEvents = event.timeline_events || [];
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -308,12 +441,19 @@ function QueryContent() {
         confidence,
         follow_ups: followUps,
         source_summary: sourceSummary,
+        query_plan: queryPlan,
+        trace,
+        verification,
+        claim_ledger: claimLedger,
+        evidence_pack: evidencePack,
+        timeline_events: timelineEvents,
       };
 
       const allMessages = [...newMessages, assistantMsg];
       setMessages(allMessages);
       setStreamingContent("");
       setStatusMessage("");
+      setActivitySteps([]);
       setFollowUpSuggestions(followUps);
       loadConversations();
 
@@ -345,6 +485,7 @@ function QueryContent() {
             if (lastA?.follow_ups) setFollowUpSuggestions(lastA.follow_ups);
             setStreamingContent("");
             setStatusMessage("");
+            setActivitySteps([]);
             loadConversations();
             setLoading(false);
             return;
@@ -359,6 +500,7 @@ function QueryContent() {
       setMessages([...newMessages, errMsg]);
       setStreamingContent("");
       setStatusMessage("");
+      setActivitySteps([]);
     } finally {
       setLoading(false);
     }
@@ -617,11 +759,24 @@ function QueryContent() {
                   {msg.role === "assistant" && msg.source_summary && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">Trust check</span>
+                        <span className="font-medium flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> Trust check
+                        </span>
                         {msg.source_summary.latest_check_used ? (
                           <Badge variant="secondary" className="text-[9px]">latest-pass run</Badge>
                         ) : (
                           <Badge variant="outline" className="text-[9px]">latest-pass not needed</Badge>
+                        )}
+                        {msg.source_summary.trust_level && (
+                          <Badge variant="outline" className="text-[9px]">
+                            {msg.source_summary.trust_level} trust
+                            {msg.source_summary.trust_score != null ? ` ${Math.round(msg.source_summary.trust_score * 100)}%` : ""}
+                          </Badge>
+                        )}
+                        {msg.source_summary.verification_status && (
+                          <Badge variant={msg.source_summary.verification_status === "verified" ? "secondary" : "outline"} className="text-[9px]">
+                            {msg.source_summary.verification_status}
+                          </Badge>
                         )}
                         {msg.source_summary.latest_source_date && (
                           <span className="text-muted-foreground">
@@ -634,6 +789,144 @@ function QueryContent() {
                           This answer did not require a sensitive-domain latest-document pass; newer documents may still exist.
                         </p>
                       )}
+                      {Boolean((msg.source_summary.unsupported_claim_count || 0) + (msg.source_summary.stale_or_conflicting_claim_count || 0)) && (
+                        <p className="text-amber-600 dark:text-amber-400">
+                          Verifier flagged {msg.source_summary.unsupported_claim_count || 0} unsupported and {msg.source_summary.stale_or_conflicting_claim_count || 0} stale/conflicting claim(s).
+                        </p>
+                      )}
+                      {msg.source_summary.trust_reasons && msg.source_summary.trust_reasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {msg.source_summary.trust_reasons.slice(0, 3).map((reason, idx) => (
+                            <span key={idx} className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {msg.source_summary.trust_dimensions && Object.keys(msg.source_summary.trust_dimensions).length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 pt-1">
+                          {Object.entries(msg.source_summary.trust_dimensions).map(([name, value]) => (
+                            <div key={name} className="rounded-md bg-muted/70 px-2 py-1">
+                              <div className="text-[9px] text-muted-foreground capitalize">{name.replaceAll("_", " ")}</div>
+                              <div className="text-[11px] font-medium">{Math.round((value || 0) * 100)}%</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {Object.entries(msg.source_summary.claim_summary).map(([status, count]) => count ? (
+                            <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-[9px]">
+                              {status}: {count}
+                            </Badge>
+                          ) : null)}
+                        </div>
+                      )}
+                      {msg.source_summary.evidence_coverage && (
+                        <p className="text-[10px] text-muted-foreground">
+                          Evidence pack: {String(msg.source_summary.evidence_coverage["evidence_item_count"] || 0)} items,
+                          {" "}{String(msg.source_summary.evidence_coverage["source_document_count"] || 0)} docs,
+                          {" "}quality {Math.round(Number(msg.source_summary.evidence_coverage["average_source_quality"] || 0) * 100)}%
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && msg.verification && (
+                    Boolean((msg.verification.unsupported_claims || []).length + (msg.verification.stale_or_conflicting_claims || []).length + (msg.verification.missing_evidence || []).length) && (
+                      <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                        <p className="font-medium flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> Evidence review
+                        </p>
+                        {(msg.verification.unsupported_claims || []).slice(0, 4).map((claim, idx) => (
+                          <div key={`unsupported-${idx}`} className="text-[10px] text-amber-700 dark:text-amber-300">
+                            Unsupported: {claim}
+                          </div>
+                        ))}
+                        {(msg.verification.stale_or_conflicting_claims || []).slice(0, 4).map((claim, idx) => (
+                          <div key={`stale-${idx}`} className="text-[10px] text-red-700 dark:text-red-300">
+                            Stale/conflict: {claim}
+                          </div>
+                        ))}
+                        {(msg.verification.missing_evidence || []).slice(0, 3).map((gap, idx) => (
+                          <div key={`gap-${idx}`} className="text-[10px] text-muted-foreground">
+                            Missing evidence: {gap}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  )}
+
+                  {msg.role === "assistant" && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <p className="font-medium flex items-center gap-1">
+                        <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})
+                      </p>
+                      {msg.claim_ledger.claims.slice(0, 6).map((claim, idx) => (
+                        <div key={idx} className="grid gap-1 text-[10px]">
+                          <div className="flex items-start gap-1.5">
+                            <Badge variant={claim.support_status === "supported" ? "secondary" : "outline"} className="text-[8px] px-1 py-0 shrink-0">
+                              {claim.support_status || "unknown"}
+                            </Badge>
+                            <span>{claim.claim}</span>
+                          </div>
+                          {(claim.source_title || claim.evidence_excerpt) && (
+                            <div className="text-muted-foreground pl-14 truncate">
+                              {claim.source_title || "Evidence"}{claim.date ? ` · ${claim.date}` : ""}{claim.evidence_excerpt ? ` · ${claim.evidence_excerpt}` : ""}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && (msg.query_plan || (msg.trace && msg.trace.length > 0)) && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium flex items-center gap-1">
+                          <Route className="h-3 w-3" /> Why this answer
+                        </span>
+                        {msg.query_plan?.planner && <Badge variant="outline" className="text-[9px]">{msg.query_plan.planner} planner</Badge>}
+                        {msg.query_plan?.intent && <Badge variant="secondary" className="text-[9px]">{msg.query_plan.intent}</Badge>}
+                        {msg.query_plan?.domain && <Badge variant="outline" className="text-[9px]">{msg.query_plan.domain}</Badge>}
+                      </div>
+                      {msg.query_plan?.strategy && (
+                        <p className="text-muted-foreground">{msg.query_plan.strategy}</p>
+                      )}
+                      {msg.query_plan?.subqueries && msg.query_plan.subqueries.length > 0 && (
+                        <div className="space-y-1">
+                          {msg.query_plan.subqueries.slice(0, 4).map((q, idx) => (
+                            <div key={idx} className="flex gap-1.5 text-[10px]">
+                              <span className="shrink-0 text-muted-foreground">{q.role || "query"}</span>
+                              <span className="truncate">{q.query}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {msg.trace && msg.trace.length > 0 && (
+                        <div className="grid gap-1">
+                          {msg.trace.slice(-5).map((step, idx) => (
+                            <div key={idx} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                              <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0" />
+                              <span><span className="font-medium text-foreground">{step.step}</span>: {step.detail || step.status}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && msg.timeline_events && msg.timeline_events.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <p className="font-medium flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> Timeline events ({msg.timeline_events.length})
+                      </p>
+                      {msg.timeline_events.slice(0, 6).map((event, idx) => (
+                        <div key={idx} className="grid grid-cols-[84px_1fr] gap-2 text-[10px]">
+                          <span className="text-muted-foreground truncate">{event.date || "No date"}</span>
+                          <span className="truncate">{event.title || event.summary}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -689,12 +982,34 @@ function QueryContent() {
               </div>
             ))}
 
-            {(streamingContent || statusMessage) && (
+            {(streamingContent || statusMessage || (loading && activitySteps.length > 0)) && (
               <div className="flex gap-2 md:gap-3 justify-start">
                 <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                   <Network className="h-3.5 w-3.5 text-primary" />
                 </div>
                 <div className="max-w-[90%] md:max-w-[85%] space-y-2">
+                  {loading && activitySteps.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <div className="flex items-center gap-2 font-medium">
+                        <Bot className="h-3 w-3" />
+                        <span>Agent activity</span>
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      </div>
+                      <div className="space-y-1">
+                        {activitySteps.slice(-6).map((step, idx) => (
+                          <div key={`${step.step}-${idx}`} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                            <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${
+                              step.status === "fallback" || step.status === "needs_review" ? "bg-amber-500" : "bg-primary/70"
+                            }`} />
+                            <span>
+                              <span className="font-medium text-foreground">{step.step.replaceAll("_", " ")}</span>
+                              {step.detail ? `: ${step.detail}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {statusMessage && !streamingContent && (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
                       <Loader2 className="h-3 w-3 animate-spin" /> {statusMessage}
@@ -758,14 +1073,15 @@ function QueryContent() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-lg border bg-background p-0.5">
                 {[
-                  ["quick", "Quick"],
+                  ["quick", "Fast"],
                   ["deep", "Deep"],
                   ["timeline", "Timeline"],
+                  ["strict", "Strict"],
                 ].map(([id, label]) => (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline")}
+                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline" | "strict")}
                     className={
                       "rounded-md px-2.5 py-1.5 text-xs transition-colors " +
                       (queryMode === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")

@@ -8,6 +8,7 @@ import {
   getEntityReviewCandidates,
   ignoreEntityCandidate,
   mergeEntityCandidate,
+  runEntitySteward,
   splitEntityCandidate,
 } from "@/lib/api";
 import { AlertCircle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, X } from "lucide-react";
@@ -17,6 +18,22 @@ interface Candidate {
   label: string;
   left: { uuid: string; name: string; properties: Record<string, unknown> };
   right: { uuid: string; name: string; properties: Record<string, unknown> };
+  steward?: {
+    decision?: string;
+    deterministic?: {
+      score?: number;
+      risk?: string;
+      recommendation?: string;
+      reasons?: string[];
+      shared_identifiers?: string[];
+    };
+    agent?: {
+      recommendation?: string;
+      confidence?: number;
+      risk?: string;
+      reasons?: string[];
+    };
+  };
 }
 
 interface Notice {
@@ -29,6 +46,7 @@ export default function EntityReviewPage() {
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [stewardRunning, setStewardRunning] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -47,6 +65,27 @@ export default function EntityReviewPage() {
       }
     } finally {
       if (showSpinner) setLoading(false);
+    }
+  };
+
+  const runSteward = async () => {
+    setStewardRunning(true);
+    setNotice(null);
+    setError("");
+    try {
+      const result = await runEntitySteward(75);
+      setNotice({
+        kind: "success",
+        text: `Entity steward reviewed ${result.reviewed_count || 0} candidates: ${result.suggest_merge || 0} merge, ${result.suggest_split || 0} split, ${result.suggest_review || 0} review.`,
+      });
+      await load(false);
+    } catch (err) {
+      setNotice({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Entity steward run failed.",
+      });
+    } finally {
+      setStewardRunning(false);
     }
   };
 
@@ -80,10 +119,16 @@ export default function EntityReviewPage() {
           <h1 className="text-2xl font-bold tracking-tight">Entity Review</h1>
           <p className="text-sm text-muted-foreground mt-1">Likely duplicate entities and bad merge candidates.</p>
         </div>
-        <Button onClick={() => load()} disabled={loading} variant="outline" size="sm" className="gap-2">
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={runSteward} disabled={loading || stewardRunning} variant="secondary" size="sm" className="gap-2">
+            {stewardRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitMerge className="h-3.5 w-3.5" />}
+            Steward
+          </Button>
+          <Button onClick={() => load()} disabled={loading} variant="outline" size="sm" className="gap-2">
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {notice && (
@@ -121,9 +166,33 @@ export default function EntityReviewPage() {
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Badge variant="secondary">{candidate.label}</Badge>
                     <span>{Math.round(candidate.score)}% similar</span>
+                    {candidate.steward?.decision && (
+                      <Badge variant="outline">{candidate.steward.decision.replace("suggest_", "")}</Badge>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {candidate.steward && (
+                    <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.steward.deterministic?.risk && (
+                          <Badge variant="outline" className="text-[9px]">risk: {candidate.steward.deterministic.risk}</Badge>
+                        )}
+                        {candidate.steward.deterministic?.score != null && (
+                          <Badge variant="outline" className="text-[9px]">score: {Math.round(candidate.steward.deterministic.score * 100)}%</Badge>
+                        )}
+                        {candidate.steward.agent?.recommendation && (
+                          <Badge variant="secondary" className="text-[9px]">
+                            agent: {candidate.steward.agent.recommendation}
+                            {candidate.steward.agent.confidence != null ? ` ${Math.round(candidate.steward.agent.confidence * 100)}%` : ""}
+                          </Badge>
+                        )}
+                      </div>
+                      {(candidate.steward.agent?.reasons || candidate.steward.deterministic?.reasons || []).slice(0, 3).map((reason, idx) => (
+                        <p key={idx} className="text-muted-foreground">{reason}</p>
+                      ))}
+                    </div>
+                  )}
                   <div className="grid gap-3 md:grid-cols-2">
                     {[candidate.left, candidate.right].map((entity) => (
                       <div key={entity.uuid} className="rounded-lg border bg-card p-3">

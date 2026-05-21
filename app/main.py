@@ -19,7 +19,9 @@ from app.pipeline import sync_documents, reindex_all, reindex_document
 from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
+from app.entity_steward import entity_steward, SUGGESTION_DECISIONS, TERMINAL_DECISIONS
 from app.cache import get_all_cache_stats, invalidate_on_sync
+from app.strands_orchestrator import strands_orchestrator
 from app import conversations
 from starlette.responses import StreamingResponse
 
@@ -66,6 +68,7 @@ _tasks: dict[str, dict] = {}
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 _last_failed_extraction: dict | None = None
 _auto_sync_task: asyncio.Task | None = None
+_entity_steward_task: asyncio.Task | None = None
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -207,6 +210,7 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
+            asyncio.create_task(entity_steward.run_once(reason="post-sync"))
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -238,19 +242,40 @@ async def _auto_sync_loop():
             logger.error("Auto sync failed to start: %s", e)
 
 
+async def _entity_steward_loop():
+    from app.config import settings
+
+    interval = max(settings.entity_steward_interval_minutes, 0)
+    if interval <= 0:
+        logger.info("Entity steward periodic loop disabled")
+        return
+
+    logger.info("Entity steward enabled: every %s minutes", interval)
+    await asyncio.sleep(min(300, interval * 60))
+    while True:
+        try:
+            await entity_steward.run_once(reason="periodic")
+        except Exception as e:
+            logger.error("Entity steward periodic run failed: %s", e, exc_info=True)
+        await asyncio.sleep(interval * 60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _auto_sync_task
+    global _auto_sync_task, _entity_steward_task
     logger.info("Starting up...")
     await graph_store.init()
     await embeddings_store.init()
     await conversations.init()
     _auto_sync_task = asyncio.create_task(_auto_sync_loop())
+    _entity_steward_task = asyncio.create_task(_entity_steward_loop())
     logger.info("Startup complete")
     yield
     logger.info("Shutting down...")
     if _auto_sync_task:
         _auto_sync_task.cancel()
+    if _entity_steward_task:
+        _entity_steward_task.cancel()
     await graph_store.close()
     await embeddings_store.close()
     await conversations.close()
@@ -381,6 +406,7 @@ async def health():
 
     # Cache
     components["cache"] = get_all_cache_stats()
+    components["strands"] = strands_orchestrator.status
 
     overall = "healthy"
     for key, comp in components.items():
@@ -747,6 +773,15 @@ async def query(req: QueryRequest):
                 entities=result.get("entities_found"),
                 confidence=result.get("confidence"),
                 follow_ups=result.get("follow_up_suggestions"),
+                metadata={
+                    "source_summary": result.get("source_summary"),
+                    "query_plan": result.get("query_plan"),
+                    "trace": result.get("trace"),
+                    "verification": result.get("verification"),
+                    "claim_ledger": result.get("claim_ledger"),
+                    "evidence_pack": result.get("evidence_pack"),
+                    "timeline_events": result.get("timeline_events"),
+                },
             )
 
         return result
@@ -779,6 +814,7 @@ async def query_stream(req: QueryRequest):
             final_entities = None
             final_confidence = None
             final_follow_ups = None
+            final_metadata = None
 
             async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode):
                 if event.get("type") == "answer_chunk":
@@ -792,6 +828,15 @@ async def query_stream(req: QueryRequest):
                     final_entities = event.get("entities_found")
                     final_confidence = event.get("confidence")
                     final_follow_ups = event.get("follow_up_suggestions")
+                    final_metadata = {
+                        "source_summary": event.get("source_summary"),
+                        "query_plan": event.get("query_plan"),
+                        "trace": event.get("trace"),
+                        "verification": event.get("verification"),
+                        "claim_ledger": event.get("claim_ledger"),
+                        "evidence_pack": event.get("evidence_pack"),
+                        "timeline_events": event.get("timeline_events"),
+                    }
 
                 await queue.put(event)
 
@@ -803,6 +848,7 @@ async def query_stream(req: QueryRequest):
                         entities=final_entities,
                         confidence=final_confidence,
                         follow_ups=final_follow_ups,
+                        metadata=final_metadata,
                     )
         except Exception as e:
             await queue.put({"type": "error", "message": str(e)})
@@ -815,7 +861,12 @@ async def query_stream(req: QueryRequest):
     async def event_generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Send SSE comment as keepalive to prevent connection timeout
+                    yield ": keepalive\n\n"
+                    continue
                 if event is None:
                     break
                 yield f"data: {json.dumps(event)}" + "\n\n"
@@ -879,10 +930,48 @@ async def entity_review_candidates(limit: int = 50):
     ignored_pairs = {
         tuple(sorted([d["left_uuid"], d["right_uuid"]]))
         for d in decisions
-        if d["decision"] in {"ignore", "split", "merged"}
+        if d["decision"] in TERMINAL_DECISIONS
     }
+    suggestions = _entity_suggestion_map(decisions)
     candidates = await graph_store.get_entity_review_candidates(ignored_pairs, limit=limit)
+    for candidate in candidates:
+        pair = tuple(sorted([candidate["left"]["uuid"], candidate["right"]["uuid"]]))
+        if pair in suggestions:
+            candidate["steward"] = suggestions[pair]
     return {"candidates": candidates, "ignored_count": len(ignored_pairs)}
+
+
+def _entity_suggestion_map(decisions: list[dict]) -> dict[tuple[str, str], dict]:
+    suggestions = {}
+    for decision in decisions:
+        if decision["decision"] not in SUGGESTION_DECISIONS:
+            continue
+        pair = tuple(sorted([decision["left_uuid"], decision["right_uuid"]]))
+        payload = {}
+        note = decision.get("note") or ""
+        if note:
+            try:
+                payload = json.loads(note)
+            except Exception:
+                payload = {"note": note}
+        existing = suggestions.get(pair)
+        created_at = decision.get("created_at")
+        if not existing or str(created_at) > str(existing.get("created_at", "")):
+            suggestions[pair] = {
+                "decision": decision["decision"],
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                **payload,
+            }
+    return suggestions
+
+
+@app.post("/entity-review/steward")
+async def entity_review_steward(limit: int = 50):
+    try:
+        return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
+    except Exception as e:
+        logger.error("Entity steward run failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/entity-review/ignore")
@@ -908,6 +997,7 @@ async def entity_review_merge(req: EntityMergeRequest):
         await embeddings_store.add_entity_review_decision(
             req.primary_uuid, req.duplicate_uuid, "merged", ""
         )
+        asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
         return {"status": "merged", "entity": merged}
     except Exception as e:
         logger.error("Entity merge failed: %s", e, exc_info=True)

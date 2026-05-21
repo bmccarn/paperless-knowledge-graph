@@ -353,6 +353,27 @@ class GraphStore:
                 return {"nodes": [], "relationships": []}
             return {"nodes": record["nodes"][:50], "relationships": record["rels"][:100]}
 
+
+    async def get_documents_by_entity_types(self, entity_types: list[str], limit: int = 100) -> dict[str, list[dict]]:
+        """Get documents connected to entities of specific types, grouped by entity type.
+        Returns {entity_type: [{paperless_id, title, entity_name, relationship}, ...]}"""
+        results = {}
+        async with self.driver.session() as session:
+            for etype in entity_types:
+                query = """
+                MATCH (d:Document)-[r]-(e)
+                WHERE any(label IN labels(e) WHERE label = $etype)
+                  AND d.paperless_id IS NOT NULL
+                RETURN DISTINCT d.paperless_id AS doc_id, d.title AS title,
+                       e.name AS entity_name, type(r) AS rel_type
+                ORDER BY d.paperless_id DESC
+                LIMIT $limit
+                """
+                res = await session.run(query, etype=etype, limit=limit)
+                records = await res.data()
+                results[etype] = records
+        return results
+
     async def get_all_document_ids(self) -> set[int]:
         """Return all paperless_id values for Document nodes in the graph."""
         async with self.driver.session() as session:
@@ -658,6 +679,130 @@ class GraphStore:
                 "nodes": list(all_nodes.values()),
                 "relationships": relationships,
             }
+
+    async def get_documents_by_entity_types(self, entity_types: list[str], limit: int = 100) -> list[int]:
+        """Get document IDs connected to entities of the given types.
+        Returns the most recent documents first (highest paperless_id = newest).
+        """
+        if not entity_types:
+            return []
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (d:Document)-[r]-(e)
+                WHERE any(label IN labels(e) WHERE label IN $types)
+                WITH d.paperless_id AS pid, count(DISTINCT e) AS entity_count
+                ORDER BY pid DESC
+                LIMIT $limit
+                RETURN pid
+                """,
+                types=entity_types,
+                limit=limit,
+            )
+            doc_ids = []
+            async for record in result:
+                pid = record["pid"]
+                if pid is not None:
+                    doc_ids.append(int(pid))
+            return doc_ids
+
+    async def get_recent_docs_per_organization(self, limit_per_org: int = 2) -> list[dict]:
+        """For each Organization in the graph, find the most recent documents.
+        Returns list of {org_name, doc_id} dicts, most recent doc per org.
+        Perfect for 'what are my bills?' queries — ensures every payee is represented."""
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (o:Organization)-[]-(d:Document)
+                WITH o.name AS org_name, d.paperless_id AS pid
+                ORDER BY pid DESC
+                WITH org_name, collect(pid)[0..$limit] AS doc_ids
+                UNWIND doc_ids AS did
+                RETURN org_name, did AS doc_id
+                ORDER BY org_name
+                """,
+                limit=limit_per_org,
+            )
+            results = []
+            async for record in result:
+                results.append({
+                    "org_name": record["org_name"],
+                    "doc_id": int(record["doc_id"]),
+                })
+            return results
+
+    async def get_recent_docs_per_organization_filtered(
+        self, entity_types: list[str], limit_per_org: int = 2
+    ) -> list[dict]:
+        """For each Organization connected to entities of the specified types
+        OR to Documents with relevant doc_types, find the most recent documents.
+        This dual filter ensures orgs whose documents lack entity extraction
+        (e.g., Starlink invoices without FinancialItem entities) still get included
+        if their documents are typed as financial_invoice, insurance, etc.
+        Query-agnostic: works for any entity type combination."""
+        if not entity_types:
+            return await self.get_recent_docs_per_organization(limit_per_org)
+
+        # Map entity types to relevant document doc_types for fallback matching
+        doc_type_map = {
+            "FinancialItem": ["financial_invoice", "financial_statement", "tax_document"],
+            "InsurancePolicy": ["insurance"],
+            "Contract": ["contract", "legal"],
+            "MedicalResult": ["medical", "health"],
+            "Condition": ["medical", "health"],
+            "Product": ["product", "manual", "warranty"],
+            "System": ["product", "manual"],
+            "DateEvent": [],
+            "Event": [],
+            "Location": [],
+            "Address": ["property_home"],
+            "Person": [],
+            "Organization": [],
+            "DocumentRef": [],
+        }
+        relevant_doc_types = set()
+        for etype in entity_types:
+            for dt in doc_type_map.get(etype, []):
+                relevant_doc_types.add(dt)
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                // Strategy 1: Orgs connected to entities of the specified types
+                OPTIONAL MATCH (o1:Organization)-[]-(e)
+                WHERE any(label IN labels(e) WHERE label IN $types)
+                WITH collect(DISTINCT o1) AS entity_orgs
+
+                // Strategy 2: Orgs connected to documents with relevant doc_types
+                OPTIONAL MATCH (o2:Organization)-[]-(d2:Document)
+                WHERE d2.doc_type IN $doc_types
+                WITH entity_orgs, collect(DISTINCT o2) AS doctype_orgs
+
+                // Union both sets
+                WITH [o IN entity_orgs + doctype_orgs WHERE o IS NOT NULL] AS all_orgs
+                UNWIND all_orgs AS o
+                WITH DISTINCT o
+
+                // Get most recent docs for each qualifying org
+                MATCH (o)-[]-(d:Document)
+                WITH o.name AS org_name, d.paperless_id AS pid
+                ORDER BY pid DESC
+                WITH org_name, collect(pid)[0..$limit] AS doc_ids
+                UNWIND doc_ids AS did
+                RETURN org_name, did AS doc_id
+                ORDER BY org_name
+                """,
+                types=entity_types,
+                doc_types=list(relevant_doc_types),
+                limit=limit_per_org,
+            )
+            results = []
+            async for record in result:
+                results.append({
+                    "org_name": record["org_name"],
+                    "doc_id": int(record["doc_id"]),
+                })
+            return results
 
     async def check_health(self) -> dict:
         """Check Neo4j connectivity and return health info."""

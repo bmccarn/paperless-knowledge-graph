@@ -8,19 +8,22 @@ A knowledge graph system that extracts structured entities and relationships fro
 - **Entity resolution** — Fuzzy matching + embedding similarity to merge duplicate entities automatically
 - **Hybrid search** — Vector similarity (pgvector) + trigram keyword search + graph traversal combined
 - **Graph-aware retrieval** — Multi-hop subgraph expansion from discovered entities (2-3 hops)
-- **Iterative query pipeline** — Initial retrieval → gap analysis → follow-up retrieval → synthesis with citations
+- **Strands-planned query pipeline** — Query planning → parallel retrieval → gap repair → synthesis → verifier pass
+- **Evidence-backed strict mode** — Builds canonical evidence packs, claim ledgers, trust dimensions, and answer repair notes for high-stakes queries
+- **Timeline mode** — Extracts dated events and sorts them chronologically for change-over-time questions
+- **Entity steward** — Conservative merge/split/review suggestions after manual merges and on a periodic schedule
 - **Concurrent processing** — Configurable parallel document processing with semaphore control
 - **Retry with backoff** — Exponential backoff + jitter on all LLM and database calls for transient error resilience
 - **TTL-based caching** — Query, vector, graph, and entity caches to reduce redundant LLM/DB calls
 - **Live progress tracking** — Real-time progress for reindex/sync tasks via polling
-- **Interactive frontend** — Next.js app with 2D/3D graph explorer, document browser, natural language query, and live debug logs
+- **Interactive frontend** — Next.js app with 2D/3D graph explorer, document browser, natural language query, evidence/trust review, entity review, and live debug logs
 
 ## Architecture
 
 ```
 Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-Specific Extraction
   → Entity Resolution (fuzzy + embeddings) → Neo4j (graph) + pgvector (embeddings)
-  → Hybrid Query Pipeline (vector + keyword + graph + LLM synthesis)
+  → Hybrid Query Pipeline (Strands plan + vector + keyword + graph + evidence verifier)
 ```
 
 ### Components
@@ -33,7 +36,11 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 | `app/graph.py` | Neo4j operations — create/query nodes, relationships, subgraph traversal |
 | `app/embeddings.py` | pgvector storage, chunking, vector/keyword search, dimension migration |
 | `app/entity_resolver.py` | Fuzzy match + embedding similarity entity deduplication |
-| `app/query.py` | Iterative hybrid query pipeline with gap analysis and LLM synthesis |
+| `app/entity_steward.py` | Conservative entity merge/split/review suggestions; never auto-merges |
+| `app/evidence.py` | Evidence pack, source quality, date signal, claim ledger, and verifier repair helpers |
+| `app/query.py` | Iterative hybrid query pipeline with modes, evidence packs, verification, and LLM synthesis |
+| `app/query_quality.py` | Query planning fallbacks, timeline sorting, and trust-score dimensions |
+| `app/strands_orchestrator.py` | Bounded Strands planner, verifier, answer editor, timeline extractor, and entity-review reviewer |
 | `app/cache.py` | TTL-based caching for queries, vectors, graph, entities (Redis or in-memory) |
 | `app/retry.py` | Shared retry utilities — exponential backoff for LLM, shorter retry for DB |
 | `app/config.py` | Pydantic settings (env-based configuration) |
@@ -68,7 +75,11 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `LITELLM_URL` | LiteLLM proxy URL | `http://localhost:4000` |
 | `LITELLM_API_KEY` | LiteLLM API key | — |
 | `EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |
-| `GEMINI_MODEL` | LLM model for extraction | `gemini-2.5-flash` |
+| `GEMINI_MODEL` | LLM model for extraction/query synthesis | `gemini-3.5-flash` |
+| `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
+| `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
+| `STRANDS_MODEL` | Optional model override for Strands helper calls | Same as `GEMINI_MODEL` |
+| `STRANDS_TEMPERATURE` | Temperature for Strands helper calls | `0.1` |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials | `neo4j` / — |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | pgvector credentials | `knowledge_graph` / `kguser` / — |
 | `REDIS_URL` | Redis connection URL (optional) | `redis://localhost:6379` |
@@ -76,6 +87,8 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `OWNER_CONTEXT` | Brief context about yourself | — |
 | `MAX_CONCURRENT_DOCS` | Parallel doc processing limit | `10` |
 | `AUTO_SYNC_INTERVAL_MINUTES` | Optional in-process incremental sync interval. `0` disables scheduling. | `0` |
+| `ENTITY_STEWARD_INTERVAL_MINUTES` | Periodic entity steward review interval. `0` disables scheduling. | `360` |
+| `ENTITY_STEWARD_CANDIDATE_LIMIT` | Candidate limit per scheduled steward run | `40` |
 
 ## API Endpoints
 
@@ -98,16 +111,31 @@ See [`.env.example`](.env.example) for all available configuration options.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/query` | POST | Natural language query with hybrid retrieval + LLM synthesis |
+| `/query/stream` | POST | SSE query stream with trace/status events, answer replacement after verifier repair, and trust metadata |
 | `/graph/search?q=...&type=...` | GET | Search graph nodes by name, optional type filter |
 | `/graph/node/{uuid}` | GET | Get node details + relationships |
 | `/graph/neighbors/{uuid}?depth=2` | GET | Multi-hop neighborhood traversal |
 | `/graph/initial?limit=300` | GET | Initial graph load for explorer |
+
+`/query` and `/query/stream` accept `mode`:
+
+| Mode | Purpose |
+|------|---------|
+| `quick` | Single-pass retrieval for fast lookup |
+| `deep` | Planned multi-pass retrieval with synthesis and citations |
+| `timeline` | Chronological extraction for change-over-time questions |
+| `strict` | High-accuracy path for medical, legal, tax, insurance, financial, and exact-value questions; includes canonical evidence pack, claim ledger, verifier repair, and trust dimensions |
 
 ### Maintenance
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/resolve-entities` | POST | Run entity resolution (merge duplicates) |
+| `/entity-review/candidates` | GET | Candidate duplicate entities with deterministic scores and latest steward suggestions |
+| `/entity-review/steward` | POST | Run the conservative entity steward manually; records suggestions only |
+| `/entity-review/merge` | POST | Merge a reviewed duplicate pair, then schedules a focused post-merge steward pass |
+| `/entity-review/split` | POST | Mark a pair as distinct |
+| `/entity-review/ignore` | POST | Hide a candidate pair from review |
 | `/create-indexes` | POST | Build IVFFlat vector indexes (run after reindex) |
 | `/logs` | GET | Buffered log lines (JSON), filterable by level/time |
 | `/logs/stream` | GET | SSE live log stream |
@@ -119,7 +147,9 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `/` | Dashboard — stats, quick actions, recent activity |
 | `/graph` | Interactive 2D/3D graph explorer with physics simulation |
 | `/documents` | Document browser with type filtering, sorting, pagination, batch reindex |
-| `/query` | Natural language query interface with cited results |
+| `/documents/[id]` | Document detail, extracted graph facts, chunks, processing status, and extraction feedback |
+| `/query` | Natural language query interface with cited results, modes, trace, trust dimensions, evidence review, and claim ledger |
+| `/entities/review` | Human review queue for possible duplicate entities, with steward suggestions |
 | `/debug` | Live terminal-style log viewer with level filtering and auto-scroll |
 
 ## Services
@@ -138,8 +168,10 @@ See [`.env.example`](.env.example) for all available configuration options.
 2. **Full reindex:** `POST /reindex` — classifies + extracts all Paperless documents
 3. **Build indexes:** `POST /create-indexes` — creates IVFFlat vector indexes (needs data first)
 4. **Entity resolution:** `POST /resolve-entities` — merges duplicate entities
-5. **Ongoing sync:** `POST /sync` — processes only new/changed documents
-6. **Query:** `POST /query {"question": "What invoices mention Acme Corp?"}` — hybrid search + LLM answer
+5. **Entity review:** `GET /entity-review/candidates` and optionally `POST /entity-review/steward` — review conservative merge/split suggestions
+6. **Ongoing sync:** `POST /sync` — processes only new/changed documents and schedules a post-sync steward pass
+7. **Query:** `POST /query {"question": "What invoices mention Acme Corp?", "mode": "deep"}` — hybrid search + LLM answer
+8. **Strict query:** `POST /query {"question": "What is my current premium?", "mode": "strict"}` — evidence pack + verifier + claim ledger for high-stakes answers
 
 ## Evaluation Harness
 

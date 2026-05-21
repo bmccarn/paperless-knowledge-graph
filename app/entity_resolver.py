@@ -680,18 +680,15 @@ class EntityResolver:
                     )
                 return uuid
 
-        # Create new entity
-        import uuid as uuid_mod
-        new_uuid = str(uuid_mod.uuid4())
+        # Create new entity — use UUID from create_node (it generates its own)
         props = {
-            "uuid": new_uuid,
             "name": name,
             "source_doc_ids": [source_doc_id],
             "entity_type": entity_type,
         }
         if description:
             props["description"] = description
-        await graph_store.create_node(label, props)
+        new_uuid = await graph_store.create_node(label, props)
         logger.info(f"Created new {entity_type} ({label}): '{name}' (uuid={new_uuid})")
         self._cache[cache_key] = new_uuid
         return new_uuid

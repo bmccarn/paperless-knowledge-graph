@@ -14,7 +14,7 @@ def get_json(base_url: str, path: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def post_json(base_url: str, path: str, payload: dict | None = None) -> dict:
+def post_json(base_url: str, path: str, payload: dict | None = None, timeout: int = 120) -> dict:
     body = json.dumps(payload or {}).encode("utf-8")
     req = request.Request(
         f"{base_url.rstrip('/')}{path}",
@@ -22,7 +22,7 @@ def post_json(base_url: str, path: str, payload: dict | None = None) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with request.urlopen(req, timeout=120) as resp:
+    with request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -42,7 +42,12 @@ def main() -> int:
     guardrails = get_json(args.base_url, "/ops/guardrails")
     checks.append(("guardrails", guardrails.get("status") in {"ok", "alerting"}))
 
-    query = post_json(args.base_url, "/query", {"question": "What documents are available?"})
+    query = post_json(
+        args.base_url,
+        "/query",
+        {"question": "What documents are available?", "mode": "quick"},
+        timeout=60,
+    )
     checks.append(("query", bool(query.get("answer")) and isinstance(query.get("sources", []), list)))
 
     if args.mutating:

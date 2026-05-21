@@ -49,6 +49,8 @@ interface Source {
   chunk_index?: number;
   excerpt?: string;
   date?: string;
+  date_signals?: Record<string, string[]>;
+  source_quality?: { score?: number; tier?: string; reasons?: string[] };
 }
 
 interface SourceSummary {
@@ -60,6 +62,9 @@ interface SourceSummary {
   trust_level?: string;
   trust_reasons?: string[];
   trust_penalties?: string[];
+  trust_dimensions?: Record<string, number>;
+  claim_summary?: Record<string, number>;
+  evidence_coverage?: Record<string, unknown>;
   verification_status?: string;
   unsupported_claim_count?: number;
   stale_or_conflicting_claim_count?: number;
@@ -86,10 +91,52 @@ interface TraceStep {
 
 interface Verification {
   status?: string;
+  supported_claims?: string[];
   unsupported_claims?: string[];
   stale_or_conflicting_claims?: string[];
   missing_evidence?: string[];
   notes?: string[];
+}
+
+interface ClaimLedger {
+  summary?: Record<string, number>;
+  claims?: Array<{
+    claim?: string;
+    support_status?: string;
+    document_id?: number;
+    source_title?: string;
+    evidence_id?: string;
+    evidence_excerpt?: string;
+    date?: string;
+    source_quality?: string;
+    notes?: string;
+  }>;
+}
+
+interface EvidencePack {
+  coverage?: Record<string, unknown>;
+  source_documents?: Array<{
+    document_id?: number;
+    title?: string;
+    doc_type?: string;
+    chunks?: number;
+    best_quality_score?: number;
+    best_quality_tier?: string;
+    structured_fact_count?: number;
+    date_signals?: Record<string, string[]>;
+  }>;
+  items?: Array<{
+    id?: string;
+    document_id?: number;
+    chunk_index?: number;
+    title?: string;
+    doc_type?: string;
+    source_quality?: { score?: number; tier?: string; reasons?: string[] };
+    date_signals?: Record<string, string[]>;
+    structured_fact_count?: number;
+    exact_term_hits?: number;
+    excerpt?: string;
+  }>;
 }
 
 interface TimelineEvent {
@@ -116,6 +163,8 @@ interface Message {
   query_plan?: QueryPlan;
   trace?: TraceStep[];
   verification?: Verification;
+  claim_ledger?: ClaimLedger;
+  evidence_pack?: EvidencePack;
   timeline_events?: TimelineEvent[];
 }
 
@@ -243,7 +292,7 @@ function QueryContent() {
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
-  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline">("deep");
+  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("deep");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -326,6 +375,8 @@ function QueryContent() {
       let queryPlan: QueryPlan | undefined;
       let trace: TraceStep[] = [];
       let verification: Verification | undefined;
+      let claimLedger: ClaimLedger | undefined;
+      let evidencePack: EvidencePack | undefined;
       let timelineEvents: TimelineEvent[] = [];
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
@@ -350,7 +401,16 @@ function QueryContent() {
             setStreamingContent(fullAnswer);
             setStatusMessage("");
             break;
+          case "answer_replace":
+            fullAnswer = event.content || "";
+            setStreamingContent(fullAnswer);
+            setStatusMessage("");
+            break;
           case "complete":
+            if (event.answer) {
+              fullAnswer = event.answer;
+              setStreamingContent(fullAnswer);
+            }
             sources = event.sources || [];
             entitiesFound = event.entities_found || [];
             cached = event.cached || false;
@@ -360,6 +420,8 @@ function QueryContent() {
             queryPlan = event.query_plan || undefined;
             trace = event.trace || trace;
             verification = event.verification || undefined;
+            claimLedger = event.claim_ledger || undefined;
+            evidencePack = event.evidence_pack || undefined;
             timelineEvents = event.timeline_events || [];
             break;
           case "error":
@@ -382,6 +444,8 @@ function QueryContent() {
         query_plan: queryPlan,
         trace,
         verification,
+        claim_ledger: claimLedger,
+        evidence_pack: evidencePack,
         timeline_events: timelineEvents,
       };
 
@@ -739,6 +803,80 @@ function QueryContent() {
                           ))}
                         </div>
                       )}
+                      {msg.source_summary.trust_dimensions && Object.keys(msg.source_summary.trust_dimensions).length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 pt-1">
+                          {Object.entries(msg.source_summary.trust_dimensions).map(([name, value]) => (
+                            <div key={name} className="rounded-md bg-muted/70 px-2 py-1">
+                              <div className="text-[9px] text-muted-foreground capitalize">{name.replaceAll("_", " ")}</div>
+                              <div className="text-[11px] font-medium">{Math.round((value || 0) * 100)}%</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {Object.entries(msg.source_summary.claim_summary).map(([status, count]) => count ? (
+                            <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-[9px]">
+                              {status}: {count}
+                            </Badge>
+                          ) : null)}
+                        </div>
+                      )}
+                      {msg.source_summary.evidence_coverage && (
+                        <p className="text-[10px] text-muted-foreground">
+                          Evidence pack: {String(msg.source_summary.evidence_coverage["evidence_item_count"] || 0)} items,
+                          {" "}{String(msg.source_summary.evidence_coverage["source_document_count"] || 0)} docs,
+                          {" "}quality {Math.round(Number(msg.source_summary.evidence_coverage["average_source_quality"] || 0) * 100)}%
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && msg.verification && (
+                    Boolean((msg.verification.unsupported_claims || []).length + (msg.verification.stale_or_conflicting_claims || []).length + (msg.verification.missing_evidence || []).length) && (
+                      <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                        <p className="font-medium flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> Evidence review
+                        </p>
+                        {(msg.verification.unsupported_claims || []).slice(0, 4).map((claim, idx) => (
+                          <div key={`unsupported-${idx}`} className="text-[10px] text-amber-700 dark:text-amber-300">
+                            Unsupported: {claim}
+                          </div>
+                        ))}
+                        {(msg.verification.stale_or_conflicting_claims || []).slice(0, 4).map((claim, idx) => (
+                          <div key={`stale-${idx}`} className="text-[10px] text-red-700 dark:text-red-300">
+                            Stale/conflict: {claim}
+                          </div>
+                        ))}
+                        {(msg.verification.missing_evidence || []).slice(0, 3).map((gap, idx) => (
+                          <div key={`gap-${idx}`} className="text-[10px] text-muted-foreground">
+                            Missing evidence: {gap}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  )}
+
+                  {msg.role === "assistant" && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <p className="font-medium flex items-center gap-1">
+                        <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})
+                      </p>
+                      {msg.claim_ledger.claims.slice(0, 6).map((claim, idx) => (
+                        <div key={idx} className="grid gap-1 text-[10px]">
+                          <div className="flex items-start gap-1.5">
+                            <Badge variant={claim.support_status === "supported" ? "secondary" : "outline"} className="text-[8px] px-1 py-0 shrink-0">
+                              {claim.support_status || "unknown"}
+                            </Badge>
+                            <span>{claim.claim}</span>
+                          </div>
+                          {(claim.source_title || claim.evidence_excerpt) && (
+                            <div className="text-muted-foreground pl-14 truncate">
+                              {claim.source_title || "Evidence"}{claim.date ? ` · ${claim.date}` : ""}{claim.evidence_excerpt ? ` · ${claim.evidence_excerpt}` : ""}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -938,11 +1076,12 @@ function QueryContent() {
                   ["quick", "Fast"],
                   ["deep", "Deep"],
                   ["timeline", "Timeline"],
+                  ["strict", "Strict"],
                 ].map(([id, label]) => (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline")}
+                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline" | "strict")}
                     className={
                       "rounded-md px-2.5 py-1.5 text-xs transition-colors " +
                       (queryMode === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")

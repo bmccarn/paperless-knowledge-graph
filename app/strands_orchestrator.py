@@ -76,6 +76,7 @@ Rules:
 - For Quick mode, keep subqueries minimal.
 - For Deep mode, create 3-5 targeted retrieval subqueries.
 - For Timeline mode, include effective date, expiration date, statement period, revision, and chronological subqueries.
+- For Strict mode, include original-source, contradiction/supersession, and exact-value subqueries.
 - Prefer current/latest checks for insurance, tax, mortgage, legal, financial, medical, vehicle, and VA/military questions.
 """
         return await self._json_agent(
@@ -179,6 +180,7 @@ Return only JSON:
 Rules:
 - Flag any claim that is not clearly supported by the sources.
 - For current-state questions, flag old/expired/superseded sources used as current.
+- Prefer exact evidence IDs/excerpts from the source context when possible.
 - Do not judge writing style; only evidence support.
 - Be compact: maximum 8 supported claims, 8 unsupported claims, 8 stale/conflicting claims, 5 missing evidence items, and 3 notes.
 - Use short phrases, not paragraphs.
@@ -191,6 +193,110 @@ Rules:
             ),
             prompt=prompt,
             max_tokens=3600,
+        )
+
+    async def extract_claim_ledger(
+        self,
+        question: str,
+        answer: str,
+        evidence_context: str,
+        verification: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+
+        prompt = f"""Create an atomic claim ledger for this answer.
+
+Question: {question}
+
+Answer:
+{answer[:9000]}
+
+Evidence context:
+{evidence_context[:18000]}
+
+Verifier notes:
+{json.dumps(verification or {}, default=str)[:3000]}
+
+Return only JSON:
+{{
+  "claims": [
+    {{
+      "claim": "single factual claim",
+      "support_status": "supported|partial|unsupported|conflicting|unknown",
+      "document_id": 123,
+      "source_title": "source document title",
+      "evidence_id": "evidence id from context",
+      "evidence_excerpt": "short exact supporting excerpt",
+      "date": "date/effective period if relevant",
+      "source_quality": "original|direct|summary|weak|unknown",
+      "notes": "short note"
+    }}
+  ]
+}}
+
+Rules:
+- Split compound sentences into separate factual claims.
+- Claims with numbers, dates, names, statuses, balances, coverage, diagnoses, lab values, or legal/tax facts must have source support.
+- If the evidence pack contains support, cite the evidence ID and document.
+- If support is missing or only inferred, mark partial/unsupported instead of guessing.
+- Maximum 40 claims.
+"""
+        return await self._json_agent(
+            name="claim_ledger",
+            system_prompt=(
+                "You build claim ledgers for evidence-grounded answers. "
+                "You classify each factual claim by source support and never invent citations."
+            ),
+            prompt=prompt,
+            max_tokens=5200,
+        )
+
+    async def repair_answer(
+        self,
+        question: str,
+        answer: str,
+        evidence_context: str,
+        verification: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+
+        prompt = f"""Repair this answer so it is source-faithful.
+
+Question: {question}
+
+Original answer:
+{answer[:9000]}
+
+Evidence context:
+{evidence_context[:18000]}
+
+Verifier findings:
+{json.dumps(verification, default=str)[:5000]}
+
+Return only JSON:
+{{
+  "answer": "repaired answer",
+  "changed": true,
+  "notes": ["what changed"]
+}}
+
+Rules:
+- Preserve supported details.
+- Remove unsupported precise values if no support exists in evidence.
+- If a useful claim is only partially supported, qualify it explicitly.
+- Add a short "Evidence limits" note when relevant.
+- Do not add new facts unless they are directly supported by the evidence context.
+"""
+        return await self._json_agent(
+            name="answer_editor",
+            system_prompt=(
+                "You are a source-faithful answer editor. You remove or qualify unsupported claims "
+                "without making the answer vague."
+            ),
+            prompt=prompt,
+            max_tokens=6200,
         )
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str, max_tokens: int) -> dict[str, Any]:

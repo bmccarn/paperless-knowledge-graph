@@ -30,6 +30,16 @@ from app.query_quality import (
     timeline_fallback_events,
     trace_step,
 )
+from app.evidence import (
+    answer_needs_repair,
+    build_evidence_pack,
+    extract_date_signals,
+    format_evidence_pack_for_llm,
+    infer_source_quality,
+    is_high_stakes_query,
+    normalize_claim_ledger,
+    repair_queries_from_verification,
+)
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
@@ -165,7 +175,8 @@ class QueryEngine:
     async def _execute_retrieval_plan(self, question: str, plan: dict, mode: str) -> tuple[dict, list[str], bool, list[dict]]:
         mode = normalize_mode(mode)
         trace = []
-        queries = retrieval_queries(plan, max_queries=1 if mode == "quick" else 6)
+        max_queries = 1 if mode == "quick" else 8 if mode == "strict" else 6
+        queries = retrieval_queries(plan, max_queries=max_queries)
         if mode != "quick" and self._requires_latest_check(question) and not any(q.get("role") == "current_state" for q in queries):
             queries.append({"role": "current_state", "query": self._latest_check_query(question)})
         latest_check_used = any(q.get("role") == "current_state" for q in queries)
@@ -346,7 +357,7 @@ class QueryEngine:
         fallback = timeline_fallback_events(sources)
         return fallback, [trace_step("timeline", "fallback", f"Used source-date fallback for {len(fallback)} timeline events")]
 
-    async def _verify_and_grade(
+    async def _verify_repair_and_grade(
         self,
         question: str,
         answer: str,
@@ -355,15 +366,17 @@ class QueryEngine:
         plan: dict,
         mode: str,
         broad: bool = False,
-    ) -> tuple[dict, dict, list[dict]]:
+    ) -> tuple[str, dict, dict, list[dict], dict, dict, list[dict], dict]:
         verification = None
         trace = []
+        evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
         if normalize_mode(mode) != "quick":
+            evidence_context = format_evidence_pack_for_llm(evidence_pack)
             verification = await strands_orchestrator.verify_answer(
                 question,
                 answer,
                 sources,
-                self._format_doc_context(context, question=question, broad=broad),
+                evidence_context,
                 plan,
             )
             if verification:
@@ -376,6 +389,41 @@ class QueryEngine:
                     f"Verifier status: {status}",
                     {"unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
                 ))
+                repair_queries = repair_queries_from_verification(question, verification, limit=5)
+                if repair_queries and (unsupported or verification.get("missing_evidence")):
+                    repaired_context = context
+                    used = []
+                    for repair_query in repair_queries:
+                        extra_context = await self._retrieve(repair_query)
+                        repaired_context = self._merge_context(repaired_context, extra_context)
+                        used.append(repair_query)
+                    context = repaired_context
+                    sources = self._build_sources(context, question=question)
+                    evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
+                    evidence_context = format_evidence_pack_for_llm(evidence_pack)
+                    verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
+                    unsupported = len(verification.get("unsupported_claims") or [])
+                    stale = len(verification.get("stale_or_conflicting_claims") or [])
+                    trace.append(trace_step(
+                        "verification_retrieval_repair",
+                        "ok" if not unsupported and not stale else "needs_review",
+                        f"Ran {len(used)} targeted searches for verifier gaps",
+                        {"queries": used, "unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
+                    ))
+                if answer_needs_repair(verification):
+                    repaired = await strands_orchestrator.repair_answer(question, answer, evidence_context, verification)
+                    repaired_answer = (repaired or {}).get("answer") if isinstance(repaired, dict) else None
+                    if repaired_answer and repaired_answer.strip() and repaired_answer.strip() != answer.strip():
+                        answer = repaired_answer.strip()
+                        trace.append(trace_step(
+                            "answer_editor",
+                            "ok",
+                            "Rewrote answer to remove or qualify unsupported claims",
+                            {"notes": (repaired or {}).get("notes", [])[:4]},
+                        ))
+                        verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
+                    else:
+                        trace.append(trace_step("answer_editor", "skipped", "No answer repair returned"))
             else:
                 verification = {
                     "status": "not_run",
@@ -388,14 +436,41 @@ class QueryEngine:
                 }
                 trace.append(trace_step("verifier", "fallback", "Verifier unavailable; used computed evidence score only"))
 
-        evidence = compute_evidence_grade(question, plan, sources, context, verification)
+        claim_ledger_raw = None
+        if normalize_mode(mode) != "quick":
+            claim_ledger_raw = await strands_orchestrator.extract_claim_ledger(
+                question,
+                answer,
+                format_evidence_pack_for_llm(evidence_pack),
+                verification,
+            )
+        claim_ledger = normalize_claim_ledger(claim_ledger_raw)
+        if claim_ledger.get("claims"):
+            trace.append(trace_step(
+                "claim_ledger",
+                "ok",
+                f"Audited {len(claim_ledger.get('claims', []))} answer claim(s)",
+                claim_ledger.get("summary"),
+            ))
+        else:
+            trace.append(trace_step("claim_ledger", "fallback", "Claim ledger unavailable or empty"))
+
+        evidence = compute_evidence_grade(
+            question,
+            plan,
+            sources,
+            context,
+            verification,
+            evidence_pack=evidence_pack,
+            claim_ledger=claim_ledger,
+        )
         trace.append(trace_step(
             "evidence_grade",
             "ok",
             f"{evidence['level']} trust score ({evidence['score']:.2f})",
             {"reasons": evidence.get("reasons", []), "penalties": evidence.get("penalties", [])},
         ))
-        return verification or {}, evidence, trace
+        return answer, verification or {}, evidence, trace, claim_ledger, evidence_pack, sources, context
 
     def _blend_confidence(self, llm_confidence: float, evidence: dict, verification: dict) -> float:
         evidence_score = float(evidence.get("score", 0.5))
@@ -476,6 +551,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         trace.extend(graph_trace)
 
         sources = self._build_sources(all_context, question=question)
+        evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
         timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad)
         trace.extend(timeline_trace)
         final = await self._final_synthesis(
@@ -487,8 +563,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             broad=is_broad,
             plan=plan,
             timeline_events=timeline_events,
+            evidence_pack=evidence_pack,
         )
-        verification, evidence, verify_trace = await self._verify_and_grade(
+        answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await self._verify_repair_and_grade(
             question,
             final.get("answer", ""),
             all_context,
@@ -507,11 +584,13 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             evidence=evidence,
             verification=verification,
             timeline_events=timeline_events,
+            evidence_pack=evidence_pack,
+            claim_ledger=claim_ledger,
         )
 
         result = {
             "question": question,
-            "answer": final.get("answer", ""),
+            "answer": answer,
             "confidence": confidence,
             "sources": sources,
             "source_summary": source_summary,
@@ -527,6 +606,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "trace": trace,
             "verification": verification,
             "evidence": evidence,
+            "claim_ledger": claim_ledger,
+            "evidence_pack": self._public_evidence_pack(evidence_pack),
             "current_state": current_state_summary(plan, sources),
             "timeline_events": timeline_events,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
@@ -559,6 +640,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                    "trace": cached.get("trace", []),
                    "verification": cached.get("verification", {}),
                    "evidence": cached.get("evidence", {}),
+                   "claim_ledger": cached.get("claim_ledger", {}),
+                   "evidence_pack": cached.get("evidence_pack", {}),
                    "current_state": cached.get("current_state", {}),
                    "timeline_events": cached.get("timeline_events", []),
                    "cached": True}
@@ -598,6 +681,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             yield {"type": "trace", "step": step}
 
         sources = self._build_sources(all_context, question=question)
+        evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
         if mode == "timeline":
             yield {"type": "status", "message": "Extracting and sorting timeline events..."}
         timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad)
@@ -616,6 +700,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             conversation_history,
             plan=plan,
             timeline_events=timeline_events,
+            evidence_pack=evidence_pack,
         )
 
         answer_chunks = []
@@ -626,7 +711,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         full_answer = "".join(answer_chunks)
 
         yield {"type": "status", "message": "Verifying source support and trust score..."}
-        verification, evidence, verify_trace = await self._verify_and_grade(
+        repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await self._verify_repair_and_grade(
             question,
             full_answer,
             all_context,
@@ -635,6 +720,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             mode,
             broad=is_broad,
         )
+        if repaired_answer != full_answer:
+            full_answer = repaired_answer
+            yield {"type": "answer_replace", "content": full_answer}
         trace.extend(verify_trace)
         for step in verify_trace:
             yield {"type": "trace", "step": step}
@@ -648,6 +736,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             evidence=evidence,
             verification=verification,
             timeline_events=timeline_events,
+            evidence_pack=evidence_pack,
+            claim_ledger=claim_ledger,
         )
 
         result = {
@@ -669,6 +759,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "trace": trace,
             "verification": verification,
             "evidence": evidence,
+            "claim_ledger": claim_ledger,
+            "evidence_pack": self._public_evidence_pack(evidence_pack),
             "current_state": current_state_summary(plan, sources),
             "timeline_events": timeline_events,
             "cached": False,
@@ -684,8 +776,11 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                "trace": trace,
                "verification": verification,
                "evidence": evidence,
+               "claim_ledger": claim_ledger,
+               "evidence_pack": self._public_evidence_pack(evidence_pack),
                "current_state": result["current_state"],
                "timeline_events": timeline_events,
+               "answer": full_answer,
                "cached": False}
 
     # ── Retrieval (TUNED: wider net) ────────────────────────────────
@@ -1030,6 +1125,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         conversation_history: list = None,
         plan: dict | None = None,
         timeline_events: list[dict] | None = None,
+        evidence_pack: dict | None = None,
     ) -> str:
         draft_section = ""
         if draft_answer:
@@ -1048,6 +1144,7 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             "quick": "Answer concisely. Use the strongest available sources and avoid unnecessary expansion.",
             "deep": "Answer comprehensively. Use all relevant details and cite the strongest sources.",
             "timeline": "Answer chronologically. Compare dates, revisions, current vs superseded records, and explain how the facts changed over time.",
+            "strict": "Answer only from source-backed evidence. Prefer exact excerpts, call out uncertainty, and do not include unsupported precise claims.",
         }[mode]
 
         plan_section = ""
@@ -1062,6 +1159,12 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 {json.dumps(timeline_events[:30], indent=2, default=str)[:7000]}
 """
 
+        evidence_section = ""
+        if evidence_pack:
+            evidence_section = f"""\n\nCanonical evidence pack used for this answer:
+{format_evidence_pack_for_llm(evidence_pack, max_items=50, max_chars=28000)}
+"""
+
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
@@ -1072,7 +1175,10 @@ CONTEXT ABOUT THE USER:
 
 INSTRUCTIONS:
 - Query mode: {mode}. {mode_instruction}
+- Build the answer from the canonical evidence pack first. Use the document context only as backup.
 - Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
+- Every precise fact should be traceable to a specific source document/excerpt. If exact evidence is missing, say that instead of guessing.
+- Distinguish document dates, generation dates, statement periods, service/specimen dates, effective dates, and expiration dates.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
 
@@ -1095,7 +1201,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - When multiple documents corroborate the same fact, cite all of them for completeness
 
 	Question: {question}
-	{conv_section}{draft_section}{plan_section}{timeline_section}
+	{conv_section}{draft_section}{plan_section}{timeline_section}{evidence_section}
 	Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
 	{doc_context}
 	{graph_text}
@@ -1112,6 +1218,7 @@ TEMPORAL AWARENESS — CRITICAL:
         broad: bool = False,
         plan: dict | None = None,
         timeline_events: list[dict] | None = None,
+        evidence_pack: dict | None = None,
     ) -> dict:
         doc_context = self._format_doc_context(context, question=question, broad=broad)
         graph_text = self._format_graph_context(context)
@@ -1124,6 +1231,7 @@ TEMPORAL AWARENESS — CRITICAL:
             conversation_history,
             plan=plan,
             timeline_events=timeline_events,
+            evidence_pack=evidence_pack,
         )
 
         try:
@@ -1192,6 +1300,64 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
+
+    async def _build_evidence_pack(
+        self,
+        question: str,
+        context: dict,
+        sources: list[dict],
+        plan: dict,
+        mode: str,
+        broad: bool = False,
+    ) -> dict:
+        combined = self._merge_and_rank(
+            context.get("vector_results", []),
+            context.get("keyword_results", []),
+            question=question,
+        )
+        high_accuracy = normalize_mode(mode) == "strict" or is_high_stakes_query(question, plan)
+        base_limit = 85 if broad else 55 if high_accuracy else 36
+        selected = self._diversify_chunks(
+            combined,
+            limit=base_limit,
+            max_per_doc=4 if high_accuracy else 3,
+        )
+
+        # Pull neighboring chunks from cited/high-rank docs so synthesis and
+        # verification see enough local context around exact values.
+        doc_ids = []
+        for source in sources[:10 if high_accuracy else 6]:
+            if source.get("document_id") is not None:
+                doc_ids.append(int(source["document_id"]))
+        for chunk in selected[:14 if high_accuracy else 8]:
+            if chunk.get("document_id") is not None:
+                doc_ids.append(int(chunk["document_id"]))
+        doc_ids = list(dict.fromkeys(doc_ids))[:14 if high_accuracy else 8]
+        if doc_ids:
+            try:
+                neighbor_chunks = await embeddings_store.get_chunks_for_documents(
+                    doc_ids,
+                    chunks_per_doc=8 if high_accuracy else 4,
+                )
+                selected_for_merge = [
+                    {**chunk, "similarity": chunk.get("combined_score", chunk.get("similarity", 0))}
+                    for chunk in selected
+                ]
+                selected = self._merge_and_rank(
+                    selected_for_merge + neighbor_chunks,
+                    [],
+                    question=question,
+                )
+            except Exception as e:
+                logger.warning("Evidence neighbor chunk expansion failed: %s", e)
+
+        return build_evidence_pack(
+            question=question,
+            plan=plan,
+            chunks=selected,
+            sources=sources,
+            max_items=90 if broad or high_accuracy else 60,
+        )
 
     def _format_doc_context(self, context: dict, question: str = "", broad: bool = False) -> str:
         combined = self._merge_and_rank(
@@ -1283,6 +1449,18 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             source_date = self._extract_source_date(best)
             if source_date:
                 source["date"] = source_date
+            date_signals = extract_date_signals(
+                best.get("content", ""),
+                title=best.get("title", ""),
+                fallback_date=source_date,
+            )
+            if date_signals:
+                source["date_signals"] = date_signals
+            source["source_quality"] = infer_source_quality(
+                title=best.get("title", ""),
+                doc_type=best.get("doc_type", ""),
+                content=best.get("content", ""),
+            )
             if len(chunks) > 1:
                 source["excerpt_count"] = len(chunks)
             source["excerpt"] = best.get("content", "")[:300]
@@ -1300,6 +1478,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         evidence: dict | None = None,
         verification: dict | None = None,
         timeline_events: list[dict] | None = None,
+        evidence_pack: dict | None = None,
+        claim_ledger: dict | None = None,
     ) -> dict:
         sources = self._build_sources(context, question=question)
         dates = [s["date"] for s in sources if s.get("date")]
@@ -1307,6 +1487,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         plan = plan or {}
         evidence = evidence or {}
         verification = verification or {}
+        evidence_pack = evidence_pack or {}
+        claim_ledger = claim_ledger or {}
         current = current_state_summary(plan, sources)
         return {
             "latest_source_date": latest_date,
@@ -1317,11 +1499,37 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             "trust_level": evidence.get("level"),
             "trust_reasons": evidence.get("reasons", []),
             "trust_penalties": evidence.get("penalties", []),
+            "trust_dimensions": evidence.get("dimensions", {}),
+            "claim_summary": claim_ledger.get("summary", {}),
+            "evidence_coverage": (evidence_pack.get("coverage") or {}),
             "verification_status": verification.get("status"),
             "unsupported_claim_count": len(verification.get("unsupported_claims") or []),
             "stale_or_conflicting_claim_count": len(verification.get("stale_or_conflicting_claims") or []),
             "current_state": current,
             "timeline_event_count": len(timeline_events or []),
+        }
+
+    def _public_evidence_pack(self, evidence_pack: dict | None) -> dict:
+        """Return UI-safe evidence metadata without sending full chunk bodies."""
+        evidence_pack = evidence_pack or {}
+        items = []
+        for item in (evidence_pack.get("items") or [])[:30]:
+            items.append({
+                "id": item.get("id"),
+                "document_id": item.get("document_id"),
+                "chunk_index": item.get("chunk_index"),
+                "title": item.get("title"),
+                "doc_type": item.get("doc_type"),
+                "source_quality": item.get("source_quality"),
+                "date_signals": item.get("date_signals"),
+                "structured_fact_count": item.get("structured_fact_count"),
+                "exact_term_hits": item.get("exact_term_hits"),
+                "excerpt": item.get("excerpt"),
+            })
+        return {
+            "coverage": evidence_pack.get("coverage") or {},
+            "source_documents": evidence_pack.get("source_documents") or [],
+            "items": items,
         }
 
     def _requires_latest_check(self, question: str) -> bool:

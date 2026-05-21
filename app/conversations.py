@@ -183,6 +183,8 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                 "query_plan": metadata.get("query_plan"),
                 "trace": metadata.get("trace"),
                 "verification": metadata.get("verification"),
+                "claim_ledger": metadata.get("claim_ledger"),
+                "evidence_pack": metadata.get("evidence_pack"),
                 "timeline_events": metadata.get("timeline_events"),
                 "created_at": m["created_at"].isoformat(),
             })

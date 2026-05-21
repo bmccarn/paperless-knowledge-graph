@@ -36,7 +36,9 @@ def normalize_mode(mode: str | None) -> str:
     mode = (mode or "deep").lower()
     if mode == "fast":
         mode = "quick"
-    return mode if mode in {"quick", "deep", "timeline"} else "deep"
+    if mode in {"high_accuracy", "high-stakes", "high_stakes", "strict"}:
+        mode = "strict"
+    return mode if mode in {"quick", "deep", "timeline", "strict"} else "deep"
 
 
 def classify_domain(question: str) -> str:
@@ -100,6 +102,15 @@ def heuristic_plan(question: str, mode: str) -> dict[str, Any]:
             subqueries.append({
                 "role": "timeline_dates",
                 "query": f"{question} effective date expiration date statement period revision history chronological",
+            })
+        if mode == "strict":
+            subqueries.append({
+                "role": "source_quality",
+                "query": f"{question} original source document exact values effective dates statement period",
+            })
+            subqueries.append({
+                "role": "contradiction_check",
+                "query": f"{question} corrected revised superseded previous conflicting updated",
             })
 
     return {
@@ -192,65 +203,124 @@ def compute_evidence_grade(
     sources: list[dict[str, Any]],
     context: dict[str, Any],
     verification: dict[str, Any] | None = None,
+    evidence_pack: dict[str, Any] | None = None,
+    claim_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reasons = []
     penalties = []
-    score = 0.15
+    dimensions: dict[str, Any] = {}
+    evidence_pack = evidence_pack or {}
+    coverage = evidence_pack.get("coverage") or {}
+    claim_summary = (claim_ledger or {}).get("summary") or {}
 
     source_count = len(sources)
+    retrieval_score = 0.0
     if source_count >= 5:
-        score += 0.22
+        retrieval_score += 0.75
         reasons.append(f"{source_count} source documents retrieved")
     elif source_count >= 2:
-        score += 0.14
+        retrieval_score += 0.5
         reasons.append(f"{source_count} source documents retrieved")
     elif source_count == 1:
-        score += 0.07
+        retrieval_score += 0.28
         reasons.append("1 source document retrieved")
     else:
         penalties.append("No source documents were retrieved")
 
     exact_hits = _exact_term_hits(question, sources)
     if exact_hits >= 3:
-        score += 0.16
+        retrieval_score += 0.25
         reasons.append("Strong direct term overlap with retrieved sources")
     elif exact_hits >= 1:
-        score += 0.08
+        retrieval_score += 0.12
         reasons.append("Some direct term overlap with retrieved sources")
     else:
         penalties.append("Weak direct term overlap with retrieved sources")
+    retrieval_score = min(1.0, retrieval_score)
 
+    freshness_score = 0.75
     if plan.get("requires_current"):
         latest_sources = [s for s in sources if s.get("date")]
         if latest_sources:
-            score += 0.12
+            freshness_score = 0.75
             reasons.append("Current-state query has dated source coverage")
         else:
+            freshness_score = 0.25
             penalties.append("Current-state query lacks dated sources")
+    if coverage.get("date_signal_counts"):
+        freshness_score = min(1.0, freshness_score + 0.15)
 
-    graph_nodes = len(context.get("graph_nodes", []) or [])
-    if graph_nodes:
-        score += min(0.12, graph_nodes / 100)
-        reasons.append(f"{graph_nodes} graph entities contributed context")
+    source_quality_score = float(coverage.get("average_source_quality") or 0)
+    if source_quality_score:
+        if source_quality_score >= 0.78:
+            reasons.append("Evidence pack uses strong original/direct sources")
+        elif source_quality_score < 0.55:
+            penalties.append("Evidence pack relies on weaker summary/context sources")
+    else:
+        source_quality_score = 0.45
 
     superseded_count = sum(1 for s in sources if _looks_superseded_text(s.get("excerpt", "")))
+    contradiction_score = 1.0
     if superseded_count:
-        score -= min(0.16, superseded_count * 0.05)
+        contradiction_score -= min(0.45, superseded_count * 0.12)
         penalties.append(f"{superseded_count} retrieved source(s) look superseded or expired")
+
+    claim_support_score = 0.5
+    supported = int(claim_summary.get("supported") or 0)
+    partial = int(claim_summary.get("partial") or 0)
+    unsupported_claims = int(claim_summary.get("unsupported") or 0)
+    conflicting_claims = int(claim_summary.get("conflicting") or 0)
+    ledger_total = supported + partial + unsupported_claims + conflicting_claims + int(claim_summary.get("unknown") or 0)
+    if ledger_total:
+        claim_support_score = (supported + 0.5 * partial) / max(ledger_total, 1)
+        if supported:
+            reasons.append(f"{supported} answer claim(s) source-backed")
+        if unsupported_claims:
+            penalties.append(f"{unsupported_claims} ledger claim(s) unsupported")
+        if conflicting_claims:
+            penalties.append(f"{conflicting_claims} ledger claim(s) conflicting")
 
     if verification:
         unsupported = verification.get("unsupported_claims") or []
         stale = verification.get("stale_or_conflicting_claims") or []
         if not unsupported and not stale and verification.get("status") in {"verified", "ok"}:
-            score += 0.2
+            claim_support_score = max(claim_support_score, 0.9)
             reasons.append("Verifier found no unsupported or stale claims")
         if unsupported:
-            score -= min(0.25, 0.07 * len(unsupported))
+            claim_support_score = min(claim_support_score, max(0.0, 0.65 - 0.08 * len(unsupported)))
             penalties.append(f"{len(unsupported)} unsupported claim(s) flagged by verifier")
         if stale:
-            score -= min(0.18, 0.06 * len(stale))
+            contradiction_score = min(contradiction_score, max(0.0, 0.8 - 0.1 * len(stale)))
             penalties.append(f"{len(stale)} stale/conflicting claim(s) flagged by verifier")
 
+    structured_score = 0.35
+    structured_count = int(coverage.get("structured_fact_count") or 0)
+    if structured_count >= 20:
+        structured_score = 1.0
+        reasons.append("Structured values/tables are present in evidence")
+    elif structured_count >= 5:
+        structured_score = 0.7
+
+    graph_nodes = len(context.get("graph_nodes", []) or [])
+    if graph_nodes:
+        reasons.append(f"{graph_nodes} graph entities contributed context")
+
+    dimensions = {
+        "retrieval_coverage": round(retrieval_score, 3),
+        "source_freshness": round(freshness_score, 3),
+        "claim_support": round(claim_support_score, 3),
+        "source_quality": round(source_quality_score, 3),
+        "contradiction_check": round(max(0.0, contradiction_score), 3),
+        "structured_evidence": round(structured_score, 3),
+    }
+    score = (
+        0.22 * retrieval_score
+        + 0.18 * freshness_score
+        + 0.3 * claim_support_score
+        + 0.15 * source_quality_score
+        + 0.1 * max(0.0, contradiction_score)
+        + 0.05 * structured_score
+    )
     score = max(0.0, min(1.0, score))
     level = "high" if score >= 0.78 else "medium" if score >= 0.5 else "low"
     return {
@@ -260,6 +330,9 @@ def compute_evidence_grade(
         "penalties": penalties[:6],
         "source_count": source_count,
         "exact_term_hits": exact_hits,
+        "dimensions": dimensions,
+        "claim_summary": claim_summary,
+        "coverage": coverage,
     }
 
 
@@ -333,6 +406,7 @@ def _strategy_for_mode(mode: str) -> str:
         "quick": "single-pass deterministic retrieval with no agent gap loop",
         "deep": "Strands-planned multi-query retrieval, graph expansion, evidence grading, verifier pass",
         "timeline": "Strands-planned retrieval, timeline extraction, deterministic event sort, verifier pass",
+        "strict": "High-accuracy retrieval, source-quality evidence pack, claim ledger, verifier repair loop",
     }[normalize_mode(mode)]
 
 

@@ -754,6 +754,8 @@ async def query(req: QueryRequest):
                     "query_plan": result.get("query_plan"),
                     "trace": result.get("trace"),
                     "verification": result.get("verification"),
+                    "claim_ledger": result.get("claim_ledger"),
+                    "evidence_pack": result.get("evidence_pack"),
                     "timeline_events": result.get("timeline_events"),
                 },
             )
@@ -807,6 +809,8 @@ async def query_stream(req: QueryRequest):
                         "query_plan": event.get("query_plan"),
                         "trace": event.get("trace"),
                         "verification": event.get("verification"),
+                        "claim_ledger": event.get("claim_ledger"),
+                        "evidence_pack": event.get("evidence_pack"),
                         "timeline_events": event.get("timeline_events"),
                     }
 

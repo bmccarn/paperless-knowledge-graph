@@ -4,7 +4,7 @@ import hashlib
 import re
 import asyncio
 from datetime import datetime, timezone
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 from openai import AsyncOpenAI, RateLimitError
@@ -37,17 +37,19 @@ from app.evidence import (
     build_evidence_pack,
     claim_ledger_from_verification,
     extract_date_signals,
+    exact_term_matches as evidence_exact_term_matches,
     exact_term_hits as evidence_exact_term_hits,
     format_evidence_pack_for_llm,
     infer_source_quality,
     is_high_stakes_query,
     normalize_claim_ledger,
+    query_terms as evidence_query_terms,
     repair_queries_from_verification,
 )
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v9"
+QUERY_CACHE_VERSION = "evidence-v10"
 
 
 class QueryEngine:
@@ -1705,13 +1707,13 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         }
 
     def _supporting_evidence_dates(self, evidence_pack: dict, question: str) -> list[str]:
-        focus_terms = self._supporting_focus_terms(question)
+        focus_terms = self._supporting_focus_terms(evidence_pack, question)
         dates = []
         for item in evidence_pack.get("items") or []:
             if not item.get("exact_term_hits"):
                 continue
             text = f"{item.get('title') or ''} {item.get('doc_type') or ''} {item.get('excerpt') or ''}".lower()
-            if focus_terms and not any(term in text for term in focus_terms):
+            if focus_terms and not (evidence_exact_term_matches(question, text) & focus_terms):
                 continue
             signals = item.get("date_signals") or {}
             for key in ("reported_date", "document_date", "specimen_date", "service_date"):
@@ -1721,27 +1723,25 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                         dates.append(normalized)
         return list(dict.fromkeys(dates))
 
-    def _supporting_focus_terms(self, question: str) -> set[str]:
-        short_signal_terms = {
-            "a1c", "alt", "ast", "bun", "cbc", "crp", "fsh", "ggt", "hcg", "hdl",
-            "hmg", "igf", "ldl", "lh", "psa", "tsh",
-        }
-        generic_terms = {
-            "about", "answer", "blood", "bloodwork", "current", "document", "documents",
-            "does", "from", "have", "last", "latest", "level", "levels", "source",
-            "sources", "what", "when", "where", "which", "with",
-        }
-        terms = {
-            term
-            for term in re.findall(r"[a-z0-9]{4,}", question.lower())
-            if term not in generic_terms
-        }
-        terms.update(
-            term
-            for term in re.findall(r"[a-z0-9]{2,3}", question.lower())
-            if term in short_signal_terms
-        )
-        return terms
+    def _supporting_focus_terms(self, evidence_pack: dict, question: str) -> set[str]:
+        query_terms = evidence_query_terms(question)
+        if not query_terms:
+            return set()
+
+        counts: Counter[str] = Counter()
+        for item in evidence_pack.get("items") or []:
+            text = f"{item.get('title') or ''} {item.get('doc_type') or ''} {item.get('excerpt') or ''}"
+            counts.update(evidence_exact_term_matches(question, text) & query_terms)
+        if not counts:
+            return set()
+
+        # Use the rarest matched query terms as the date-support focus. This is
+        # intentionally domain-neutral: exact short codes, IDs, form names, lab
+        # markers, vehicle VIN terms, tax form terms, and other specific tokens
+        # naturally beat broad words that appear across many retrieved docs.
+        rarest_count = min(counts.values())
+        max_count = max(rarest_count, min(3, len(evidence_pack.get("items") or [])))
+        return {term for term, count in counts.items() if count <= max_count}
 
     def _normalize_summary_date(self, value: str) -> str | None:
         iso_match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", value)
@@ -1904,7 +1904,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         mappings = [
             (("insurance", "policy", "coverage", "premium"), ("insurance", "policy"), 0.12),
             (("tax", "irs", "return", "w-2", "1099"), ("tax", "financial"), 0.12),
-            (("medical", "doctor", "diagnosis", "medication", "lab", "labs", "blood", "bloodwork", "igf", "tsh", "psa", "cbc"), ("medical",), 0.12),
+            (("medical", "doctor", "diagnosis", "medication", "lab", "labs", "blood", "bloodwork"), ("medical",), 0.12),
             (("mortgage", "loan", "escrow", "home"), ("mortgage", "statement", "contract"), 0.10),
             (("vehicle", "auto", "car", "truck", "vin"), ("vehicle", "registration", "insurance"), 0.10),
         ]

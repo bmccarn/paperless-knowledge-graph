@@ -13,6 +13,16 @@ import re
 from collections import defaultdict
 from typing import Any
 
+QUERY_STOPWORDS = {
+    "a", "about", "an", "and", "answer", "are", "as", "at", "be", "by",
+    "can", "could", "current", "did", "do", "document", "documents", "does",
+    "for", "from", "had", "has", "have", "how", "i", "in", "into", "is",
+    "it", "last", "latest", "level", "levels", "me", "my", "newest", "now",
+    "of", "on", "or", "our", "show", "source", "sources", "the", "their",
+    "this", "to", "was", "were", "what", "when", "where", "which", "who",
+    "with", "would", "you", "your",
+}
+
 
 HIGH_STAKES_DOMAINS = {
     "medical",
@@ -291,36 +301,38 @@ def structured_fact_count(content: str) -> int:
 
 
 def exact_term_hits(question: str, text: str) -> int:
-    short_signal_terms = {
-        "a1c",
-        "alt",
-        "ast",
-        "bun",
-        "cbc",
-        "crp",
-        "fsh",
-        "ggt",
-        "hcg",
-        "hdl",
-        "hmg",
-        "igf",
-        "ldl",
-        "lh",
-        "psa",
-        "tsh",
+    return len(exact_term_matches(question, text))
+
+
+def exact_term_matches(question: str, text: str) -> set[str]:
+    return query_terms(question) & _signal_terms(text)
+
+
+def query_terms(question: str) -> set[str]:
+    return {
+        term
+        for term in _signal_terms(question)
+        if term not in QUERY_STOPWORDS and len(term) >= 2
     }
-    terms = [
-        t
-        for t in re.findall(r"[a-z0-9]{4,}", question.lower())
-        if t not in {"what", "with", "from", "about", "documents", "latest", "current", "have", "does"}
-    ]
-    terms.extend(
-        t
-        for t in re.findall(r"[a-z0-9]{2,3}", question.lower())
-        if t in short_signal_terms
-    )
-    lower = text.lower()
-    return sum(1 for term in set(terms) if term in lower)
+
+
+def _signal_terms(text: str) -> set[str]:
+    """Tokenize user/source text into comparable exact-match terms.
+
+    This keeps short codes and acronyms useful across domains: IGF, TSH, VIN,
+    EIN, W-2, K-1, 1099, SKU, SSN, VA, etc. Matching is token-based instead of
+    substring-based, so short terms do not fire inside unrelated words.
+    """
+    terms: set[str] = set()
+    for raw in re.findall(r"[a-z0-9]+(?:[-/][a-z0-9]+)*", text.lower()):
+        terms.add(raw)
+        compact = re.sub(r"[-/]", "", raw)
+        if len(compact) >= 2:
+            terms.add(compact)
+        for part in re.split(r"[-/]", raw):
+            if len(part) >= 2:
+                terms.add(part)
+    return terms
 
 
 def evidence_item_id(result: dict[str, Any]) -> str:

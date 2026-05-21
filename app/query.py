@@ -1307,11 +1307,31 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
     def _merge_context(self, ctx1: dict, ctx2: dict) -> dict:
         merged = {}
 
+        def stable_key(value: Any) -> Any:
+            if isinstance(value, (dict, list, set, tuple)):
+                return json.dumps(value, sort_keys=True, default=str)
+            return value
+
+        def collect_entity_name(value: Any) -> list[str]:
+            if isinstance(value, str):
+                return [value] if value.strip() else []
+            if isinstance(value, dict):
+                name = value.get("name") or value.get("label")
+                if not name and isinstance(value.get("properties"), dict):
+                    name = value["properties"].get("name")
+                return [str(name)] if name else []
+            if isinstance(value, list):
+                names = []
+                for item in value:
+                    names.extend(collect_entity_name(item))
+                return names
+            return [str(value)] if value else []
+
         for key in ("vector_results", "keyword_results"):
             seen = set()
             combined = []
             for r in ctx1.get(key, []) + ctx2.get(key, []):
-                k = (r.get("document_id"), r.get("chunk_index", 0))
+                k = stable_key((r.get("document_id"), r.get("chunk_index", 0)))
                 if k not in seen:
                     seen.add(k)
                     combined.append(r)
@@ -1321,7 +1341,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             seen = set()
             combined = []
             for r in ctx1.get(key, []) + ctx2.get(key, []):
-                k = r.get("entity_uuid", id(r))
+                k = stable_key(r.get("entity_uuid", id(r)))
                 if k not in seen:
                     seen.add(k)
                     combined.append(r)
@@ -1340,9 +1360,14 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         sg2 = ctx2.get("subgraph", {})
         merged["subgraph"] = sg2 if (sg2 and (not sg1 or len(str(sg2)) > len(str(sg1)))) else sg1
 
-        merged["entity_names"] = list(set(
-            ctx1.get("entity_names", []) + ctx2.get("entity_names", [])
-        ))
+        entity_names = []
+        seen_names = set()
+        for item in ctx1.get("entity_names", []) + ctx2.get("entity_names", []):
+            for name in collect_entity_name(item):
+                if name not in seen_names:
+                    seen_names.add(name)
+                    entity_names.append(name)
+        merged["entity_names"] = entity_names
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────

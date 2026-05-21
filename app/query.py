@@ -1828,10 +1828,13 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
     def _rerank_score(self, result: dict, question: str) -> float:
         base = float(result.get("combined_score", 0))
         query = question.lower()
+        title = (result.get("title") or "").lower()
         doc_type = (result.get("doc_type") or "").lower()
         content = (result.get("content") or "").lower()
 
         score = base + self._doc_type_boost(query, doc_type) + self._recency_boost(result)
+        exact_hits = evidence_exact_term_hits(question, f"{title} {doc_type} {content[:5000]}")
+        score += 0.18 * exact_hits
         if self._looks_superseded(content):
             score -= 0.18
         return score
@@ -1840,7 +1843,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         mappings = [
             (("insurance", "policy", "coverage", "premium"), ("insurance", "policy"), 0.12),
             (("tax", "irs", "return", "w-2", "1099"), ("tax", "financial"), 0.12),
-            (("medical", "doctor", "diagnosis", "medication", "lab"), ("medical",), 0.12),
+            (("medical", "doctor", "diagnosis", "medication", "lab", "labs", "blood", "bloodwork", "igf", "tsh", "psa", "cbc"), ("medical",), 0.12),
             (("mortgage", "loan", "escrow", "home"), ("mortgage", "statement", "contract"), 0.10),
             (("vehicle", "auto", "car", "truck", "vin"), ("vehicle", "registration", "insurance"), 0.10),
         ]

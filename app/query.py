@@ -50,7 +50,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v13"
+QUERY_CACHE_VERSION = "evidence-v14"
 
 
 class QueryEngine:
@@ -1363,6 +1363,7 @@ INSTRUCTIONS:
 - Distinguish document dates, generation dates, statement periods, service/specimen dates, effective dates, and expiration dates.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
 - For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
+- For "latest/current/last" answers, state the newest source-backed value found in the evidence. Do not claim that a newer document does not contain the requested fact unless the evidence explicitly shows that absence; use retrieval-limited phrasing when needed.
 
 TEMPORAL AWARENESS — CRITICAL:
 - Every document has a date or effective period. USE THESE to determine what is CURRENT vs. EXPIRED.
@@ -1371,6 +1372,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - When payment amounts change over time (e.g., mortgage escrow adjustments), always report the CURRENT amount and note the progression.
 - For addresses: distinguish between current residence and previous addresses. Do not list bills from a previous address as current obligations unless there's evidence of ongoing service.
 - When two policies/services of the same type overlap, determine which is the ACTIVE one based on effective dates and mark the other as superseded.
+- Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
 - Today's date for reference: use the most recent document dates as a proxy for "now".
 - Cite sources using document TITLES: (Source: "Document Title")
 - If no title available, use: (Document 305)

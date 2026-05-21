@@ -290,6 +290,7 @@ Rules:
 - Do not add new facts unless they are directly supported by the evidence context and relevant to the question.
 - Remove source/admin details, account/client identifiers, logistics, or adjacent facts when they are merely evidence context and not part of the answer requested.
 - Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.
+- Do not assert that a newer document or record set lacks a value unless the evidence explicitly proves absence. If latest/current status is not fully provable, phrase it as the newest source-backed value found in the retrieved evidence.
 """
         return await self._json_agent(
             name="answer_editor",

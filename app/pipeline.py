@@ -42,7 +42,7 @@ From document titled: "{doc_title}"
 
 TASK: Determine if this is a real, specific named entity AND whether the assigned type is correct.
 
-Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition
+Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition, FinancialItem, InsurancePolicy, Contract, DateEvent, Address
 
 A VALID entity is a specific, identifiable thing: a real person, company, place, product, system, law, or event.
 An INVALID entity is: a generic term, action/process description, role title without a name, sentence fragment, line item label, or date.
@@ -476,7 +476,9 @@ def _filter_boilerplate(content: str) -> str:
     for pattern in _BOILERPLATE_PATTERNS:
         filtered = pattern.sub('\n', filtered)
     filtered = re.sub(r'\n{4,}', '\n\n\n', filtered)
-    filtered = re.sub(r'^[\s|:-]+$', '', filtered, flags=re.M)
+    # Remove visual separator lines (----, ===, etc.) but preserve markdown table
+    # separator rows (| :--- | :--- |) which are needed for table-aware chunking
+    filtered = re.sub(r'^[\s:-]+$', '', filtered, flags=re.M)  # no | in class
     original_len = len(content.strip())
     filtered_len = len(filtered.strip())
     stripped_pct = round((1 - filtered_len / original_len) * 100, 1) if original_len > 0 else 0
@@ -607,7 +609,7 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
         # Process all entities (type-agnostic)
         for entity in all_entities:
             name = entity.get("name", "")
-            etype = entity.get("type", "Person").strip().title()
+            etype = _normalize_entity_type(entity.get("type", "Person"))
             desc = entity.get("description", "")
             
             if not name or not _is_valid_entity_name(name):
@@ -692,7 +694,34 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
             logger.warning(f"Failed to create implied relationship: {e}")
 
 
-VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event", "Condition"}
+
+# Canonical PascalCase map — .title() breaks multi-capital types like FinancialItem
+_CANONICAL_ENTITY_TYPE = {
+    "financialitem": "FinancialItem",
+    "insurancepolicy": "InsurancePolicy",
+    "dateevent": "DateEvent",
+    "documentref": "DocumentRef",
+    "medicalresult": "MedicalResult",
+    "person": "Person",
+    "organization": "Organization",
+    "location": "Location",
+    "system": "System",
+    "product": "Product",
+    "document": "Document",
+    "event": "Event",
+    "condition": "Condition",
+    "contract": "Contract",
+    "address": "Address",
+}
+
+def _normalize_entity_type(etype: str) -> str:
+    """Normalize entity type to canonical PascalCase. Handles multi-capital types."""
+    if not etype:
+        return etype
+    cleaned = etype.strip()
+    return _CANONICAL_ENTITY_TYPE.get(cleaned.lower(), cleaned.title())
+
+VALID_ENTITY_TYPES = {"Person", "Organization", "Location", "System", "Product", "Document", "Event", "Condition", "FinancialItem", "InsurancePolicy", "Contract", "DateEvent", "Address"}
 
 # Map entity types to Neo4j labels (avoids collision with Paperless Document nodes)
 ENTITY_TYPE_TO_LABEL = {
@@ -722,7 +751,7 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
         logger.debug(f"Skipping date string entity: '{name}' ({entity_type})")
         return ""
     
-    entity_type = entity_type.strip().title()
+    entity_type = _normalize_entity_type(entity_type)
     
     # LLM validation for ALL entities — validates existence and corrects types
     # Cheap (Gemini Flash) + cached (same name+type = one call ever)

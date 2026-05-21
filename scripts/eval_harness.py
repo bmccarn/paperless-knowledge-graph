@@ -39,6 +39,7 @@ def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: int) -
 def score_case(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     answer = (result.get("answer") or "").lower()
     sources = result.get("sources") or []
+    summary = result.get("source_summary") or {}
     required_terms = case.get("required_terms") or []
     missing_terms = [term for term in required_terms if term.lower() not in answer]
 
@@ -47,16 +48,31 @@ def score_case(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     missing_docs = sorted(required_docs - actual_docs)
 
     confidence = float(result.get("confidence") or 0)
-    passed = not missing_terms and not missing_docs and confidence >= float(case.get("min_confidence", 0.35))
+    min_trust = float(case.get("min_trust_score", 0.0))
+    trust_score = float(summary.get("trust_score") or 0)
+    missing_trace = bool(case.get("require_trace")) and not result.get("trace")
+    missing_timeline = bool(case.get("require_timeline")) and not result.get("timeline_events")
+    passed = (
+        not missing_terms
+        and not missing_docs
+        and not missing_trace
+        and not missing_timeline
+        and confidence >= float(case.get("min_confidence", 0.35))
+        and trust_score >= min_trust
+    )
 
     return {
         "id": case.get("id"),
         "question": case.get("question"),
         "passed": passed,
         "confidence": confidence,
+        "trust_score": trust_score,
+        "verification_status": summary.get("verification_status"),
         "source_count": len(sources),
         "missing_terms": missing_terms,
         "missing_source_doc_ids": missing_docs,
+        "missing_trace": missing_trace,
+        "missing_timeline": missing_timeline,
     }
 
 
@@ -65,6 +81,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://localhost:8484", help="Paperless KG API URL")
     parser.add_argument("--cases", type=Path, default=Path("evals/canonical_questions.json"))
     parser.add_argument("--model", default="", help="Optional LiteLLM model route override")
+    parser.add_argument("--mode", default="", choices=["", "quick", "deep", "timeline"], help="Force one query mode for all cases")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON only")
     args = parser.parse_args()
@@ -74,7 +91,7 @@ def main() -> int:
     started = time.time()
 
     for case in cases:
-        payload = {"question": case["question"]}
+        payload = {"question": case["question"], "mode": args.mode or case.get("mode", "deep")}
         if args.model:
             payload["model"] = args.model
         try:
@@ -105,10 +122,16 @@ def main() -> int:
         for result in results:
             status = "PASS" if result.get("passed") else "FAIL"
             print(f"{status} {result['id']}: confidence={result.get('confidence', 'n/a')} sources={result.get('source_count', 0)}")
+            if result.get("trust_score") is not None:
+                print(f"  trust={result.get('trust_score')} verification={result.get('verification_status')}")
             if result.get("missing_terms"):
                 print(f"  missing terms: {', '.join(result['missing_terms'])}")
             if result.get("missing_source_doc_ids"):
                 print(f"  missing source docs: {result['missing_source_doc_ids']}")
+            if result.get("missing_trace"):
+                print("  missing trace output")
+            if result.get("missing_timeline"):
+                print("  missing timeline events")
             if result.get("error"):
                 print(f"  error: {result['error']}")
 

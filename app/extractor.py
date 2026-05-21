@@ -252,109 +252,96 @@ Document content:
 {content}"""
 
 # Pass 2 prompt: Entity extraction with precision focus, few-shot examples, and exclusion rules
-ENTITY_EXTRACTION_PROMPT = """You are an entity extraction system for a knowledge graph. Extract only NAMED, SPECIFIC entities from this document. Prefer precision over recall — when in doubt, skip it.
+ENTITY_EXTRACTION_PROMPT = """You are an entity extraction system for a personal knowledge graph. Extract only NAMED, SPECIFIC entities from this document. Prefer precision over recall — when in doubt, skip it.
 
-Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition
+Valid entity types:
+- **Person**: Named individuals with proper names (first/last/both)
+- **Organization**: Named companies, agencies, institutions, military units, banks, law firms
+- **Location**: Named cities, states, countries, military bases, buildings, addresses
+- **Condition**: Named medical conditions, diagnoses, disabilities, symptoms
+- **Product**: Named commercial products, medications with dosages, specific equipment
+- **System**: Named software platforms, databases, portals, websites
+- **Event**: Named events, operations, incidents, wars, disasters (NOT generic processes)
+- **Document**: Named specific forms, publications, regulations (DD-214, Form W-2, SF-86)
+- **FinancialItem**: Named accounts, funds, specific financial instruments, tax line items with amounts
+- **InsurancePolicy**: Named insurance plans, coverage types with policy numbers
+- **Contract**: Named agreements, leases, service contracts between specific parties
+- **DateEvent**: Specific named periods, deadlines, or milestones (NOT raw dates like "2025-01-15")
+- **Address**: Full mailing/physical addresses (street + city/state/zip)
 
 === FEW-SHOT EXAMPLE ===
 
 DOCUMENT SNIPPET:
-"John Doe visited Dr. Sarah Johnson at Quest Diagnostics on March 15, 2024. His CBC panel results showed elevated WBC. He was diagnosed with PTSD and prescribed Gabapentin 300mg. His DD-214 confirms service during Operation Desert Storm. He filed his claim through eBenefits."
+"Blake McCarn filed Form 1040 for tax year 2025, prepared by Michael T. Dulin, CPA, PA in Matthews, NC. Total income of $468,173 from AllCloud ($236,128 W-2), Wells Fargo ($98,773 W-2), and RapidRoute Solutions LLC ($133,214 S-Corp). Mortgage interest of $30,072 paid to PHH Mortgage. Federal tax liability: $72,545."
 
-CORRECT entity extractions:
-- "John Doe" (Person) — named individual, full name
-- "Dr. Sarah Johnson" (Person) — named individual
-- "Quest Diagnostics" (Organization) — named company
-- "Charlotte, NC" (Location) — specific named place
-- "PTSD" (Condition) — named medical condition
-- "Gabapentin 300mg" (Product) — specific named product
-- "DD-214" (Document) — specific named form
-- "Operation Desert Storm" (Event) — specific named event
-- "eBenefits" (System) — named software platform
+CORRECT extractions:
+- "Blake McCarn" (Person) — taxpayer/filer
+- "Michael T. Dulin, CPA, PA" (Organization) — tax preparation firm
+- "Matthews, NC" (Location) — preparer location
+- "AllCloud" (Organization) — employer
+- "Wells Fargo" (Organization) — employer
+- "RapidRoute Solutions LLC" (Organization) — S-Corp business
+- "PHH Mortgage" (Organization) — mortgage lender
+- "Form 1040" (Document) — specific tax form
+- "Form W-2" (Document) — wage statement
 
 WRONG extractions to AVOID:
-- "the patient" → generic role, not a named person
+- "the taxpayer" → generic role, not a named person
 - "tax preparer" → generic role without a proper name
-- "VR&E Officer" → generic role title, not a specific person
 - "30 percent" → a numeric value, not an entity
-- "90% combined rating" → a numeric value, not an entity
 - "your area" → vague reference, not a specific place
-- "the facility" → generic reference, not named
-- "Certification Issue Date" → form field label, not an entity
-- "Date of Issue" → form field label
+- "Certification Issue Date" → form field label
 - "Direct Review" → procedural term, not an event
-- "Evidence Submission" → process description, not an event
-- "Section 3" → document section header
-- "How VA Combines Percentages" → descriptive phrase
+- "$468,173" → raw dollar amount, not an entity
+- "2025-01-15" → raw date, not a DateEvent
 - "psychiatric care" → generic concept, not a product
-- "anxiety medications" → generic category, not a named product
-- "disaster area" → generic phrase, not a specific location
-- "lab results" → generic concept, not a specific document
-- "blood draw" → procedure description, not an entity
+- "lab results" → generic concept, not a document
 
 === DO NOT EXTRACT ===
-- Generic roles without proper names ("tax preparer", "officer", "physician", "VR&E Officer", "Veterans Law Judge")
-- Form field labels ("Date of Issue", "Reference Number", "Certification Issue Date", "Certification Expiration Date")
-- Percentages, dollar amounts, or numeric values ("30 percent", "90% combined rating", "$1,500")
-- Vague/generic locations ("your area", "the facility", "disaster area", "the hospital")
-- Process descriptions or procedural terms ("Direct Review", "Evidence Submission", "Hearing", "background investigations")
-- Document section headers ("Section 3", "Part A", "Chapter 2")
-- Descriptive phrases that aren't proper nouns ("How VA Combines Percentages", "psychiatric care", "anxiety medications")
+- Generic roles without proper names ("tax preparer", "officer", "physician")
+- Form field labels ("Date of Issue", "Reference Number", "Line 24")
+- Raw percentages, dollar amounts, or numeric values ("30 percent", "$72,545")
+- Vague/generic locations ("your area", "the facility")
+- Process descriptions or procedural terms ("Direct Review", "Evidence Submission")
+- Document section headers ("Section 3", "Part A")
+- Descriptive phrases that aren't proper nouns
+- Raw dates ("2025-01-15", "January 15, 2026") — only extract named periods/milestones
 - Common English words or generic nouns
+- IRS form numbers that appear only as checkbox references or "attach if applicable" lines (e.g., "Form 2441", "Form 8839" when they only appear on a 1040 checklist without actual filed data)
 
 === TYPE-BY-TYPE EXTRACTION GUIDANCE ===
 
-Think through each type systematically:
-
-1. PERSON: Named individuals ONLY. Must have a proper name (first name, last name, or both).
-   YES: "John Doe", "Dr. Sarah Johnson", "John A. Smith"
-   NO: "tax preparer", "VR&E Officer", "the physician", "Veteran", "applicant"
-
-2. ORGANIZATION: Named entities with proper names.
-   YES: "Quest Diagnostics", "Department of Veterans Affairs", "Bank of America", "82nd Airborne Division"
-   NO: "the hospital", "the bank", "insurance company", "military unit"
-
-3. LOCATION: Specific named places only.
-   YES: "Charlotte, NC", "Fort Bragg", "Walter Reed Medical Center"
-   NO: "your area", "the facility", "disaster area", "home address"
-
-4. CONDITION: Named medical conditions, diagnoses, symptoms, injuries, disabilities.
-   YES: "PTSD", "sleep apnea", "lumbar strain", "migraine headaches", "anxiety disorder"
-   NO: "feeling tired", "pain", "symptoms", "health issues"
-
-5. DOCUMENT: Specific named forms, documents, or publications.
-   YES: "DD-214", "SF-86", "Form W-2", "VA Form 21-526EZ"
-   NO: "the form", "application", "the letter", "paperwork"
-
-6. PRODUCT: Named commercial products, medications with specific names/dosages, named services.
-   YES: "Gabapentin 300mg", "Sertraline 50mg", "CPAP machine"
-   NO: "anxiety medications", "pain pills", "medical equipment"
-
-7. SYSTEM: Named software, databases, or platforms.
-   YES: "eBenefits", "MyHealtheVet", "VBMS", "e-QIP"
-   NO: "the website", "online portal", "the database"
-
-8. EVENT: Specific named events, operations, or incidents with identifiable names/dates.
-   YES: "Operation Desert Storm", "9/11 attacks", "Hurricane Katrina"
-   NO: "Direct Review", "Evidence Submission", "Hearing", "the appointment"
+1. **Person**: Must have a proper name. YES: "John Doe", "Dr. Sarah Johnson". NO: "the physician", "applicant"
+2. **Organization**: Named entities with proper names. YES: "AllCloud", "USAA", "82nd Airborne Division". NO: "the bank", "insurance company"
+3. **Location**: Specific named places. YES: "Charlotte, NC", "Fort Bragg". NO: "your area", "the facility"
+4. **Condition**: Named medical conditions. YES: "PTSD", "sleep apnea", "lumbar strain". NO: "pain", "symptoms"
+5. **Product**: Named products/medications. YES: "Gabapentin 300mg", "CPAP machine". NO: "anxiety medications"
+6. **System**: Named software/platforms. YES: "eBenefits", "MyHealtheVet". NO: "the website", "online portal"
+7. **Event**: Specific named events. YES: "Operation Desert Storm". NO: "the appointment", "Hearing"
+8. **Document**: Specific named forms that were actually filed or contain data. YES: "DD-214", "Form W-2", "Schedule A (Form 1040)" (when itemized deductions are present). NO: "the form", "paperwork", "Form 2441" (when only referenced as a checkbox on 1040)
+9. **FinancialItem**: When a document contains a specific financial figure tied to a named source, extract the SOURCE as an Organization, NOT the dollar amount as an entity.
+   - For tax returns: Only extract forms/schedules that were ACTUALLY FILED (have data filled in). Do NOT extract form numbers that appear only as checkbox references, line references, or "see instructions" mentions on Form 1040. For example, if Schedule A has itemized deductions filled in, extract it. If Form 2441 appears only as "Attach Form 2441" with no data, skip it.
+10. **Address**: Full street addresses only. YES: "5589 Galloway Drive, Midland, NC 28107". NO: "NC", "28107"
+11. **Contract**: Only extract if a specific agreement is named. YES: "Deed of Trust #2024-001234". NO: "the agreement"
+12. **DateEvent**: Only named milestones. YES: "Gulf War Era", "2025 Filing Season". NO: "January 15, 2025"
 
 === CANONICAL NAME GUIDANCE ===
-Use the most complete, properly-cased form of each name found in the document:
-- Prefer full names over abbreviated forms (e.g. "John Doe" over "DOE")
+Use the most complete, properly-cased form found in the document:
+- Prefer full names: "John A. Doe" over "DOE"
 - Prefer "Department of Veterans Affairs" over "VA" (unless VA is the only form used)
 - Prefer "Charlotte, NC" over "charlotte" or "CHARLOTTE NC"
 
 Return a JSON object:
-{{
+{{{{
   "entities": [
-    {{
+    {{{{
       "name": "entity name (canonical form)",
-      "type": "Person/Organization/Location/System/Product/Document/Event/Condition",
+      "type": "Person/Organization/Location/System/Product/Document/Event/Condition/FinancialItem/InsurancePolicy/Contract/DateEvent/Address",
       "confidence": 0.95,
       "description": "brief description of the entity in context"
-    }}
+    }}}}
   ]
-}}
+}}}}
 
 Only include entities with confidence >= 0.8. If unsure about an entity, skip it entirely.
 
@@ -371,43 +358,86 @@ RELATIONSHIP_EXTRACTION_PROMPT = """Infer relationships between the provided ent
 
 IMPORTANT RULES:
 - Only create relationships between entities that exist in the entity list below. Do NOT invent new entities.
-- Only infer relationships that can be reasonably inferred from the document context.
+- Only infer relationships that can be reasonably supported by the document context.
 - Include confidence scores based on how explicit the relationship is in the document.
+- Use UPPER_SNAKE_CASE for relationship types (Neo4j compatible).
 
-=== VALID RELATIONSHIP PATTERNS ===
+=== RELATIONSHIP GUIDANCE ===
 
-These are the allowed source_type → relationship → target_type patterns:
+Use consistent, general, and timeless relationship types. Prefer specific types over generic ones.
 
-- Person → WORKS_AT / EMPLOYED_BY → Organization
-- Person → PATIENT_OF / TREATED_BY → Organization
-- Person → LOCATED_AT / LIVES_IN → Location
-- Person → DIAGNOSED_WITH / HAS_CONDITION → Condition
-- Person → PRESCRIBED / TAKES → Product
-- Person → SERVED_IN / PARTICIPATED_IN → Event
-- Person → USES → System
-- Person → FILED / SUBMITTED → Document
-- Organization → LOCATED_IN → Location
-- Organization → PROVIDES → Product
-- Document → AUTHORED_BY / SIGNED_BY → Person
-- Document → ISSUED_BY / FROM → Organization
-- Document → REFERENCES → Document
-- Product → TREATS → Condition
+**Employment & Roles:**
+- WORKS_AT, EMPLOYED_BY — person works at an organization
+- OFFICER_OF, OWNER_OF — person has ownership/officer role
+- PREPARED_BY — document prepared by a person or firm
+- SIGNED_BY, AUTHORIZED_BY — document signed/authorized by person
 
-Relationship types should be UPPER_SNAKE_CASE (Neo4j compatible).
-You may also use: RELATED_TO as a generic fallback, but prefer specific types.
+**Financial:**
+- PAID_TO, PAID_BY — payment between parties
+- BILLED_BY, INVOICED_BY — billing relationship
+- WITHHELD_BY — tax withholding by employer
+- MORTGAGE_WITH, LOAN_FROM — lending relationship
+- PREMIUM_PAID_TO — insurance premium payments
+- INCOME_FROM — income source relationship
+
+**Medical & Health:**
+- PATIENT_OF, TREATED_BY — patient-provider relationship
+- DIAGNOSED_WITH, HAS_CONDITION — person has medical condition
+- PRESCRIBED, TAKES — medication relationship
+- ORDERED_BY — test ordered by physician
+- RESULTED_IN — test resulted in finding
+
+**Military & Government:**
+- SERVED_IN, PARTICIPATED_IN — military service
+- STATIONED_AT, DEPLOYED_TO — location assignment
+- ASSIGNED_TO — unit assignment
+- BRANCH_OF_SERVICE — service branch
+- RATED_AT — disability rating
+- FILED_WITH, SUBMITTED_TO — filing relationship
+- ISSUED_BY — document issued by agency
+
+**Legal & Contracts:**
+- PARTY_TO, CONTRACTED_WITH — contract parties
+- COVERS, INSURES — insurance coverage
+- GOVERNS, APPLIES_TO — regulatory relationship
+- EFFECTIVE_FROM, EXPIRES_ON — temporal bounds
+
+**Location & Association:**
+- LOCATED_IN, LOCATED_AT — physical location
+- LIVES_IN, RESIDES_AT — residential location
+- HEADQUARTERS_IN — organization HQ
+- MAILING_ADDRESS — address association
+
+**Document:**
+- REFERENCES, SUPERSEDES — document cross-references
+- ATTACHMENT_TO, SUPPLEMENT_TO — document hierarchy
+- AMENDS, CORRECTS — document revisions
+
+**General (use sparingly):**
+- RELATED_TO — only when no specific type fits
+- ASSOCIATED_WITH — loose association
+- MENTIONS — document mentions entity (avoid if a more specific type applies)
+
+You may create relationship types beyond these examples when the document context clearly supports a specific, meaningful connection. Keep types general and reusable — prefer "INCOME_FROM" over "RECEIVED_W2_WAGES_FROM".
+
+=== ANTI-PATTERNS (avoid these) ===
+- Do NOT create relationships between entities that merely appear in the same document without a stated connection
+- Do NOT use overly specific types like "RECEIVED_QUARTERLY_TAX_ESTIMATE_FROM" — simplify to "PAID_TO" or "ESTIMATED_TAX_TO"
+- Do NOT duplicate the same relationship with slight wording variations
+- Prefer MENTIONS as a last resort only — if a more meaningful relationship exists, use it
 
 Return a JSON object with:
-{{
+{{{{
   "relationships": [
-    {{
+    {{{{
       "from_entity": "source entity name (must match entity list exactly)",
-      "to_entity": "target entity name (must match entity list exactly)", 
+      "to_entity": "target entity name (must match entity list exactly)",
       "relationship_type": "RELATIONSHIP_TYPE",
       "confidence": 0.8,
       "description": "brief explanation of why this relationship exists"
-    }}
+    }}}}
   ]
-}}
+}}}}
 
 Document title: {title}
 
@@ -420,15 +450,19 @@ Document context:
 # Pass 4 prompt: Verification/critique of extracted entities
 VERIFICATION_PROMPT = """You are a quality reviewer for a knowledge graph entity extraction system. Review the following entity list extracted from a document and REMOVE any that are not real, specific, named entities.
 
+VALID ENTITY TYPES: Person, Organization, Location, System, Product, Document, Event, Condition, FinancialItem, InsurancePolicy, Contract, DateEvent, Address
+
 REMOVE entities that are:
 1. Generic descriptions rather than named entities (e.g., "tax preparer", "the physician", "VR&E Officer")
 2. Form field labels (e.g., "Date of Issue", "Certification Issue Date", "Reference Number")
-3. Numbers, percentages, or dollar amounts masquerading as entities (e.g., "30 percent", "90% combined rating")
+3. Numbers, percentages, or dollar amounts masquerading as entities (e.g., "30 percent", "90% combined rating", "$72,545")
 4. Vague references (e.g., "your area", "the facility", "disaster area")
 5. Process descriptions or procedural terms (e.g., "Direct Review", "Evidence Submission")
 6. Document section headers (e.g., "Section 3", "Part A")
 7. Descriptive phrases that aren't proper nouns (e.g., "How VA Combines Percentages")
 8. Duplicates or near-duplicates (keep the most complete version)
+9. Raw dates that aren't named periods (e.g., "2025-01-15", "January 15, 2026")
+10. Standalone zip codes, state abbreviations, or partial addresses
 
 KEEP entities that are:
 - Real named people (with actual proper names)
@@ -439,23 +473,31 @@ KEEP entities that are:
 - Specific named documents/forms (DD-214, SF-86, etc.)
 - Named software systems/platforms
 - Named events/operations
+- Full street addresses (for Address type)
+- Named insurance policies or coverage plans
+
+ALSO CHECK entity types — if an entity is valid but assigned the WRONG type, correct it:
+- "USAA" labeled as Person → should be Organization
+- "Fort Bragg" labeled as Person → should be Location
+- "PTSD" labeled as Event → should be Condition
+- "Gabapentin 300mg" labeled as Person → should be Product
 
 Document title: {title}
 
 Entity list to review:
 {entities}
 
-Return a JSON object with ONLY the validated entities (remove all junk):
-{{
+Return a JSON object with ONLY the validated entities (remove all junk, correct wrong types):
+{{{{
   "entities": [
-    {{
+    {{{{
       "name": "entity name",
       "type": "entity type",
       "confidence": 0.95,
       "description": "description"
-    }}
+    }}}}
   ]
-}}"""
+}}}}"""
 
 
 def _repair_json(raw_text: str) -> dict:

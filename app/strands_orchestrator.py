@@ -299,6 +299,43 @@ Rules:
             max_tokens=6200,
         )
 
+    async def review_entity_candidate(self, candidate: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+
+        prompt = f"""Review whether two knowledge-graph entities should be merged.
+
+Candidate:
+{json.dumps(candidate, default=str)[:7000]}
+
+Deterministic signals:
+{json.dumps(deterministic, default=str)[:3000]}
+
+Return only JSON:
+{{
+  "recommendation": "merge|split|review",
+  "confidence": 0.0,
+  "risk": "low|medium|high",
+  "reasons": ["short reason"],
+  "required_human_check": true
+}}
+
+Rules:
+- Prefer review/split for people, medical entities, addresses, legal parties, and ambiguous organizations.
+- Recommend merge only when names/identifiers/source context clearly indicate the same real-world entity.
+- Similar-looking names alone are not enough for high-risk entity types.
+- Never recommend destructive merge when entity types differ.
+"""
+        return await self._json_agent(
+            name="entity_steward",
+            system_prompt=(
+                "You are a conservative knowledge-graph entity steward. "
+                "Bad merges corrupt the graph, so you prefer review unless evidence is clear."
+            ),
+            prompt=prompt,
+            max_tokens=1800,
+        )
+
     async def _json_agent(self, name: str, system_prompt: str, prompt: str, max_tokens: int) -> dict[str, Any]:
         try:
             agent = Agent(

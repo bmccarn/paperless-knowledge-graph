@@ -5,6 +5,7 @@ import re
 import asyncio
 from datetime import datetime, timezone
 from collections import defaultdict
+from typing import Any
 
 from openai import AsyncOpenAI, RateLimitError
 
@@ -33,6 +34,7 @@ from app.query_quality import (
 from app.evidence import (
     answer_needs_repair,
     build_evidence_pack,
+    claim_ledger_from_verification,
     extract_date_signals,
     format_evidence_pack_for_llm,
     infer_source_quality,
@@ -425,6 +427,7 @@ class QueryEngine:
                         verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
                     else:
                         trace.append(trace_step("answer_editor", "skipped", "No answer repair returned"))
+                        answer = self._append_evidence_limits(answer, verification)
             else:
                 verification = {
                     "status": "not_run",
@@ -446,6 +449,8 @@ class QueryEngine:
                 verification,
             )
         claim_ledger = normalize_claim_ledger(claim_ledger_raw)
+        if not claim_ledger.get("claims") and verification:
+            claim_ledger = claim_ledger_from_verification(verification)
         if claim_ledger.get("claims"):
             trace.append(trace_step(
                 "claim_ledger",
@@ -472,6 +477,24 @@ class QueryEngine:
             {"reasons": evidence.get("reasons", []), "penalties": evidence.get("penalties", [])},
         ))
         return answer, verification or {}, evidence, trace, claim_ledger, evidence_pack, sources, context
+
+    def _append_evidence_limits(self, answer: str, verification: dict[str, Any]) -> str:
+        unsupported = verification.get("unsupported_claims") or []
+        stale = verification.get("stale_or_conflicting_claims") or []
+        missing = verification.get("missing_evidence") or []
+        if not unsupported and not stale and not missing:
+            return answer
+        lines = ["\n\nEvidence limits:"]
+        if unsupported:
+            lines.append("The verifier could not confirm these claim groups from the retrieved evidence:")
+            lines.extend(f"- {claim}" for claim in unsupported[:6])
+        if stale:
+            lines.append("The verifier found possible stale/conflicting claim groups:")
+            lines.extend(f"- {claim}" for claim in stale[:4])
+        if missing:
+            lines.append("Missing evidence to fully certify the answer:")
+            lines.extend(f"- {gap}" for gap in missing[:4])
+        return answer.rstrip() + "\n".join(lines)
 
     def _blend_confidence(self, llm_confidence: float, evidence: dict, verification: dict) -> float:
         evidence_score = float(evidence.get("score", 0.5))

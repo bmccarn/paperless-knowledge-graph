@@ -332,6 +332,30 @@ def normalize_claim_ledger(raw: Any) -> dict[str, Any]:
     return {"claims": claims[:80], "summary": summary}
 
 
+def claim_ledger_from_verification(verification: dict[str, Any] | None) -> dict[str, Any]:
+    verification = verification or {}
+    claims = []
+    for value in verification.get("supported_claims") or []:
+        claims.append({
+            "claim": str(value)[:500],
+            "support_status": "supported",
+            "notes": "From verifier supported claims",
+        })
+    for value in verification.get("unsupported_claims") or []:
+        claims.append({
+            "claim": str(value)[:500],
+            "support_status": "unsupported",
+            "notes": "From verifier unsupported claims",
+        })
+    for value in verification.get("stale_or_conflicting_claims") or []:
+        claims.append({
+            "claim": str(value)[:500],
+            "support_status": "conflicting",
+            "notes": "From verifier stale/conflicting claims",
+        })
+    return normalize_claim_ledger({"claims": claims})
+
+
 def repair_queries_from_verification(question: str, verification: dict[str, Any], limit: int = 5) -> list[str]:
     parts = []
     for key in ("unsupported_claims", "missing_evidence", "stale_or_conflicting_claims"):

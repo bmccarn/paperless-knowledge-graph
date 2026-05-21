@@ -34,6 +34,8 @@ class Settings(BaseSettings):
 
     max_concurrent_docs: int = 10
     auto_sync_interval_minutes: int = 0
+    entity_steward_interval_minutes: int = 360
+    entity_steward_candidate_limit: int = 40
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

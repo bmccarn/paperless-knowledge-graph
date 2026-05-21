@@ -63,6 +63,7 @@ interface SourceSummary {
   trust_reasons?: string[];
   trust_penalties?: string[];
   trust_dimensions?: Record<string, number>;
+  audit_status?: string;
   claim_summary?: Record<string, number>;
   evidence_coverage?: Record<string, unknown>;
   verification_status?: string;
@@ -859,6 +860,15 @@ function QueryContent() {
                         <p className="text-amber-600 dark:text-amber-400">
                           Verifier flagged {msg.source_summary.unsupported_claim_count || 0} unsupported and {msg.source_summary.stale_or_conflicting_claim_count || 0} stale/conflicting claim(s).
                         </p>
+                      )}
+                      {msg.source_summary.trust_penalties && msg.source_summary.trust_penalties.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {msg.source_summary.trust_penalties.slice(0, 3).map((penalty, idx) => (
+                            <span key={idx} className="rounded-md bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                              {penalty}
+                            </span>
+                          ))}
+                        </div>
                       )}
                       {msg.source_summary.trust_reasons && msg.source_summary.trust_reasons.length > 0 && (
                         <div className="flex flex-wrap gap-1">

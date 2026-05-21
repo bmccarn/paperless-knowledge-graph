@@ -183,7 +183,7 @@ export async function mergeEntityCandidate(primary_uuid: string, duplicate_uuid:
 }
 
 export async function runEntitySteward(limit = 75) {
-  return apiFetch(`/entity-review/steward?limit=${limit}`, { method: "POST" });
+  return apiFetch(`/entity-review/steward/task?limit=${limit}`, { method: "POST" });
 }
 
 export async function cancelTask(taskId: string) {

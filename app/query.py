@@ -43,6 +43,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
+QUERY_CACHE_VERSION = "evidence-v2"
 
 
 class QueryEngine:
@@ -526,7 +527,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
+        cache_key = normalize_query_key(f"{QUERY_CACHE_VERSION}:{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
@@ -627,7 +628,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         if conversation_history:
             conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
             conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(f"{mode}:{question}{conv_suffix}")
+        cache_key = normalize_query_key(f"{QUERY_CACHE_VERSION}:{mode}:{question}{conv_suffix}")
         cached = query_cache.get(cache_key)
         if cached is not None:
             yield {"type": "answer_chunk", "content": cached["answer"]}

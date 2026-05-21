@@ -283,11 +283,12 @@ Return only JSON:
 }}
 
 Rules:
-- Preserve supported details.
+- Preserve supported details that answer the user's question.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Add a short "Evidence limits" note when relevant.
-- Do not add new facts unless they are directly supported by the evidence context.
+- Do not add new facts unless they are directly supported by the evidence context and relevant to the question.
+- Remove source/admin details, account/client identifiers, logistics, or adjacent facts when they are merely evidence context and not part of the answer requested.
 """
         return await self._json_agent(
             name="answer_editor",

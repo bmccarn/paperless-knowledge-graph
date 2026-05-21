@@ -50,7 +50,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v11"
+QUERY_CACHE_VERSION = "evidence-v12"
 
 
 class QueryEngine:
@@ -1226,7 +1226,7 @@ Document context:
 {graph_text}
 
 Analyze the context and provide:
-1. A draft answer — be specific, cite document titles. Include ALL relevant details you can find. If this is a follow-up question, use the conversation context to understand what "it", "that", "more details", etc. refer to.
+1. A draft answer — be specific, cite document titles, and stay scoped to the user's question. Include all relevant answer details you can find, but do not add administrative/source metadata or adjacent facts merely because they are present in retrieved evidence. If this is a follow-up question, use the conversation context to understand what "it", "that", "more details", etc. refer to.
 2. A confidence score (0-1) for completeness.
 3. What information is MISSING or could be more complete? Generate exactly 5 targeted follow-up SEARCH queries to fill gaps. BE SPECIFIC — each query should target a SPECIFIC document type or known entity:
    - For each category mentioned in the question but not yet well-covered, generate a specific search like "GM Financial vehicle loan statement 2026" or "Progressive auto insurance declaration page"
@@ -1358,7 +1358,7 @@ CONTEXT ABOUT THE USER:
 INSTRUCTIONS:
 - Query mode: {mode}. {mode_instruction}
 - Build the answer from the canonical evidence pack first. Use the document context only as backup.
-- Be EXHAUSTIVE — use every piece of relevant information from the context. Do not summarize away details.
+- Be complete within the user's requested scope. Use every relevant answer detail from the context, but do not expand into adjacent facts, administrative metadata, account/client identifiers, providers, or source logistics unless the user asked for them or they are needed to disambiguate the answer.
 - Every precise fact should be traceable to a specific source document/excerpt. If exact evidence is missing, say that instead of guessing.
 - Distinguish document dates, generation dates, statement periods, service/specimen dates, effective dates, and expiration dates.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
@@ -1374,7 +1374,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - Today's date for reference: use the most recent document dates as a proxy for "now".
 - Cite sources using document TITLES: (Source: "Document Title")
 - If no title available, use: (Document 305)
-- Include ALL specific details: dates, amounts, percentages, names, medical terms, account numbers
+- Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
 - If information conflicts between documents, note BOTH, explain which is more current based on dates, and clearly label the outdated one as PREVIOUS/EXPIRED/SUPERSEDED
 - Reference knowledge graph relationships when they add context

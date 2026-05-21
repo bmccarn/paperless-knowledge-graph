@@ -214,6 +214,7 @@ def compute_evidence_grade(
     evidence_pack = evidence_pack or {}
     coverage = evidence_pack.get("coverage") or {}
     claim_summary = (claim_ledger or {}).get("summary") or {}
+    verification_status = (verification or {}).get("status")
 
     source_count = len(sources)
     retrieval_score = 0.0
@@ -295,6 +296,36 @@ def compute_evidence_grade(
             contradiction_score = min(contradiction_score, max(0.0, 0.8 - 0.1 * len(stale)))
             penalties.append(f"{len(stale)} stale/conflicting claim(s) flagged by verifier")
 
+    audit_score = 1.0 if ledger_total else 0.5
+    audit_status = "claim_audited" if ledger_total else "not_claim_audited"
+    score_cap = 1.0
+    if verification_status == "checking":
+        audit_score = 0.35
+        audit_status = "checking"
+        score_cap = min(score_cap, 0.69)
+        penalties.append("Claim support audit is still running")
+    elif verification_status == "not_run":
+        audit_score = 0.25
+        audit_status = "verifier_unavailable"
+        score_cap = min(score_cap, 0.74)
+        penalties.append("Verifier unavailable; answer is retrieval-backed but not claim-audited")
+    elif verification_status == "needs_review":
+        audit_score = min(audit_score, 0.65)
+        audit_status = "needs_review"
+        score_cap = min(score_cap, 0.77)
+        penalties.append("Verifier marked the answer for review")
+    elif verification_status in {"verified", "ok"}:
+        if ledger_total:
+            audit_score = max(0.75, claim_support_score)
+        else:
+            audit_score = 0.75
+            audit_status = "verifier_checked"
+    elif not ledger_total:
+        audit_score = 0.3
+        audit_status = "audit_missing"
+        score_cap = min(score_cap, 0.74)
+        penalties.append("No claim-level audit was available; trust is retrieval-backed only")
+
     structured_score = 0.35
     structured_count = int(coverage.get("structured_fact_count") or 0)
     if structured_count >= 20:
@@ -314,6 +345,7 @@ def compute_evidence_grade(
         "source_quality": round(source_quality_score, 3),
         "contradiction_check": round(max(0.0, contradiction_score), 3),
         "structured_evidence": round(structured_score, 3),
+        "audit_coverage": round(audit_score, 3),
     }
     score = (
         0.22 * retrieval_score
@@ -324,6 +356,9 @@ def compute_evidence_grade(
         + 0.05 * structured_score
     )
     score = max(0.0, min(1.0, score))
+    if score > score_cap:
+        score = score_cap
+        penalties.append("Trust score capped until claim audit coverage improves")
     level = "high" if score >= 0.78 else "medium" if score >= 0.5 else "low"
     return {
         "score": round(score, 3),
@@ -333,6 +368,7 @@ def compute_evidence_grade(
         "source_count": source_count,
         "exact_term_hits": exact_hits,
         "dimensions": dimensions,
+        "audit_status": audit_status,
         "claim_summary": claim_summary,
         "coverage": coverage,
     }

@@ -50,7 +50,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v14"
+QUERY_CACHE_VERSION = "evidence-v15"
 
 
 class QueryEngine:
@@ -505,10 +505,10 @@ class QueryEngine:
                     "unsupported_claims": [],
                     "stale_or_conflicting_claims": [],
                     "missing_evidence": [],
-                    "notes": ["Verifier unavailable; confidence is computed from retrieval evidence only."],
-                    "confidence_adjustment": 0,
+                    "notes": ["Verifier unavailable; answer is retrieval-backed but not claim-audited."],
+                    "confidence_adjustment": -0.12,
                 }
-                trace.append(trace_step("verifier", "fallback", "Verifier unavailable; used computed evidence score only"))
+                trace.append(trace_step("verifier", "fallback", "Verifier unavailable; answer is retrieval-backed but not claim-audited"))
                 await emit("verifier", evidence=preliminary_evidence)
 
         claim_ledger_raw = None
@@ -576,6 +576,11 @@ class QueryEngine:
         except Exception:
             adjustment = 0.0
         blended = (0.35 * float(llm_confidence or 0.5)) + (0.65 * evidence_score) + adjustment
+        status = verification.get("status") if isinstance(verification, dict) else None
+        if status == "checking":
+            blended = min(blended, 0.69)
+        elif status == "not_run":
+            blended = min(blended, 0.74)
         return round(max(0.0, min(1.0, blended)), 3)
 
     # ── Main query (non-streaming, backward compat) ─────────────────
@@ -1842,6 +1847,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             "trust_reasons": evidence.get("reasons", []),
             "trust_penalties": evidence.get("penalties", []),
             "trust_dimensions": evidence.get("dimensions", {}),
+            "audit_status": evidence.get("audit_status"),
             "claim_summary": claim_ledger.get("summary", {}),
             "evidence_coverage": (evidence_pack.get("coverage") or {}),
             "verification_status": verification.get("status"),

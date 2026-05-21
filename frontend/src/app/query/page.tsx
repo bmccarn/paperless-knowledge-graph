@@ -234,6 +234,7 @@ function QueryContent() {
   const [showHistoryDesktop, setShowHistoryDesktop] = useState(true);
   const [streamingContent, setStreamingContent] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
+  const [activitySteps, setActivitySteps] = useState<TraceStep[]>([]);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState("");
@@ -311,6 +312,7 @@ function QueryContent() {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setLoading(true);
+    setActivitySteps([{ step: "start", status: "running", detail: "Starting query workflow..." }]);
 
     const startTime = Date.now();
     try {
@@ -330,9 +332,18 @@ function QueryContent() {
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
+            if (event.message) {
+              setActivitySteps(prev => [
+                ...prev,
+                { step: "status", status: "running", detail: event.message },
+              ].slice(-8));
+            }
             break;
           case "trace":
-            if (event.step) trace = [...trace, event.step];
+            if (event.step) {
+              trace = [...trace, event.step];
+              setActivitySteps(prev => [...prev, event.step].slice(-8));
+            }
             break;
           case "answer_chunk":
             fullAnswer += event.content;
@@ -378,6 +389,7 @@ function QueryContent() {
       setMessages(allMessages);
       setStreamingContent("");
       setStatusMessage("");
+      setActivitySteps([]);
       setFollowUpSuggestions(followUps);
       loadConversations();
 
@@ -409,6 +421,7 @@ function QueryContent() {
             if (lastA?.follow_ups) setFollowUpSuggestions(lastA.follow_ups);
             setStreamingContent("");
             setStatusMessage("");
+            setActivitySteps([]);
             loadConversations();
             setLoading(false);
             return;
@@ -423,6 +436,7 @@ function QueryContent() {
       setMessages([...newMessages, errMsg]);
       setStreamingContent("");
       setStatusMessage("");
+      setActivitySteps([]);
     } finally {
       setLoading(false);
     }
@@ -830,12 +844,34 @@ function QueryContent() {
               </div>
             ))}
 
-            {(streamingContent || statusMessage) && (
+            {(streamingContent || statusMessage || (loading && activitySteps.length > 0)) && (
               <div className="flex gap-2 md:gap-3 justify-start">
                 <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                   <Network className="h-3.5 w-3.5 text-primary" />
                 </div>
                 <div className="max-w-[90%] md:max-w-[85%] space-y-2">
+                  {loading && activitySteps.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <div className="flex items-center gap-2 font-medium">
+                        <Bot className="h-3 w-3" />
+                        <span>Agent activity</span>
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      </div>
+                      <div className="space-y-1">
+                        {activitySteps.slice(-6).map((step, idx) => (
+                          <div key={`${step.step}-${idx}`} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                            <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${
+                              step.status === "fallback" || step.status === "needs_review" ? "bg-amber-500" : "bg-primary/70"
+                            }`} />
+                            <span>
+                              <span className="font-medium text-foreground">{step.step.replaceAll("_", " ")}</span>
+                              {step.detail ? `: ${step.detail}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {statusMessage && !streamingContent && (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
                       <Loader2 className="h-3 w-3 animate-spin" /> {statusMessage}

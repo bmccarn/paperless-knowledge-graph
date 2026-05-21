@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash"
+    fallback_model: str = "gpt-5.4-mini"
 
     litellm_url: str = "http://localhost:4000"
     litellm_api_key: str = ""

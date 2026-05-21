@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 
 import asyncpg
@@ -80,21 +81,68 @@ ON entity_embeddings USING GIN (content gin_trgm_ops);
 """
 
 
+def _find_table_regions(content: str) -> list:
+    """Find all markdown table regions in content.
+    Returns list of (start_pos, end_pos, header_text) tuples.
+    A table region spans from the header row through all contiguous data rows.
+    The header_text includes the header row + separator row for prepending."""
+    lines = content.split('\n')
+    regions = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # Look for separator rows (| :--- | or | --- |) to identify tables
+        if re.match(r'^\|[\s:]*-{2,}', line):
+            if i > 0 and lines[i - 1].strip().startswith('|'):
+                header = lines[i - 1].rstrip() + '\n' + lines[i].rstrip() + '\n'
+                # Table starts at the header row
+                table_start = sum(len(lines[j]) + 1 for j in range(i - 1))
+                # Scan forward to find end of table
+                j = i + 1
+                while j < len(lines):
+                    jline = lines[j].strip()
+                    if jline.startswith('|'):
+                        j += 1
+                        continue
+                    if not jline:
+                        # Empty line — check if table continues after it
+                        if j + 1 < len(lines) and lines[j + 1].strip().startswith('|'):
+                            j += 1
+                            continue
+                        break
+                    break  # Non-table, non-empty line
+                table_end = sum(len(lines[k]) + 1 for k in range(j))
+                regions.append((table_start, table_end, header))
+                i = j
+                continue
+        i += 1
+    return regions
+
+
 def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list[str]:
-    """Split text into chunks using paragraph/sentence boundaries with overlap."""
+    """Split text into chunks using paragraph/sentence boundaries with overlap.
+    Table-aware: when a chunk starts inside a markdown table, the table's header
+    row and separator row are prepended so the chunk is self-contained and the
+    LLM can interpret column values correctly."""
     if not content or not content.strip():
         return []
     if len(content) <= chunk_size:
         return [content]
 
-    chunks = []
+    # Pre-compute table regions for header prepending
+    table_regions = _find_table_regions(content)
+
+    # Phase 1: Normal boundary-aware chunking
+    raw_chunks = []
+    chunk_starts = []
     start = 0
     while start < len(content):
         end = start + chunk_size
         if end >= len(content):
             chunk = content[start:]
             if chunk.strip():
-                chunks.append(chunk)
+                raw_chunks.append(chunk)
+                chunk_starts.append(start)
             break
 
         # Try to find a good break point
@@ -116,14 +164,34 @@ def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list
 
         chunk = content[start:end]
         if chunk.strip():
-            chunks.append(chunk)
+            raw_chunks.append(chunk)
+            chunk_starts.append(start)
 
         # Move start with overlap
         start = end - overlap
         if start <= (end - chunk_size):
             start = end  # Prevent infinite loop
 
-    return chunks if chunks else [content[:chunk_size]]
+    if not raw_chunks:
+        return [content[:chunk_size]]
+
+    # Phase 2: Prepend table headers to continuation chunks that start within a table
+    result = [raw_chunks[0]]
+    for i in range(1, len(raw_chunks)):
+        chunk = raw_chunks[i]
+        pos = chunk_starts[i]
+
+        for tstart, tend, header in table_regions:
+            if tstart < pos < tend:
+                # This chunk starts inside this table — prepend header if not already present
+                header_first_line = header.split('\n')[0].strip()
+                if header_first_line not in chunk:
+                    chunk = header + chunk
+                break
+
+        result.append(chunk)
+
+    return result
 
 
 class EmbeddingsStore:
@@ -297,6 +365,65 @@ class EmbeddingsStore:
                 )
         await retry_db(_op, operation='store_document_embedding')
 
+
+    async def get_chunks_for_document(self, doc_id: int, limit: int = 3) -> list[dict]:
+        """Retrieve stored chunks for a specific document by ID."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT document_id, chunk_index, content, title, doc_type
+                FROM document_embeddings
+                WHERE document_id = $1
+                ORDER BY chunk_index ASC
+                LIMIT $2
+                """,
+                doc_id, limit,
+            )
+            return [
+                {
+                    'document_id': r['document_id'],
+                    'chunk_index': r['chunk_index'],
+                    'content': r['content'],
+                    'title': r['title'],
+                    'doc_type': r['doc_type'],
+                    'similarity': 0.5,  # neutral score for graph-driven results
+                }
+                for r in rows
+            ]
+
+    async def get_chunks_for_documents(self, doc_ids: list[int], chunks_per_doc: int = 2) -> list[dict]:
+        """Retrieve stored chunks for multiple documents in a single query.
+        Returns up to `chunks_per_doc` chunks per document, ordered by chunk_index.
+        """
+        if not doc_ids:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT document_id, chunk_index, content, title, doc_type
+                FROM (
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY chunk_index) AS rn
+                    FROM document_embeddings
+                    WHERE document_id = ANY($1::int[])
+                ) sub
+                WHERE rn <= $2
+                ORDER BY document_id, chunk_index
+                """,
+                doc_ids, chunks_per_doc,
+            )
+            return [
+                {
+                    'document_id': r['document_id'],
+                    'chunk_index': r['chunk_index'],
+                    'content': r['content'],
+                    'title': r['title'],
+                    'doc_type': r['doc_type'],
+                    'similarity': 0.4,  # lower base score for graph-driven results
+                }
+                for r in rows
+            ]
+
     async def delete_document_embeddings(self, doc_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings WHERE document_id = $1", doc_id)
@@ -350,6 +477,31 @@ class EmbeddingsStore:
                     """,
                     str(embedding), limit,
                 )
+            return [dict(r) for r in rows]
+
+    async def vector_search_by_doc_ids(self, query: str, doc_ids: list[int], limit: int = 40) -> list[dict]:
+        """Vector similarity search scoped to a specific set of document IDs.
+        Used by graph-driven retrieval: the graph identifies candidate docs,
+        then this method finds which of those docs are most semantically relevant
+        to the query. Returns chunks sorted by similarity score."""
+        if not doc_ids:
+            return []
+        embedding = await self.generate_embedding(query)
+        if not embedding:
+            return []
+        async with self.pool.acquire() as conn:
+            await conn.execute("SET hnsw.ef_search = 40")
+            rows = await conn.fetch(
+                """
+                SELECT document_id, chunk_index, content, title, doc_type,
+                       1 - (embedding <=> $1::vector) as similarity
+                FROM document_embeddings
+                WHERE document_id = ANY($3::int[])
+                ORDER BY embedding <=> $1::vector
+                LIMIT $2
+                """,
+                str(embedding), limit, doc_ids,
+            )
             return [dict(r) for r in rows]
 
     async def entity_vector_search(self, query: str, limit: int = 10) -> list[dict]:

@@ -47,7 +47,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v4"
+QUERY_CACHE_VERSION = "evidence-v5"
 
 
 class QueryEngine:
@@ -735,6 +735,26 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             yield {"type": "answer_chunk", "content": chunk}
 
         full_answer = "".join(answer_chunks)
+        yield {"type": "answer_done",
+               "answer": full_answer,
+               "sources": sources,
+               "source_summary": self._build_source_summary(
+                   all_context,
+                   latest_check_used,
+                   question=question,
+                   plan=plan,
+                   evidence_pack=evidence_pack,
+                   timeline_events=timeline_events,
+               ),
+               "entities_found": [
+                   {"name": e} if isinstance(e, str) else e
+                   for e in entities_found[:30]
+               ],
+               "query_plan": plan,
+               "trace": trace,
+               "evidence_pack": self._public_evidence_pack(evidence_pack),
+               "current_state": current_state_summary(plan, sources),
+               "timeline_events": timeline_events}
 
         yield {"type": "status", "message": "Verifying source support and trust score..."}
         repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await self._verify_repair_and_grade(

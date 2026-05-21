@@ -854,6 +854,7 @@ async def query_stream(req: QueryRequest):
         try:
             paperless_base = _get_paperless_url()
             full_answer_chunks = []
+            final_answer = None
             final_sources = None
             final_entities = None
             final_confidence = None
@@ -863,11 +864,14 @@ async def query_stream(req: QueryRequest):
             async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode):
                 if event.get("type") == "answer_chunk":
                     full_answer_chunks.append(event.get("content", ""))
+                if event.get("type") == "answer_replace":
+                    final_answer = event.get("content", "")
                 if event.get("type") == "complete" and event.get("sources"):
                     for source in event["sources"]:
                         if source.get("document_id"):
                             source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
                 if event.get("type") == "complete":
+                    final_answer = event.get("answer") or final_answer
                     final_sources = event.get("sources")
                     final_entities = event.get("entities_found")
                     final_confidence = event.get("confidence")
@@ -885,7 +889,7 @@ async def query_stream(req: QueryRequest):
                 await queue.put(event)
 
                 if event.get("type") == "complete" and req.conversation_id:
-                    full_answer = "".join(full_answer_chunks)
+                    full_answer = final_answer or "".join(full_answer_chunks)
                     await conversations.add_message(
                         req.conversation_id, "assistant", full_answer,
                         sources=final_sources,

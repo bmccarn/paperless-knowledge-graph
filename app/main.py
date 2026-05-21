@@ -223,6 +223,50 @@ async def _run_sync_task(task_type: str = "sync") -> str:
     return task_id
 
 
+async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> str:
+    running = [
+        t for t in _tasks.values()
+        if t["status"] == "running" and t.get("type") == "entity_steward"
+    ]
+    if running:
+        raise HTTPException(status_code=409, detail="Entity steward is already running.")
+
+    task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "type": "entity_steward",
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "limit": limit,
+        "reviewed_count": 0,
+        "current_doc": "Reviewing entity candidates",
+        "elapsed_seconds": 0,
+        "estimated_remaining_seconds": 0,
+    }
+
+    async def _run():
+        try:
+            result = await entity_steward.run_once(reason=reason, limit=limit)
+            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = result
+            _tasks[task_id]["reviewed_count"] = result.get("reviewed_count", 0)
+            _tasks[task_id]["current_doc"] = ""
+            elapsed = time.time() - _tasks[task_id]["_start_time"]
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except Exception as e:
+            logger.error("Entity steward task %s failed: %s", task_id, e, exc_info=True)
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
+        finally:
+            _schedule_task_cleanup(task_id)
+
+    asyncio.create_task(_run())
+    return task_id
+
+
 async def _auto_sync_loop():
     from app.config import settings
 
@@ -972,6 +1016,12 @@ async def entity_review_steward(limit: int = 50):
     except Exception as e:
         logger.error("Entity steward run failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/entity-review/steward/task", response_model=TaskResponse)
+async def entity_review_steward_task(limit: int = 75):
+    task_id = await _run_entity_steward_task(limit=min(limit, 200), reason="manual")
+    return TaskResponse(task_id=task_id, status="started", message="Entity steward started in background")
 
 
 @app.post("/entity-review/ignore")

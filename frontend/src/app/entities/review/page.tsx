@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getEntityReviewCandidates,
+  getTask,
   ignoreEntityCandidate,
   mergeEntityCandidate,
   runEntitySteward,
@@ -41,6 +42,19 @@ interface Notice {
   text: string;
 }
 
+interface TaskStatus {
+  status?: string;
+  result?: {
+    reviewed_count?: number;
+    suggest_merge?: number;
+    suggest_split?: number;
+    suggest_review?: number;
+  };
+  error?: string;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function EntityReviewPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +87,20 @@ export default function EntityReviewPage() {
     setNotice(null);
     setError("");
     try {
-      const result = await runEntitySteward(75);
+      const start = await runEntitySteward(75);
+      setNotice({ kind: "success", text: "Entity steward started. Reviewing candidates in the background..." });
+      let task: TaskStatus | null = null;
+      for (let attempt = 0; attempt < 160; attempt += 1) {
+        const latest = await getTask(start.task_id) as TaskStatus;
+        task = latest;
+        if (latest.status === "completed") break;
+        if (latest.status === "failed") throw new Error(latest.error || "Entity steward run failed.");
+        await sleep(1500);
+      }
+      if (!task || task.status !== "completed") {
+        throw new Error("Entity steward is still running. Refresh in a moment to see new suggestions.");
+      }
+      const result = task.result || {};
       setNotice({
         kind: "success",
         text: `Entity steward reviewed ${result.reviewed_count || 0} candidates: ${result.suggest_merge || 0} merge, ${result.suggest_split || 0} split, ${result.suggest_review || 0} review.`,

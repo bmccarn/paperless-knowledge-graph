@@ -35,6 +35,8 @@ import {
   Search,
   Gauge,
   Bot,
+  Route,
+  ShieldCheck,
 } from "lucide-react";
 
 interface Source {
@@ -54,6 +56,49 @@ interface SourceSummary {
   latest_check_used?: boolean;
   source_count?: number;
   newer_docs_may_exist?: boolean;
+  trust_score?: number;
+  trust_level?: string;
+  trust_reasons?: string[];
+  trust_penalties?: string[];
+  verification_status?: string;
+  unsupported_claim_count?: number;
+  stale_or_conflicting_claim_count?: number;
+  timeline_event_count?: number;
+}
+
+interface QueryPlan {
+  mode?: string;
+  intent?: string;
+  domain?: string;
+  requires_current?: boolean;
+  needs_timeline?: boolean;
+  strategy?: string;
+  planner?: string;
+  subqueries?: Array<{ role?: string; query?: string }>;
+}
+
+interface TraceStep {
+  step: string;
+  status?: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+}
+
+interface Verification {
+  status?: string;
+  unsupported_claims?: string[];
+  stale_or_conflicting_claims?: string[];
+  missing_evidence?: string[];
+  notes?: string[];
+}
+
+interface TimelineEvent {
+  date?: string;
+  title?: string;
+  summary?: string;
+  document_id?: number;
+  source_title?: string;
+  status?: string;
 }
 
 interface Message {
@@ -68,6 +113,10 @@ interface Message {
   confidence?: number;
   follow_ups?: string[];
   source_summary?: SourceSummary;
+  query_plan?: QueryPlan;
+  trace?: TraceStep[];
+  verification?: Verification;
+  timeline_events?: TimelineEvent[];
 }
 
 interface Conversation {
@@ -272,11 +321,18 @@ function QueryContent() {
       let confidence: number | undefined;
       let followUps: string[] = [];
       let sourceSummary: SourceSummary | undefined;
+      let queryPlan: QueryPlan | undefined;
+      let trace: TraceStep[] = [];
+      let verification: Verification | undefined;
+      let timelineEvents: TimelineEvent[] = [];
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
+            break;
+          case "trace":
+            if (event.step) trace = [...trace, event.step];
             break;
           case "answer_chunk":
             fullAnswer += event.content;
@@ -290,6 +346,10 @@ function QueryContent() {
             confidence = event.confidence;
             followUps = event.follow_up_suggestions || [];
             sourceSummary = event.source_summary || undefined;
+            queryPlan = event.query_plan || undefined;
+            trace = event.trace || trace;
+            verification = event.verification || undefined;
+            timelineEvents = event.timeline_events || [];
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -308,6 +368,10 @@ function QueryContent() {
         confidence,
         follow_ups: followUps,
         source_summary: sourceSummary,
+        query_plan: queryPlan,
+        trace,
+        verification,
+        timeline_events: timelineEvents,
       };
 
       const allMessages = [...newMessages, assistantMsg];
@@ -617,11 +681,24 @@ function QueryContent() {
                   {msg.role === "assistant" && msg.source_summary && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">Trust check</span>
+                        <span className="font-medium flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> Trust check
+                        </span>
                         {msg.source_summary.latest_check_used ? (
                           <Badge variant="secondary" className="text-[9px]">latest-pass run</Badge>
                         ) : (
                           <Badge variant="outline" className="text-[9px]">latest-pass not needed</Badge>
+                        )}
+                        {msg.source_summary.trust_level && (
+                          <Badge variant="outline" className="text-[9px]">
+                            {msg.source_summary.trust_level} trust
+                            {msg.source_summary.trust_score != null ? ` ${Math.round(msg.source_summary.trust_score * 100)}%` : ""}
+                          </Badge>
+                        )}
+                        {msg.source_summary.verification_status && (
+                          <Badge variant={msg.source_summary.verification_status === "verified" ? "secondary" : "outline"} className="text-[9px]">
+                            {msg.source_summary.verification_status}
+                          </Badge>
                         )}
                         {msg.source_summary.latest_source_date && (
                           <span className="text-muted-foreground">
@@ -634,6 +711,70 @@ function QueryContent() {
                           This answer did not require a sensitive-domain latest-document pass; newer documents may still exist.
                         </p>
                       )}
+                      {Boolean((msg.source_summary.unsupported_claim_count || 0) + (msg.source_summary.stale_or_conflicting_claim_count || 0)) && (
+                        <p className="text-amber-600 dark:text-amber-400">
+                          Verifier flagged {msg.source_summary.unsupported_claim_count || 0} unsupported and {msg.source_summary.stale_or_conflicting_claim_count || 0} stale/conflicting claim(s).
+                        </p>
+                      )}
+                      {msg.source_summary.trust_reasons && msg.source_summary.trust_reasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {msg.source_summary.trust_reasons.slice(0, 3).map((reason, idx) => (
+                            <span key={idx} className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && (msg.query_plan || (msg.trace && msg.trace.length > 0)) && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium flex items-center gap-1">
+                          <Route className="h-3 w-3" /> Why this answer
+                        </span>
+                        {msg.query_plan?.planner && <Badge variant="outline" className="text-[9px]">{msg.query_plan.planner} planner</Badge>}
+                        {msg.query_plan?.intent && <Badge variant="secondary" className="text-[9px]">{msg.query_plan.intent}</Badge>}
+                        {msg.query_plan?.domain && <Badge variant="outline" className="text-[9px]">{msg.query_plan.domain}</Badge>}
+                      </div>
+                      {msg.query_plan?.strategy && (
+                        <p className="text-muted-foreground">{msg.query_plan.strategy}</p>
+                      )}
+                      {msg.query_plan?.subqueries && msg.query_plan.subqueries.length > 0 && (
+                        <div className="space-y-1">
+                          {msg.query_plan.subqueries.slice(0, 4).map((q, idx) => (
+                            <div key={idx} className="flex gap-1.5 text-[10px]">
+                              <span className="shrink-0 text-muted-foreground">{q.role || "query"}</span>
+                              <span className="truncate">{q.query}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {msg.trace && msg.trace.length > 0 && (
+                        <div className="grid gap-1">
+                          {msg.trace.slice(-5).map((step, idx) => (
+                            <div key={idx} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                              <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0" />
+                              <span><span className="font-medium text-foreground">{step.step}</span>: {step.detail || step.status}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && msg.timeline_events && msg.timeline_events.length > 0 && (
+                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
+                      <p className="font-medium flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> Timeline events ({msg.timeline_events.length})
+                      </p>
+                      {msg.timeline_events.slice(0, 6).map((event, idx) => (
+                        <div key={idx} className="grid grid-cols-[84px_1fr] gap-2 text-[10px]">
+                          <span className="text-muted-foreground truncate">{event.date || "No date"}</span>
+                          <span className="truncate">{event.title || event.summary}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -758,7 +899,7 @@ function QueryContent() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-lg border bg-background p-0.5">
                 {[
-                  ["quick", "Quick"],
+                  ["quick", "Fast"],
                   ["deep", "Deep"],
                   ["timeline", "Timeline"],
                 ].map(([id, label]) => (

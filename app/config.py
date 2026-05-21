@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     litellm_url: str = "http://localhost:4000"
     litellm_api_key: str = ""
     embedding_model: str = "text-embedding-3-large"
+    strands_enabled: bool = True
+    strands_model: str = ""
+    strands_temperature: float = 0.1
 
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"

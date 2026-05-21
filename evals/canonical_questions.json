@@ -3,30 +3,54 @@
     "id": "insurance-current-auto",
     "question": "What are my current auto insurance policies?",
     "required_terms": ["Progressive", "USAA"],
-    "sensitive_domain": true
+    "sensitive_domain": true,
+    "mode": "deep",
+    "min_trust_score": 0.45,
+    "require_trace": true
   },
   {
     "id": "insurance-homeowners",
     "question": "What is my homeowners insurance coverage?",
     "required_terms": ["homeowners", "dwelling", "liability"],
-    "sensitive_domain": true
+    "sensitive_domain": true,
+    "mode": "deep",
+    "min_trust_score": 0.45,
+    "require_trace": true
   },
   {
     "id": "tax-business",
     "question": "What tax documents mention RapidRoute Solutions?",
     "required_terms": ["RapidRoute", "tax"],
-    "sensitive_domain": true
+    "sensitive_domain": true,
+    "mode": "deep",
+    "min_trust_score": 0.4,
+    "require_trace": true
   },
   {
     "id": "vehicles",
     "question": "What vehicles are referenced in my documents?",
     "required_terms": ["vehicle"],
-    "sensitive_domain": false
+    "sensitive_domain": false,
+    "mode": "quick",
+    "require_trace": true
   },
   {
     "id": "mortgage",
     "question": "What mortgage or home loan documents are in the archive?",
     "required_terms": ["mortgage"],
-    "sensitive_domain": true
+    "sensitive_domain": true,
+    "mode": "deep",
+    "min_trust_score": 0.4,
+    "require_trace": true
+  },
+  {
+    "id": "insurance-timeline",
+    "question": "How has my insurance coverage changed over time?",
+    "required_terms": ["insurance"],
+    "sensitive_domain": true,
+    "mode": "timeline",
+    "min_trust_score": 0.4,
+    "require_trace": true,
+    "require_timeline": true
   }
 ]

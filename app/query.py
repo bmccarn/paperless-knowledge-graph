@@ -2,6 +2,7 @@ import json
 import logging
 import hashlib
 import re
+import asyncio
 from datetime import datetime, timezone
 from collections import defaultdict
 
@@ -18,6 +19,18 @@ from app.retry import retry_with_backoff
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.cache import query_cache, vector_cache, graph_cache, normalize_query_key
+from app.query_quality import (
+    compute_evidence_grade,
+    current_state_summary,
+    heuristic_plan,
+    merge_agent_plan,
+    normalize_mode,
+    retrieval_queries,
+    sort_timeline_events,
+    timeline_fallback_events,
+    trace_step,
+)
+from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +73,213 @@ class QueryEngine:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
+    # ── Orchestration ─────────────────────────────────────────────────
+
+    def _conversation_context(self, conversation_history: list = None) -> str:
+        if not conversation_history:
+            return ""
+        lines = []
+        for msg in conversation_history[-6:]:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            lines.append(f"{role}: {msg.get('content', '')[:600]}")
+        return "\n".join(lines)
+
+    async def _build_query_plan(self, question: str, mode: str, conversation_history: list = None) -> tuple[dict, list[dict]]:
+        mode = normalize_mode(mode)
+        trace = [trace_step("mode", "ok", f"{mode} query strategy selected", {"mode": mode})]
+
+        if mode == "quick":
+            plan = heuristic_plan(question, mode)
+            trace.append(trace_step(
+                "planner",
+                "ok",
+                "Quick mode uses deterministic single-pass planning",
+                {"planner": plan.get("planner"), "intent": plan.get("intent"), "domain": plan.get("domain")},
+            ))
+            return plan, trace
+
+        agent_plan = await strands_orchestrator.plan_query(
+            question,
+            mode,
+            conversation_context=self._conversation_context(conversation_history),
+        )
+        plan = merge_agent_plan(question, mode, agent_plan)
+        trace.append(trace_step(
+            "planner",
+            "ok" if plan.get("planner") == "strands" else "fallback",
+            "Strands planner produced a retrieval plan" if plan.get("planner") == "strands" else "Using heuristic retrieval plan",
+            {
+                "strands": strands_orchestrator.status,
+                "intent": plan.get("intent"),
+                "domain": plan.get("domain"),
+                "requires_current": plan.get("requires_current"),
+                "subquery_count": len(plan.get("subqueries", [])),
+            },
+        ))
+        return plan, trace
+
+    async def _execute_retrieval_plan(self, question: str, plan: dict, mode: str) -> tuple[dict, list[str], bool, list[dict]]:
+        mode = normalize_mode(mode)
+        trace = []
+        queries = retrieval_queries(plan, max_queries=1 if mode == "quick" else 6)
+        latest_check_used = any(q.get("role") == "current_state" for q in queries)
+
+        async def _retrieve_one(item: dict) -> tuple[dict, dict]:
+            ctx = await self._retrieve(item["query"])
+            return item, ctx
+
+        if mode == "quick":
+            item = queries[0] if queries else {"role": "primary", "query": question}
+            all_context = await self._retrieve(item["query"])
+            trace.append(trace_step("retrieval", "ok", "Single-pass hybrid retrieval completed", {"queries": [item]}))
+            return all_context, [], latest_check_used, trace
+
+        retrieved = await asyncio.gather(*[_retrieve_one(item) for item in queries])
+        all_context: dict | None = None
+        for item, ctx in retrieved:
+            all_context = ctx if all_context is None else self._merge_context(all_context, ctx)
+            trace.append(trace_step(
+                "retrieval",
+                "ok",
+                f"{item.get('role', 'planned')} retrieval completed",
+                {
+                    "query": item.get("query"),
+                    "vector_results": len(ctx.get("vector_results", [])),
+                    "keyword_results": len(ctx.get("keyword_results", [])),
+                    "graph_nodes": len(ctx.get("graph_nodes", [])),
+                },
+            ))
+
+        all_context = all_context or {
+            "vector_results": [], "keyword_results": [], "entity_results": [],
+            "entity_kw_results": [], "graph_nodes": [], "subgraph": {}, "entity_names": [],
+        }
+        return all_context, [q["query"] for q in queries[1:]], latest_check_used, trace
+
+    async def _gap_review(self, question: str, context: dict, conversation_history: list, mode: str) -> tuple[dict, dict, list[str], list[dict]]:
+        trace = []
+        if normalize_mode(mode) == "quick":
+            entities = context.get("entity_names", [])
+            return {"draft_answer": "", "confidence": 0.55, "entities_found": entities, "follow_up_suggestions": []}, context, [], trace
+
+        first_pass = await self._synthesize_with_gaps(question, context, conversation_history)
+        follow_ups_used = []
+        for follow_up in first_pass.get("follow_up_queries", [])[:2]:
+            extra_context = await self._retrieve(follow_up)
+            context = self._merge_context(context, extra_context)
+            follow_ups_used.append(follow_up)
+            trace.append(trace_step(
+                "gap_review",
+                "ok",
+                "Follow-up retrieval filled an evidence gap",
+                {"query": follow_up, "vector_results": len(extra_context.get("vector_results", []))},
+            ))
+        if not follow_ups_used:
+            trace.append(trace_step("gap_review", "ok", "No additional gap follow-up retrieval was needed"))
+        return first_pass, context, follow_ups_used, trace
+
+    async def _expand_planned_graph(self, context: dict, entities_found: list) -> tuple[dict, list[dict]]:
+        trace = []
+        entity_candidates = []
+        for entity in entities_found or []:
+            if isinstance(entity, dict):
+                name = entity.get("name") or entity.get("label")
+            else:
+                name = entity
+            if name:
+                entity_candidates.append(str(name))
+        entity_candidates.extend(str(e) for e in context.get("entity_names", []) if e)
+        entity_candidates = list(dict.fromkeys(entity_candidates))[:12]
+
+        if entity_candidates:
+            graph_context = await self._expand_graph(entity_candidates)
+            context = self._merge_context(context, graph_context)
+            trace.append(trace_step(
+                "graph_expansion",
+                "ok",
+                f"Expanded {len(entity_candidates)} planned entities through Neo4j",
+                {"entities": entity_candidates[:8], "graph_nodes": len(graph_context.get("graph_nodes", []))},
+            ))
+        else:
+            trace.append(trace_step("graph_expansion", "skipped", "No entity candidates found for graph expansion"))
+        return context, trace
+
+    async def _extract_timeline_events(self, question: str, context: dict, sources: list[dict], mode: str) -> tuple[list[dict], list[dict]]:
+        if normalize_mode(mode) != "timeline":
+            return [], []
+        doc_context = self._format_doc_context(context, question=question)
+        graph_text = self._format_graph_context(context)
+        events = await strands_orchestrator.extract_timeline(question, f"{doc_context}\n{graph_text}")
+        if events:
+            events = sort_timeline_events(events)
+            return events[:30], [trace_step("timeline", "ok", f"Extracted and sorted {len(events)} timeline events with Strands")]
+        fallback = timeline_fallback_events(sources)
+        return fallback, [trace_step("timeline", "fallback", f"Used source-date fallback for {len(fallback)} timeline events")]
+
+    async def _verify_and_grade(
+        self,
+        question: str,
+        answer: str,
+        context: dict,
+        sources: list[dict],
+        plan: dict,
+        mode: str,
+    ) -> tuple[dict, dict, list[dict]]:
+        verification = None
+        trace = []
+        if normalize_mode(mode) != "quick":
+            verification = await strands_orchestrator.verify_answer(
+                question,
+                answer,
+                sources,
+                self._format_doc_context(context, question=question),
+                plan,
+            )
+            if verification:
+                unsupported = len(verification.get("unsupported_claims") or [])
+                stale = len(verification.get("stale_or_conflicting_claims") or [])
+                status = verification.get("status") or ("needs_review" if unsupported or stale else "verified")
+                trace.append(trace_step(
+                    "verifier",
+                    "ok" if status == "verified" else "needs_review",
+                    f"Verifier status: {status}",
+                    {"unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
+                ))
+            else:
+                verification = {
+                    "status": "not_run",
+                    "supported_claims": [],
+                    "unsupported_claims": [],
+                    "stale_or_conflicting_claims": [],
+                    "missing_evidence": [],
+                    "notes": ["Verifier unavailable; confidence is computed from retrieval evidence only."],
+                    "confidence_adjustment": 0,
+                }
+                trace.append(trace_step("verifier", "fallback", "Verifier unavailable; used computed evidence score only"))
+
+        evidence = compute_evidence_grade(question, plan, sources, context, verification)
+        trace.append(trace_step(
+            "evidence_grade",
+            "ok",
+            f"{evidence['level']} trust score ({evidence['score']:.2f})",
+            {"reasons": evidence.get("reasons", []), "penalties": evidence.get("penalties", [])},
+        ))
+        return verification or {}, evidence, trace
+
+    def _blend_confidence(self, llm_confidence: float, evidence: dict, verification: dict) -> float:
+        evidence_score = float(evidence.get("score", 0.5))
+        adjustment = 0.0
+        try:
+            adjustment = float(verification.get("confidence_adjustment") or 0)
+        except Exception:
+            adjustment = 0.0
+        blended = (0.35 * float(llm_confidence or 0.5)) + (0.65 * evidence_score) + adjustment
+        return round(max(0.0, min(1.0, blended)), 3)
+
     # ── Main query (non-streaming, backward compat) ─────────────────
 
     async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep") -> dict:
-        """Answer a question using iterative retrieval + synthesis."""
+        """Answer a question using mode-specific retrieval + synthesis."""
         mode = self._normalize_mode(mode)
         self._model_override = model_override
         # Include conversation context in cache key for uniqueness
@@ -77,45 +293,69 @@ class QueryEngine:
             cached["cached"] = True
             return cached
 
-        initial_context = await self._retrieve(question)
-        latest_check_used = False
-        if self._requires_latest_check(question):
-            latest_context = await self._retrieve(self._latest_check_query(question))
-            initial_context = self._merge_context(initial_context, latest_context)
-            latest_check_used = True
-        first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
-        all_context = initial_context
+        plan, trace = await self._build_query_plan(question, mode, conversation_history)
+        all_context, planned_queries_used, latest_check_used, retrieval_trace = await self._execute_retrieval_plan(question, plan, mode)
+        trace.extend(retrieval_trace)
 
-        # Up to 3 follow-up iterations for deeper retrieval
-        follow_ups_used = []
-        follow_up_limit = 0 if mode == "quick" else 3
-        for follow_up in first_pass.get("follow_up_queries", [])[:follow_up_limit]:
-            extra_context = await self._retrieve(follow_up)
-            all_context = self._merge_context(all_context, extra_context)
-            follow_ups_used.append(follow_up)
+        first_pass, all_context, gap_follow_ups, gap_trace = await self._gap_review(question, all_context, conversation_history, mode)
+        trace.extend(gap_trace)
 
-        entities_found = first_pass.get("entities_found", [])
-        graph_context = await self._expand_graph(entities_found)
-        all_context = self._merge_context(all_context, graph_context)
+        entities_found = first_pass.get("entities_found", []) or all_context.get("entity_names", [])
+        all_context, graph_trace = await self._expand_planned_graph(all_context, entities_found)
+        trace.extend(graph_trace)
 
+        sources = self._build_sources(all_context, question=question)
+        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode)
+        trace.extend(timeline_trace)
         final = await self._final_synthesis(
-            question, all_context, first_pass.get("draft_answer", ""), conversation_history, mode=mode
+            question,
+            all_context,
+            first_pass.get("draft_answer", ""),
+            conversation_history,
+            mode=mode,
+            plan=plan,
+            timeline_events=timeline_events,
+        )
+        verification, evidence, verify_trace = await self._verify_and_grade(
+            question,
+            final.get("answer", ""),
+            all_context,
+            sources,
+            plan,
+            mode,
+        )
+        trace.extend(verify_trace)
+        confidence = self._blend_confidence(final.get("confidence", first_pass.get("confidence", 0.5)), evidence, verification)
+        source_summary = self._build_source_summary(
+            all_context,
+            latest_check_used,
+            question=question,
+            plan=plan,
+            evidence=evidence,
+            verification=verification,
+            timeline_events=timeline_events,
         )
 
         result = {
             "question": question,
             "answer": final.get("answer", ""),
-            "confidence": final.get("confidence", first_pass.get("confidence", 0.5)),
-            "sources": self._build_sources(all_context),
-            "source_summary": self._build_source_summary(all_context, latest_check_used),
+            "confidence": confidence,
+            "sources": sources,
+            "source_summary": source_summary,
             "entities_found": [
                 {"name": e} if isinstance(e, str) else e
                 for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
-            "follow_up_queries_used": follow_ups_used,
-            "iterations": 1 + len(follow_ups_used),
+            "follow_up_queries_used": planned_queries_used + gap_follow_ups,
+            "iterations": 1 + len(planned_queries_used) + len(gap_follow_ups),
             "mode": mode,
+            "query_plan": plan,
+            "trace": trace,
+            "verification": verification,
+            "evidence": evidence,
+            "current_state": current_state_summary(plan, sources),
+            "timeline_events": timeline_events,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
@@ -142,38 +382,48 @@ class QueryEngine:
                    "entities_found": cached.get("entities_found", []),
                    "confidence": cached.get("confidence", 0.7),
                    "follow_up_suggestions": cached.get("follow_up_suggestions", []),
+                   "query_plan": cached.get("query_plan"),
+                   "trace": cached.get("trace", []),
+                   "verification": cached.get("verification", {}),
+                   "evidence": cached.get("evidence", {}),
+                   "current_state": cached.get("current_state", {}),
+                   "timeline_events": cached.get("timeline_events", []),
                    "cached": True}
             return
 
-        yield {"type": "status", "message": "Searching documents and knowledge graph..."}
-        initial_context = await self._retrieve(question)
-        latest_check_used = False
-        if self._requires_latest_check(question):
-            yield {"type": "status", "message": "Checking for latest/current documents..."}
-            latest_context = await self._retrieve(self._latest_check_query(question))
-            initial_context = self._merge_context(initial_context, latest_context)
-            latest_check_used = True
+        yield {"type": "status", "message": "Planning query workflow..."}
+        plan, trace = await self._build_query_plan(question, mode, conversation_history)
+        yield {"type": "trace", "step": trace[-1]}
 
-        yield {"type": "status", "message": "Analyzing results and identifying gaps..."}
-        first_pass = await self._synthesize_with_gaps(question, initial_context, conversation_history)
-        all_context = initial_context
+        strategy_label = "single-pass search" if mode == "quick" else "parallel planned searches"
+        yield {"type": "status", "message": f"Running {strategy_label}..."}
+        all_context, planned_queries_used, latest_check_used, retrieval_trace = await self._execute_retrieval_plan(question, plan, mode)
+        trace.extend(retrieval_trace)
+        for step in retrieval_trace:
+            yield {"type": "trace", "step": step}
 
-        # Up to 3 follow-up iterations
-        follow_ups_used = []
-        follow_up_limit = 0 if mode == "quick" else 3
-        for i, follow_up in enumerate(first_pass.get("follow_up_queries", [])[:follow_up_limit]):
-            yield {"type": "status", "message": f"Deep dive {i+1}/3: {follow_up[:60]}..."}
-            extra_context = await self._retrieve(follow_up)
-            all_context = self._merge_context(all_context, extra_context)
-            follow_ups_used.append(follow_up)
+        yield {"type": "status", "message": "Reviewing evidence gaps..."}
+        first_pass, all_context, gap_follow_ups, gap_trace = await self._gap_review(question, all_context, conversation_history, mode)
+        trace.extend(gap_trace)
+        for step in gap_trace:
+            yield {"type": "trace", "step": step}
 
-        entities_found = first_pass.get("entities_found", [])
-        if entities_found:
-            yield {"type": "status", "message": f"Expanding knowledge graph ({len(entities_found)} entities)..."}
-            graph_context = await self._expand_graph(entities_found)
-            all_context = self._merge_context(all_context, graph_context)
+        entities_found = first_pass.get("entities_found", []) or all_context.get("entity_names", [])
+        yield {"type": "status", "message": "Expanding related graph context..."}
+        all_context, graph_trace = await self._expand_planned_graph(all_context, entities_found)
+        trace.extend(graph_trace)
+        for step in graph_trace:
+            yield {"type": "trace", "step": step}
 
-        yield {"type": "status", "message": "Synthesizing comprehensive answer..."}
+        sources = self._build_sources(all_context, question=question)
+        if mode == "timeline":
+            yield {"type": "status", "message": "Extracting and sorting timeline events..."}
+        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode)
+        trace.extend(timeline_trace)
+        for step in timeline_trace:
+            yield {"type": "trace", "step": step}
+
+        yield {"type": "status", "message": "Synthesizing answer from ranked evidence..."}
 
         prompt = self._build_final_prompt(
             question,
@@ -182,6 +432,8 @@ class QueryEngine:
             self._format_graph_context(all_context),
             first_pass.get("draft_answer", ""),
             conversation_history,
+            plan=plan,
+            timeline_events=timeline_events,
         )
 
         answer_chunks = []
@@ -190,13 +442,35 @@ class QueryEngine:
             yield {"type": "answer_chunk", "content": chunk}
 
         full_answer = "".join(answer_chunks)
-        sources = self._build_sources(all_context)
-        source_summary = self._build_source_summary(all_context, latest_check_used)
+
+        yield {"type": "status", "message": "Verifying source support and trust score..."}
+        verification, evidence, verify_trace = await self._verify_and_grade(
+            question,
+            full_answer,
+            all_context,
+            sources,
+            plan,
+            mode,
+        )
+        trace.extend(verify_trace)
+        for step in verify_trace:
+            yield {"type": "trace", "step": step}
+
+        confidence = self._blend_confidence(first_pass.get("confidence", 0.7), evidence, verification)
+        source_summary = self._build_source_summary(
+            all_context,
+            latest_check_used,
+            question=question,
+            plan=plan,
+            evidence=evidence,
+            verification=verification,
+            timeline_events=timeline_events,
+        )
 
         result = {
             "question": question,
             "answer": full_answer,
-            "confidence": first_pass.get("confidence", 0.7),
+            "confidence": confidence,
             "sources": sources,
             "source_summary": source_summary,
             "entities_found": [
@@ -204,10 +478,16 @@ class QueryEngine:
                 for e in entities_found[:30]
             ],
             "graph_nodes_used": len(all_context.get("graph_nodes", [])),
-            "follow_up_queries_used": follow_ups_used,
+            "follow_up_queries_used": planned_queries_used + gap_follow_ups,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
-            "iterations": 1 + len(follow_ups_used),
+            "iterations": 1 + len(planned_queries_used) + len(gap_follow_ups),
             "mode": mode,
+            "query_plan": plan,
+            "trace": trace,
+            "verification": verification,
+            "evidence": evidence,
+            "current_state": current_state_summary(plan, sources),
+            "timeline_events": timeline_events,
             "cached": False,
         }
         query_cache.set(cache_key, result)
@@ -217,6 +497,12 @@ class QueryEngine:
                "entities_found": result["entities_found"],
                "confidence": result.get("confidence", 0.7),
                "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
+               "query_plan": plan,
+               "trace": trace,
+               "verification": verification,
+               "evidence": evidence,
+               "current_state": result["current_state"],
+               "timeline_events": timeline_events,
                "cached": False}
 
     # ── Retrieval (TUNED: wider net) ────────────────────────────────
@@ -376,7 +662,17 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
     # ── Final synthesis (TUNED: exhaustive prompting) ───────────────
 
-    def _build_final_prompt(self, question: str, mode: str, doc_context: str, graph_text: str, draft_answer: str, conversation_history: list = None) -> str:
+    def _build_final_prompt(
+        self,
+        question: str,
+        mode: str,
+        doc_context: str,
+        graph_text: str,
+        draft_answer: str,
+        conversation_history: list = None,
+        plan: dict | None = None,
+        timeline_events: list[dict] | None = None,
+    ) -> str:
         draft_section = ""
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
@@ -395,6 +691,18 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             "deep": "Answer comprehensively. Use all relevant details and cite the strongest sources.",
             "timeline": "Answer chronologically. Compare dates, revisions, current vs superseded records, and explain how the facts changed over time.",
         }[mode]
+
+        plan_section = ""
+        if plan:
+            plan_section = f"""\n\nStructured query plan:
+{json.dumps(plan, indent=2, default=str)[:4000]}
+"""
+
+        timeline_section = ""
+        if timeline_events:
+            timeline_section = f"""\n\nDeterministically sorted timeline events:
+{json.dumps(timeline_events[:30], indent=2, default=str)[:7000]}
+"""
 
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
@@ -419,18 +727,36 @@ INSTRUCTIONS:
 - State what you could NOT find or what's missing from the archive
 - When multiple documents corroborate the same fact, cite all of them for completeness
 
-Question: {question}
-{conv_section}{draft_section}
-Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
-{doc_context}
-{graph_text}
+	Question: {question}
+	{conv_section}{draft_section}{plan_section}{timeline_section}
+	Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
+	{doc_context}
+	{graph_text}
 
-Provide your comprehensive, exhaustive answer with inline citations:"""
+	Provide your comprehensive, exhaustive answer with inline citations:"""
 
-    async def _final_synthesis(self, question: str, context: dict, draft_answer: str, conversation_history: list = None, mode: str = "deep") -> dict:
+    async def _final_synthesis(
+        self,
+        question: str,
+        context: dict,
+        draft_answer: str,
+        conversation_history: list = None,
+        mode: str = "deep",
+        plan: dict | None = None,
+        timeline_events: list[dict] | None = None,
+    ) -> dict:
         doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
-        prompt = self._build_final_prompt(question, self._normalize_mode(mode), doc_context, graph_text, draft_answer, conversation_history)
+        prompt = self._build_final_prompt(
+            question,
+            self._normalize_mode(mode),
+            doc_context,
+            graph_text,
+            draft_answer,
+            conversation_history,
+            plan=plan,
+            timeline_events=timeline_events,
+        )
 
         try:
             answer = await self._llm_generate(prompt)
@@ -452,8 +778,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return {"answer": answer, "confidence": confidence}
 
     def _normalize_mode(self, mode: str) -> str:
-        mode = (mode or "deep").lower()
-        return mode if mode in {"quick", "deep", "timeline"} else "deep"
+        return normalize_mode(mode)
 
     # ── Context merging ─────────────────────────────────────────────
 
@@ -553,11 +878,12 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             graph_data["subgraph"] = subgraph
         return "\n\nKnowledge Graph context:\n" + json.dumps(graph_data, indent=2, default=str)[:10000]
 
-    def _build_sources(self, context: dict) -> list[dict]:
+    def _build_sources(self, context: dict, question: str = "") -> list[dict]:
         """Build deduplicated source citations grouped by document."""
         combined = self._merge_and_rank(
             context.get("vector_results", []),
-            context.get("keyword_results", [])
+            context.get("keyword_results", []),
+            question=question,
         )
 
         doc_groups = defaultdict(list)
@@ -590,15 +916,37 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         sources.sort(key=lambda x: x["similarity"], reverse=True)
         return sources[:15]  # Return up to 15 sources (was 10)
 
-    def _build_source_summary(self, context: dict, latest_check_used: bool) -> dict:
-        sources = self._build_sources(context)
+    def _build_source_summary(
+        self,
+        context: dict,
+        latest_check_used: bool,
+        question: str = "",
+        plan: dict | None = None,
+        evidence: dict | None = None,
+        verification: dict | None = None,
+        timeline_events: list[dict] | None = None,
+    ) -> dict:
+        sources = self._build_sources(context, question=question)
         dates = [s["date"] for s in sources if s.get("date")]
         latest_date = max(dates) if dates else None
+        plan = plan or {}
+        evidence = evidence or {}
+        verification = verification or {}
+        current = current_state_summary(plan, sources)
         return {
             "latest_source_date": latest_date,
             "latest_check_used": latest_check_used,
             "source_count": len(sources),
             "newer_docs_may_exist": not latest_check_used,
+            "trust_score": evidence.get("score"),
+            "trust_level": evidence.get("level"),
+            "trust_reasons": evidence.get("reasons", []),
+            "trust_penalties": evidence.get("penalties", []),
+            "verification_status": verification.get("status"),
+            "unsupported_claim_count": len(verification.get("unsupported_claims") or []),
+            "stale_or_conflicting_claim_count": len(verification.get("stale_or_conflicting_claims") or []),
+            "current_state": current,
+            "timeline_event_count": len(timeline_events or []),
         }
 
     def _requires_latest_check(self, question: str) -> bool:

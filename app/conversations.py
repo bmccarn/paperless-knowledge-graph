@@ -89,12 +89,14 @@ async def init():
                 query_time_ms INTEGER,
                 cached BOOLEAN DEFAULT FALSE,
                 follow_ups JSONB,
+                metadata JSONB,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_conv
                 ON conversation_messages(conversation_id, created_at);
         """)
+        await conn.execute("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS metadata JSONB")
     logger.info("Conversation tables initialized")
 
 
@@ -158,32 +160,39 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
 
         msgs = await conn.fetch("""
             SELECT id, role, content, sources, entities, confidence,
-                   query_time_ms, cached, follow_ups, created_at
+                   query_time_ms, cached, follow_ups, metadata, created_at
             FROM conversation_messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC
         """, uuid.UUID(conv_id))
+
+        messages = []
+        for m in msgs:
+            metadata = json.loads(m["metadata"]) if m["metadata"] else {}
+            messages.append({
+                "id": str(m["id"]),
+                "role": m["role"],
+                "content": m["content"],
+                "sources": json.loads(m["sources"]) if m["sources"] else None,
+                "entities": json.loads(m["entities"]) if m["entities"] else None,
+                "confidence": m["confidence"],
+                "query_time_ms": m["query_time_ms"],
+                "cached": m["cached"],
+                "follow_ups": json.loads(m["follow_ups"]) if m["follow_ups"] else None,
+                "source_summary": metadata.get("source_summary"),
+                "query_plan": metadata.get("query_plan"),
+                "trace": metadata.get("trace"),
+                "verification": metadata.get("verification"),
+                "timeline_events": metadata.get("timeline_events"),
+                "created_at": m["created_at"].isoformat(),
+            })
 
         return {
             "id": str(conv["id"]),
             "title": conv["title"],
             "created_at": conv["created_at"].isoformat(),
             "updated_at": conv["updated_at"].isoformat(),
-            "messages": [
-                {
-                    "id": str(m["id"]),
-                    "role": m["role"],
-                    "content": m["content"],
-                    "sources": json.loads(m["sources"]) if m["sources"] else None,
-                    "entities": json.loads(m["entities"]) if m["entities"] else None,
-                    "confidence": m["confidence"],
-                    "query_time_ms": m["query_time_ms"],
-                    "cached": m["cached"],
-                    "follow_ups": json.loads(m["follow_ups"]) if m["follow_ups"] else None,
-                    "created_at": m["created_at"].isoformat(),
-                }
-                for m in msgs
-            ],
+            "messages": messages,
         }
 
 
@@ -219,14 +228,15 @@ async def add_message(
     query_time_ms: int = None,
     cached: bool = False,
     follow_ups: list = None,
+    metadata: dict = None,
 ) -> dict:
     """Add a message to a conversation."""
     async with _pool.acquire() as conn:
         row = await conn.fetchrow("""
             INSERT INTO conversation_messages
                 (conversation_id, role, content, sources, entities, confidence,
-                 query_time_ms, cached, follow_ups)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 query_time_ms, cached, follow_ups, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id, created_at
         """,
             uuid.UUID(conv_id),
@@ -238,6 +248,7 @@ async def add_message(
             query_time_ms,
             cached,
             json.dumps(follow_ups) if follow_ups else None,
+            json.dumps(metadata) if metadata else None,
         )
 
         # Set placeholder title from first user message (will be replaced by AI title from frontend)

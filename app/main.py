@@ -20,6 +20,7 @@ from app.paperless import paperless_client
 from app.query import query_engine
 from app.entity_resolver import entity_resolver
 from app.cache import get_all_cache_stats, invalidate_on_sync
+from app.strands_orchestrator import strands_orchestrator
 from app import conversations
 from starlette.responses import StreamingResponse
 
@@ -381,6 +382,7 @@ async def health():
 
     # Cache
     components["cache"] = get_all_cache_stats()
+    components["strands"] = strands_orchestrator.status
 
     overall = "healthy"
     for key, comp in components.items():
@@ -747,6 +749,13 @@ async def query(req: QueryRequest):
                 entities=result.get("entities_found"),
                 confidence=result.get("confidence"),
                 follow_ups=result.get("follow_up_suggestions"),
+                metadata={
+                    "source_summary": result.get("source_summary"),
+                    "query_plan": result.get("query_plan"),
+                    "trace": result.get("trace"),
+                    "verification": result.get("verification"),
+                    "timeline_events": result.get("timeline_events"),
+                },
             )
 
         return result
@@ -779,6 +788,7 @@ async def query_stream(req: QueryRequest):
             final_entities = None
             final_confidence = None
             final_follow_ups = None
+            final_metadata = None
 
             async for event in query_engine.query_stream(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode):
                 if event.get("type") == "answer_chunk":
@@ -792,6 +802,13 @@ async def query_stream(req: QueryRequest):
                     final_entities = event.get("entities_found")
                     final_confidence = event.get("confidence")
                     final_follow_ups = event.get("follow_up_suggestions")
+                    final_metadata = {
+                        "source_summary": event.get("source_summary"),
+                        "query_plan": event.get("query_plan"),
+                        "trace": event.get("trace"),
+                        "verification": event.get("verification"),
+                        "timeline_events": event.get("timeline_events"),
+                    }
 
                 await queue.put(event)
 
@@ -803,6 +820,7 @@ async def query_stream(req: QueryRequest):
                         entities=final_entities,
                         confidence=final_confidence,
                         follow_ups=final_follow_ups,
+                        metadata=final_metadata,
                     )
         except Exception as e:
             await queue.put({"type": "error", "message": str(e)})

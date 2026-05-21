@@ -450,6 +450,28 @@ function QueryContent() {
             setStreamingContent("");
             setStatusMessage("Verifying source support and trust score...");
             break;
+          case "metadata_update":
+            sources = event.sources || sources;
+            sourceSummary = event.source_summary || sourceSummary;
+            queryPlan = event.query_plan || queryPlan;
+            trace = event.trace || trace;
+            verification = event.verification || verification;
+            claimLedger = event.claim_ledger || claimLedger;
+            evidencePack = event.evidence_pack || evidencePack;
+            if (event.stage) {
+              const stageLabels: Record<string, string> = {
+                evidence_pack: "Ranking source evidence...",
+                verifier: "Checking claim support...",
+                verification_retrieval_repair: "Filling evidence gaps...",
+                answer_editor: "Reconciling unsupported details...",
+                evidence_grade: "Finalizing trust artifacts...",
+              };
+              setStatusMessage(stageLabels[event.stage] || "Updating trust artifacts...");
+            }
+            if (draftAssistantShown) {
+              showDraftAssistant();
+            }
+            break;
           case "complete":
             if (event.answer) {
               fullAnswer = event.answer;

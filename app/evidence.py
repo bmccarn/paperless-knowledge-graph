@@ -291,11 +291,34 @@ def structured_fact_count(content: str) -> int:
 
 
 def exact_term_hits(question: str, text: str) -> int:
+    short_signal_terms = {
+        "a1c",
+        "alt",
+        "ast",
+        "bun",
+        "cbc",
+        "crp",
+        "fsh",
+        "ggt",
+        "hcg",
+        "hdl",
+        "hmg",
+        "igf",
+        "ldl",
+        "lh",
+        "psa",
+        "tsh",
+    }
     terms = [
         t
         for t in re.findall(r"[a-z0-9]{4,}", question.lower())
         if t not in {"what", "with", "from", "about", "documents", "latest", "current", "have", "does"}
     ]
+    terms.extend(
+        t
+        for t in re.findall(r"[a-z0-9]{2,3}", question.lower())
+        if t in short_signal_terms
+    )
     lower = text.lower()
     return sum(1 for term in set(terms) if term in lower)
 

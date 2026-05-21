@@ -378,6 +378,33 @@ function QueryContent() {
       let claimLedger: ClaimLedger | undefined;
       let evidencePack: EvidencePack | undefined;
       let timelineEvents: TimelineEvent[] = [];
+      let draftAssistantShown = false;
+
+      const showDraftAssistant = (overrides: Partial<Message> = {}) => {
+        draftAssistantShown = true;
+        setMessages([
+          ...newMessages,
+          {
+            role: "assistant",
+            content: fullAnswer,
+            sources,
+            entities: entitiesFound,
+            timestamp: Date.now(),
+            queryTime: Date.now() - startTime,
+            cached,
+            confidence,
+            follow_ups: followUps,
+            source_summary: sourceSummary,
+            query_plan: queryPlan,
+            trace,
+            verification,
+            claim_ledger: claimLedger,
+            evidence_pack: evidencePack,
+            timeline_events: timelineEvents,
+            ...overrides,
+          },
+        ]);
+      };
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
         switch (event.type) {
@@ -403,13 +430,30 @@ function QueryContent() {
             break;
           case "answer_replace":
             fullAnswer = event.content || "";
-            setStreamingContent(fullAnswer);
+            if (draftAssistantShown) {
+              showDraftAssistant({ content: fullAnswer });
+            } else {
+              setStreamingContent(fullAnswer);
+            }
             setStatusMessage("");
+            break;
+          case "answer_done":
+            if (event.answer) fullAnswer = event.answer;
+            sources = event.sources || sources;
+            entitiesFound = event.entities_found || entitiesFound;
+            sourceSummary = event.source_summary || sourceSummary;
+            queryPlan = event.query_plan || queryPlan;
+            trace = event.trace || trace;
+            evidencePack = event.evidence_pack || evidencePack;
+            timelineEvents = event.timeline_events || timelineEvents;
+            showDraftAssistant();
+            setStreamingContent("");
+            setStatusMessage("Verifying source support and trust score...");
             break;
           case "complete":
             if (event.answer) {
               fullAnswer = event.answer;
-              setStreamingContent(fullAnswer);
+              if (!draftAssistantShown) setStreamingContent(fullAnswer);
             }
             sources = event.sources || [];
             entitiesFound = event.entities_found || [];

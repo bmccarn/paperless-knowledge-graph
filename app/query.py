@@ -17,7 +17,8 @@ def _owner_name():
 def _owner_context():
     return settings.owner_context or ""
 from app.retry import retry_with_backoff
-from app.embeddings import embeddings_store
+from app.embeddings import chunk_text, embeddings_store
+from app.paperless import paperless_client
 from app.graph import graph_store
 from app.cache import query_cache, vector_cache, graph_cache, normalize_query_key
 from app.query_quality import (
@@ -46,7 +47,7 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v3"
+QUERY_CACHE_VERSION = "evidence-v4"
 
 
 class QueryEngine:
@@ -1364,12 +1365,17 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     doc_ids,
                     chunks_per_doc=8 if high_accuracy else 4,
                 )
+                full_doc_chunks = await self._expand_source_documents(
+                    question,
+                    doc_ids[:5 if high_accuracy else 3],
+                    high_accuracy=high_accuracy,
+                )
                 selected_for_merge = [
                     {**chunk, "similarity": chunk.get("combined_score", chunk.get("similarity", 0))}
                     for chunk in selected
                 ]
                 selected = self._merge_and_rank(
-                    selected_for_merge + neighbor_chunks,
+                    selected_for_merge + neighbor_chunks + full_doc_chunks,
                     [],
                     question=question,
                 )
@@ -1384,6 +1390,98 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
+
+    async def _expand_source_documents(
+        self,
+        question: str,
+        doc_ids: list[int],
+        high_accuracy: bool = False,
+    ) -> list[dict]:
+        """Fetch full Paperless text for top source docs in strict/high-stakes mode.
+
+        Retrieval chunks are intentionally narrow. For exact-answer workflows,
+        especially medical/lab, tax, insurance, and legal questions, the top
+        source document often contains neighboring tables or values that did not
+        win vector ranking. This expansion promotes bounded full-document chunks
+        into the evidence pack without changing the indexed graph.
+        """
+        if not high_accuracy or not doc_ids:
+            return []
+
+        expanded = []
+        seen = set()
+        for doc_id in doc_ids[:5]:
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            try:
+                doc = await paperless_client.get_document(int(doc_id))
+            except Exception as e:
+                logger.warning("Full source fetch failed for Paperless doc %s: %s", doc_id, e)
+                continue
+
+            content = str(doc.get("content") or "")
+            if not content.strip():
+                continue
+            title = str(doc.get("title") or f"Document {doc_id}")
+            doc_type = str(doc.get("document_type") or "")
+            if isinstance(doc.get("document_type"), dict):
+                doc_type = str(doc["document_type"].get("name") or "")
+            date = doc.get("created") or doc.get("modified") or doc.get("added")
+
+            prefix = f"Title: {title}\nDocument ID: {doc_id}\nDate: {date or 'unknown'}\n\n"
+            chunks = chunk_text(content, chunk_size=3600, overlap=500)
+            ranked_chunks = self._rank_full_document_chunks(question, chunks)
+            for rank, text in ranked_chunks[:10]:
+                expanded.append({
+                    "document_id": int(doc_id),
+                    "chunk_index": 100000 + rank,
+                    "content": prefix + text,
+                    "title": title,
+                    "doc_type": doc_type,
+                    "similarity": 0.78,
+                    "rank_score": 1.0,
+                    "_source": "paperless_full_document",
+                })
+        if expanded:
+            logger.info("Expanded %s full-document evidence chunks from %s source docs", len(expanded), len(seen))
+        return expanded
+
+    def _rank_full_document_chunks(self, question: str, chunks: list[str]) -> list[tuple[int, str]]:
+        query_terms = self._query_terms_with_domain_expansion(question)
+
+        def score(index_and_text: tuple[int, str]) -> float:
+            idx, text = index_and_text
+            lower = text.lower()
+            hits = sum(1 for term in query_terms if term in lower)
+            structured = 1 if re.search(r"\b\d+(?:\.\d+)?\s*(mg/dl|ng/ml|%|iu/ml|pg/ml|mcg/dl|u/l|mmol/l|\$)\b", lower, flags=re.I) else 0
+            table = 1 if "|" in text[:2500] and text.count("|") >= 4 else 0
+            date = 1 if re.search(r"\b(19|20)\d{2}\b", lower) else 0
+            return hits + 0.75 * structured + 0.5 * table + 0.25 * date - (idx * 0.01)
+
+        indexed = list(enumerate(chunks))
+        return sorted(indexed, key=score, reverse=True)
+
+    def _query_terms_with_domain_expansion(self, question: str) -> set[str]:
+        terms = {
+            term
+            for term in re.findall(r"[a-z0-9$]+", question.lower())
+            if len(term) >= 3
+        }
+        expansions = {
+            "bloodwork": {"blood", "lab", "labs", "laboratory", "result", "reference", "glucose", "cholesterol", "testosterone", "cbc", "cmp"},
+            "labs": {"lab", "laboratory", "result", "reference"},
+            "lab": {"laboratory", "result", "reference"},
+            "payment": {"amount", "balance", "installment", "schedule", "due"},
+            "premium": {"policy", "payment", "amount", "balance"},
+            "policy": {"coverage", "declarations", "effective", "premium"},
+            "tax": {"return", "income", "w-2", "1099", "k-1"},
+            "mortgage": {"payment", "escrow", "principal", "interest", "balance"},
+        }
+        expanded = set(terms)
+        for term in terms:
+            expanded.update(expansions.get(term, set()))
+        return expanded
 
     def _rank_evidence_chunks(self, chunks: list[dict], question: str, sources: list[dict]) -> list[dict]:
         source_rank = {
@@ -1402,7 +1500,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             source_boost = 0.0
             if doc_id is not None and int(doc_id) in source_rank:
                 source_boost = max(0.0, 0.35 - 0.025 * source_rank[int(doc_id)])
-            return base + 0.18 * title_hits + 0.05 * content_hits + source_boost
+            full_doc_boost = 0.22 if chunk.get("_source") == "paperless_full_document" else 0.0
+            return base + 0.18 * title_hits + 0.05 * content_hits + source_boost + full_doc_boost
 
         return sorted(chunks, key=score, reverse=True)
 

@@ -8,10 +8,22 @@ services:
       - "8484:8000"
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: "localhost,127.0.0.1,litellm-lan.mccarn.tech,mcp-lan.mccarn.tech,garmin-mcp-lan.mccarn.tech"
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      no_proxy: "localhost,127.0.0.1,litellm-lan.mccarn.tech,mcp-lan.mccarn.tech,garmin-mcp-lan.mccarn.tech"
     depends_on:
       neo4j:
         condition: service_healthy
       pgvector:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     labels:
@@ -72,6 +84,19 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   pgvector_data:
+  redis_data:

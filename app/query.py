@@ -3,6 +3,7 @@ import logging
 import hashlib
 import re
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
 from typing import Any
@@ -887,6 +888,40 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                 "evidence_pack": self._public_evidence_pack(event_evidence_pack),
             }
 
+        def fallback_verification(reason: str):
+            fallback_verification_result = {
+                "status": "not_run",
+                "supported_claims": [],
+                "unsupported_claims": [],
+                "stale_or_conflicting_claims": [],
+                "missing_evidence": [],
+                "notes": [
+                    reason,
+                    "Answer is retrieval-backed, but the post-answer claim audit did not finish.",
+                ],
+                "confidence_adjustment": -0.12,
+            }
+            fallback_evidence = compute_evidence_grade(
+                question,
+                plan,
+                sources,
+                all_context,
+                fallback_verification_result,
+                evidence_pack=evidence_pack,
+                claim_ledger={},
+            )
+            fallback_trace = [trace_step("verifier", "fallback", reason)]
+            return (
+                full_answer,
+                fallback_verification_result,
+                fallback_evidence,
+                fallback_trace,
+                {},
+                evidence_pack,
+                sources,
+                all_context,
+            )
+
         verification_task = asyncio.create_task(self._verify_repair_and_grade(
             question,
             full_answer,
@@ -897,16 +932,38 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             broad=is_broad,
             progress_callback=progress_callback,
         ))
+        loop = asyncio.get_running_loop()
+        verification_timeout = max(1.0, float(settings.stream_verification_timeout_seconds or 60))
+        verification_deadline = loop.time() + verification_timeout
+        verification_timed_out = False
         while not verification_task.done():
+            remaining = verification_deadline - loop.time()
+            if remaining <= 0:
+                verification_timed_out = True
+                verification_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await verification_task
+                break
             try:
-                payload = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+                payload = await asyncio.wait_for(progress_queue.get(), timeout=min(0.5, remaining))
             except asyncio.TimeoutError:
                 continue
             yield metadata_update_event(payload)
         while not progress_queue.empty():
             yield metadata_update_event(progress_queue.get_nowait())
 
-        repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await verification_task
+        if verification_timed_out:
+            repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = fallback_verification(
+                f"Verifier exceeded {verification_timeout:.0f}s stream budget; returning retrieval-backed answer."
+            )
+        else:
+            try:
+                repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await verification_task
+            except Exception as exc:
+                logger.warning("Streaming verification failed; returning retrieval-backed answer: %s", exc, exc_info=True)
+                repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = fallback_verification(
+                    "Verifier failed; returning retrieval-backed answer."
+                )
         if repaired_answer != full_answer:
             full_answer = repaired_answer
             yield {"type": "answer_replace", "content": full_answer}

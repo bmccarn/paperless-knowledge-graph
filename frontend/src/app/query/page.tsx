@@ -365,22 +365,22 @@ function QueryContent() {
     setActivitySteps([{ step: "start", status: "running", detail: "Starting query workflow..." }]);
 
     const startTime = Date.now();
-    try {
-      let fullAnswer = "";
-      let sources: Source[] = [];
-      let entitiesFound: Array<{ name?: string; label?: string }> = [];
-      let cached = false;
-      let confidence: number | undefined;
-      let followUps: string[] = [];
-      let sourceSummary: SourceSummary | undefined;
-      let queryPlan: QueryPlan | undefined;
-      let trace: TraceStep[] = [];
-      let verification: Verification | undefined;
-      let claimLedger: ClaimLedger | undefined;
-      let evidencePack: EvidencePack | undefined;
-      let timelineEvents: TimelineEvent[] = [];
-      let draftAssistantShown = false;
+    let fullAnswer = "";
+    let sources: Source[] = [];
+    let entitiesFound: Array<{ name?: string; label?: string }> = [];
+    let cached = false;
+    let confidence: number | undefined;
+    let followUps: string[] = [];
+    let sourceSummary: SourceSummary | undefined;
+    let queryPlan: QueryPlan | undefined;
+    let trace: TraceStep[] = [];
+    let verification: Verification | undefined;
+    let claimLedger: ClaimLedger | undefined;
+    let evidencePack: EvidencePack | undefined;
+    let timelineEvents: TimelineEvent[] = [];
+    let draftAssistantShown = false;
 
+    try {
       const showDraftAssistant = (overrides: Partial<Message> = {}) => {
         draftAssistantShown = true;
         setMessages([
@@ -492,6 +492,23 @@ function QueryContent() {
             timelineEvents = event.timeline_events || [];
             break;
           case "error":
+            if (fullAnswer.trim()) {
+              const detail = event.message || "Stream ended before final completion; preserving streamed answer.";
+              const fallbackStep: TraceStep = { step: "stream_error", status: "fallback", detail };
+              trace = [...trace, fallbackStep];
+              verification = verification || {
+                status: "not_run",
+                notes: [detail],
+              };
+              setActivitySteps(prev => [...prev, fallbackStep].slice(-8));
+              setStatusMessage("");
+              if (draftAssistantShown) {
+                showDraftAssistant({ trace, verification });
+              } else {
+                setStreamingContent(fullAnswer);
+              }
+              break;
+            }
             throw new Error(event.message || "Stream error");
         }
       }
@@ -542,6 +559,41 @@ function QueryContent() {
         }
       }
     } catch {
+      if (fullAnswer.trim()) {
+        const fallbackStep: TraceStep = {
+          step: "stream_error",
+          status: "fallback",
+          detail: "Stream ended before final completion; preserving streamed answer.",
+        };
+        const fallbackTrace = [...trace, fallbackStep];
+        const assistantMsg: Message = {
+          role: "assistant",
+          content: fullAnswer,
+          sources,
+          entities: entitiesFound,
+          timestamp: Date.now(),
+          queryTime: Date.now() - startTime,
+          cached,
+          confidence,
+          follow_ups: followUps,
+          source_summary: sourceSummary,
+          query_plan: queryPlan,
+          trace: fallbackTrace,
+          verification: verification || {
+            status: "not_run",
+            notes: [fallbackStep.detail || "Stream ended before final completion."],
+          },
+          claim_ledger: claimLedger,
+          evidence_pack: evidencePack,
+          timeline_events: timelineEvents,
+        };
+        setMessages([...newMessages, assistantMsg]);
+        setStreamingContent("");
+        setStatusMessage("");
+        setActivitySteps([]);
+        setFollowUpSuggestions(followUps);
+        return;
+      }
       // Stream broke - try recovering from conversation history
       if (convId) {
         try {

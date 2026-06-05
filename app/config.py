@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     strands_enabled: bool = True
     strands_model: str = ""
     strands_temperature: float = 0.1
+    strands_call_timeout_seconds: float = 45
+    stream_verification_timeout_seconds: float = 60
 
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"

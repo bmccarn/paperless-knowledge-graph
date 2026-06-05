@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 from typing import Any
 
 from app.config import settings
@@ -347,8 +348,12 @@ Rules:
                 system_prompt=system_prompt,
                 callback_handler=None,
             )
-            result = await agent.invoke_async(prompt)
+            timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
+            result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
             return _extract_json(str(result))
+        except asyncio.TimeoutError:
+            logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
+            return {}
         except Exception as exc:
             logger.warning("Strands %s failed: %s", name, exc)
             return {}

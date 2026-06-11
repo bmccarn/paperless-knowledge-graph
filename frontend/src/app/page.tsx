@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getStatus, postSync, postReindex, getTask, cancelTask, graphSearch } from "@/lib/api";
+import { getStatus, postSync, postReindex, postRepairDrift, getTask, cancelTask, graphSearch } from "@/lib/api";
 import type { FreshnessDocumentRef, StatusResponse } from "@/lib/types";
 import {
   Dialog,
@@ -87,6 +87,19 @@ function formatIds(ids?: number[], limit = 8): string {
   return `${shown.join(", ")}${more}`;
 }
 
+const TASK_LABELS: Record<string, string> = {
+  reindex: "Reindex",
+  sync: "Sync",
+  "scheduled-sync": "Scheduled Sync",
+  "repair-drift": "Repair Drift",
+  "reindex-document": "Reindex Document",
+  entity_steward: "Entity Steward",
+};
+
+function taskLabel(taskType: string): string {
+  return TASK_LABELS[taskType] || taskType.split(/[-_]/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -139,8 +152,7 @@ export default function DashboardPage() {
       const [taskId, info] = runningTasks[0];
       setActiveTaskId(taskId);
       const taskType = typeof info === "object" && info !== null ? (info as Record<string, string>).type || "task" : "task";
-      const label = taskType === "reindex" ? "Reindex" : taskType === "sync" ? "Sync" : taskType.charAt(0).toUpperCase() + taskType.slice(1);
-      setActiveTaskType(label);
+      setActiveTaskType(taskLabel(taskType));
       // Immediately fetch task progress instead of waiting for poll interval
       getTask(taskId).then((t) => setTaskProgress(t as TaskProgress)).catch(() => {});
     }
@@ -211,6 +223,36 @@ export default function DashboardPage() {
           setToast({ message: "Full reindex started", type: "success" });
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Failed to start reindex";
+          if (msg.includes("409")) {
+            setToast({ message: "A task is already running", type: "error" });
+          } else {
+            setToast({ message: msg, type: "error" });
+          }
+        }
+      },
+    });
+  };
+
+  const handleRepairDrift = () => {
+    setConfirmDialog({
+      open: true,
+      title: "Repair Freshness Drift",
+      description: "This will reindex only the exact drifted document IDs reported by freshness and clean up stale graph/vector/hash artifacts for IDs no longer in Paperless.",
+      variant: "default",
+      action: async () => {
+        try {
+          const res = await postRepairDrift();
+          if (res.status === "noop" || !res.task_id) {
+            setToast({ message: "No drift to repair", type: "success" });
+            fetchStatus();
+            return;
+          }
+          setActiveTaskId(res.task_id);
+          setActiveTaskType("Repair Drift");
+          setTaskProgress(null);
+          setToast({ message: "Drift repair started", type: "success" });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Failed to start drift repair";
           if (msg.includes("409")) {
             setToast({ message: "A task is already running", type: "error" });
           } else {
@@ -347,9 +389,19 @@ export default function DashboardPage() {
           detail: formatDocRefs(freshness.drift?.missing_embeddings),
         },
         {
+          label: "Extra embeddings",
+          count: freshness.extra_embedding_documents || 0,
+          detail: formatIds(freshness.drift?.extra_embeddings),
+        },
+        {
           label: "Missing hashes",
           count: freshness.missing_hash_documents || 0,
           detail: formatDocRefs(freshness.drift?.missing_hashes),
+        },
+        {
+          label: "Extra hashes",
+          count: freshness.extra_hash_documents || 0,
+          detail: formatIds(freshness.drift?.extra_hashes),
         },
         {
           label: "Modified after sync",
@@ -422,14 +474,26 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
-              <Button onClick={handleSync} disabled={!!activeTaskId && isRunning} size="sm" className="gap-2 shrink-0">
-                {activeTaskType === "Sync" && isRunning ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5" />
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                {freshnessDriftDetails.length > 0 && (
+                  <Button onClick={handleRepairDrift} disabled={!!activeTaskId && isRunning} size="sm" variant="secondary" className="gap-2">
+                    {activeTaskType === "Repair Drift" && isRunning ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Repair drift
+                  </Button>
                 )}
-                Sync now
-              </Button>
+                <Button onClick={handleSync} disabled={!!activeTaskId && isRunning} size="sm" className="gap-2">
+                  {activeTaskType === "Sync" && isRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  Sync now
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -612,7 +676,7 @@ export default function DashboardPage() {
                   return (
                     <div key={id} className="flex items-center gap-2 rounded-lg bg-accent/50 p-2.5">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                      <Badge variant="secondary" className="text-xs">{taskType || taskStatus}</Badge>
+                      <Badge variant="secondary" className="text-xs">{taskType ? taskLabel(taskType) : taskStatus}</Badge>
                       <span className="text-xs text-muted-foreground truncate flex-1">{id}</span>
                     </div>
                   );

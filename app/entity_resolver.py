@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from rapidfuzz import fuzz
 
@@ -58,11 +58,40 @@ TITLE_PREFIXES = {
 BUSINESS_PREFIX_SUFFIXES = {"llc", "inc", "corp", "ltd", "co", "the"}
 
 
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            text = _coerce_text(item)
+            if text:
+                return text
+        return ""
+    if isinstance(value, dict):
+        return " ".join(_coerce_text(item) for item in value.values()).strip()
+    return str(value).strip()
+
+
+def _coerce_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        texts: list[str] = []
+        for item in value:
+            candidates = _coerce_text_list(item) if isinstance(item, list) else [_coerce_text(item)]
+            for candidate in candidates:
+                if candidate and candidate not in texts:
+                    texts.append(candidate)
+        return texts
+    text = _coerce_text(value)
+    return [text] if text else []
+
+
 def normalize_name(name: str) -> str:
     """Normalize a name for comparison."""
+    name = _coerce_text(name)
     if not name:
         return ""
-    name = name.strip()
     # Handle "LAST, FIRST" format
     if "," in name and len(name.split(",")) == 2:
         parts = name.split(",")
@@ -488,6 +517,7 @@ class EntityResolver:
         self._cache = {}
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         """Resolve a person name to an existing or new node. Returns uuid."""
+        name = _coerce_text(name)
         if not name or not name.strip():
             return ""
 
@@ -588,8 +618,9 @@ class EntityResolver:
         return node_uuid
 
     async def resolve_organization(self, name: str, source_doc_id: int,
-                                    org_type: str = None, description: str = None) -> str:
+                                   org_type: str = None, description: str = None) -> str:
         """Resolve an organization name. Returns uuid."""
+        name = _coerce_text(name)
         name = normalize_org_name(name)
         if not name or len(name) < 3:
             return ""
@@ -651,6 +682,7 @@ class EntityResolver:
     async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int,
                               description: str = None) -> str:
         """Resolve a generic entity (Location, System, Product, etc.) — fuzzy match or create."""
+        name = _coerce_text(name)
         if not name or not name.strip():
             return ""
 
@@ -665,7 +697,7 @@ class EntityResolver:
         # Try exact match in Neo4j
         async with graph_store.driver.session() as session:
             result = await session.run(
-                f"MATCH (n:{label}) WHERE toLower(n.name) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
+                f"MATCH (n:{label}) WHERE toLower(toString(n.name)) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
                 name=name,
             )
             record = await result.single()
@@ -834,14 +866,14 @@ class EntityResolver:
             )
 
             all_aliases = [remove_name] + remove_aliases
-            for alias in all_aliases:
+            for alias in _coerce_text_list(all_aliases):
                 if alias:
                     await session.run(
                         """
                         MATCH (n) WHERE n.uuid = $uuid
                         SET n.aliases = CASE
-                            WHEN NOT $alias IN n.aliases THEN n.aliases + $alias
-                            ELSE n.aliases
+                            WHEN NOT $alias IN coalesce(n.aliases, []) THEN coalesce(n.aliases, []) + $alias
+                            ELSE coalesce(n.aliases, [])
                         END
                         """,
                         uuid=keep_uuid, alias=alias,
@@ -851,7 +883,7 @@ class EntityResolver:
             if canonical_name:
                 await session.run(
                     "MATCH (n) WHERE n.uuid = $uuid SET n.name = $name",
-                    uuid=keep_uuid, name=canonical_name,
+                    uuid=keep_uuid, name=_coerce_text(canonical_name),
                 )
 
             await session.run(

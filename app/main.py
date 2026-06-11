@@ -61,6 +61,7 @@ _buffer_handler = BufferLogHandler()
 _buffer_handler.setLevel(logging.DEBUG)
 _buffer_handler.setFormatter(logging.Formatter("%(message)s"))
 logging.getLogger().addHandler(_buffer_handler)
+logging.getLogger("neo4j.notifications").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Track background tasks
@@ -69,6 +70,7 @@ _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 _last_failed_extraction: dict | None = None
 _auto_sync_task: asyncio.Task | None = None
 _entity_steward_task: asyncio.Task | None = None
+_startup_ready: bool = False
 _freshness_cache: dict | None = None
 _freshness_cache_at: float = 0.0
 FRESHNESS_CACHE_TTL_SECONDS = int(os.getenv("FRESHNESS_CACHE_TTL_SECONDS", "60"))
@@ -82,6 +84,12 @@ def _schedule_task_cleanup(task_id: str, delay: int = 300):
         _tasks.pop(task_id, None)
         _cancel_events.pop(task_id, None)
     asyncio.create_task(_cleanup())
+
+
+def _clear_freshness_cache():
+    global _freshness_cache, _freshness_cache_at
+    _freshness_cache = None
+    _freshness_cache_at = 0.0
 
 
 def _make_progress_callback(task_id: str):
@@ -174,6 +182,42 @@ def _sample_document_refs(ids: set[int], docs_by_id: dict[int, dict]) -> list[di
 
 def _sample_ids(ids: set[int]) -> list[int]:
     return sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]
+
+
+def _doc_ref_ids(refs: list[dict]) -> set[int]:
+    ids: set[int] = set()
+    for ref in refs or []:
+        try:
+            ids.add(int(ref.get("id")))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _ids_from_values(values: list[int]) -> set[int]:
+    ids: set[int] = set()
+    for value in values or []:
+        try:
+            ids.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _freshness_repair_targets(snapshot: dict) -> tuple[list[int], list[int]]:
+    drift = snapshot.get("drift") or {}
+    reindex_ids = set()
+    reindex_ids |= _doc_ref_ids(drift.get("missing_from_graph", []))
+    reindex_ids |= _doc_ref_ids(drift.get("missing_embeddings", []))
+    reindex_ids |= _doc_ref_ids(drift.get("missing_hashes", []))
+    reindex_ids |= _doc_ref_ids(drift.get("modified_after_last_sync", []))
+
+    delete_ids = set()
+    delete_ids |= _ids_from_values(drift.get("extra_in_graph", []))
+    delete_ids |= _ids_from_values(drift.get("extra_embeddings", []))
+    delete_ids |= _ids_from_values(drift.get("extra_hashes", []))
+    delete_ids -= reindex_ids
+    return sorted(reindex_ids), sorted(delete_ids)
 
 
 async def _freshness_snapshot(force: bool = False) -> dict:
@@ -298,6 +342,7 @@ async def _run_sync_task(task_type: str = "sync") -> str:
         try:
             invalidate_on_sync()
             result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
+            _clear_freshness_cache()
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""
@@ -361,6 +406,133 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
     return task_id
 
 
+async def _run_reindex_documents_task(
+    doc_ids: list[int],
+    *,
+    task_type: str,
+    message: str,
+    delete_ids: list[int] | None = None,
+    update_last_sync: bool = False,
+) -> tuple[str, str]:
+    running = [t for t in _tasks.values() if t["status"] == "running"]
+    if running:
+        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
+
+    doc_ids = sorted({int(doc_id) for doc_id in doc_ids})
+    doc_id_set = set(doc_ids)
+    delete_ids = sorted({int(doc_id) for doc_id in (delete_ids or []) if int(doc_id) not in doc_id_set})
+    total_docs = len(doc_ids) + len(delete_ids)
+    if total_docs == 0:
+        return "", "No drift to repair"
+
+    task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    _tasks[task_id] = {
+        "status": "running",
+        "type": task_type,
+        "started": now.isoformat(),
+        "_start_time": time.time(),
+        "total_docs": total_docs,
+        "processed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "current_doc": "",
+        "elapsed_seconds": 0,
+        "docs_per_minute": 0,
+        "estimated_remaining_seconds": 0,
+        "recent_results": [],
+        "target_doc_ids": doc_ids,
+        "delete_doc_ids": delete_ids,
+    }
+
+    cancel_event = asyncio.Event()
+    _cancel_events[task_id] = cancel_event
+    progress_cb = _make_progress_callback(task_id)
+    progress_cb("init", {"total_docs": total_docs})
+
+    async def _run():
+        start_time = time.time()
+        results = []
+        try:
+            invalidate_on_sync()
+            for doc_id in delete_ids:
+                if cancel_event.is_set():
+                    result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
+                    progress_cb("result", result)
+                    results.append(result)
+                    continue
+                progress_cb("current", {"title": f"Removing stale document #{doc_id}"})
+                try:
+                    await graph_store.delete_document_graph(doc_id)
+                    await embeddings_store.delete_document_embeddings(doc_id)
+                    await embeddings_store.delete_doc_hash(doc_id)
+                    result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale drift artifacts"}
+                except Exception as e:
+                    logger.error("Failed to remove stale drift doc %s: %s", doc_id, e, exc_info=True)
+                    result = {"doc_id": doc_id, "status": "error", "error": str(e)}
+                progress_cb("result", result)
+                results.append(result)
+
+            for doc_id in doc_ids:
+                if cancel_event.is_set():
+                    result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
+                    progress_cb("result", result)
+                    results.append(result)
+                    continue
+                progress_cb("current", {"title": f"Reindexing document #{doc_id}"})
+                try:
+                    result = await reindex_document(doc_id)
+                except Exception as e:
+                    logger.error("Failed to reindex document %s: %s", doc_id, e, exc_info=True)
+                    result = {"doc_id": doc_id, "status": "error", "error": str(e)}
+                progress_cb("result", result)
+                results.append(result)
+
+            errors = sum(1 for r in results if r.get("status") == "error")
+            if update_last_sync and errors == 0 and not cancel_event.is_set():
+                await embeddings_store.set_last_sync(datetime.now(timezone.utc))
+
+            _clear_freshness_cache()
+            elapsed = time.time() - start_time
+            processed = sum(1 for r in results if r.get("status") == "processed")
+            skipped = sum(1 for r in results if r.get("status") == "skipped")
+            docs_per_minute = (processed / (elapsed / 60)) if elapsed > 0 and processed > 0 else 0
+            if cancel_event.is_set():
+                _tasks[task_id]["status"] = "cancelled"
+            elif errors:
+                _tasks[task_id]["status"] = "failed"
+            else:
+                _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["result"] = {
+                "total": total_docs,
+                "processed": processed,
+                "skipped": skipped,
+                "errors": errors,
+                "reindexed": doc_ids,
+                "deleted": delete_ids,
+                "elapsed_seconds": round(elapsed, 1),
+                "docs_per_minute": round(docs_per_minute, 1),
+                "results": results,
+            }
+            _tasks[task_id]["current_doc"] = ""
+            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
+            _tasks[task_id]["docs_per_minute"] = round(docs_per_minute, 1)
+            _tasks[task_id]["estimated_remaining_seconds"] = 0
+            if errors:
+                _tasks[task_id]["error"] = f"{errors} document(s) failed"
+        except Exception as e:
+            logger.error("%s task %s failed: %s", task_type, task_id, e, exc_info=True)
+            _tasks[task_id]["status"] = "failed"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["current_doc"] = ""
+            _clear_freshness_cache()
+        finally:
+            _schedule_task_cleanup(task_id)
+
+    asyncio.create_task(_run())
+    return task_id, message
+
+
 async def _auto_sync_loop():
     from app.config import settings
 
@@ -400,16 +572,18 @@ async def _entity_steward_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _auto_sync_task, _entity_steward_task
+    global _auto_sync_task, _entity_steward_task, _startup_ready
     logger.info("Starting up...")
     await graph_store.init()
     await embeddings_store.init()
     await conversations.init()
     _auto_sync_task = asyncio.create_task(_auto_sync_loop())
     _entity_steward_task = asyncio.create_task(_entity_steward_loop())
+    _startup_ready = True
     logger.info("Startup complete")
     yield
     logger.info("Shutting down...")
+    _startup_ready = False
     if _auto_sync_task:
         _auto_sync_task.cancel()
     if _entity_steward_task:
@@ -477,6 +651,14 @@ async def get_config():
 
 
 # --- Health & Status ---
+
+@app.get("/readyz")
+async def readyz():
+    """Cheap Kubernetes readiness endpoint."""
+    if not _startup_ready:
+        raise HTTPException(status_code=503, detail="Application startup is not complete")
+    return {"status": "ready"}
+
 
 @app.get("/status")
 async def status():
@@ -560,11 +742,16 @@ async def health():
 
 
 @app.get("/ops/guardrails")
-async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 0):
+async def ops_guardrails(
+    max_sync_age_hours: int = 24,
+    allowed_doc_drift: int = 0,
+    force: bool = False,
+    check_model: bool = True,
+):
     """Machine-readable guardrail checks for monitoring."""
     alerts = []
     last_sync = await embeddings_store.get_last_sync()
-    health_status = await health()
+    health_status = await health() if check_model else None
     freshness_snapshot = None
 
     if last_sync:
@@ -581,7 +768,7 @@ async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 
         })
 
     try:
-        freshness_snapshot = await _freshness_snapshot()
+        freshness_snapshot = await _freshness_snapshot(force=force)
         drift = int(freshness_snapshot.get("paperless_documents", 0)) - int(freshness_snapshot.get("indexed_documents", 0))
         graph_drift = int(freshness_snapshot.get("missing_documents", 0)) + int(freshness_snapshot.get("extra_documents", 0))
         if graph_drift > allowed_doc_drift:
@@ -622,13 +809,14 @@ async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 
         drift = None
         alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
 
-    litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
-    if litellm_status != "healthy":
-        alerts.append({
-            "type": "model_route_health",
-            "severity": "critical",
-            "message": f"LiteLLM health is {litellm_status or 'unknown'}",
-        })
+    if check_model and health_status:
+        litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
+        if litellm_status != "healthy":
+            alerts.append({
+                "type": "model_route_health",
+                "severity": "critical",
+                "message": f"LiteLLM health is {litellm_status or 'unknown'}",
+            })
 
     error_logs = [
         line for line in list(_log_buffer)[-200:]
@@ -698,6 +886,7 @@ async def reindex():
         try:
             invalidate_on_sync()
             result = await reindex_all(progress_callback=progress_cb, cancel_event=cancel_event)
+            _clear_freshness_cache()
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""
@@ -716,13 +905,30 @@ async def reindex():
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
 
 
-@app.post("/reindex/{doc_id}")
+@app.post("/reindex/{doc_id}", response_model=TaskResponse)
 async def reindex_single(doc_id: int):
-    try:
-        result = await reindex_document(doc_id)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    task_id, message = await _run_reindex_documents_task(
+        [doc_id],
+        task_type="reindex-document",
+        message=f"Document {doc_id} reindex started in background",
+    )
+    return TaskResponse(task_id=task_id, status="started", message=message)
+
+
+@app.post("/freshness/repair", response_model=TaskResponse)
+async def repair_freshness_drift():
+    snapshot = await _freshness_snapshot(force=True)
+    reindex_ids, delete_ids = _freshness_repair_targets(snapshot)
+    task_id, message = await _run_reindex_documents_task(
+        reindex_ids,
+        delete_ids=delete_ids,
+        task_type="repair-drift",
+        message=f"Repair drift started: {len(reindex_ids)} reindex, {len(delete_ids)} cleanup",
+        update_last_sync=True,
+    )
+    if not task_id:
+        return TaskResponse(task_id="", status="noop", message=message)
+    return TaskResponse(task_id=task_id, status="started", message=message)
 
 
 @app.get("/document/{doc_id}/detail")
@@ -762,6 +968,7 @@ async def delete_document(doc_id: int):
         await embeddings_store.delete_document_embeddings(doc_id)
         await embeddings_store.delete_doc_hash(doc_id)
         invalidate_on_sync()
+        _clear_freshness_cache()
         logger.info(f"Deleted document {doc_id} from knowledge graph")
         return {"status": "deleted", "doc_id": doc_id}
     except Exception as e:

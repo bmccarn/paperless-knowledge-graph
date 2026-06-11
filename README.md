@@ -97,13 +97,15 @@ See [`.env.example`](.env.example) for all available configuration options.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/status` | GET | Node/relationship/embedding counts |
+| `/readyz` | GET | Cheap startup/readiness check for Kubernetes probes |
 | `/freshness` | GET | Compares exact Paperless, graph, embedding, and hash document IDs; use `?force=true` to bypass the short status cache |
 | `/health` | GET | Component health check (Neo4j, pgvector, LiteLLM, cache stats) |
 | `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health, and recent error alerts |
 | `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |
 | `/reindex` | POST | Full reindex — clears graph + embeddings, reprocesses all documents |
-| `/reindex/{doc_id}` | POST | Reindex a single document |
+| `/reindex/{doc_id}` | POST | Start a background task to reindex a single document |
+| `/freshness/repair` | POST | Start a targeted background repair for exact drift IDs reported by `/freshness?force=true` |
 | `/task/{task_id}` | GET | Live task progress (processed, errors, ETA, current doc) |
 
 ### Query & Search
@@ -190,6 +192,14 @@ Run a non-mutating API smoke test:
 ```bash
 python3 scripts/api_smoke_tests.py --base-url http://localhost:8484
 ```
+
+Run the exact Paperless/graph/vector/hash ID audit after restores or migrations:
+
+```bash
+python3 scripts/kg_exact_drift_audit.py --base-url https://kg.mccarn.tech/api
+```
+
+The audit exits non-zero when drift exists. Add `--repair --wait` to start the targeted repair task and wait for completion.
 
 Export graph/vector state before risky changes:
 

@@ -1428,7 +1428,11 @@ async def stream_logs():
     async def event_generator():
         try:
             while True:
-                line = await queue.get()
+                try:
+                    line = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
                 yield f"data: {json.dumps(line)}\n\n"
         except asyncio.CancelledError:
             pass

@@ -747,6 +747,7 @@ async def ops_guardrails(
     allowed_doc_drift: int = 0,
     force: bool = False,
     check_model: bool = True,
+    check_logs: bool = True,
 ):
     """Machine-readable guardrail checks for monitoring."""
     alerts = []
@@ -818,16 +819,17 @@ async def ops_guardrails(
                 "message": f"LiteLLM health is {litellm_status or 'unknown'}",
             })
 
-    error_logs = [
-        line for line in list(_log_buffer)[-200:]
-        if line.get("level") == "ERROR" or "confidence=0." in line.get("message", "")
-    ]
-    if error_logs:
-        alerts.append({
-            "type": "recent_extraction_or_runtime_errors",
-            "severity": "warning",
-            "message": f"{len(error_logs)} recent error/low-confidence log lines",
-        })
+    if check_logs:
+        error_logs = [
+            line for line in list(_log_buffer)[-200:]
+            if line.get("level") == "ERROR" or "confidence=0." in line.get("message", "")
+        ]
+        if error_logs:
+            alerts.append({
+                "type": "recent_extraction_or_runtime_errors",
+                "severity": "warning",
+                "message": f"{len(error_logs)} recent error/low-confidence log lines",
+            })
 
     return {
         "status": "ok" if not alerts else "alerting",

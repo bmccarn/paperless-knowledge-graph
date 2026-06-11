@@ -13,11 +13,11 @@ services:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       ALL_PROXY: ""
-      NO_PROXY: "localhost,127.0.0.1,litellm-lan.mccarn.tech,mcp-lan.mccarn.tech,garmin-mcp-lan.mccarn.tech"
+      NO_PROXY: "localhost,127.0.0.1,litellm.mccarn.tech,mcp.mccarn.tech,garmin-mcp.mccarn.tech"
       http_proxy: ""
       https_proxy: ""
       all_proxy: ""
-      no_proxy: "localhost,127.0.0.1,litellm-lan.mccarn.tech,mcp-lan.mccarn.tech,garmin-mcp-lan.mccarn.tech"
+      no_proxy: "localhost,127.0.0.1,litellm.mccarn.tech,mcp.mccarn.tech,garmin-mcp.mccarn.tech"
     depends_on:
       neo4j:
         condition: service_healthy

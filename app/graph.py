@@ -581,7 +581,26 @@ class GraphStore:
         type_filter = f":{node_type}" if node_type else ""
         terms = self._search_terms(query)
         if not terms:
-            return []
+            if not node_type:
+                return []
+            async with self.driver.session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n{type_filter})
+                    RETURN labels(n) AS labels, properties(n) AS props
+                    LIMIT 5000
+                    """,
+                )
+                rows = [{"labels": r["labels"], "properties": r["props"]} async for r in result]
+            rows.sort(
+                key=lambda row: (
+                    self._first_text((row.get("properties") or {}).get("date")),
+                    self._first_text((row.get("properties") or {}).get("title"))
+                    or self._first_text((row.get("properties") or {}).get("name")),
+                ),
+                reverse=True,
+            )
+            return rows[:limit]
 
         async with self.driver.session() as session:
             result = await session.run(

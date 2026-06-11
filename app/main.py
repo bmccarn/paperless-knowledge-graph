@@ -1060,21 +1060,7 @@ async def list_models():
 
     base_url = settings.litellm_url.rstrip("/")
     headers = {"Authorization": f"Bearer {settings.litellm_api_key}"}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{base_url}/model/info",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = _models_from_litellm_info(resp.json())
-            if not models:
-                raise ValueError("LiteLLM /model/info returned no chat models")
-            return {"models": models, "default": settings.gemini_model}
-    except Exception as e:
-        logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
+    errors: list[str] = []
 
     try:
         async with httpx.AsyncClient() as client:
@@ -1089,8 +1075,30 @@ async def list_models():
                 raise ValueError("LiteLLM /v1/models returned no chat models")
             return {"models": models, "default": settings.gemini_model}
     except Exception as e:
-        logger.error(f"Failed to list models from LiteLLM fallback: {e}")
-        return {"models": [_model_option(settings.gemini_model)], "default": settings.gemini_model}
+        errors.append(f"/v1/models: {e}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{base_url}/model/info",
+                headers=headers,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            models = _models_from_litellm_info(resp.json())
+            if not models:
+                raise ValueError("LiteLLM /model/info returned no chat models")
+            return {"models": models, "default": settings.gemini_model}
+    except httpx.HTTPStatusError as e:
+        errors.append(f"/model/info: {e}")
+        if e.response.status_code not in {401, 403}:
+            logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
+    except Exception as e:
+        errors.append(f"/model/info: {e}")
+        logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
+
+    logger.error(f"Failed to list models from LiteLLM; using configured default. Details: {'; '.join(errors)}")
+    return {"models": [_model_option(settings.gemini_model)], "default": settings.gemini_model}
 
 
 def _models_from_litellm_info(data: dict) -> list[dict]:

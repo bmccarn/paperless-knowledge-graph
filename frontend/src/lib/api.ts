@@ -30,8 +30,16 @@ export async function postReindex() {
   return apiFetch("/reindex", { method: "POST" });
 }
 
-export async function postReindexDoc(docId: number) {
-  return apiFetch(`/reindex/${docId}`, { method: "POST" });
+export async function postReindexDoc(docId: number, waitForCompletion = true) {
+  const response = await apiFetch(`/reindex/${docId}`, { method: "POST" });
+  if (waitForCompletion && response.task_id) {
+    await waitForTask(response.task_id);
+  }
+  return response;
+}
+
+export async function postRepairDrift() {
+  return apiFetch("/freshness/repair", { method: "POST" });
 }
 
 export async function getDocumentDetail(docId: number) {
@@ -47,6 +55,19 @@ export async function postDocumentFeedback(docId: number, reason: string, note =
 
 export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
+}
+
+export async function waitForTask(taskId: string, intervalMs = 2000, timeoutMs = 15 * 60 * 1000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const task = await getTask(taskId);
+    if (task.status === "completed") return task;
+    if (task.status === "failed" || task.status === "cancelled") {
+      throw new Error(task.error || `Task ${task.status}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("Timed out waiting for reindex task to finish");
 }
 
 export async function postQuery(question: string, conversationId?: string, model?: string, mode = "deep") {

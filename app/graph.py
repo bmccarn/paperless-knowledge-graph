@@ -90,6 +90,49 @@ class GraphStore:
         return str(value)
 
     @staticmethod
+    def _coerce_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            for item in value:
+                text = GraphStore._coerce_text(item)
+                if text:
+                    return text
+            return ""
+        if isinstance(value, dict):
+            return GraphStore._searchable_text(value).strip()
+        return str(value).strip()
+
+    @staticmethod
+    def _coerce_text_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            texts: list[str] = []
+            for item in value:
+                if isinstance(item, list):
+                    candidates = GraphStore._coerce_text_list(item)
+                else:
+                    text = GraphStore._coerce_text(item)
+                    candidates = [text] if text else []
+                for candidate in candidates:
+                    if candidate and candidate not in texts:
+                        texts.append(candidate)
+            return texts
+        text = GraphStore._coerce_text(value)
+        return [text] if text else []
+
+    @staticmethod
+    def _sanitize_identity_properties(properties: dict | None) -> dict:
+        props = dict(properties or {})
+        for key in ("name", "uuid"):
+            if key in props:
+                props[key] = GraphStore._coerce_text(props[key])
+        if "aliases" in props:
+            props["aliases"] = GraphStore._coerce_text_list(props["aliases"])
+        return props
+
+    @staticmethod
     def _search_terms(query: str) -> list[str]:
         return [term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 2]
 
@@ -116,12 +159,12 @@ class GraphStore:
             result = await session.run(
                 """
                 MATCH (p:Person)
-                WHERE toLower(p.name) = toLower($name)
-                   OR any(a IN p.aliases WHERE toLower(a) = toLower($name))
+                WHERE toLower(toString(p.name)) = toLower($name)
+                   OR any(a IN coalesce(p.aliases, []) WHERE toLower(toString(a)) = toLower($name))
                 RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases
                 LIMIT 1
                 """,
-                name=name,
+                name=self._coerce_text(name),
             )
             record = await result.single()
             return dict(record) if record else None
@@ -145,12 +188,12 @@ class GraphStore:
             result = await session.run(
                 """
                 MATCH (o:Organization)
-                WHERE toLower(o.name) = toLower($name)
-                   OR any(a IN o.aliases WHERE toLower(a) = toLower($name))
+                WHERE toLower(toString(o.name)) = toLower($name)
+                   OR any(a IN coalesce(o.aliases, []) WHERE toLower(toString(a)) = toLower($name))
                 RETURN o.uuid AS uuid, o.name AS name, o.aliases AS aliases, o.type AS type
                 LIMIT 1
                 """,
-                name=name,
+                name=self._coerce_text(name),
             )
             record = await result.single()
             return dict(record) if record else None
@@ -158,25 +201,32 @@ class GraphStore:
     async def create_person(self, name: str, aliases: list[str] = None, role: str = None,
                             description: str = None) -> str:
         node_uuid = self.new_uuid()
+        name = self._coerce_text(name)
+        aliases = self._coerce_text_list(aliases)
+        role = self._coerce_text(role)
+        description = self._coerce_text(description)
         async with self.driver.session() as session:
             await session.run(
                 """
                 CREATE (p:Person {uuid: $uuid, name: $name, aliases: $aliases, role: $role,
                                   description: $description, entity_type: 'Person'})
                 """,
-                uuid=node_uuid, name=name, aliases=aliases or [], role=role or "",
-                description=description or "",
+                uuid=node_uuid, name=name, aliases=aliases, role=role,
+                description=description,
             )
         return node_uuid
 
     async def add_person_alias(self, node_uuid: str, alias: str):
+        alias = self._coerce_text(alias)
+        if not alias:
+            return
         async with self.driver.session() as session:
             await session.run(
                 """
                 MATCH (p:Person {uuid: $uuid})
                 SET p.aliases = CASE
-                    WHEN NOT $alias IN p.aliases THEN p.aliases + $alias
-                    ELSE p.aliases
+                    WHEN NOT $alias IN coalesce(p.aliases, []) THEN coalesce(p.aliases, []) + $alias
+                    ELSE coalesce(p.aliases, [])
                 END
                 """,
                 uuid=node_uuid, alias=alias,
@@ -185,25 +235,32 @@ class GraphStore:
     async def create_organization(self, name: str, org_type: str = None,
                                    aliases: list[str] = None, description: str = None) -> str:
         node_uuid = self.new_uuid()
+        name = self._coerce_text(name)
+        org_type = self._coerce_text(org_type)
+        aliases = self._coerce_text_list(aliases)
+        description = self._coerce_text(description)
         async with self.driver.session() as session:
             await session.run(
                 """
                 CREATE (o:Organization {uuid: $uuid, name: $name, type: $type, aliases: $aliases,
                                         description: $description, entity_type: 'Organization'})
                 """,
-                uuid=node_uuid, name=name, type=org_type or "", aliases=aliases or [],
-                description=description or "",
+                uuid=node_uuid, name=name, type=org_type, aliases=aliases,
+                description=description,
             )
         return node_uuid
 
     async def add_org_alias(self, node_uuid: str, alias: str):
+        alias = self._coerce_text(alias)
+        if not alias:
+            return
         async with self.driver.session() as session:
             await session.run(
                 """
                 MATCH (o:Organization {uuid: $uuid})
                 SET o.aliases = CASE
-                    WHEN NOT $alias IN o.aliases THEN o.aliases + $alias
-                    ELSE o.aliases
+                    WHEN NOT $alias IN coalesce(o.aliases, []) THEN coalesce(o.aliases, []) + $alias
+                    ELSE coalesce(o.aliases, [])
                 END
                 """,
                 uuid=node_uuid, alias=alias,
@@ -212,6 +269,7 @@ class GraphStore:
     async def create_node(self, label: str, properties: dict) -> str:
         """Create a generic node with given label and properties."""
         node_uuid = self.new_uuid()
+        properties = self._sanitize_identity_properties(properties)
         props = {**properties, "uuid": node_uuid}
         props_str = ", ".join(f"{k}: ${k}" for k in props)
         query = f"CREATE (n:{label} {{{props_str}}})"

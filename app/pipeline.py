@@ -3,6 +3,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from app.config import settings
 from app.paperless import paperless_client, PaperlessClient
@@ -72,13 +73,27 @@ Respond with ONLY a JSON object:
 - If not a real entity: {{"valid": false}}"""
 
 
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            text = _coerce_text(item)
+            if text:
+                return text
+        return ""
+    if isinstance(value, dict):
+        return " ".join(_coerce_text(item) for item in value.values()).strip()
+    return str(value).strip()
+
+
 def _is_suspicious_entity(name: str, entity_type: str) -> bool:
     """Determine if an entity name is borderline and needs LLM validation.
     
     The LLM's general knowledge can catch type mismatches (e.g., "Trane" as Person
     when it's actually a company) and junk entities that slip past the blocklist.
     """
-    name_clean = name.strip()
+    name_clean = _coerce_text(name)
     words = name_clean.split()
     
     # Protected entities are NEVER suspicious - skip LLM validation entirely
@@ -144,6 +159,8 @@ async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str)
     Returns dict with:
       {"valid": True/False, "correct_type": "Person"/"Organization"/etc.}
     """
+    name = _coerce_text(name)
+    entity_type = _coerce_text(entity_type)
     # Protected entities always pass - never send to LLM
     if name.strip().lower() in PROTECTED_ENTITY_NAMES:
         return {"valid": True, "correct_type": entity_type}
@@ -357,6 +374,7 @@ BLOCKED_ENTITY_NAMES = {
 
 def _is_valid_entity_name(name: str) -> bool:
     """Validate entity name - reject generic terms and junk."""
+    name = _coerce_text(name)
     if not name or len(name.strip()) < 2:
         return False
     
@@ -421,7 +439,7 @@ DATE_PATTERNS = [
 
 def _is_date_string(name: str) -> bool:
     """Check if a string is just a date (should not be an entity node)."""
-    name = name.strip()
+    name = _coerce_text(name)
     if any(p.match(name) for p in DATE_PATTERNS):
         return True
     # Also catch dates with label prefixes like "Date of Issue: 2015-10-30" or "R/O Open Date 12/23/25"
@@ -441,7 +459,7 @@ def _is_date_string(name: str) -> bool:
 
 def _is_full_address(name: str) -> bool:
     """Check if a string is a full street address or too granular for a Location entity."""
-    name = name.strip()
+    name = _coerce_text(name)
     # Standalone zip code
     if re.match(r"^\d{5}(-\d{4})?$", name):
         return True
@@ -608,9 +626,9 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
         
         # Process all entities (type-agnostic)
         for entity in all_entities:
-            name = entity.get("name", "")
+            name = _coerce_text(entity.get("name", ""))
             etype = _normalize_entity_type(entity.get("type", "Person"))
-            desc = entity.get("description", "")
+            desc = _coerce_text(entity.get("description", ""))
             
             if not name or not _is_valid_entity_name(name):
                 continue
@@ -640,7 +658,7 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
                            ("vendor", "Organization"), ("policyholder", "Person"),
                            ("filer_name", "Person"), ("ordering_physician", "Person"),
                            ("preparer", "Person")]:
-            name = extracted.get(key)
+            name = _coerce_text(extracted.get(key))
             if name and _is_valid_entity_name(name):
                 results = await graph_store.search_nodes(name, node_type=etype, limit=1)
                 if results:
@@ -670,11 +688,11 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
                 logger.debug(f"Skipping low-confidence implied relationship: {rel} (conf={confidence})")
                 continue
 
-            from_name = rel.get("from_entity", "")
-            to_name = rel.get("to_entity", "")
-            from_type = rel.get("from_type", "Person")
-            to_type = rel.get("to_type", "Person")
-            rel_type = rel.get("relationship", "RELATED_TO")
+            from_name = _coerce_text(rel.get("from_entity", ""))
+            to_name = _coerce_text(rel.get("to_entity", ""))
+            from_type = _coerce_text(rel.get("from_type", "Person"))
+            to_type = _coerce_text(rel.get("to_type", "Person"))
+            rel_type = _coerce_text(rel.get("relationship", "RELATED_TO"))
 
             if not from_name or not to_name:
                 continue
@@ -716,6 +734,7 @@ _CANONICAL_ENTITY_TYPE = {
 
 def _normalize_entity_type(etype: str) -> str:
     """Normalize entity type to canonical PascalCase. Handles multi-capital types."""
+    etype = _coerce_text(etype)
     if not etype:
         return etype
     cleaned = etype.strip()
@@ -742,6 +761,9 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
     2. LLM validation for suspicious entities (type correction + rejection)
     3. Type-appropriate resolution (person, org, generic)
     """
+    name = _coerce_text(name)
+    entity_type = _coerce_text(entity_type)
+    description = _coerce_text(description)
     if not _is_valid_entity_name(name):
         logger.debug(f"Skipping invalid entity name: '{name}'")
         return ""
@@ -786,10 +808,10 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
     
     for entity in all_entities:
         try:
-            name = entity.get("name", "")
-            entity_type = entity.get("type", "Person")
+            name = _coerce_text(entity.get("name", ""))
+            entity_type = _coerce_text(entity.get("type", "Person"))
             confidence = float(entity.get("confidence", 0.8))
-            description = entity.get("description", "")
+            description = _coerce_text(entity.get("description", ""))
             
             if not name or confidence < CONFIDENCE_THRESHOLD:
                 continue
@@ -921,7 +943,7 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
 async def _process_contract(doc_id, doc_node_id, data, source_props):
     """Process contract with specific relationship types (PARTY_TO, CONTRACTED_WITH)."""
     for party in (data.get("parties") or []):
-        name = party.get("name")
+        name = _coerce_text(party.get("name"))
         if not name or not _is_valid_entity_name(name):
             continue
         
@@ -935,7 +957,7 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         
         if entity_uuid:
             # Use specific contract relationships instead of generic MENTIONS
-            role = party.get("role", "").lower()
+            role = _coerce_text(party.get("role", "")).lower()
             if "sign" in role or "execute" in role or "enter" in role:
                 rel_type = "CONTRACTED_WITH"
             else:
@@ -1137,7 +1159,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             doc_node_id, "Document", benefit_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
 
     for org in (data.get("organizations") or []):
-        name = org.get("name") if isinstance(org, dict) else org
+        name = _coerce_text(org.get("name") if isinstance(org, dict) else org)
         if not name or not _is_valid_entity_name(name):
             continue
         org_uuid = await _resolve_entity(name, "Organization", doc_id)
@@ -1146,14 +1168,14 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
     for loc in (data.get("locations") or []):
-        name = loc.get("name") if isinstance(loc, dict) else loc
+        name = _coerce_text(loc.get("name") if isinstance(loc, dict) else loc)
         if not name or not _is_valid_entity_name(name):
             continue
         if _is_full_address(name):
             continue
         loc_uuid = await entity_resolver.resolve_generic(name, "Location", doc_id)
         if loc_uuid:
-            context = loc.get("context", "mentioned") if isinstance(loc, dict) else "mentioned"
+            context = _coerce_text(loc.get("context", "mentioned")) if isinstance(loc, dict) else "mentioned"
             rel_type = "DEPLOYED_TO" if "deploy" in context.lower() else "STATIONED_AT" if "station" in context.lower() else "LOCATED_AT"
             await graph_store.create_relationship(
                 doc_node_id, "Document", loc_uuid, "Location", rel_type, source_props)
@@ -1167,7 +1189,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
         return
     
     for person in (data.get("people") or []):
-        name = person.get("name") if isinstance(person, dict) else person
+        name = _coerce_text(person.get("name") if isinstance(person, dict) else person)
         if not name or not _is_valid_entity_name(name):
             continue
         if isinstance(person, dict):
@@ -1182,7 +1204,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
     for org in (data.get("organizations") or []):
-        name = org.get("name") if isinstance(org, dict) else org
+        name = _coerce_text(org.get("name") if isinstance(org, dict) else org)
         if not name or not _is_valid_entity_name(name):
             continue
         if isinstance(org, dict):

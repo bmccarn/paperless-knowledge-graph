@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -8,6 +9,20 @@ from app.config import settings
 from app.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            text = _coerce_text(item)
+            if text:
+                return text
+        return ""
+    if isinstance(value, dict):
+        return " ".join(_coerce_text(item) for item in value.values()).strip()
+    return str(value).strip()
 
 # Pass 1 prompts: Focus only on structured metadata extraction per doc type
 METADATA_EXTRACTION_PROMPTS = {
@@ -782,8 +797,8 @@ class EntityExtractor:
         try:
             verified = await _extract_json_with_retry(_call, operation="pass4_verification")
             # Sanity check: verification should not ADD entities, only remove them
-            verified_names = {e.get("name", "").lower() for e in verified.get("entities", [])}
-            original_names = {e.get("name", "").lower() for e in entity_list}
+            verified_names = {_coerce_text(e.get("name", "")).lower() for e in verified.get("entities", [])}
+            original_names = {_coerce_text(e.get("name", "")).lower() for e in entity_list}
             # If verification added new entities, that's wrong - fall back to original
             new_entities = verified_names - original_names
             if new_entities:
@@ -809,8 +824,8 @@ class EntityExtractor:
         all_entities = entities.get("entities", [])
         
         for entity in all_entities:
-            entity_type = entity.get("type", "")
-            name = entity.get("name", "")
+            entity_type = _coerce_text(entity.get("type", ""))
+            name = _coerce_text(entity.get("name", ""))
             if not name:
                 continue
                 
@@ -836,8 +851,8 @@ class EntityExtractor:
         # Convert relationships to implied_relationships format
         implied_relationships = []
         for rel in relationships.get("relationships", []):
-            from_entity = rel.get("from_entity", "")
-            to_entity = rel.get("to_entity", "")
+            from_entity = _coerce_text(rel.get("from_entity", ""))
+            to_entity = _coerce_text(rel.get("to_entity", ""))
             if not from_entity or not to_entity:
                 continue
                 
@@ -850,7 +865,7 @@ class EntityExtractor:
                 "from_type": from_type,
                 "to_entity": to_entity, 
                 "to_type": to_type,
-                "relationship": rel.get("relationship_type", "RELATED_TO"),
+                "relationship": _coerce_text(rel.get("relationship_type", "RELATED_TO")),
                 "confidence": rel.get("confidence", 0.7)
             })
         
@@ -871,9 +886,10 @@ class EntityExtractor:
     
     def _find_entity_type(self, entity_name: str, entities: list) -> str:
         """Find the type of an entity from the entities list."""
+        entity_name = _coerce_text(entity_name)
         for entity in entities:
-            if entity.get("name", "") == entity_name:
-                return entity.get("type", "Person")
+            if _coerce_text(entity.get("name", "")) == entity_name:
+                return _coerce_text(entity.get("type", "Person")) or "Person"
         # Fallback heuristics
         if any(w in entity_name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
             return "Organization"

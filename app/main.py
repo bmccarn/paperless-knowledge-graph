@@ -69,6 +69,10 @@ _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 _last_failed_extraction: dict | None = None
 _auto_sync_task: asyncio.Task | None = None
 _entity_steward_task: asyncio.Task | None = None
+_freshness_cache: dict | None = None
+_freshness_cache_at: float = 0.0
+FRESHNESS_CACHE_TTL_SECONDS = int(os.getenv("FRESHNESS_CACHE_TTL_SECONDS", "60"))
+FRESHNESS_SAMPLE_LIMIT = int(os.getenv("FRESHNESS_SAMPLE_LIMIT", "50"))
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -140,37 +144,127 @@ def _make_progress_callback(task_id: str):
     return callback
 
 
-async def _freshness_snapshot() -> dict:
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _document_ref(doc: dict) -> dict:
+    return {
+        "id": doc.get("id"),
+        "title": doc.get("title"),
+        "modified": doc.get("modified"),
+    }
+
+
+def _sample_document_refs(ids: set[int], docs_by_id: dict[int, dict]) -> list[dict]:
+    refs = []
+    for doc_id in sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]:
+        doc = docs_by_id.get(doc_id)
+        refs.append(_document_ref(doc) if doc else {"id": doc_id, "title": None, "modified": None})
+    return refs
+
+
+def _sample_ids(ids: set[int]) -> list[int]:
+    return sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]
+
+
+async def _freshness_snapshot(force: bool = False) -> dict:
     """Compare Paperless source state with the indexed knowledge graph."""
-    paperless = await paperless_client.get_document_summary()
+    global _freshness_cache, _freshness_cache_at
+
+    now = time.monotonic()
+    if (
+        not force
+        and _freshness_cache is not None
+        and now - _freshness_cache_at < FRESHNESS_CACHE_TTL_SECONDS
+    ):
+        return _freshness_cache
+
+    paperless_docs_list = await paperless_client.get_all_documents(page_size=100)
+    docs_by_id = {int(doc["id"]): doc for doc in paperless_docs_list if doc.get("id") is not None}
+    paperless_ids = set(docs_by_id.keys())
+    latest = paperless_docs_list[0] if paperless_docs_list else None
     counts = await graph_store.get_counts()
+    graph_ids = {int(doc_id) for doc_id in await graph_store.get_all_document_ids()}
+    embedding_ids = await embeddings_store.get_document_embedding_ids()
+    hash_ids = await embeddings_store.get_document_hash_ids()
     last_sync = await embeddings_store.get_last_sync()
     indexed_docs = counts.get("documents", 0)
-    paperless_docs = paperless.get("count", 0)
-    missing_docs = max(paperless_docs - indexed_docs, 0)
+    paperless_docs = len(paperless_ids)
 
-    latest_modified = paperless.get("latest_modified")
-    stale = bool(missing_docs)
-    if latest_modified and last_sync:
-        try:
-            latest_dt = datetime.fromisoformat(latest_modified.replace("Z", "+00:00"))
-            stale = stale or latest_dt > last_sync
-        except ValueError:
-            stale = True
-    elif latest_modified and not last_sync:
+    missing_from_graph = paperless_ids - graph_ids
+    extra_in_graph = graph_ids - paperless_ids
+    missing_embeddings = paperless_ids - embedding_ids
+    extra_embeddings = embedding_ids - paperless_ids
+    missing_hashes = paperless_ids - hash_ids
+    extra_hashes = hash_ids - paperless_ids
+
+    latest_modified = latest.get("modified") if latest else None
+    latest_dt = _parse_timestamp(latest_modified)
+    last_sync_dt = last_sync.astimezone(timezone.utc) if last_sync else None
+    modified_after_last_sync: set[int] = set()
+    if last_sync_dt:
+        for doc_id, doc in docs_by_id.items():
+            modified_dt = _parse_timestamp(doc.get("modified"))
+            if modified_dt and modified_dt > last_sync_dt:
+                modified_after_last_sync.add(doc_id)
+    elif paperless_ids:
+        modified_after_last_sync = set(paperless_ids)
+
+    stale = bool(
+        missing_from_graph
+        or extra_in_graph
+        or missing_embeddings
+        or extra_embeddings
+        or missing_hashes
+        or extra_hashes
+        or modified_after_last_sync
+    )
+    if latest_modified and not latest_dt:
         stale = True
 
-    return {
+    snapshot = {
         "stale": stale,
         "paperless_documents": paperless_docs,
         "indexed_documents": indexed_docs,
-        "missing_documents": missing_docs,
+        "docs_with_embeddings": len(embedding_ids),
+        "hashed_documents": len(hash_ids),
+        "missing_documents": len(missing_from_graph),
+        "extra_documents": len(extra_in_graph),
+        "missing_embedding_documents": len(missing_embeddings),
+        "extra_embedding_documents": len(extra_embeddings),
+        "missing_hash_documents": len(missing_hashes),
+        "extra_hash_documents": len(extra_hashes),
+        "modified_after_last_sync_documents": len(modified_after_last_sync),
+        "exact_id_check": True,
+        "drift": {
+            "sample_limit": FRESHNESS_SAMPLE_LIMIT,
+            "missing_from_graph": _sample_document_refs(missing_from_graph, docs_by_id),
+            "extra_in_graph": _sample_ids(extra_in_graph),
+            "missing_embeddings": _sample_document_refs(missing_embeddings, docs_by_id),
+            "extra_embeddings": _sample_ids(extra_embeddings),
+            "missing_hashes": _sample_document_refs(missing_hashes, docs_by_id),
+            "extra_hashes": _sample_ids(extra_hashes),
+            "modified_after_last_sync": _sample_document_refs(modified_after_last_sync, docs_by_id),
+        },
         "last_sync": last_sync.isoformat() if last_sync else None,
         "latest_paperless_modified": latest_modified,
-        "latest_paperless_id": paperless.get("latest_id"),
-        "latest_paperless_title": paperless.get("latest_title"),
+        "latest_paperless_id": latest.get("id") if latest else None,
+        "latest_paperless_title": latest.get("title") if latest else None,
         "last_failed_extraction": _last_failed_extraction,
     }
+
+    _freshness_cache = snapshot
+    _freshness_cache_at = now
+    return snapshot
 
 
 async def _run_sync_task(task_type: str = "sync") -> str:
@@ -412,8 +506,8 @@ async def status():
 
 
 @app.get("/freshness")
-async def freshness():
-    return await _freshness_snapshot()
+async def freshness(force: bool = False):
+    return await _freshness_snapshot(force=force)
 
 
 @app.get("/health")
@@ -469,9 +563,9 @@ async def health():
 async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 0):
     """Machine-readable guardrail checks for monitoring."""
     alerts = []
-    counts = await graph_store.get_counts()
     last_sync = await embeddings_store.get_last_sync()
     health_status = await health()
+    freshness_snapshot = None
 
     if last_sync:
         age_hours = (datetime.now(timezone.utc) - last_sync.astimezone(timezone.utc)).total_seconds() / 3600
@@ -487,16 +581,44 @@ async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 
         })
 
     try:
-        source = await paperless_client.get_document_summary()
-        drift = int(source.get("count", 0)) - int(counts.get("documents", 0))
-        if drift > allowed_doc_drift:
+        freshness_snapshot = await _freshness_snapshot()
+        drift = int(freshness_snapshot.get("paperless_documents", 0)) - int(freshness_snapshot.get("indexed_documents", 0))
+        graph_drift = int(freshness_snapshot.get("missing_documents", 0)) + int(freshness_snapshot.get("extra_documents", 0))
+        if graph_drift > allowed_doc_drift:
             alerts.append({
-                "type": "doc_count_drift",
+                "type": "doc_id_drift",
                 "severity": "warning",
-                "message": f"Paperless has {drift} more documents than the graph",
+                "message": (
+                    f"Paperless/graph ID drift: {freshness_snapshot.get('missing_documents', 0)} "
+                    f"missing from graph, {freshness_snapshot.get('extra_documents', 0)} extra in graph"
+                ),
+                "details": {
+                    "missing_from_graph": freshness_snapshot.get("drift", {}).get("missing_from_graph", []),
+                    "extra_in_graph": freshness_snapshot.get("drift", {}).get("extra_in_graph", []),
+                },
+            })
+        vector_drift = (
+            int(freshness_snapshot.get("missing_embedding_documents", 0))
+            + int(freshness_snapshot.get("extra_embedding_documents", 0))
+            + int(freshness_snapshot.get("missing_hash_documents", 0))
+            + int(freshness_snapshot.get("extra_hash_documents", 0))
+        )
+        if vector_drift:
+            alerts.append({
+                "type": "vector_hash_id_drift",
+                "severity": "warning",
+                "message": (
+                    f"Vector/hash drift: {freshness_snapshot.get('missing_embedding_documents', 0)} "
+                    f"missing embeddings, {freshness_snapshot.get('missing_hash_documents', 0)} missing hashes"
+                ),
+                "details": {
+                    "missing_embeddings": freshness_snapshot.get("drift", {}).get("missing_embeddings", []),
+                    "extra_embeddings": freshness_snapshot.get("drift", {}).get("extra_embeddings", []),
+                    "missing_hashes": freshness_snapshot.get("drift", {}).get("missing_hashes", []),
+                    "extra_hashes": freshness_snapshot.get("drift", {}).get("extra_hashes", []),
+                },
             })
     except Exception as e:
-        source = {"error": str(e)}
         drift = None
         alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
 
@@ -524,9 +646,15 @@ async def ops_guardrails(max_sync_age_hours: int = 24, allowed_doc_drift: int = 
         "alerts": alerts,
         "last_sync": last_sync.isoformat() if last_sync else None,
         "sync_age_hours": round(age_hours, 2) if age_hours is not None else None,
-        "graph_documents": counts.get("documents", 0),
-        "paperless": source,
+        "graph_documents": freshness_snapshot.get("indexed_documents", 0) if freshness_snapshot else None,
+        "paperless": {
+            "count": freshness_snapshot.get("paperless_documents", 0),
+            "latest_id": freshness_snapshot.get("latest_paperless_id"),
+            "latest_title": freshness_snapshot.get("latest_paperless_title"),
+            "latest_modified": freshness_snapshot.get("latest_paperless_modified"),
+        } if freshness_snapshot else None,
         "document_drift": drift,
+        "freshness": freshness_snapshot,
     }
 
 

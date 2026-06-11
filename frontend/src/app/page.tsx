@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getStatus, postSync, postReindex, getTask, cancelTask, graphSearch } from "@/lib/api";
-import type { StatusResponse } from "@/lib/types";
+import type { FreshnessDocumentRef, StatusResponse } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -66,6 +66,25 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function formatDocRefs(docs?: FreshnessDocumentRef[], limit = 5): string {
+  const refs = docs || [];
+  if (refs.length === 0) return "";
+  const shown = refs.slice(0, limit).map((doc) => {
+    const label = doc.title ? ` ${doc.title}` : "";
+    return `#${doc.id}${label}`;
+  });
+  const more = refs.length > limit ? ` +${refs.length - limit} more` : "";
+  return `${shown.join(", ")}${more}`;
+}
+
+function formatIds(ids?: number[], limit = 8): string {
+  const values = ids || [];
+  if (values.length === 0) return "";
+  const shown = values.slice(0, limit).map((id) => `#${id}`);
+  const more = values.length > limit ? ` +${values.length - limit} more` : "";
+  return `${shown.join(", ")}${more}`;
 }
 
 export default function DashboardPage() {
@@ -310,6 +329,35 @@ export default function DashboardPage() {
   const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
   const freshness = status.freshness;
   const lastFailedExtraction = freshness?.last_failed_extraction;
+  const freshnessDriftDetails = freshness
+    ? [
+        {
+          label: "Missing graph docs",
+          count: freshness.missing_documents || 0,
+          detail: formatDocRefs(freshness.drift?.missing_from_graph),
+        },
+        {
+          label: "Extra graph docs",
+          count: freshness.extra_documents || 0,
+          detail: formatIds(freshness.drift?.extra_in_graph),
+        },
+        {
+          label: "Missing embeddings",
+          count: freshness.missing_embedding_documents || 0,
+          detail: formatDocRefs(freshness.drift?.missing_embeddings),
+        },
+        {
+          label: "Missing hashes",
+          count: freshness.missing_hash_documents || 0,
+          detail: formatDocRefs(freshness.drift?.missing_hashes),
+        },
+        {
+          label: "Modified after sync",
+          count: freshness.modified_after_last_sync_documents || 0,
+          detail: formatDocRefs(freshness.drift?.modified_after_last_sync),
+        },
+      ].filter((item) => item.count > 0)
+    : [];
 
   return (
     <div className="space-y-4 p-4 md:space-y-6 md:p-6 lg:p-8 h-full overflow-y-auto">
@@ -355,6 +403,17 @@ export default function DashboardPage() {
                       <span> {freshness.missing_documents.toLocaleString()} document{freshness.missing_documents === 1 ? "" : "s"} appear missing from the index.</span>
                     )}
                   </p>
+                  {freshnessDriftDetails.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {freshnessDriftDetails.map((item) => (
+                        <p key={item.label} className="text-xs text-muted-foreground">
+                          <span className="font-medium text-amber-200">{item.label}:</span>{" "}
+                          {item.count.toLocaleString()}
+                          {item.detail && <span> ({item.detail})</span>}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   {freshness.latest_paperless_title && (
                     <p className="text-xs text-muted-foreground mt-1">
                       Latest Paperless change: {freshness.latest_paperless_title}

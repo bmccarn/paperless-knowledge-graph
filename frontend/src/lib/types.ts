@@ -16,7 +16,26 @@ export interface FreshnessStatus {
   stale: boolean;
   paperless_documents: number;
   indexed_documents: number;
+  docs_with_embeddings?: number;
+  hashed_documents?: number;
   missing_documents: number;
+  extra_documents?: number;
+  missing_embedding_documents?: number;
+  extra_embedding_documents?: number;
+  missing_hash_documents?: number;
+  extra_hash_documents?: number;
+  modified_after_last_sync_documents?: number;
+  exact_id_check?: boolean;
+  drift?: {
+    sample_limit: number;
+    missing_from_graph: FreshnessDocumentRef[];
+    extra_in_graph: number[];
+    missing_embeddings: FreshnessDocumentRef[];
+    extra_embeddings: number[];
+    missing_hashes: FreshnessDocumentRef[];
+    extra_hashes: number[];
+    modified_after_last_sync: FreshnessDocumentRef[];
+  };
   last_sync: string | null;
   latest_paperless_modified: string | null;
   latest_paperless_id: number | null;
@@ -28,6 +47,12 @@ export interface FreshnessStatus {
     task_id?: string;
     at?: string;
   } | null;
+}
+
+export interface FreshnessDocumentRef {
+  id: number;
+  title?: string | null;
+  modified?: string | null;
 }
 
 export interface TaskResponse {

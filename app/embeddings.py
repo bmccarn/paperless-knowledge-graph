@@ -725,5 +725,17 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT COUNT(DISTINCT document_id) FROM document_embeddings")
 
+    async def get_document_embedding_ids(self) -> set[int]:
+        """Return all document IDs with at least one embedding chunk."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT DISTINCT document_id FROM document_embeddings")
+            return {int(r["document_id"]) for r in rows}
+
+    async def get_document_hash_ids(self) -> set[int]:
+        """Return all document IDs with processing hashes."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT document_id FROM document_hashes")
+            return {int(r["document_id"]) for r in rows}
+
 
 embeddings_store = EmbeddingsStore()

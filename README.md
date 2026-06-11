@@ -97,9 +97,9 @@ See [`.env.example`](.env.example) for all available configuration options.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/status` | GET | Node/relationship/embedding counts |
-| `/freshness` | GET | Compares Paperless count/latest modified document against the indexed graph |
+| `/freshness` | GET | Compares exact Paperless, graph, embedding, and hash document IDs; use `?force=true` to bypass the short status cache |
 | `/health` | GET | Component health check (Neo4j, pgvector, LiteLLM, cache stats) |
-| `/ops/guardrails` | GET | Machine-readable sync age, doc drift, model health, and recent error alerts |
+| `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health, and recent error alerts |
 | `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |
 | `/reindex` | POST | Full reindex — clears graph + embeddings, reprocesses all documents |

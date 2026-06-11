@@ -49,12 +49,18 @@ class PaperlessClient:
         """Fetch a single document by ID."""
         return await self._get(f"/api/documents/{doc_id}/")
 
-    async def get_all_documents(self, modified_after: datetime | None = None) -> list[dict]:
+    async def get_all_documents(
+        self, modified_after: datetime | None = None, page_size: int = 50
+    ) -> list[dict]:
         """Fetch all documents, paginating automatically."""
         all_docs = []
         page = 1
         while True:
-            data = await self.get_documents(modified_after=modified_after, page=page)
+            data = await self.get_documents(
+                modified_after=modified_after,
+                page=page,
+                page_size=page_size,
+            )
             results = data.get("results", [])
             all_docs.extend(results)
             if not data.get("next"):

@@ -233,6 +233,14 @@ async def process_document(doc: dict) -> dict:
     content = doc.get("content", "") or ""
     content_hash = PaperlessClient.content_hash(content)
 
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    if paperless_client.has_any_tag(doc, skip_tag_ids):
+        logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
+        await graph_store.delete_document_graph(doc_id)
+        await embeddings_store.delete_document_embeddings(doc_id)
+        await embeddings_store.delete_doc_hash(doc_id)
+        return {"doc_id": doc_id, "status": "skipped", "reason": "configured skip tag present"}
+
     if not content or not content.strip():
         logger.warning(f"Doc {doc_id} has no content, recording metadata-only index")
         try:
@@ -1291,8 +1299,10 @@ async def sync_documents(progress_callback=None, cancel_event=None):
     logger.info(f"Starting sync (last sync: {last_sync})")
 
     start_time = time.time()
-    docs = await paperless_client.get_all_documents(modified_after=last_sync)
-    logger.info(f"Found {len(docs)} documents to check")
+    all_docs = await paperless_client.get_all_documents(modified_after=last_sync)
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    docs, held_docs = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
+    logger.info(f"Found {len(docs)} indexable documents to check ({len(held_docs)} held by skip tags)")
 
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs)})
@@ -1329,7 +1339,9 @@ async def sync_documents(progress_callback=None, cancel_event=None):
     # Detect and remove deleted documents
     deleted_count = 0
     try:
-        paperless_ids = {doc["id"] for doc in await paperless_client.get_all_documents()}
+        current_docs = await paperless_client.get_all_documents()
+        indexable_docs, held_current_docs = paperless_client.partition_indexable_documents(current_docs, skip_tag_ids)
+        paperless_ids = {doc["id"] for doc in indexable_docs}
         graph_ids = await graph_store.get_all_document_ids()
         deleted_ids = graph_ids - paperless_ids
         if deleted_ids:
@@ -1369,6 +1381,7 @@ async def sync_documents(progress_callback=None, cancel_event=None):
         "total": len(docs),
         "processed": processed,
         "skipped": skipped,
+        "held": len(held_docs),
         "errors": errors,
         "deleted": deleted_count,
         "elapsed_seconds": round(elapsed, 1),
@@ -1385,8 +1398,10 @@ async def reindex_all(progress_callback=None, cancel_event=None):
     await embeddings_store.clear_all()
 
     start_time = time.time()
-    docs = await paperless_client.get_all_documents()
-    logger.info(f"Reindexing {len(docs)} documents")
+    all_docs = await paperless_client.get_all_documents()
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    docs, held_docs = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
+    logger.info(f"Reindexing {len(docs)} indexable documents ({len(held_docs)} held by skip tags)")
 
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs)})
@@ -1453,6 +1468,7 @@ async def reindex_all(progress_callback=None, cancel_event=None):
     return {
         "total": len(docs),
         "processed": processed,
+        "held": len(held_docs),
         "errors": errors,
         "elapsed_seconds": round(elapsed, 1),
         "results": results,
@@ -1463,6 +1479,14 @@ async def reindex_document(doc_id: int):
     """Reindex a single document."""
     logger.info(f"Reindexing document {doc_id}")
     doc = await paperless_client.get_document(doc_id)
+
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    if paperless_client.has_any_tag(doc, skip_tag_ids):
+        logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
+        await embeddings_store.delete_doc_hash(doc_id)
+        await graph_store.delete_document_graph(doc_id)
+        await embeddings_store.delete_document_embeddings(doc_id)
+        return {"doc_id": doc_id, "status": "skipped", "reason": "configured skip tag present"}
 
     await embeddings_store.delete_doc_hash(doc_id)
     await graph_store.delete_document_graph(doc_id)

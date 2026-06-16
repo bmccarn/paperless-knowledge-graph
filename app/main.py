@@ -233,9 +233,16 @@ async def _freshness_snapshot(force: bool = False) -> dict:
         return _freshness_cache
 
     paperless_docs_list = await paperless_client.get_all_documents(page_size=100)
-    docs_by_id = {int(doc["id"]): doc for doc in paperless_docs_list if doc.get("id") is not None}
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    indexable_docs_list, held_docs_list = paperless_client.partition_indexable_documents(
+        paperless_docs_list,
+        skip_tag_ids,
+    )
+    all_docs_by_id = {int(doc["id"]): doc for doc in paperless_docs_list if doc.get("id") is not None}
+    docs_by_id = {int(doc["id"]): doc for doc in indexable_docs_list if doc.get("id") is not None}
     paperless_ids = set(docs_by_id.keys())
-    latest = paperless_docs_list[0] if paperless_docs_list else None
+    held_ids = {int(doc["id"]) for doc in held_docs_list if doc.get("id") is not None}
+    latest = indexable_docs_list[0] if indexable_docs_list else None
     counts = await graph_store.get_counts()
     graph_ids = {int(doc_id) for doc_id in await graph_store.get_all_document_ids()}
     embedding_ids = await embeddings_store.get_document_embedding_ids()
@@ -278,6 +285,8 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     snapshot = {
         "stale": stale,
         "paperless_documents": paperless_docs,
+        "paperless_total_documents": len(paperless_docs_list),
+        "skip_tag_documents": len(held_ids),
         "indexed_documents": indexed_docs,
         "docs_with_embeddings": len(embedding_ids),
         "hashed_documents": len(hash_ids),
@@ -298,6 +307,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
             "missing_hashes": _sample_document_refs(missing_hashes, docs_by_id),
             "extra_hashes": _sample_ids(extra_hashes),
             "modified_after_last_sync": _sample_document_refs(modified_after_last_sync, docs_by_id),
+            "held_by_skip_tag": _sample_document_refs(held_ids, all_docs_by_id),
         },
         "last_sync": last_sync.isoformat() if last_sync else None,
         "latest_paperless_modified": latest_modified,

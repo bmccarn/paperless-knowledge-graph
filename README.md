@@ -72,6 +72,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `PAPERLESS_URL` | Paperless-ngx instance URL | `http://localhost:8000` |
 | `PAPERLESS_TOKEN` | Paperless API token | — |
 | `PAPERLESS_EXTERNAL_URL` | External URL for Paperless links in frontend | Same as `PAPERLESS_URL` |
+| `PAPERLESS_SKIP_TAG_NAMES` | Comma-separated Paperless tag names to exclude from KG sync/reindex/freshness while present | `needs-review` |
 | `LITELLM_URL` | LiteLLM proxy URL | `http://localhost:4000` |
 | `LITELLM_API_KEY` | LiteLLM API key | — |
 | `EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |

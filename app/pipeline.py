@@ -230,13 +230,52 @@ async def process_document(doc: dict) -> dict:
     """Process a single Paperless document through the full pipeline."""
     doc_id = doc["id"]
     title = doc.get("title", "")
-    content = doc.get("content", "")
+    content = doc.get("content", "") or ""
+    content_hash = PaperlessClient.content_hash(content)
 
     if not content or not content.strip():
-        logger.warning(f"Doc {doc_id} has no content, skipping")
-        return {"doc_id": doc_id, "status": "skipped", "reason": "no content"}
+        logger.warning(f"Doc {doc_id} has no content, recording metadata-only index")
+        try:
+            await graph_store.delete_document_graph(doc_id)
+            await embeddings_store.delete_document_embeddings(doc_id)
 
-    content_hash = PaperlessClient.content_hash(content)
+            doc_type = "no_content"
+            doc_date = _extract_date(doc, {})
+            await graph_store.create_document_node(
+                paperless_id=doc_id,
+                title=title,
+                doc_type=doc_type,
+                date=doc_date,
+                content_hash=content_hash,
+            )
+
+            metadata_content = (
+                f"Document: {title or f'Document {doc_id}'}\n"
+                f"Type: {doc_type}\n"
+                f"Date: {doc_date or 'unknown'}\n"
+                f"Paperless ID: {doc_id}\n\n"
+                "No OCR content is available for this Paperless document."
+            )
+            await embeddings_store.store_document_embedding(
+                doc_id,
+                metadata_content,
+                chunk_index=0,
+                title=title,
+                doc_type=doc_type,
+            )
+            await embeddings_store.set_doc_hash(doc_id, content_hash)
+            return {
+                "doc_id": doc_id,
+                "status": "processed",
+                "doc_type": doc_type,
+                "entities_extracted": 0,
+                "chunks": 1,
+                "confidence": 0.0,
+                "reason": "metadata-only; no OCR content",
+            }
+        except Exception as e:
+            logger.error(f"Failed to process metadata-only doc {doc_id}: {e}", exc_info=True)
+            return {"doc_id": doc_id, "status": "error", "error": str(e)}
 
     # Check if already processed with same content
     existing_hash = await embeddings_store.get_doc_hash(doc_id)

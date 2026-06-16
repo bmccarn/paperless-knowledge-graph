@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     paperless_url: str = "http://localhost:8000"
     paperless_token: str = ""
     paperless_external_url: str = ""
+    paperless_skip_tag_names: str = "needs-review"
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash"

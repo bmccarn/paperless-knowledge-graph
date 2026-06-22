@@ -95,6 +95,8 @@ def _clear_freshness_cache():
 def _make_progress_callback(task_id: str):
     """Create a progress callback that updates _tasks[task_id] in place."""
     def callback(event: str, data: dict):
+        global _last_failed_extraction
+
         task = _tasks.get(task_id)
         if not task:
             return
@@ -110,8 +112,12 @@ def _make_progress_callback(task_id: str):
             # Update counters
             if result.get("status") == "processed":
                 task["processed"] = task.get("processed", 0) + 1
+                if _last_failed_extraction and _last_failed_extraction.get("doc_id") == result.get("doc_id"):
+                    _last_failed_extraction = None
             elif result.get("status") == "skipped":
                 task["skipped"] = task.get("skipped", 0) + 1
+                if _last_failed_extraction and _last_failed_extraction.get("doc_id") == result.get("doc_id"):
+                    _last_failed_extraction = None
             elif result.get("status") == "error":
                 task["errors"] = task.get("errors", 0) + 1
 
@@ -137,7 +143,6 @@ def _make_progress_callback(task_id: str):
                 recent_entry["relationships"] = result.get("chunks", 0)
             elif result.get("status") == "error":
                 recent_entry["error"] = result.get("error", "")
-                global _last_failed_extraction
                 _last_failed_extraction = {
                     "doc_id": result.get("doc_id"),
                     "title": task.get("current_doc", ""),

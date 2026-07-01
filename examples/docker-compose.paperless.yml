@@ -1,0 +1,55 @@
+name: paperless-local
+
+services:
+  broker:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - paperless_redis:/data
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PAPERLESS_DBNAME:-paperless}"
+      POSTGRES_USER: "${PAPERLESS_DBUSER:-paperless}"
+      POSTGRES_PASSWORD: "${PAPERLESS_DBPASS:-paperless}"
+    volumes:
+      - paperless_postgres:/var/lib/postgresql/data
+
+  webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    restart: unless-stopped
+    depends_on:
+      - broker
+      - db
+    ports:
+      - "8000:8000"
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBNAME: "${PAPERLESS_DBNAME:-paperless}"
+      PAPERLESS_DBUSER: "${PAPERLESS_DBUSER:-paperless}"
+      PAPERLESS_DBPASS: "${PAPERLESS_DBPASS:-paperless}"
+      PAPERLESS_SECRET_KEY: "${PAPERLESS_SECRET_KEY:-change-me-local-dev-only}"
+      PAPERLESS_URL: "${PAPERLESS_URL:-http://localhost:8000}"
+      PAPERLESS_ALLOWED_HOSTS: "${PAPERLESS_ALLOWED_HOSTS:-localhost,127.0.0.1}"
+      PAPERLESS_CSRF_TRUSTED_ORIGINS: "${PAPERLESS_CSRF_TRUSTED_ORIGINS:-http://localhost:8000}"
+      PAPERLESS_TIME_ZONE: "${PAPERLESS_TIME_ZONE:-UTC}"
+      PAPERLESS_OCR_LANGUAGE: "${PAPERLESS_OCR_LANGUAGE:-eng}"
+      PAPERLESS_ADMIN_USER: "${PAPERLESS_ADMIN_USER:-admin}"
+      PAPERLESS_ADMIN_PASSWORD: "${PAPERLESS_ADMIN_PASSWORD:-admin}"
+      PAPERLESS_ADMIN_MAIL: "${PAPERLESS_ADMIN_MAIL:-admin@example.com}"
+    volumes:
+      - paperless_data:/usr/src/paperless/data
+      - paperless_media:/usr/src/paperless/media
+      - paperless_export:/usr/src/paperless/export
+      - paperless_consume:/usr/src/paperless/consume
+
+volumes:
+  paperless_redis:
+  paperless_postgres:
+  paperless_data:
+  paperless_media:
+  paperless_export:
+  paperless_consume:

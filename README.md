@@ -56,12 +56,45 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 
 ## Quick Start
 
+The main compose file runs the knowledge graph backend, frontend, Neo4j,
+Postgres/pgvector, and Redis. It expects Paperless-ngx to already be running
+separately, then connects to it through `PAPERLESS_URL` and `PAPERLESS_TOKEN`.
+
 ```bash
 cp .env.example .env
 # Edit .env with your Paperless URL/token, LiteLLM URL/key, Neo4j password, Postgres creds
 
 docker compose up -d
 ```
+
+Open the frontend at `http://localhost:3001` and the API at
+`http://localhost:8484`.
+
+### Local Testing Examples
+
+If you need a disposable local Paperless-ngx instance for testing, use the
+sample compose in [`examples/`](examples/):
+
+```bash
+cp examples/paperless.env.example examples/paperless.env
+docker compose --env-file examples/paperless.env \
+  -f examples/docker-compose.paperless.yml up -d
+```
+
+Then create an API token in Paperless at `http://localhost:8000`, copy the KG
+sample environment, fill in the Paperless token and LiteLLM settings, and start
+the normal KG stack:
+
+```bash
+cp examples/kg-local.env.example .env
+# edit .env
+docker compose up -d
+```
+
+If you only want the local databases while running the KG backend directly on
+your host, start [`examples/docker-compose.datastores.yml`](examples/docker-compose.datastores.yml)
+instead. See [`examples/README.md`](examples/README.md) for the full local
+testing flow and host-mode environment values.
 
 ### Environment Variables
 

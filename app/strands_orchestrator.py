@@ -35,8 +35,15 @@ class StrandsQueryOrchestrator:
 
     def __init__(self):
         self.enabled = bool(settings.strands_enabled and STRANDS_AVAILABLE)
+        if self.enabled:
+            # LiteLLM's aiohttp proxy transport drops its ephemeral session
+            # before the public cleanup helper can close it. The httpx path is
+            # cached and closed deterministically by _close_litellm_clients().
+            import litellm
+
+            litellm.disable_aiohttp_transport = True
         # LiteLLM caches aiohttp transports globally. Serialize the bounded
-        # Strands calls so each one can close and evict those transports without
+        # Strands calls so each one can close and evict its HTTP clients without
         # racing another request.
         self._client_lock = asyncio.Lock()
 

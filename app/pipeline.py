@@ -35,6 +35,14 @@ def _get_validation_client():
         )
     return _validation_client
 
+
+async def close_clients():
+    """Close module-level HTTP clients created by the extraction pipeline."""
+    global _validation_client
+    if _validation_client is not None:
+        await _validation_client.close()
+        _validation_client = None
+
 ENTITY_VALIDATION_PROMPT = """You are an entity validation and type-correction system for a knowledge graph.
 
 Entity name: "{name}"
@@ -563,6 +571,7 @@ async def _generate_document_summary(doc_id: int, title: str, doc_type: str,
     from app.retry import retry_with_backoff
     from openai import AsyncOpenAI
 
+    client = None
     try:
         client = AsyncOpenAI(
             base_url=_settings.litellm_url,
@@ -609,7 +618,6 @@ Summary:"""
                 model=_settings.gemini_model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1500,
-                temperature=0.1,
             )
             text = response.choices[0].message.content
             if text:
@@ -628,7 +636,6 @@ Summary:"""
                     model=_settings.gemini_model,
                     messages=[{"role": "user", "content": retry_prompt}],
                     max_tokens=1500,
-                    temperature=0.1,
                 )
                 text = response.choices[0].message.content
                 if text:
@@ -646,6 +653,9 @@ Summary:"""
     except Exception as e:
         logger.warning(f"Doc {doc_id}: summary generation failed: {e}")
         return ""
+    finally:
+        if client is not None:
+            await client.close()
 
 
 async def _store_entity_embeddings(doc_id: int, extracted: dict):

@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-large"
     strands_enabled: bool = True
     strands_model: str = ""
-    strands_temperature: float = 0.1
     strands_call_timeout_seconds: float = 45
     stream_verification_timeout_seconds: float = 60
 

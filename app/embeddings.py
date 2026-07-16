@@ -292,6 +292,8 @@ class EmbeddingsStore:
     async def close(self):
         if self.pool:
             await self.pool.close()
+            self.pool = None
+        await self.openai.close()
 
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate embedding via LiteLLM proxy."""

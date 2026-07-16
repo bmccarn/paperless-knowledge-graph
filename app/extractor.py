@@ -686,6 +686,9 @@ class EntityExtractor:
         )
         self.model = settings.gemini_model
 
+    async def close(self):
+        await self.client.close()
+
     async def extract(self, title: str, content: str, doc_type: str) -> dict:
         """Extract entities and relationships using 4-pass pipeline."""
         # Pass 1: Structured Metadata Extraction

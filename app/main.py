@@ -15,9 +15,11 @@ from typing import Optional
 
 from app.embeddings import embeddings_store
 from app.graph import graph_store
-from app.pipeline import sync_documents, reindex_all, reindex_document
+from app.pipeline import sync_documents, reindex_all, reindex_document, close_clients as close_pipeline_clients
 from app.paperless import paperless_client
 from app.query import query_engine
+from app.classifier import classifier
+from app.extractor import extractor
 from app.entity_resolver import entity_resolver
 from app.entity_steward import entity_steward, SUGGESTION_DECISIONS, TERMINAL_DECISIONS
 from app.cache import get_all_cache_stats, invalidate_on_sync
@@ -603,6 +605,14 @@ async def lifespan(app: FastAPI):
         _auto_sync_task.cancel()
     if _entity_steward_task:
         _entity_steward_task.cancel()
+    background_tasks = [task for task in (_auto_sync_task, _entity_steward_task) if task]
+    if background_tasks:
+        await asyncio.gather(*background_tasks, return_exceptions=True)
+    await query_engine.close()
+    await extractor.close()
+    await classifier.close()
+    await close_pipeline_clients()
+    await strands_orchestrator.close()
     await graph_store.close()
     await embeddings_store.close()
     await conversations.close()
@@ -729,12 +739,12 @@ async def health():
     try:
         from openai import AsyncOpenAI
         from app.config import settings
-        client = AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key)
-        response = await client.chat.completions.create(
-            model=settings.gemini_model,
-            messages=[{"role": "user", "content": "Say 'ok'"}],
-            max_tokens=5,
-        )
+        async with AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key) as client:
+            response = await client.chat.completions.create(
+                model=settings.gemini_model,
+                messages=[{"role": "user", "content": "Say 'ok'"}],
+                max_tokens=5,
+            )
         components["litellm"] = {"status": "healthy"} if response.choices else {"status": "degraded"}
     except Exception as e:
         components["litellm"] = {"status": "unhealthy", "error": str(e)}

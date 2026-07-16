@@ -51,6 +51,9 @@ class DocumentClassifier:
         )
         self.model = settings.gemini_model
 
+    async def close(self):
+        await self.client.close()
+
     async def classify(self, title: str, content: str) -> dict:
         """Classify a document into one of the predefined types."""
         truncated = content[:3000]

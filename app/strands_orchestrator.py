@@ -35,6 +35,10 @@ class StrandsQueryOrchestrator:
 
     def __init__(self):
         self.enabled = bool(settings.strands_enabled and STRANDS_AVAILABLE)
+        # LiteLLM caches aiohttp transports globally. Serialize the bounded
+        # Strands calls so each one can close and evict those transports without
+        # racing another request.
+        self._client_lock = asyncio.Lock()
 
     @property
     def status(self) -> dict[str, Any]:
@@ -341,22 +345,40 @@ Rules:
         )
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+        async with self._client_lock:
+            try:
+                agent = Agent(
+                    name=name,
+                    model=self._model(max_tokens=max_tokens),
+                    system_prompt=system_prompt,
+                    callback_handler=None,
+                )
+                timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
+                result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
+                return _extract_json(str(result))
+            except asyncio.TimeoutError:
+                logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
+                return {}
+            except Exception as exc:
+                logger.warning("Strands %s failed: %s", name, exc)
+                return {}
+            finally:
+                await self._close_litellm_clients()
+
+    async def _close_litellm_clients(self):
+        if not STRANDS_AVAILABLE:
+            return
         try:
-            agent = Agent(
-                name=name,
-                model=self._model(max_tokens=max_tokens),
-                system_prompt=system_prompt,
-                callback_handler=None,
-            )
-            timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
-            result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
-            return _extract_json(str(result))
-        except asyncio.TimeoutError:
-            logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
-            return {}
+            import litellm
+
+            await litellm.close_litellm_async_clients()
+            litellm.in_memory_llm_clients_cache.flush_cache()
         except Exception as exc:
-            logger.warning("Strands %s failed: %s", name, exc)
-            return {}
+            logger.warning("Failed to close Strands LiteLLM clients: %s", exc)
+
+    async def close(self):
+        async with self._client_lock:
+            await self._close_litellm_clients()
 
     def _model(self, max_tokens: int):
         model_id = settings.strands_model or settings.gemini_model
@@ -369,7 +391,6 @@ Rules:
             model_id=model_id,
             params={
                 "max_tokens": max_tokens,
-                "temperature": settings.strands_temperature,
             },
         )
 

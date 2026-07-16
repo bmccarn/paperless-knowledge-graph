@@ -63,6 +63,9 @@ class QueryEngine:
         self.model = settings.gemini_model
         self._model_override = None
 
+    async def close(self):
+        await self.client.close()
+
     def _active_model(self, model_override=None):
         return model_override or self._model_override or self.model
 

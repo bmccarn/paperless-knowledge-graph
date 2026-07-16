@@ -113,7 +113,6 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
 | `STRANDS_MODEL` | Optional model override for Strands helper calls | Same as `GEMINI_MODEL` |
-| `STRANDS_TEMPERATURE` | Temperature for Strands helper calls | `0.1` |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials | `neo4j` / — |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | pgvector credentials | `knowledge_graph` / `kguser` / — |
 | `REDIS_URL` | Redis connection URL (optional) | `redis://localhost:6379` |

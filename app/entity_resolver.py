@@ -456,6 +456,7 @@ async def _llm_should_merge(name_a: str, name_b: str, entity_type: str) -> bool:
     if rev_key in _merge_llm_cache:
         return _merge_llm_cache[rev_key]
     
+    client = None
     try:
         from app.config import settings
         from app.retry import retry_with_backoff
@@ -510,6 +511,9 @@ Respond with ONLY: {{"same_entity": true}} or {{"same_entity": false}}"""
     except Exception as e:
         logger.warning(f"LLM merge tiebreaker failed for '{name_a}' <-> '{name_b}': {e}")
         return False  # When in doubt, don't merge
+    finally:
+        if client is not None:
+            await client.close()
 
 
 class EntityResolver:

@@ -1,0 +1,22 @@
+Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+======================================================================
+FAIL: test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint (tests.test_ingestion.IngestionTests.test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_ingestion.py", line 232, in test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint
+    self.assertEqual(result["status"], "failed")
+AssertionError: 'completed' != 'failed'
+- completed
++ failed
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (failures=1)

@@ -443,7 +443,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         generation = await get_corpus_generation_async()
         generation_token = _REQUEST_GENERATION.set(generation)
         try:
-            return await self._query(question, conversation_history, mode)
+            result = await self._query(question, conversation_history, mode)
+            await self._check_delivery_snapshot(result)
+            return result
         finally:
             _REQUEST_MODEL.reset(token)
             _REQUEST_GENERATION.reset(generation_token)
@@ -547,9 +549,18 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "cached": False,
         }
 
-        generation_changed = await get_corpus_generation_async() != _REQUEST_GENERATION.get()
-        source_ids = [i["document_id"] for i in evidence_pack.get("items", []) if type(i.get("document_id")) is int]
+        if await self._check_delivery_snapshot(result):
+            await cache_set(query_cache, cache_key, result)
+        return result
+
+    async def _check_delivery_snapshot(self, result: dict) -> bool:
+        """One snapshot check for cached and newly audited public results."""
+        source_ids = [i["document_id"] for i in result.get("evidence_pack", {}).get("items", [])
+                      if type(i.get("document_id")) is int]
         incomplete = await embeddings_store.get_incomplete_document_ids(source_ids)
+        # Check generation after the datastore read, which may itself overlap a
+        # mutation. No await separates this last observation and the verdict.
+        generation_changed = await get_corpus_generation_async() != _REQUEST_GENERATION.get()
         if generation_changed or incomplete:
             # A completed audit of a changing/partially replaced snapshot is not
             # a completed request. Rejected candidate text must not be published.
@@ -561,9 +572,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             result["verification"].update(status="corpus_changed", missing_evidence=["Stable completed source index required."])
             result["evidence"].update(score=0.0, level="low", audit_status="corpus_changed")
             result["source_summary"].update(trust_score=0.0, trust_level="low", verification_status="corpus_changed", audit_status="corpus_changed")
-        else:
-            await cache_set(query_cache, cache_key, result)
-        return result
+            return False
+        return True
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
@@ -1235,15 +1245,17 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 doc_type = str(doc["document_type"].get("name") or "")
             date = doc.get("created") or doc.get("modified") or doc.get("added")
 
-            prefix = f"Title: {title}\nDocument ID: {doc_id}\nDate: {date or 'unknown'}\n\n"
             chunks = chunk_text(content, chunk_size=3600, overlap=500)
             ranked_chunks = self._rank_full_document_chunks(question, chunks)
             for rank, text in ranked_chunks[:10]:
                 expanded.append({
                     "document_id": int(doc_id),
                     "chunk_index": 100000 + rank,
-                    "content": prefix + text,
+                    "content": text,
+                    "source_kind": "ocr",
+                    "source_content": text,
                     "title": title,
+                    "date": date,
                     "doc_type": doc_type,
                     "similarity": 0.78,
                     "rank_score": 1.0,
@@ -1534,6 +1546,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "chunk_index": item.get("chunk_index"),
                 "title": item.get("title"),
                 "doc_type": item.get("doc_type"),
+                "source_kind": item.get("source_kind"),
                 "source_quality": item.get("source_quality"),
                 "date_signals": item.get("date_signals"),
                 "structured_fact_count": item.get("structured_fact_count"),

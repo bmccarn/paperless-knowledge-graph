@@ -70,6 +70,8 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [total, setTotal] = useState(0);
   const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
   const [typeFilter, setTypeFilter] = useState("");
@@ -109,7 +111,7 @@ export default function DocumentsPage() {
   useEffect(() => {
     void fetchDocs();
     return invalidateRequests;
-  }, [fetchDocs, invalidateRequests]);
+  }, [fetchDocs, invalidateRequests, refreshVersion]);
 
   const submitSearch = () => {
     if (query === searchQuery.trim() && page === 0) void fetchDocs();
@@ -137,18 +139,20 @@ export default function DocumentsPage() {
   };
 
   const handleReindex = async (docId: number) => {
+    setReindexError(null);
     setReindexing((prev) => new Set([...prev, docId]));
     try {
       await postReindexDoc(docId);
-      await fetchDocs();
+      setRefreshVersion(version => version + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Reindex failed");
+      setReindexError(e instanceof Error ? e.message : "Reindex failed");
     } finally {
       setReindexing((prev) => { const next = new Set(prev); next.delete(docId); return next; });
     }
   };
 
   const handleBatchReindex = async () => {
+    setReindexError(null);
     setBatchReindexing(true);
     const failures: number[] = [];
     for (const docId of selected) {
@@ -160,8 +164,8 @@ export default function DocumentsPage() {
     }
     setBatchReindexing(false);
     setSelected(new Set());
-    await fetchDocs();
-    if (failures.length) setError(`Reindex failed for documents: ${failures.join(", ")}`);
+    setRefreshVersion(version => version + 1);
+    if (failures.length) setReindexError(`Reindex failed for documents: ${failures.join(", ")}`);
   };
 
   const toggleSelect = (docId: number) => {
@@ -275,6 +279,7 @@ export default function DocumentsPage() {
             <span>{error}</span><Button variant="outline" size="sm" onClick={() => void fetchDocs()}>Retry loading</Button>
           </div>
         )}
+        {reindexError && <div role="alert" className="rounded border border-destructive/40 p-3 text-sm">{reindexError}</div>}
       </div>
 
       {/* Content */}

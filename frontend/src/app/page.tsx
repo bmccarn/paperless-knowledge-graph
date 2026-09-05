@@ -409,6 +409,11 @@ export default function DashboardPage() {
           count: freshness.modified_after_last_sync_documents || 0,
           detail: formatDocRefs(freshness.drift?.modified_after_last_sync),
         },
+        {
+          label: "Changed since indexing",
+          count: freshness.changed_since_index_documents || 0,
+          detail: formatDocRefs(freshness.drift?.changed_since_index),
+        },
       ].filter((item) => item.count > 0)
     : [];
 

@@ -1,0 +1,17 @@
+{
+  "outcomes": [
+    {
+      "name": "hubs_complete_pagination_and_domain_page",
+      "status": "passed"
+    },
+    {
+      "name": "hubs_error_and_retry",
+      "status": "passed"
+    },
+    {
+      "name": "hubs_stale_success_error_and_loading",
+      "status": "passed"
+    }
+  ],
+  "page_errors": []
+}

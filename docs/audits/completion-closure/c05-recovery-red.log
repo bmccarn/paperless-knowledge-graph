@@ -1,0 +1,28 @@
+✖ failed recovery from an old conversation cannot overwrite a new pending question (563.800125ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 764.183792
+
+✖ failing tests:
+
+test at frontend/tests/completion-ui.mjs:44:1
+✖ failed recovery from an old conversation cannot overwrite a new pending question (563.800125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/completion-ui.mjs:74:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,5 +1,6 @@
 """Public entity-resolution/review regressions using controlled storage adapters."""
 import copy
+import asyncio
 import json
 import os
 import unittest
@@ -155,6 +156,62 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["errors"], [])
         self.assertEqual(report["total_merged"], 0)
         self.assertTrue(any("decision" in row["reason"] for row in report["skipped"]))
+
+    async def test_split_acceptance_waits_for_inflight_identity_resolution(self):
+        self.graph.nodes = {"left": person("left", documents=[11]), "right": person("right", documents=[22])}
+        entered, release, accepted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = self.graph.find_person
+        async def paused_find(name):
+            entered.set()
+            await release.wait()
+            return await original(name)
+        self.graph.find_person = paused_find
+        lookup = asyncio.create_task(self.resolver.resolve_person("John Smith", 22))
+        await entered.wait()
+        async def record():
+            result = await self.resolver.record_decision("left", "right", "split")
+            accepted.set()
+            return result
+        decision = asyncio.create_task(record())
+        try:
+            await asyncio.sleep(0)
+            self.assertFalse(accepted.is_set(), "A split cannot be acknowledged while an older lookup is still deciding")
+        finally:
+            release.set()
+            await lookup
+            await decision
+        self.assertEqual(await self.resolver.resolve_person("John Smith", 22), "right")
+
+    async def test_review_serialization_covers_organizations_and_generic_entities(self):
+        for kind, name in (("Organization", "Example Company"), ("Condition", "Example Condition")):
+            with self.subTest(kind=kind):
+                self.graph.nodes = {key: {**person(key, name, docs), "entity_type": kind}
+                                    for key, docs in (("left", [11]), ("right", [22]))}
+                self.decisions.rows = []
+                entered, release = asyncio.Event(), asyncio.Event()
+                original_read = self.decisions.get_entity_review_decisions
+                async def paused_read():
+                    rows = await original_read()
+                    entered.set()
+                    await release.wait()
+                    return rows
+                with patch.object(self.decisions, "get_entity_review_decisions", paused_read):
+                    resolve = lambda: self.resolver.resolve_organization(name, 22) if kind == "Organization" else self.resolver.resolve_generic(name, kind, 22)
+                    lookup = asyncio.create_task(resolve())
+                    await entered.wait()
+                    decision = asyncio.create_task(self.resolver.record_decision("left", "right", "split"))
+                    try:
+                        await asyncio.sleep(0)
+                        self.assertFalse(decision.done())
+                    finally:
+                        release.set()
+                        await lookup
+                        await decision
+                    self.assertEqual(await resolve(), "right")
+
+    async def test_person_redirect_to_organization_does_not_deadlock(self):
+        result = await asyncio.wait_for(self.resolver.resolve_person("Example Insurance", 11), timeout=1)
+        self.assertEqual((await self.graph.get_node(result))["labels"], ["Organization"])
 
     async def test_generic_resolution_after_deletion_returns_a_live_identity(self):
         original = await self.resolver.resolve_generic("Example Condition", "Condition", 11)

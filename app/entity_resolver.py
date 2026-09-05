@@ -620,6 +620,10 @@ class EntityResolver:
 
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         """Resolve a person name to an existing or new node. Returns uuid."""
+        async with self._mutation_lock:
+            return await self._resolve_person(name, source_doc_id, role, description)
+
+    async def _resolve_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         name = _coerce_text(name)
         if not name or not name.strip():
             return ""
@@ -655,7 +659,7 @@ class EntityResolver:
                          "insurance", "financial", "trust", "group", "partners"]
         if any(f" {ind}" in f" {name_lower} " or name_lower.endswith(f" {ind}") or name_lower.startswith(f"{ind} ") for ind in org_indicators):
             logger.info(f"Redirecting org-as-person to org resolver: '{name}'")
-            return await self.resolve_organization(name, source_doc_id, description=description)
+            return await self._resolve_organization(name, source_doc_id, description=description)
 
         # 1. Exact match
         existing = await graph_store.find_person(normalized)
@@ -728,6 +732,11 @@ class EntityResolver:
     async def resolve_organization(self, name: str, source_doc_id: int,
                                    org_type: str = None, description: str = None) -> str:
         """Resolve an organization name. Returns uuid."""
+        async with self._mutation_lock:
+            return await self._resolve_organization(name, source_doc_id, org_type, description)
+
+    async def _resolve_organization(self, name: str, source_doc_id: int,
+                                    org_type: str = None, description: str = None) -> str:
         name = _coerce_text(name)
         name = normalize_org_name(name)
         if not name or len(name) < 3:
@@ -794,6 +803,11 @@ class EntityResolver:
     async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int,
                               description: str = None) -> str:
         """Resolve a generic entity (Location, System, Product, etc.) — fuzzy match or create."""
+        async with self._mutation_lock:
+            return await self._resolve_generic(name, entity_type, source_doc_id, description)
+
+    async def _resolve_generic(self, name: str, entity_type: str, source_doc_id: int,
+                               description: str = None) -> str:
         name = _coerce_text(name)
         if not name or not name.strip():
             return ""

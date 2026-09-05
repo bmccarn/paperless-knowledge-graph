@@ -9,6 +9,7 @@ pack at synthesis, verification, and UI time.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import defaultdict
 from typing import Any
@@ -190,6 +191,8 @@ def build_evidence_pack(
 
     coverage = {
         "evidence_item_count": len(items),
+        "available_chunk_count": len({(c.get("document_id"), c.get("chunk_index", 0)) for c in chunks}),
+        "retrieval_is_exhaustive": False,
         "source_document_count": len(docs),
         "citation_document_count": len(source_doc_ids),
         "direct_source_count": len(direct_items),
@@ -204,35 +207,29 @@ def build_evidence_pack(
         "domain": plan.get("domain"),
         "intent": plan.get("intent"),
         "coverage": coverage,
-        "source_documents": source_documents[:30],
+        "source_documents": source_documents,
         "items": items,
     }
 
 
 def format_evidence_pack_for_llm(pack: dict[str, Any], max_items: int = 42, max_chars: int = 26000) -> str:
+    """Select complete source windows, never silently cut source text prefixes."""
+    from app.answer_finalization import evidence_spans, select_spans
     if not pack:
         return ""
-    lines = [
-        "Evidence pack:",
-        f"- Domain: {pack.get('domain') or 'unknown'}",
-        f"- Intent: {pack.get('intent') or 'unknown'}",
-        f"- Coverage: {pack.get('coverage')}",
-        "",
-    ]
-    for item in (pack.get("items") or [])[:max_items]:
-        quality = item.get("source_quality") or {}
-        dates = item.get("date_signals") or {}
-        header = (
-            f"[Evidence {item.get('id')} | doc {item.get('document_id')} chunk {item.get('chunk_index')} | "
-            f"{item.get('title') or 'Untitled'} | {item.get('doc_type') or 'unknown'} | "
-            f"quality={quality.get('tier')}:{quality.get('score')} | dates={dates}]"
-        )
-        lines.append(header)
-        lines.append(str(item.get("excerpt") or "")[:1600])
-        lines.append("")
-        if len("\n".join(lines)) >= max_chars:
-            break
-    return "\n".join(lines)[:max_chars]
+    available = evidence_spans(pack)
+    ranked = select_spans(pack.get("question", ""), [], available, budget=max_chars)
+    payload = {"scope": "selected source windows, not the full archive", "available_span_count": len(available),
+               "selected_span_count": 0, "spans": []}
+    for span in ranked[:max_items]:
+        candidate = {**payload, "spans": payload["spans"] + [span], "selected_span_count": payload["selected_span_count"] + 1}
+        if len(json.dumps(candidate, ensure_ascii=False)) <= max_chars:
+            payload = candidate
+    pack.setdefault("coverage", {})["synthesis"] = {
+        "available_span_count": len(available), "selected_span_count": payload["selected_span_count"],
+        "selected_span_ids": [span["span_id"] for span in payload["spans"]],
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def infer_source_quality(title: str, doc_type: str, content: str) -> dict[str, Any]:
@@ -369,8 +366,8 @@ def _signal_terms(text: str) -> set[str]:
 
 
 def evidence_item_id(result: dict[str, Any]) -> str:
-    raw = f"{result.get('document_id')}:{result.get('chunk_index', 0)}:{result.get('title', '')}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+    raw = f"{result.get('document_id')}:{result.get('chunk_index', 0)}:{result.get('title', '')}:{result.get('content', '')}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def normalize_claim_ledger(raw: Any) -> dict[str, Any]:

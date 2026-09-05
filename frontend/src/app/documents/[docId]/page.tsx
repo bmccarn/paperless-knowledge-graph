@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { getDocumentDetail, postDocumentFeedback, postReindexDoc, getPaperlessDocUrl, getConfig } from "@/lib/api";
+import { getDocumentDetail, postDocumentFeedback, resolveDocumentFeedback, postReindexDoc, getPaperlessDocUrl, getConfig } from "@/lib/api";
 import { ArrowLeft, ExternalLink, FileText, Loader2, RefreshCw, ThumbsDown, Network } from "lucide-react";
 
 interface DetailPayload {
@@ -23,53 +23,101 @@ interface DetailPayload {
     processed_at?: string | null;
     chunk_count: number;
     feedback_count: number;
+    open_feedback_count?: number;
   };
+  feedback?: Array<{ id: number; reason: string; note: string; status: "open" | "resolved"; created_at: string; resolution?: string; resolution_note?: string; resolved_at?: string }>;
 }
 
 export default function DocumentDetailPage() {
   const params = useParams<{ docId: string }>();
   const docId = Number(params.docId);
-  const [detail, setDetail] = useState<DetailPayload | null>(null);
+  const [loadedDetail, setDetail] = useState<DetailPayload | null>(null);
+  const [loadedDocumentId, setLoadedDocumentId] = useState<number | null>(null);
+  const requestVersion = useRef(0);
+  const detail = loadedDocumentId === docId ? loadedDetail : null;
   const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [reindexing, setReindexing] = useState(false);
   const [feedbackNote, setFeedbackNote] = useState("");
-  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [resolving, setResolving] = useState<number | null>(null);
+  const [resolutionNotes, setResolutionNotes] = useState<Record<number, string>>({});
+  const [resolutionKinds, setResolutionKinds] = useState<Record<number, string>>({});
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setError("");
     try {
-      setDetail(await getDocumentDetail(docId));
+      const result = await getDocumentDetail(docId);
+      if (version !== requestVersion.current) return;
+      setDetail(result);
+      setLoadedDocumentId(docId);
+    } catch (error) {
+      if (version === requestVersion.current) setError(error instanceof Error ? error.message : "Could not load document.");
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  };
+  }, [docId]);
 
   useEffect(() => {
     getConfig().then((c) => setPaperlessBaseUrl(c.paperless_url)).catch(() => {});
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId]);
+  }, [load]);
 
   const handleReindex = async () => {
     setReindexing(true);
+    setError("");
+    setNotice("");
     try {
       await postReindexDoc(docId);
       await load();
+      setNotice("Reindex completed. Inspect the extracted facts, then resolve any open reports.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Reindex failed. Review reports remain open.");
     } finally {
       setReindexing(false);
     }
   };
 
   const handleFeedback = async () => {
-    await postDocumentFeedback(docId, "extraction_wrong", feedbackNote);
-    setFeedbackNote("");
-    setFeedbackSent(true);
-    await load();
+    setFeedbackSending(true);
+    setError("");
+    setNotice("");
+    try {
+      await postDocumentFeedback(docId, "extraction_wrong", feedbackNote);
+      setFeedbackNote("");
+      setNotice("Open review report recorded. The extraction remains disputed until reviewed.");
+      await load();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not record review report.");
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
+
+  const handleResolve = async (feedbackId: number) => {
+    setResolving(feedbackId);
+    setError("");
+    setNotice("");
+    try {
+      await resolveDocumentFeedback(docId, feedbackId, resolutionKinds[feedbackId] || "reindexed_and_reviewed", resolutionNotes[feedbackId] || "");
+      setNotice("Review resolution recorded and cached answers invalidated.");
+      await load();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not resolve report. Complete reindex and review first.");
+    } finally {
+      setResolving(null);
+    }
   };
 
   if (loading && !detail) {
     return <div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary/50" /></div>;
+  }
+  if (!detail) {
+    return <div className="space-y-3 p-6"><p role="alert">{error || "Document details are unavailable."}</p><Button onClick={load}>Retry loading document</Button></div>;
   }
 
   const title = (detail?.paperless?.title as string) || `Document #${docId}`;
@@ -89,7 +137,7 @@ export default function DocumentDetailPage() {
               {detail?.processing?.processed ? "processed" : "not processed"}
             </Badge>
             <Badge variant="outline">{detail?.processing?.chunk_count || 0} chunks</Badge>
-            {detail?.processing?.feedback_count ? <Badge variant="outline">{detail.processing.feedback_count} review flags</Badge> : null}
+            {detail?.processing?.open_feedback_count ? <Badge variant="destructive">{detail.processing.open_feedback_count} open review reports</Badge> : null}
           </div>
         </div>
         <div className="flex gap-2">
@@ -107,6 +155,9 @@ export default function DocumentDetailPage() {
           </Link>
         </div>
       </div>
+
+      {error && <p role="alert" className="rounded border border-destructive p-3 text-sm text-destructive">{error} <button className="underline" onClick={load}>Reload document</button></p>}
+      {notice && <p role="status" className="rounded border p-3 text-sm">{notice}</p>}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div className="space-y-4">
@@ -166,16 +217,32 @@ export default function DocumentDetailPage() {
           <Card>
             <CardHeader><CardTitle className="text-base flex items-center gap-2"><ThumbsDown className="h-4 w-4" /> Extraction Review</CardTitle></CardHeader>
             <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">Open reports mark derived extraction as disputed. Original OCR remains available. Reindexing keeps reports open until you inspect and resolve them.</p>
               <Textarea
                 value={feedbackNote}
                 onChange={(e) => setFeedbackNote(e.target.value)}
                 placeholder="What looks wrong?"
+                aria-label="Extraction review report"
                 rows={3}
               />
-              <Button onClick={handleFeedback} disabled={!feedbackNote.trim()} variant="secondary" className="w-full gap-2">
+              <Button onClick={handleFeedback} disabled={!feedbackNote.trim() || feedbackSending} variant="secondary" className="w-full gap-2">
                 <FileText className="h-4 w-4" /> Mark extraction wrong
               </Button>
-              {feedbackSent && <p className="text-xs text-emerald-400">Review flag recorded.</p>}
+              {(detail?.feedback || []).map((report) => (
+                <div key={report.id} className="space-y-2 rounded border p-3 text-xs">
+                  <div className="flex items-center justify-between"><Badge variant={report.status === "open" ? "destructive" : "outline"}>{report.status}</Badge><span>{new Date(report.created_at).toLocaleDateString()}</span></div>
+                  <p className="whitespace-pre-wrap">{report.note || report.reason}</p>
+                  {report.status === "resolved" ? <p className="text-muted-foreground">{report.resolution === "reindexed_and_reviewed" ? "Reindexed and reviewed" : "Dismissed after review"}: {report.resolution_note}</p> : <>
+                    <label htmlFor={`resolution-${report.id}`} className="block">Resolution</label>
+                    <select id={`resolution-${report.id}`} className="w-full rounded border bg-background p-2" value={resolutionKinds[report.id] || "reindexed_and_reviewed"} onChange={(event) => setResolutionKinds({ ...resolutionKinds, [report.id]: event.target.value })}>
+                      <option value="reindexed_and_reviewed">Reindexed and checked correction</option>
+                      <option value="dismissed_after_review">Checked original extraction; no correction needed</option>
+                    </select>
+                    <Textarea aria-label={`Review note for report ${report.id}`} placeholder="What did you check against the original source?" value={resolutionNotes[report.id] || ""} onChange={(event) => setResolutionNotes({ ...resolutionNotes, [report.id]: event.target.value })} rows={2} />
+                    <Button variant="outline" size="sm" disabled={!resolutionNotes[report.id]?.trim() || resolving !== null || reindexing} onClick={() => handleResolve(report.id)}>{resolving === report.id ? "Resolving…" : "Resolve reviewed report"}</Button>
+                  </>}
+                </div>
+              ))}
             </CardContent>
           </Card>
         </div>

@@ -9,7 +9,14 @@ export async function apiFetch(path: string, options?: RequestInit) {
     },
   });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail.slice(0, 1200);
+    } catch {
+      // Non-JSON upstream failures still retain their HTTP status.
+    }
+    throw new Error(`API error: ${res.status} ${detail}`);
   }
   return res.json();
 }
@@ -53,6 +60,13 @@ export async function postDocumentFeedback(docId: number, reason: string, note =
   });
 }
 
+export async function resolveDocumentFeedback(docId: number, feedbackId: number, resolution: string, note: string) {
+  return apiFetch(`/document/${docId}/feedback/${feedbackId}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ resolution, note }),
+  });
+}
+
 export async function getTask(taskId: string) {
   return apiFetch(`/task/${taskId}`);
 }
@@ -70,7 +84,7 @@ export async function waitForTask(taskId: string, intervalMs = 2000, timeoutMs =
   throw new Error("Timed out waiting for reindex task to finish");
 }
 
-export async function postQuery(question: string, conversationId?: string, model?: string, mode = "deep") {
+export async function postQuery(question: string, conversationId?: string, model?: string, mode = "strict") {
   return apiFetch("/query", {
     method: "POST",
     body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
@@ -78,7 +92,7 @@ export async function postQuery(question: string, conversationId?: string, model
 }
 
 // SSE streaming query
-export async function* postQueryStream(question: string, conversationId?: string, model?: string, mode = "deep") {
+export async function* postQueryStream(question: string, conversationId?: string, model?: string, mode = "strict") {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -156,10 +170,15 @@ export async function generateTitle(message: string): Promise<string> {
   return resp.title;
 }
 
-export async function graphSearch(q: string, type?: string, limit = 20) {
-  const params = new URLSearchParams({ q, limit: String(limit) });
+export async function graphSearch(q: string, type?: string, limit = 20, offset = 0) {
+  const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) });
   if (type) params.set("type", type);
   return apiFetch(`/graph/search?${params}`);
+}
+
+export async function getDocuments(q = "", docType = "", offset = 0, limit = 25, sort = "title", direction = "asc") {
+  const params = new URLSearchParams({ q, doc_type: docType, offset: String(offset), limit: String(limit), sort, direction });
+  return apiFetch(`/documents?${params}`);
 }
 
 export async function getGraphNode(uuid: string) {

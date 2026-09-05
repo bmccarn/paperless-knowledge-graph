@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { graphSearch, getGraphNode, postReindexDoc, getConfig } from "@/lib/api";
+import { getDocuments, getGraphNode, postReindexDoc, getConfig } from "@/lib/api";
 import {
   Search,
   RefreshCw,
@@ -68,6 +68,10 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
   const [typeFilter, setTypeFilter] = useState("");
   const [expanded, setExpanded] = useState<Record<string, ExpandedDoc>>({});
   const [reindexing, setReindexing] = useState<Set<number>>(new Set());
@@ -76,30 +80,44 @@ export default function DocumentsPage() {
   const [sortField, setSortField] = useState<string>("title");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
+  const requestVersion = useRef(0);
 
   const fetchDocs = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setError(null);
+    setDocuments([]);
+    setSelected(new Set());
+    setExpanded({});
     try {
-      const data = await graphSearch(searchQuery || " ", "Document", 200);
-      const docs = (data.results || []).filter((r: DocResult) =>
-        r.labels?.includes("Document")
-      );
-      setDocuments(docs);
-      setPage(0);
+      const data = await getDocuments(query, typeFilter, page * PAGE_SIZE, PAGE_SIZE, sortField, sortDir);
+      if (version !== requestVersion.current) return;
+      setDocuments(data.results || []);
+      setTotal(data.total || 0);
+      setTypeCounts(data.doc_types || {});
+      if (page > 0 && page * PAGE_SIZE >= data.total) setPage(Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1));
     } catch (e) {
-      console.error("Failed to load documents:", e);
+      if (version === requestVersion.current) setError(e instanceof Error ? e.message : "Failed to load documents");
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [searchQuery]);
+  }, [query, typeFilter, page, sortField, sortDir]);
 
   useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
 
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
   useEffect(() => {
-    fetchDocs();
-  }, [fetchDocs]);
+    void fetchDocs();
+    return invalidateRequests;
+  }, [fetchDocs, invalidateRequests]);
+
+  const submitSearch = () => {
+    if (query === searchQuery.trim() && page === 0) void fetchDocs();
+    else { setQuery(searchQuery.trim()); setPage(0); }
+  };
 
   const toggleExpand = async (docId: number, uuid?: string) => {
+    const version = requestVersion.current;
     const key = String(docId);
     if (expanded[key]) {
       setExpanded((prev) => { const next = { ...prev }; delete next[key]; return next; });
@@ -109,8 +127,11 @@ export default function DocumentsPage() {
     try {
       const nodeId = uuid || `doc-${docId}`;
       const node = await getGraphNode(nodeId);
+      if (version !== requestVersion.current) return;
       setExpanded((prev) => ({ ...prev, [key]: { node, loading: false } }));
-    } catch {
+    } catch (e) {
+      if (version !== requestVersion.current) return;
+      setError(e instanceof Error ? e.message : "Failed to load document details");
       setExpanded((prev) => { const next = { ...prev }; delete next[key]; return next; });
     }
   };
@@ -119,8 +140,9 @@ export default function DocumentsPage() {
     setReindexing((prev) => new Set([...prev, docId]));
     try {
       await postReindexDoc(docId);
+      await fetchDocs();
     } catch (e) {
-      console.error("Reindex failed:", e);
+      setError(e instanceof Error ? e.message : "Reindex failed");
     } finally {
       setReindexing((prev) => { const next = new Set(prev); next.delete(docId); return next; });
     }
@@ -128,15 +150,18 @@ export default function DocumentsPage() {
 
   const handleBatchReindex = async () => {
     setBatchReindexing(true);
+    const failures: number[] = [];
     for (const docId of selected) {
       try {
         await postReindexDoc(docId);
-      } catch (e) {
-        console.error(`Reindex failed for ${docId}:`, e);
+      } catch {
+        failures.push(docId);
       }
     }
     setBatchReindexing(false);
     setSelected(new Set());
+    await fetchDocs();
+    if (failures.length) setError(`Reindex failed for documents: ${failures.join(", ")}`);
   };
 
   const toggleSelect = (docId: number) => {
@@ -149,25 +174,18 @@ export default function DocumentsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selected.size === filtered.length) {
+    if (selected.size === documents.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filtered.map((d) => d.properties.paperless_id as number)));
+      setSelected(new Set(documents.map((d) => d.properties.paperless_id as number)));
     }
   };
 
-  const filtered = documents
-    .filter((d) => !typeFilter || d.properties?.doc_type === typeFilter)
-    .sort((a, b) => {
-      const aVal = (a.properties?.[sortField] as string) || "";
-      const bVal = (b.properties?.[sortField] as string) || "";
-      return sortDir === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-    });
-
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const paginated = documents;
 
   const handleSort = (field: string) => {
+    setPage(0);
     if (sortField === field) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -175,12 +193,6 @@ export default function DocumentsPage() {
       setSortDir("asc");
     }
   };
-
-  const typeCounts: Record<string, number> = {};
-  documents.forEach((d) => {
-    const t = (d.properties?.doc_type as string) || "unknown";
-    typeCounts[t] = (typeCounts[t] || 0) + 1;
-  });
 
   return (
     <div className="flex flex-col h-full">
@@ -190,13 +202,13 @@ export default function DocumentsPage() {
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight">Documents</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {documents.length} documents indexed
+              {total} {query || typeFilter ? "matching indexed documents" : "indexed documents"}
             </p>
           </div>
           {selected.size > 0 && (
             <Button
               onClick={handleBatchReindex}
-              disabled={batchReindexing}
+              disabled={batchReindexing || loading}
               size="sm"
               className="gap-2"
             >
@@ -211,14 +223,14 @@ export default function DocumentsPage() {
         </div>
 
         {/* Stats bar */}
-        {!loading && documents.length > 0 && (
+        {!loading && Object.keys(typeCounts).length > 0 && (
           <div className="flex flex-wrap gap-1.5 md:gap-2 overflow-x-auto">
             {Object.entries(typeCounts)
               .sort((a, b) => b[1] - a[1])
               .map(([type, count]) => (
                 <button
                   key={type}
-                  onClick={() => setTypeFilter(typeFilter === type ? "" : type)}
+                  onClick={() => { setTypeFilter(typeFilter === type ? "" : type); setPage(0); }}
                   className="transition-all"
                 >
                   <Badge
@@ -234,7 +246,7 @@ export default function DocumentsPage() {
                 </button>
               ))}
             {typeFilter && (
-              <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setTypeFilter("")}>
+              <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => { setTypeFilter(""); setPage(0); }}>
                 Clear
               </Button>
             )}
@@ -248,19 +260,25 @@ export default function DocumentsPage() {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && fetchDocs()}
+              onKeyDown={(e) => e.key === "Enter" && submitSearch()}
               placeholder="Search documents..."
+              aria-label="Search indexed documents"
               className="pl-9"
             />
           </div>
-          <Button onClick={fetchDocs} disabled={loading} variant="secondary" className="min-w-[44px]">
+          <Button onClick={submitSearch} disabled={loading} variant="secondary" className="min-w-[44px]" aria-label="Search documents">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
+        {error && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded border border-destructive/40 p-3 text-sm">
+            <span>{error}</span><Button variant="outline" size="sm" onClick={() => void fetchDocs()}>Retry loading</Button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
-      <div className="flex-1 px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 min-h-0">
+      <div className="flex flex-1 flex-col px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 min-h-0">
         {loading && documents.length === 0 ? (
           <div className="space-y-2">
             {[...Array(8)].map((_, i) => (
@@ -270,7 +288,7 @@ export default function DocumentsPage() {
         ) : (
           <>
             {/* Mobile card layout */}
-            <div className="md:hidden space-y-2 overflow-y-auto h-full">
+            <div className="md:hidden min-h-0 flex-1 space-y-2 overflow-y-auto">
               {paginated.map((doc) => {
                 const p = doc.properties;
                 const docId = p.paperless_id as number;
@@ -344,7 +362,8 @@ export default function DocumentsPage() {
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="w-10">
                         <Checkbox
-                          checked={selected.size > 0 && selected.size === filtered.length}
+                          checked={selected.size > 0 && selected.size === documents.length}
+                          aria-label="Select documents on this page"
                           onCheckedChange={toggleSelectAll}
                           className="h-3.5 w-3.5"
                         />
@@ -390,7 +409,7 @@ export default function DocumentsPage() {
                       const docType = (p.doc_type as string) || "unknown";
 
                       return (
-                        <>
+                        <Fragment key={key}>
                           <TableRow
                             key={key}
                             className="cursor-pointer group"
@@ -496,7 +515,7 @@ export default function DocumentsPage() {
                               </TableCell>
                             </TableRow>
                           )}
-                        </>
+                        </Fragment>
                       );
                     })}
                     {paginated.length === 0 && !loading && (
@@ -515,22 +534,22 @@ export default function DocumentsPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between border-t px-4 py-2">
                   <p className="text-xs text-muted-foreground">
-                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
                   </p>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(0)} disabled={page === 0}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(0)} aria-label="First page" disabled={loading || page === 0}>
                       <ChevronsLeft className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p - 1)} disabled={page === 0}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p - 1)} aria-label="Previous page" disabled={loading || page === 0}>
                       <ChevronLeft className="h-3.5 w-3.5" />
                     </Button>
                     <span className="text-xs text-muted-foreground px-2">
                       {page + 1} / {totalPages}
                     </span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage((p) => p + 1)} aria-label="Next page" disabled={loading || page >= totalPages - 1}>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPage(totalPages - 1)} aria-label="Last page" disabled={loading || page >= totalPages - 1}>
                       <ChevronsRight className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -542,16 +561,16 @@ export default function DocumentsPage() {
             {totalPages > 1 && (
               <div className="md:hidden flex items-center justify-between pt-3">
                 <p className="text-xs text-muted-foreground">
-                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
                 </p>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p - 1)} disabled={page === 0}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p - 1)} aria-label="Previous page" disabled={loading || page === 0}>
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <span className="text-xs text-muted-foreground px-2">
                     {page + 1}/{totalPages}
                   </span>
-                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setPage((p) => p + 1)} aria-label="Next page" disabled={loading || page >= totalPages - 1}>
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>

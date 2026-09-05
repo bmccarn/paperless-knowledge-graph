@@ -1,5 +1,7 @@
 "use client";
 
+import { formatAnswerInline } from "@/lib/answer-format";
+
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -104,10 +106,13 @@ interface ClaimLedger {
   claims?: Array<{
     claim?: string;
     support_status?: string;
+    status?: string;
     document_id?: number;
     source_title?: string;
     evidence_id?: string;
     evidence_excerpt?: string;
+    evidence_quote?: string;
+    references?: Array<{ document_id: number; quote: string; source_title?: string }>;
     date?: string;
     source_quality?: string;
     notes?: string;
@@ -208,28 +213,21 @@ function renderMarkdownContent(text: string) {
       elements.push(<h1 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h1>);
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
       elements.push(
-        <li key={i} className="text-sm ml-4 list-disc" dangerouslySetInnerHTML={{ __html: formatInline(line.slice(2)) }} />
+        <li key={i} className="text-sm ml-4 list-disc" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line.slice(2)) }} />
       );
     } else if (/^\d+\.\s/.test(line)) {
       elements.push(
-        <li key={i} className="text-sm ml-4 list-decimal" dangerouslySetInnerHTML={{ __html: formatInline(line.replace(/^\d+\.\s/, "")) }} />
+        <li key={i} className="text-sm ml-4 list-decimal" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line.replace(/^\d+\.\s/, "")) }} />
       );
     } else if (line.trim() === "") {
       elements.push(<div key={i} className="h-2" />);
     } else {
       elements.push(
-        <p key={i} className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: formatInline(line) }} />
+        <p key={i} className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line) }} />
       );
     }
   }
   return elements;
-}
-
-function formatInline(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`(.+?)`/g, '<code class="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">$1</code>');
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -246,7 +244,7 @@ function ConfidenceBar({ value }: { value: number }) {
           <span className="text-[10px] text-muted-foreground">{pct}%</span>
         </div>
       </TooltipTrigger>
-      <TooltipContent>Confidence: {pct}%</TooltipContent>
+      <TooltipContent>Source-audit score: {pct}/100 (not a probability)</TooltipContent>
     </Tooltip>
   );
 }
@@ -293,7 +291,7 @@ function QueryContent() {
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
-  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("deep");
+  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("strict");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -366,6 +364,7 @@ function QueryContent() {
 
     const startTime = Date.now();
     let fullAnswer = "";
+    let completed = false;
     let sources: Source[] = [];
     let entitiesFound: Array<{ name?: string; label?: string }> = [];
     let cached = false;
@@ -474,6 +473,7 @@ function QueryContent() {
             }
             break;
           case "complete":
+            completed = true;
             if (event.answer) {
               fullAnswer = event.answer;
               if (!draftAssistantShown) setStreamingContent(fullAnswer);
@@ -492,27 +492,11 @@ function QueryContent() {
             timelineEvents = event.timeline_events || [];
             break;
           case "error":
-            if (fullAnswer.trim()) {
-              const detail = event.message || "Stream ended before final completion; preserving streamed answer.";
-              const fallbackStep: TraceStep = { step: "stream_error", status: "fallback", detail };
-              trace = [...trace, fallbackStep];
-              verification = verification || {
-                status: "not_run",
-                notes: [detail],
-              };
-              setActivitySteps(prev => [...prev, fallbackStep].slice(-8));
-              setStatusMessage("");
-              if (draftAssistantShown) {
-                showDraftAssistant({ trace, verification });
-              } else {
-                setStreamingContent(fullAnswer);
-              }
-              break;
-            }
             throw new Error(event.message || "Stream error");
         }
       }
 
+      if (!completed) throw new Error("Stream ended before final verification");
       const queryTime = Date.now() - startTime;
       const assistantMsg: Message = {
         role: "assistant",
@@ -559,41 +543,6 @@ function QueryContent() {
         }
       }
     } catch {
-      if (fullAnswer.trim()) {
-        const fallbackStep: TraceStep = {
-          step: "stream_error",
-          status: "fallback",
-          detail: "Stream ended before final completion; preserving streamed answer.",
-        };
-        const fallbackTrace = [...trace, fallbackStep];
-        const assistantMsg: Message = {
-          role: "assistant",
-          content: fullAnswer,
-          sources,
-          entities: entitiesFound,
-          timestamp: Date.now(),
-          queryTime: Date.now() - startTime,
-          cached,
-          confidence,
-          follow_ups: followUps,
-          source_summary: sourceSummary,
-          query_plan: queryPlan,
-          trace: fallbackTrace,
-          verification: verification || {
-            status: "not_run",
-            notes: [fallbackStep.detail || "Stream ended before final completion."],
-          },
-          claim_ledger: claimLedger,
-          evidence_pack: evidencePack,
-          timeline_events: timelineEvents,
-        };
-        setMessages([...newMessages, assistantMsg]);
-        setStreamingContent("");
-        setStatusMessage("");
-        setActivitySteps([]);
-        setFollowUpSuggestions(followUps);
-        return;
-      }
       // Stream broke - try recovering from conversation history
       if (convId) {
         try {
@@ -905,7 +854,7 @@ function QueryContent() {
                       </div>
                       {msg.source_summary.newer_docs_may_exist && (
                         <p className="text-muted-foreground">
-                          This answer did not require a sensitive-domain latest-document pass; newer documents may still exist.
+                          Retrieval does not establish completeness of the archive; newer or conflicting records may exist.
                         </p>
                       )}
                       {Boolean((msg.source_summary.unsupported_claim_count || 0) + (msg.source_summary.stale_or_conflicting_claim_count || 0)) && (
@@ -990,17 +939,17 @@ function QueryContent() {
                       <p className="font-medium flex items-center gap-1">
                         <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})
                       </p>
-                      {msg.claim_ledger.claims.slice(0, 6).map((claim, idx) => (
+                      {msg.claim_ledger.claims.map((claim, idx) => (
                         <div key={idx} className="grid gap-1 text-[10px]">
                           <div className="flex items-start gap-1.5">
-                            <Badge variant={claim.support_status === "supported" ? "secondary" : "outline"} className="text-[8px] px-1 py-0 shrink-0">
-                              {claim.support_status || "unknown"}
+                            <Badge variant={(claim.status || claim.support_status) === "supported" ? "secondary" : "outline"} className="text-[8px] px-1 py-0 shrink-0">
+                              {claim.status || claim.support_status || "unknown"}
                             </Badge>
                             <span>{claim.claim}</span>
                           </div>
-                          {(claim.source_title || claim.evidence_excerpt) && (
-                            <div className="text-muted-foreground pl-14 truncate">
-                              {claim.source_title || "Evidence"}{claim.date ? ` · ${claim.date}` : ""}{claim.evidence_excerpt ? ` · ${claim.evidence_excerpt}` : ""}
+                          {(claim.source_title || claim.evidence_quote || claim.evidence_excerpt) && (
+                            <div className="text-muted-foreground pl-14 whitespace-pre-wrap break-words">
+                              {claim.source_title || "Evidence"}{claim.date ? ` · ${claim.date}` : ""}{(claim.evidence_quote || claim.evidence_excerpt) ? ` · ${claim.evidence_quote || claim.evidence_excerpt}` : ""}
                             </div>
                           )}
                         </div>

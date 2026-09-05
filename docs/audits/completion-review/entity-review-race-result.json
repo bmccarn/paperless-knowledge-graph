@@ -1,0 +1,12 @@
+{
+  "recorded_decision": "split",
+  "incoming_document": 22,
+  "concurrent_resolution": "left",
+  "fresh_resolution": "right",
+  "left_documents": [
+    11
+  ],
+  "right_documents": [
+    22
+  ]
+}

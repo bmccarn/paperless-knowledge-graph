@@ -1,0 +1,317 @@
+2026-09-04 21:36:55,327 app.cache WARNING Redis clear error (test): synthetic Redis outage
+2026-09-04 21:36:55,328 app.cache WARNING Redis get error (test): synthetic Redis outage
+2026-09-04 21:36:55,329 app.cache WARNING Corpus generation pending Redis recovery
+2026-09-04 21:36:55,333 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-04 21:36:55,333 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,335 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,337 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-04 21:36:55,337 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,338 httpx INFO HTTP Request: GET http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,340 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-04 21:36:55,341 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,342 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 409 Conflict"
+2026-09-04 21:36:55,342 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,344 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-04 21:36:55,344 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,344 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 422 Unprocessable Entity"
+2026-09-04 21:36:55,345 httpx INFO HTTP Request: POST http://synthetic.local/document/102/feedback/1/resolve "HTTP/1.1 404 Not Found"
+2026-09-04 21:36:55,346 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,346 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 409 Conflict"
+2026-09-04 21:36:55,351 app.entity_resolver INFO Merged Person 'John Smith' into 'John Alexander Smith' (score=0.900)
+2026-09-04 21:36:55,354 app.main ERROR Entity resolution failed: metadata failed after graph write
+Traceback (most recent call last):
+  File "/app/app/main.py", line 1426, in resolve_entities
+    report = await entity_resolver.resolve_all_entities()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/mock.py", line 2291, in _execute_mock_call
+    raise effect
+RuntimeError: metadata failed after graph write
+2026-09-04 21:36:55,357 app.main ERROR Entity merge failed: metadata failed after graph write
+Traceback (most recent call last):
+  File "/app/app/main.py", line 1515, in entity_review_merge
+    merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/mock.py", line 2291, in _execute_mock_call
+    raise effect
+RuntimeError: metadata failed after graph write
+2026-09-04 21:36:55,360 app.entity_resolver INFO Created new Condition (Condition): 'Example Condition' (uuid=created-1)
+2026-09-04 21:36:55,360 app.entity_resolver INFO Created new Condition (Condition): 'Example Condition' (uuid=created-2)
+2026-09-04 21:36:55,362 app.entity_resolver INFO LLM confirmed merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-04 21:36:55,362 app.entity_resolver INFO LLM-confirmed match 'John Smythee' to 'John Smith' (score=0.818)
+2026-09-04 21:36:55,363 app.entity_resolver INFO LLM blocked merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-04 21:36:55,363 app.entity_resolver INFO Created new Person: 'John Smythee' (uuid=created-1)
+2026-09-04 21:36:55,363 app.entity_resolver INFO LLM blocked merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-04 21:36:55,363 app.entity_resolver INFO Created new Person: 'John Smythee' (uuid=created-2)
+2026-09-04 21:36:55,365 app.entity_resolver INFO Merged Person 'John Smith' into 'John Smith' (score=1.000)
+2026-09-04 21:36:55,366 app.entity_resolver INFO Created new Person: 'John Smyth' (uuid=created-1)
+2026-09-04 21:36:55,370 app.entity_resolver INFO First name mismatch blocked merge: 'Jonathan Smith' <-> 'John Smith' (different first names)
+2026-09-04 21:36:55,370 app.entity_resolver INFO First name mismatch blocked merge: 'Jonathan Smith' <-> 'John Smith' (different first names)
+2026-09-04 21:36:55,370 app.entity_resolver INFO Created new Person: 'Jonathan Smith' (uuid=created-1)
+2026-09-04 21:36:55,375 app.entity_resolver INFO Matched 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-04 21:36:55,375 app.entity_resolver INFO Created new Person: 'Shared Name' (uuid=created-1)
+2026-09-04 21:36:55,375 app.entity_resolver INFO Matched 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-04 21:36:55,376 app.entity_resolver INFO Fuzzy matched org 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-04 21:36:55,376 app.entity_resolver INFO Created new Organization: 'Shared Name' (uuid=created-2)
+2026-09-04 21:36:55,376 app.entity_resolver INFO Fuzzy matched org 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-04 21:36:55,380 app.entity_steward INFO Entity steward completed: 1 candidates, 0 merge suggestions, 0 split suggestions
+2026-09-04 21:36:55,404 app.extractor WARNING Extraction window 0:36 failed during entity proposals: Response must contain a entities list of objects
+2026-09-04 21:36:55,405 app.extractor WARNING Extraction window 0:36 failed during metadata: Metadata response must contain metadata object and evidence list
+2026-09-04 21:36:55,405 app.extractor WARNING pass4_verification: Unexpected error (attempt 1/3): synthetic provider failure
+2026-09-04 21:36:55,405 app.extractor WARNING pass4_verification: Unexpected error (attempt 2/3): synthetic provider failure
+2026-09-04 21:36:55,405 app.extractor WARNING pass4_verification: Unexpected error (attempt 3/3): synthetic provider failure
+2026-09-04 21:36:55,405 app.extractor ERROR pass4_verification: All 3 attempts failed, using empty dict. Last error: synthetic provider failure
+2026-09-04 21:36:55,405 app.extractor WARNING Extraction window 0:36 failed during entity verification: Response must contain a entities list of objects
+2026-09-04 21:36:55,406 app.extractor WARNING Extraction window 0:36 failed during relationship verification: Response must contain a relationships list of objects
+2026-09-04 21:36:55,415 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 1/3): Model output truncated by completion budget
+2026-09-04 21:36:55,415 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 2/3): Model output truncated by completion budget
+2026-09-04 21:36:55,415 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 3/3): Model output truncated by completion budget
+2026-09-04 21:36:55,415 app.extractor ERROR pass1_metadata:insurance: All 3 attempts failed, using empty dict. Last error: Model output truncated by completion budget
+2026-09-04 21:36:55,415 app.extractor WARNING Extraction window 0:13 failed during metadata: Metadata response must contain metadata object and evidence list
+2026-09-04 21:36:55,422 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,422 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,422 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,422 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,422 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,423 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,424 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,424 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,424 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,424 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,424 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,424 app.pipeline ERROR Failed to process doc 1: chunk write failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 397, in process_document
+    await embeddings_store.store_document_embedding(
+  File "/app/tests/test_ingestion.py", line 112, in store_document_embedding
+    raise RuntimeError('chunk write failed')
+RuntimeError: chunk write failed
+2026-09-04 21:36:55,428 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,428 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,429 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,432 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,432 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,432 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,437 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,437 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,438 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,438 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,438 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,438 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,440 app.pipeline INFO Doc 1 unchanged, skipping
+2026-09-04 21:36:55,440 app.pipeline INFO Processing doc 2: Document 2
+2026-09-04 21:36:55,440 app.pipeline INFO Doc 2 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,440 app.pipeline INFO Doc 2 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,440 app.pipeline WARNING Doc 2 'Document 2': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,440 app.pipeline INFO Doc 2: generated summary (379 chars)
+2026-09-04 21:36:55,441 app.pipeline INFO Doc 2: stored 1 embedding chunks
+2026-09-04 21:36:55,445 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,445 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,445 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,445 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,445 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,446 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,452 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,452 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,452 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,452 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,452 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,453 app.pipeline INFO Doc 1: stored 2 embedding chunks
+2026-09-04 21:36:55,456 app.pipeline ERROR Failed to purge stale document 1
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 1419, in _ingest_documents
+    await _purge_document_index(doc_id)
+  File "/app/app/pipeline.py", line 244, in _purge_document_index
+    await graph_store.delete_document_graph(doc_id)
+  File "/app/tests/test_ingestion.py", line 51, in delete_document_graph
+    raise RuntimeError('graph delete failed')
+RuntimeError: graph delete failed
+2026-09-04 21:36:55,460 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,460 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,460 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,462 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,462 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,462 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,462 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,462 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,463 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,466 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,466 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,466 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,467 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,467 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,467 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,467 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,467 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,468 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,471 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,471 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,471 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,474 app.pipeline WARNING Doc 1 has no content, recording metadata-only index
+2026-09-04 21:36:55,474 app.pipeline ERROR Failed to process metadata-only doc 1: Metadata-only document embedding was not generated
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 284, in process_document
+    raise ValueError("Metadata-only document embedding was not generated")
+ValueError: Metadata-only document embedding was not generated
+2026-09-04 21:36:55,475 app.pipeline WARNING Doc 1 has no content, recording metadata-only index
+2026-09-04 21:36:55,478 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,478 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,478 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,478 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,478 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,478 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,480 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,480 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,480 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,480 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,480 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,481 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,482 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,482 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,482 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,482 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,482 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,483 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,486 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,486 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,486 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,486 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,486 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,487 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,491 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,491 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,491 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,491 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,491 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,491 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,494 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,495 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,495 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,495 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,495 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,495 app.pipeline ERROR Failed to process doc 1: graph create failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 380, in process_document
+    doc_node_id = await graph_store.create_document_node(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 56, in create_document_node
+    raise RuntimeError('graph create failed')
+RuntimeError: graph create failed
+2026-09-04 21:36:55,496 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,496 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,496 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,496 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,497 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,497 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,498 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,498 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,498 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,498 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,498 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,499 app.pipeline ERROR Failed to process doc 1: chunk write failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 397, in process_document
+    await embeddings_store.store_document_embedding(
+  File "/app/tests/test_ingestion.py", line 112, in store_document_embedding
+    raise RuntimeError('chunk write failed')
+RuntimeError: chunk write failed
+2026-09-04 21:36:55,500 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,500 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,500 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,500 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,500 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,501 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,503 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,503 app.pipeline ERROR Failed to process doc 1: classification failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 334, in process_document
+    classification = await classifier.classify(title, content)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 126, in classify
+    raise RuntimeError('classification failed')
+RuntimeError: classification failed
+2026-09-04 21:36:55,504 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,504 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,504 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 339, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 144, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-04 21:36:55,505 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,505 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,505 app.pipeline ERROR Failed to process doc 1: Extraction coverage is incomplete; previous index retained
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 344, in process_document
+    raise ValueError("Extraction coverage is incomplete; previous index retained")
+ValueError: Extraction coverage is incomplete; previous index retained
+2026-09-04 21:36:55,506 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,506 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,506 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,506 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,506 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,506 app.pipeline ERROR Failed to process doc 1: Document embedding was not generated for chunk 0
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 367, in process_document
+    raise ValueError(f"Document embedding was not generated for chunk {index}")
+ValueError: Document embedding was not generated for chunk 0
+2026-09-04 21:36:55,510 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,510 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,510 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,510 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,510 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,511 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,512 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 21:36:55,512 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 21:36:55,512 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 21:36:55,512 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 21:36:55,512 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 21:36:55,513 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 21:36:55,518 httpx INFO HTTP Request: DELETE http://test/document/101 "HTTP/1.1 409 Conflict"
+2026-09-04 21:36:55,519 httpx INFO HTTP Request: POST http://test/entity-review/merge "HTTP/1.1 409 Conflict"
+2026-09-04 21:36:55,525 httpx INFO HTTP Request: POST http://test/sync "HTTP/1.1 409 Conflict"
+2026-09-04 21:36:55,525 httpx INFO HTTP Request: DELETE http://test/document/101 "HTTP/1.1 500 Internal Server Error"
+2026-09-04 21:36:55,693 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,699 httpx INFO HTTP Request: POST http://synthetic.local/query "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,701 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+2026-09-04 21:36:55,704 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+----------------------------------------------------------------------
+Ran 153 tests in 0.539s
+
+OK (skipped=25)

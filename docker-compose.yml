@@ -60,8 +60,8 @@ services:
     ports:
       - "3001:3000"
     environment:
-      # NEXT_PUBLIC_API_URL removed - using /api rewrites for external access
-      - BACKEND_URL=http://app:8000
+      # Ordinary and streaming API routes share this runtime backend URL.
+      - BACKEND_URL=${BACKEND_URL:-http://app:8000}
     depends_on:
       - app
     restart: unless-stopped

@@ -185,6 +185,10 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                 "claim_ledger": metadata.get("claim_ledger"),
                 "evidence_pack": metadata.get("evidence_pack"),
                 "timeline_events": metadata.get("timeline_events"),
+                "evidence": metadata.get("evidence"),
+                "current_state": metadata.get("current_state"),
+                "finalization": metadata.get("finalization"),
+                "mode": metadata.get("mode"),
                 "created_at": m["created_at"].isoformat(),
             })
 
@@ -281,8 +285,8 @@ async def add_message(
         }
 
 
-async def get_conversation_history(conv_id: str, limit: int = 10) -> list[dict]:
-    """Get recent messages for context (used by query engine)."""
+async def get_conversation_history(conv_id: str, limit: int | None = None) -> list[dict]:
+    """Get complete context by default; an explicit limit selects recent messages."""
     async with _pool.acquire() as conn:
         msgs = await conn.fetch("""
             SELECT role, content FROM conversation_messages

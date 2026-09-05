@@ -1,10 +1,9 @@
 import { NextRequest } from "next/server";
+import { backendUrl } from "@/lib/backend";
 
 // Allow up to 5 minutes for long-running queries
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://app:8000";
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -14,7 +13,7 @@ export async function POST(req: NextRequest) {
   const timeout = setTimeout(() => controller.abort(), 300000);
 
   try {
-    const backendRes = await fetch(`${BACKEND_URL}/query/stream`, {
+    const backendRes = await fetch(backendUrl("query/stream"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

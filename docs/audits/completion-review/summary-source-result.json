@@ -1,0 +1,29 @@
+{
+  "actual_ocr": "Monthly premium: $321.00 USD.",
+  "generated_summary": "DOCUMENT SUMMARY \u2014 January statement (Type: financial, Doc ID: 101)\n\nMonthly premium: $999.00 USD.",
+  "retrieved_item_source_quality": {
+    "score": 0.77,
+    "tier": "summary",
+    "reasons": [
+      "looks like an original/source document",
+      "looks like a summary or portal rollup",
+      "typed as financial",
+      "contains structured values"
+    ]
+  },
+  "retrieved_chunk_index": 9999,
+  "public_answer": "Monthly premium: $999.00 USD. [Document 101](/documents/101)",
+  "finalization": {
+    "policy_version": "source-audit-v1",
+    "disposition": "supported",
+    "answer_digest": "dc54979d8c461facfbc6c9e7c68056a97c67a5a5b9de11c21f622c0e3364fa76",
+    "candidate_digest": "2ac3e4697336a3c3e80f0c65a3598b101803e2c9c93d189257a8a9620ef93c1b",
+    "evaluated_at": "2026-09-05",
+    "attempts": 1,
+    "complete": true,
+    "cited_document_ids": [
+      101
+    ]
+  },
+  "score": 0.8
+}

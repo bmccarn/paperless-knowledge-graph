@@ -1,0 +1,33 @@
+{
+  "result": {
+    "status": "completed",
+    "processed": 0,
+    "skipped": 1,
+    "checkpoint_advanced": true
+  },
+  "stored_graph": {
+    "paperless_id": 1,
+    "title": "Existing usable document"
+  },
+  "source_title": "Corrected document title",
+  "source_created": "2026-03-01",
+  "chunk": "Existing usable chunk",
+  "next_sync": {
+    "total": 0,
+    "processed": 0,
+    "skipped": 0,
+    "held": 0,
+    "errors": 0,
+    "deleted": 0,
+    "cancelled": false,
+    "status": "completed",
+    "checkpoint_advanced": true,
+    "scan_started_at": "2026-09-05T02:29:08.497979+00:00",
+    "previous_checkpoint": "2026-09-05T02:29:08.497172+00:00",
+    "elapsed_seconds": 0.0,
+    "docs_per_minute": 0.0,
+    "avg_entities_per_doc": 0,
+    "postprocess_errors": [],
+    "results": []
+  }
+}

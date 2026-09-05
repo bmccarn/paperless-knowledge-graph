@@ -1,236 +1,318 @@
-'use client';
+"use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType, RefAttributes } from "react";
+import type {
+  ForceGraphMethods,
+  ForceGraphProps,
+  NodeObject,
+  LinkObject,
+} from "react-force-graph-2d";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  escapeGraphLabel,
+  type ExplorerGraph,
+  type ExplorerNode,
+  type ExplorerLink,
+} from "@/lib/graph-data";
+import { getNodeColor } from "./graph-legend";
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2 } from 'lucide-react';
+type RenderNode = NodeObject<ExplorerNode> & { z?: number; fz?: number };
+type RenderLink = LinkObject<
+  ExplorerNode,
+  Omit<ExplorerLink, "source" | "target">
+>;
+export type GraphHandle = ForceGraphMethods<
+  ExplorerNode,
+  Omit<ExplorerLink, "source" | "target">
+> & {
+  cameraPosition?: (
+    position?: { x: number; y: number; z: number },
+    lookAt?: { x: number; y: number; z: number },
+    duration?: number,
+  ) => void;
+};
+type GraphComponent = ComponentType<
+  ForceGraphProps<ExplorerNode, Omit<ExplorerLink, "source" | "target">> &
+    RefAttributes<GraphHandle>
+>;
 
-interface ForceGraphClientProps {
-  fgRef?: React.RefObject<any>;
-  is3DMode: boolean;
-  graphData: any;
-  nodeLabel?: (node: any) => string;
-  nodeColor?: (node: any) => string;
-  nodeVal?: (node: any) => number;
-  nodeRelSize?: number;
-  linkDirectionalArrowLength?: number;
-  linkDirectionalArrowRelPos?: number;
-  linkDirectionalArrowColor?: string | ((link: any) => string);
-  linkLabel?: string | ((link: any) => string);
-  linkColor?: string | ((link: any) => string);
-  linkWidth?: number | ((link: any) => number);
-  onNodeClick?: (node: any) => void;
-  onNodeHover?: (node: any) => void;
-  onNodeRightClick?: (node: any) => void;
-  onBackgroundClick?: () => void;
-  warmupTicks?: number;
-  cooldownTicks?: number;
-  backgroundColor?: string;
-  d3AlphaDecay?: number;
-  d3VelocityDecay?: number;
-  nodeOpacity?: number;
-  linkOpacity?: number;
-  nodeResolution?: number;
-  enableNodeDrag?: boolean;
-  enableNavigationControls?: boolean;
-  showNavInfo?: boolean;
-  nodeCanvasObject?: (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => void;
-  nodeCanvasObjectMode?: () => string;
-  nodePointerAreaPaint?: (node: any, color: string, ctx: CanvasRenderingContext2D) => void;
-  linkCanvasObjectMode?: () => string;
-  linkCanvasObject?: (link: any, ctx: CanvasRenderingContext2D, globalScale: number) => void;
-  onEngineInit?: (fg: any) => void;
-  linkDirectionalParticles?: number | ((link: any) => number);
-  linkDirectionalParticleSpeed?: number | ((link: any) => number);
-  linkDirectionalParticleWidth?: number;
-  linkDirectionalParticleColor?: (link: any) => string;
-  linkCurvature?: number | ((link: any) => number);
+interface Props {
+  graph: ExplorerGraph;
+  is3D: boolean;
+  showLabels: boolean;
+  selectedNodeId: string | null;
+  selectedLinkId: string | null;
+  onSelectNode: (node: ExplorerNode) => void;
+  onSelectLink: (link: ExplorerLink) => void;
+  onClear: () => void;
+  onReady: (handle: GraphHandle | null) => void;
+  onUse2D: () => void;
 }
 
-function isWebGLAvailable(): boolean {
-  try {
-    const canvas = document.createElement('canvas');
-    return !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
-  } catch {
-    return false;
-  }
+function endpointId(value: RenderLink["source"]): string {
+  return typeof value === "object" && value !== null
+    ? String(value.id)
+    : String(value);
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result
-    ? { r: parseInt(result[1], 16) / 255, g: parseInt(result[2], 16) / 255, b: parseInt(result[3], 16) / 255 }
-    : { r: 1, g: 1, b: 1 };
-}
-
-export function ForceGraphClient({ fgRef, is3DMode, graphData, ...props }: ForceGraphClientProps) {
+export function ForceGraphClient({
+  graph,
+  is3D,
+  showLabels,
+  selectedNodeId,
+  selectedLinkId,
+  onSelectNode,
+  onSelectLink,
+  onClear,
+  onReady,
+  onUse2D,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const localRef = useRef<any>(null);
-  const threeRef = useRef<any>(null);
-  const sceneInitialized = useRef(false);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [GraphComponent, setGraphComponent] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const graphRef = fgRef || localRef;
+  const handleRef = useRef<GraphHandle | null>(null);
+  const renderNodes = useRef(new Map<string, RenderNode>());
+  const fitted = useRef(false);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [renderer, setRenderer] = useState<{
+    mode: boolean;
+    Component: GraphComponent | null;
+    error: string | null;
+  }>({ mode: is3D, Component: null, error: null });
 
   useEffect(() => {
-    let mounted = true;
-    const loadGraph = async () => {
-      await new Promise(resolve => requestAnimationFrame(resolve));
-      if (!mounted) return;
-      if (!isWebGLAvailable()) {
-        setError('WebGL is not available.');
-        setIsLoading(false);
-        return;
-      }
+    let active = true;
+    fitted.current = false;
+    async function load() {
       try {
-        if (is3DMode) {
-          const [graphModule, THREE] = await Promise.all([
-            import('react-force-graph-3d'),
-            import('three'),
-          ]);
-          if (mounted) { threeRef.current = THREE; setGraphComponent(() => graphModule.default); }
-        } else {
-          const graphModule = await import('react-force-graph-2d');
-          if (mounted) setGraphComponent(() => graphModule.default);
+        if (is3D) {
+          const canvas = document.createElement("canvas");
+          if (!canvas.getContext("webgl2") && !canvas.getContext("webgl"))
+            throw new Error(
+              "3D requires WebGL. The 2D graph works without it.",
+            );
         }
-        if (mounted) setIsLoading(false);
-      } catch (err) {
-        if (mounted) { setError(err instanceof Error ? err.message : 'Failed to load graph'); setIsLoading(false); }
+        const rendererModule = is3D
+          ? await import("react-force-graph-3d")
+          : await import("react-force-graph-2d");
+        if (active)
+          setRenderer({
+            mode: is3D,
+            Component: rendererModule.default as unknown as GraphComponent,
+            error: null,
+          });
+      } catch (error) {
+        if (active)
+          setRenderer({
+            mode: is3D,
+            Component: null,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unable to load graph renderer.",
+          });
       }
+    }
+    void load();
+    return () => {
+      active = false;
     };
-    setIsLoading(true);
-    setGraphComponent(null);
-    setError(null);
-    sceneInitialized.current = false;
-    loadGraph();
-    return () => { mounted = false; };
-  }, [is3DMode]);
+  }, [is3D]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: rect.width || 800, height: rect.height || 600 });
-      }
-    };
-    updateDimensions();
-    const observer = new ResizeObserver(updateDimensions);
-    observer.observe(containerRef.current);
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setDimensions({ width: Math.round(width), height: Math.round(height) });
+    });
+    observer.observe(element);
     return () => observer.disconnect();
   }, []);
 
-  const nodeThreeObject = useCallback((node: any) => {
-    const THREE = threeRef.current;
-    if (!THREE) return null;
-    const size = (node.val || 1) * 14;
-    const color = node.color || '#ffffff';
-    const rgb = hexToRgb(color);
-    const geometry = new THREE.SphereGeometry(size, 32, 32);
-    const material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(rgb.r, rgb.g, rgb.b),
-      roughness: 0.4,
-      metalness: 0.1,
-      envMapIntensity: 0.5,
-    });
-    return new THREE.Mesh(geometry, material);
-  }, []);
-
-  if (isLoading || !GraphComponent) {
-    return (
-      <div ref={containerRef} className="h-full w-full flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div ref={containerRef} className="h-full w-full flex items-center justify-center">
-        <p className="text-destructive">{error}</p>
-      </div>
-    );
-  }
-
-  const {
-    nodeOpacity, linkOpacity, nodeResolution, enableNodeDrag, enableNavigationControls, showNavInfo,
-    nodeCanvasObject, nodeCanvasObjectMode, nodePointerAreaPaint,
-    linkCanvasObject, linkCanvasObjectMode,
-    d3AlphaDecay, d3VelocityDecay, onEngineInit,
-    linkDirectionalParticles, linkDirectionalParticleSpeed, linkDirectionalParticleWidth, linkDirectionalParticleColor,
-    linkCurvature, ...commonProps
-  } = props;
-
-  const graphProps = is3DMode
-    ? {
-        ...commonProps,
-        nodeOpacity, linkOpacity,
-        nodeResolution: nodeResolution || 20,
-        enableNodeDrag, enableNavigationControls, showNavInfo,
-        d3AlphaDecay, d3VelocityDecay,
-        nodeThreeObject, nodeThreeObjectExtend: false,
-        linkWidth: 0.8, linkCurvature,
-        linkDirectionalParticles, linkDirectionalParticleSpeed, linkDirectionalParticleWidth, linkDirectionalParticleColor,
-      }
-    : {
-        ...commonProps,
-        nodeCanvasObject, nodeCanvasObjectMode, nodePointerAreaPaint,
-        linkCanvasObject, linkCanvasObjectMode,
-        d3AlphaDecay, d3VelocityDecay,
-        linkCurvature,
-        linkDirectionalParticles, linkDirectionalParticleSpeed, linkDirectionalParticleWidth, linkDirectionalParticleColor,
+  // Mutable force coordinates belong only to the renderer, never graph metadata.
+  const data = useMemo(() => {
+    const nodes = graph.nodes.map((node) => {
+      const previous = renderNodes.current.get(node.id);
+      const rendered = {
+        ...node,
+        props: { ...node.props },
+        x: previous?.x,
+        y: previous?.y,
+        z: previous?.z,
+        fx: previous?.fx,
+        fy: previous?.fy,
+        fz: previous?.fz,
       };
+      renderNodes.current.set(node.id, rendered);
+      return rendered;
+    });
+    return {
+      nodes,
+      links: graph.links.map((link) => ({ ...link, props: { ...link.props } })),
+    };
+  }, [graph]);
 
-  const setGraphRefCb = (instance: any) => {
-    if (graphRef && 'current' in graphRef) {
-      (graphRef as React.MutableRefObject<any>).current = instance;
+  const highlighted = useMemo(() => {
+    const ids = new Set<string>();
+    if (selectedNodeId) {
+      ids.add(selectedNodeId);
+      for (const link of graph.links)
+        if (link.source === selectedNodeId || link.target === selectedNodeId) {
+          ids.add(link.source);
+          ids.add(link.target);
+        }
     }
-    if (instance && !sceneInitialized.current) {
-      sceneInitialized.current = true;
-      setTimeout(() => {
-        if (onEngineInit) onEngineInit(instance);
-        if (is3DMode) setup3DScene(instance);
-      }, 150);
-    }
-  };
+    return ids;
+  }, [graph.links, selectedNodeId]);
 
+  const setHandle = useCallback(
+    (handle: GraphHandle | null) => {
+      handleRef.current = handle;
+      onReady(handle);
+    },
+    [onReady],
+  );
+
+  const paintNode = useCallback(
+    (node: RenderNode, ctx: CanvasRenderingContext2D, scale: number) => {
+      if (node.x === undefined || node.y === undefined) return;
+      const selected = node.id === selectedNodeId;
+      const radius = (node.label === "Document" ? 5 : 6) / scale;
+      ctx.save();
+      ctx.globalAlpha = selectedNodeId && !highlighted.has(node.id) ? 0.28 : 1;
+      ctx.beginPath();
+      if (node.label === "Document")
+        ctx.rect(node.x - radius, node.y - radius, radius * 2, radius * 2);
+      else ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = getNodeColor(node.label);
+      ctx.fill();
+      if (selected) {
+        ctx.strokeStyle = "#f8fafc";
+        ctx.lineWidth = 2 / scale;
+        ctx.stroke();
+      }
+      if (
+        (showLabels && (graph.nodes.length < 80 || scale > 1.4)) ||
+        selected
+      ) {
+        const fontSize = 11 / scale;
+        ctx.font = `${fontSize}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        const label =
+          node.name.length > 42 ? `${node.name.slice(0, 41)}…` : node.name;
+        const width = ctx.measureText(label).width;
+        ctx.fillStyle = "#101820e8";
+        ctx.fillRect(
+          node.x - width / 2 - 3,
+          node.y + radius + 2,
+          width + 6,
+          fontSize + 4,
+        );
+        ctx.fillStyle = "#e2e8f0";
+        ctx.fillText(label, node.x, node.y + radius + 4);
+      }
+      ctx.restore();
+    },
+    [selectedNodeId, highlighted, showLabels, graph.nodes.length],
+  );
+
+  const Component = renderer.mode === is3D ? renderer.Component : null;
+  const error = renderer.mode === is3D ? renderer.error : null;
   return (
-    <div ref={containerRef} className="h-full w-full relative" style={{ zIndex: 1 }}>
-      <GraphComponent ref={setGraphRefCb} graphData={graphData} width={dimensions.width} height={dimensions.height} {...graphProps} />
+    <div
+      ref={containerRef}
+      className="relative h-full w-full min-h-0 overflow-hidden bg-[#0b131c]"
+      aria-label={`${is3D ? "3D" : "2D"} relationship graph`}
+    >
+      {error ? (
+        <div
+          role="alert"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
+        >
+          <AlertCircle className="h-6 w-6 text-amber-400" />
+          <p>{error}</p>
+          {is3D && <Button onClick={onUse2D}>Use 2D graph</Button>}
+        </div>
+      ) : !Component || !dimensions.width || !dimensions.height ? (
+        <div
+          role="status"
+          className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+        >
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Loading graph renderer…
+        </div>
+      ) : (
+        <Component
+          key={is3D ? "3d" : "2d"}
+          ref={setHandle}
+          graphData={data}
+          width={dimensions.width}
+          height={dimensions.height}
+          backgroundColor="#0b131c"
+          nodeVal={(node) => (node.label === "Document" ? 2 : 3)}
+          nodeRelSize={4}
+          nodeColor={(node) => getNodeColor(node.label)}
+          nodeLabel={(node) =>
+            `${escapeGraphLabel(node.name)} · ${escapeGraphLabel(node.label)}`
+          }
+          linkLabel={(link) =>
+            `${escapeGraphLabel(link.type)}${link.props.implied ? " · inferred" : ""}`
+          }
+          linkColor={(link) =>
+            link.id === selectedLinkId
+              ? "#f8fafc"
+              : link.props.implied
+                ? "#eab308aa"
+                : "#7295adb0"
+          }
+          linkWidth={(link) => (link.id === selectedLinkId ? 2.5 : 1.2)}
+          linkDirectionalArrowLength={4}
+          linkDirectionalArrowRelPos={0.95}
+          linkCurvature={0.08}
+          linkLineDash={(link) => (link.props.implied ? [3, 2] : null)}
+          nodeCanvasObject={is3D ? undefined : paintNode}
+          nodePointerAreaPaint={
+            is3D
+              ? undefined
+              : (node, color, ctx, scale) => {
+                  if (node.x === undefined || node.y === undefined) return;
+                  ctx.fillStyle = color;
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, 9 / scale, 0, Math.PI * 2);
+                  ctx.fill();
+                }
+          }
+          onNodeClick={(node) => onSelectNode(node)}
+          onBackgroundClick={onClear}
+          onLinkClick={(link) =>
+            onSelectLink({
+              ...link,
+              source: endpointId(link.source),
+              target: endpointId(link.target),
+            })
+          }
+          onNodeDragEnd={(node) => {
+            node.fx = node.x;
+            node.fy = node.y;
+            if (is3D) (node as RenderNode).fz = (node as RenderNode).z;
+          }}
+          onEngineStop={() => {
+            if (!fitted.current && handleRef.current) {
+              fitted.current = true;
+              handleRef.current.zoomToFit(350, 65);
+            }
+          }}
+          warmupTicks={50}
+          cooldownTicks={80}
+          d3AlphaDecay={0.06}
+          d3VelocityDecay={0.5}
+          enableNodeDrag
+          minZoom={0.1}
+          maxZoom={4}
+        />
+      )}
     </div>
   );
 }
-
-async function setup3DScene(instance: any) {
-  try {
-    const THREE = await import('three');
-    const scene = instance.scene();
-    if (!scene) return;
-    const lightsToRemove: any[] = [];
-    scene.traverse((child: any) => { if (child.isLight && child.userData?.custom) lightsToRemove.push(child); });
-    lightsToRemove.forEach((l: any) => scene.remove(l));
-
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    ambient.userData = { custom: true };
-    scene.add(ambient);
-
-    const main = new THREE.DirectionalLight(0xffffff, 1.0);
-    main.position.set(100, 150, 100);
-    main.userData = { custom: true };
-    scene.add(main);
-
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3);
-    fill.position.set(-100, -50, -100);
-    fill.userData = { custom: true };
-    scene.add(fill);
-
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
-    hemi.userData = { custom: true };
-    scene.add(hemi);
-  } catch (err) {
-    console.warn('Failed to setup 3D scene:', err);
-  }
-}
-
-export default ForceGraphClient;

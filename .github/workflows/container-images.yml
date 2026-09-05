@@ -1,6 +1,7 @@
 name: Container Images
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -8,12 +9,84 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: validation-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  backend:
+    name: Backend validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KG_ENV_FILE: ""
+      REDIS_URL: memory://
+      STRANDS_ENABLED: "false"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install locked backend dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+
+      - name: Run offline behavior regressions
+        run: python -m unittest discover -s tests -t . -v
+
+  frontend:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Check production advisories
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run graph regressions
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build production frontend
+        run: npm run build
+
   build:
     name: Build and push
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6

@@ -89,16 +89,22 @@ export function relationshipSupport(props: Record<string, unknown>): Array<{
     if (typeof value !== "string") return value;
     try { return JSON.parse(value); } catch { return undefined; }
   };
-  const records = Array.isArray(props.support_records) ? props.support_records : [];
+  const records = Array.isArray(props.support_records) ? [...props.support_records] : [];
+  const legacyId = documentId(props.source_doc);
+  if (legacyId !== null && !records.some(raw => documentId(record(parsed(raw)).source_doc) === legacyId)) {
+    records.push(props);
+  }
   return records.flatMap((raw) => {
     const support = record(parsed(raw));
     const id = documentId(support.source_doc);
     if (id === null) return [];
-    const spans = parsed(support.evidence_spans);
-    const quotes = Array.isArray(spans) ? spans.flatMap((span) => {
-      const quote = record(span).quote;
-      return typeof quote === "string" ? [quote] : [];
-    }) : [];
+    const quotes = [...new Set([support.evidence_spans, support.evidence_json].flatMap(value => {
+      const spans = parsed(value);
+      return Array.isArray(spans) ? spans.flatMap(span => {
+        const quote = record(span).quote;
+        return typeof quote === "string" ? [quote] : [];
+      }) : [];
+    }))];
     const rationale = (Array.isArray(support.rationale) ? support.rationale : [support.rationale])
       .filter((value): value is string => typeof value === "string");
     return [{ documentId: id, inferred: support.inferred === true || support.implied === true, quotes, rationale }];

@@ -1,0 +1,556 @@
+WARNING: The requested image's platform (linux/amd64) does not match the detected host platform (linux/arm64/v8) and no specific platform was requested
+test_budget_overflow_is_explicit (tests.test_answer_finalization.AnswerFinalizationTests.test_budget_overflow_is_explicit) ... ok
+test_fabricated_document_quote_and_evidence_id_are_rejected (tests.test_answer_finalization.AnswerFinalizationTests.test_fabricated_document_quote_and_evidence_id_are_rejected) ... ok
+test_flagged_source_cannot_certify_derived_fact (tests.test_answer_finalization.AnswerFinalizationTests.test_flagged_source_cannot_certify_derived_fact) ... ok
+test_missing_unit_or_duplicate_assessment_prevents_complete_verdict (tests.test_answer_finalization.AnswerFinalizationTests.test_missing_unit_or_duplicate_assessment_prevents_complete_verdict) ... ok
+test_repair_is_reaudited_and_cannot_introduce_new_unsupported_fact (tests.test_answer_finalization.AnswerFinalizationTests.test_repair_is_reaudited_and_cannot_introduce_new_unsupported_fact) ... ok
+test_supported_answer_keeps_its_value_and_resolvable_source (tests.test_answer_finalization.AnswerFinalizationTests.test_supported_answer_keeps_its_value_and_resolvable_source) ... ok
+test_supported_repair_is_accepted (tests.test_answer_finalization.AnswerFinalizationTests.test_supported_repair_is_accepted) ... ok
+test_tail_evidence_and_answer_are_audited (tests.test_answer_finalization.AnswerFinalizationTests.test_tail_evidence_and_answer_are_audited) ... ok
+test_timeout_empty_evidence_and_provider_failure_do_not_keep_draft (tests.test_answer_finalization.AnswerFinalizationTests.test_timeout_empty_evidence_and_provider_failure_do_not_keep_draft) ... ok
+test_wrong_digit_and_unit_fail_even_when_auditor_says_supported (tests.test_answer_finalization.AnswerFinalizationTests.test_wrong_digit_and_unit_fail_even_when_auditor_says_supported) ... ok
+test_conflicting_duplicate_evidence_identity_does_not_pick_first (tests.test_answer_hardening.AnswerHardeningTests.test_conflicting_duplicate_evidence_identity_does_not_pick_first) ... ok
+test_impossible_iso_date_is_not_certified_even_if_source_contains_it (tests.test_answer_hardening.AnswerHardeningTests.test_impossible_iso_date_is_not_certified_even_if_source_contains_it) ... ok
+test_malformed_temporal_scope_returns_terminal_result (tests.test_answer_hardening.AnswerHardeningTests.test_malformed_temporal_scope_returns_terminal_result) ... ok
+test_model_document_link_is_replaced_by_validated_document_citation (tests.test_answer_hardening.AnswerHardeningTests.test_model_document_link_is_replaced_by_validated_document_citation) ... ok
+test_planner_cannot_disable_current_claim_gate (tests.test_answer_hardening.AnswerHardeningTests.test_planner_cannot_disable_current_claim_gate) ... ok
+test_quote_cannot_cut_digits_or_negative_sign_from_source_value (tests.test_answer_hardening.AnswerHardeningTests.test_quote_cannot_cut_digits_or_negative_sign_from_source_value) ... ok
+test_quote_cannot_cut_numeric_value_at_a_selected_span_edge (tests.test_answer_hardening.AnswerHardeningTests.test_quote_cannot_cut_numeric_value_at_a_selected_span_edge) ... ok
+test_repair_timeout_cannot_attach_prior_ledger_to_new_revision (tests.test_answer_hardening.AnswerHardeningTests.test_repair_timeout_cannot_attach_prior_ledger_to_new_revision) ... ok
+test_unit_outside_original_small_registry_is_checked (tests.test_answer_hardening.AnswerHardeningTests.test_unit_outside_original_small_registry_is_checked) ... ok
+test_unscoped_current_assertion_is_not_relabelled_historical (tests.test_answer_hardening.AnswerHardeningTests.test_unscoped_current_assertion_is_not_relabelled_historical) ... ok
+test_value_and_unit_must_cooccur_in_support_not_separately (tests.test_answer_hardening.AnswerHardeningTests.test_value_and_unit_must_cooccur_in_support_not_separately) ... ok
+test_malformed_assessment_records_fail_without_raising (tests.test_answer_hardening.TimelineHardeningTests.test_malformed_assessment_records_fail_without_raising) ... ok
+test_other_supplied_source_is_available_for_contradiction_review (tests.test_answer_hardening.TimelineHardeningTests.test_other_supplied_source_is_available_for_contradiction_review) ... ok
+test_partial_date_cannot_hide_invalid_full_source_date (tests.test_answer_hardening.TimelineHardeningTests.test_partial_date_cannot_hide_invalid_full_source_date) ... ok
+test_published_quote_is_the_one_independent_auditor_used (tests.test_answer_hardening.TimelineHardeningTests.test_published_quote_is_the_one_independent_auditor_used) ... ok
+test_timeline_references_are_limited_to_extraction_manifest (tests.test_answer_hardening.TimelineHardeningTests.test_timeline_references_are_limited_to_extraction_manifest) ... ok
+test_document_and_graph_routes_serialize_complete_pages (tests.test_browsing.Neo4jBrowsingTests.test_document_and_graph_routes_serialize_complete_pages) ... skipped 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI'
+test_final_and_empty_pages_have_truthful_metadata (tests.test_browsing.Neo4jBrowsingTests.test_final_and_empty_pages_have_truthful_metadata) ... skipped 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI'
+test_finds_title_and_alias_beyond_old_5000_node_cap (tests.test_browsing.Neo4jBrowsingTests.test_finds_title_and_alias_beyond_old_5000_node_cap) ... skipped 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI'
+test_pages_reach_beyond_old_200_document_subset (tests.test_browsing.Neo4jBrowsingTests.test_pages_reach_beyond_old_200_document_subset) ... skipped 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI'
+test_type_filter_counts_and_order_are_global (tests.test_browsing.Neo4jBrowsingTests.test_type_filter_counts_and_order_are_global) ... skipped 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI'
+test_empty_global_search_retains_compatible_empty_result (tests.test_browsing.ParameterTests.test_empty_global_search_retains_compatible_empty_result) ... ok
+test_invalid_inputs_fail_before_database_access (tests.test_browsing.ParameterTests.test_invalid_inputs_fail_before_database_access) ... ok
+test_async_set_get_matches_sync_value_isolation (tests.test_cache.AsyncCacheTests.test_async_set_get_matches_sync_value_isolation) ... ok
+test_slow_socket_does_not_block_event_loop (tests.test_cache.AsyncCacheTests.test_slow_socket_does_not_block_event_loop) ... ok
+test_capacity_uses_recent_access_and_expired_entries_are_not_counted (tests.test_cache.CacheTests.test_capacity_uses_recent_access_and_expired_entries_are_not_counted) ... ok
+test_concurrent_set_get_clear_remains_bounded (tests.test_cache.CacheTests.test_concurrent_set_get_clear_remains_bounded) ... ok
+test_expiry_at_deadline_and_zero_ttl (tests.test_cache.CacheTests.test_expiry_at_deadline_and_zero_ttl) ... ok
+test_failed_clear_cannot_restore_old_entries_after_recovery (tests.test_cache.CacheTests.test_failed_clear_cannot_restore_old_entries_after_recovery) ... 2026-09-05 03:10:52,311 app.cache WARNING Redis clear error (test): synthetic Redis outage
+2026-09-05 03:10:52,312 app.cache WARNING Redis get error (test): synthetic Redis outage
+ok
+test_generation_shared_and_pending_invalidation_published_after_outage (tests.test_cache.CacheTests.test_generation_shared_and_pending_invalidation_published_after_outage) ... 2026-09-05 03:10:52,312 app.cache WARNING Corpus generation pending Redis recovery
+ok
+test_mutating_input_or_output_cannot_change_cached_value (tests.test_cache.CacheTests.test_mutating_input_or_output_cannot_change_cached_value) ... ok
+test_redis_namespace_clear_prevents_old_hits_without_enumeration (tests.test_cache.CacheTests.test_redis_namespace_clear_prevents_old_hits_without_enumeration) ... ok
+test_redis_prefix_scan_does_not_clear_other_entries (tests.test_cache.CacheTests.test_redis_prefix_scan_does_not_clear_other_entries) ... ok
+test_stats_do_not_contact_or_scan_redis (tests.test_cache.CacheTests.test_stats_do_not_contact_or_scan_redis) ... ok
+test_dismissal_records_review_without_claiming_reindex (tests.test_document_feedback.FeedbackRoutesTests.test_dismissal_records_review_without_claiming_reindex) ... 2026-09-05 03:10:52,316 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-05 03:10:52,317 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,319 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+ok
+test_flag_is_open_visible_and_invalidates_cached_answers (tests.test_document_feedback.FeedbackRoutesTests.test_flag_is_open_visible_and_invalidates_cached_answers) ... 2026-09-05 03:10:52,321 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-05 03:10:52,321 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,322 httpx INFO HTTP Request: GET http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+ok
+test_reindex_resolution_requires_completed_processing_after_report (tests.test_document_feedback.FeedbackRoutesTests.test_reindex_resolution_requires_completed_processing_after_report) ... 2026-09-05 03:10:52,323 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-05 03:10:52,324 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,325 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 409 Conflict"
+2026-09-05 03:10:52,325 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+ok
+test_resolution_needs_note_and_cannot_target_another_document_or_repeat (tests.test_document_feedback.FeedbackRoutesTests.test_resolution_needs_note_and_cannot_target_another_document_or_repeat) ... 2026-09-05 03:10:52,327 app.main WARNING Document 101 marked for extraction review: extraction_wrong
+2026-09-05 03:10:52,327 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,328 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 422 Unprocessable Entity"
+2026-09-05 03:10:52,328 httpx INFO HTTP Request: POST http://synthetic.local/document/102/feedback/1/resolve "HTTP/1.1 404 Not Found"
+2026-09-05 03:10:52,329 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,329 httpx INFO HTTP Request: POST http://synthetic.local/document/101/feedback/1/resolve "HTTP/1.1 409 Conflict"
+ok
+test_allowed_canonical_merge_preserves_existing_veto (tests.test_entity_decisions.EntityDecisionTests.test_allowed_canonical_merge_preserves_existing_veto) ... ok
+test_bulk_merge_carries_a_related_veto_to_the_surviving_name (tests.test_entity_decisions.EntityDecisionTests.test_bulk_merge_carries_a_related_veto_to_the_surviving_name) ... 2026-09-05 03:10:52,334 app.entity_resolver INFO Merged Person 'John Smith' into 'John Alexander Smith' (score=0.900)
+ok
+test_decision_store_failure_prevents_resolution_and_merge (tests.test_entity_decisions.EntityDecisionTests.test_decision_store_failure_prevents_resolution_and_merge) ... ok
+test_failed_merge_routes_clear_answers_from_before_partial_mutation (tests.test_entity_decisions.EntityDecisionTests.test_failed_merge_routes_clear_answers_from_before_partial_mutation) ... 2026-09-05 03:10:52,337 app.main ERROR Entity resolution failed: metadata failed after graph write
+Traceback (most recent call last):
+  File "/app/app/main.py", line 1433, in resolve_entities
+    report = await entity_resolver.resolve_all_entities()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/mock.py", line 2291, in _execute_mock_call
+    raise effect
+RuntimeError: metadata failed after graph write
+2026-09-05 03:10:52,339 app.main ERROR Entity merge failed: metadata failed after graph write
+Traceback (most recent call last):
+  File "/app/app/main.py", line 1524, in entity_review_merge
+    merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/mock.py", line 2291, in _execute_mock_call
+    raise effect
+RuntimeError: metadata failed after graph write
+ok
+test_generic_resolution_after_deletion_returns_a_live_identity (tests.test_entity_decisions.EntityDecisionTests.test_generic_resolution_after_deletion_returns_a_live_identity) ... 2026-09-05 03:10:52,341 app.entity_resolver INFO Created new Condition (Condition): 'Example Condition' (uuid=created-1)
+2026-09-05 03:10:52,342 app.entity_resolver INFO Created new Condition (Condition): 'Example Condition' (uuid=created-2)
+ok
+test_gray_zone_model_answer_requires_a_real_boolean (tests.test_entity_decisions.EntityDecisionTests.test_gray_zone_model_answer_requires_a_real_boolean) ... 2026-09-05 03:10:52,344 app.entity_resolver INFO LLM confirmed merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-05 03:10:52,344 app.entity_resolver INFO LLM-confirmed match 'John Smythee' to 'John Smith' (score=0.818)
+2026-09-05 03:10:52,344 app.entity_resolver INFO LLM blocked merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-05 03:10:52,344 app.entity_resolver INFO Created new Person: 'John Smythee' (uuid=created-1)
+2026-09-05 03:10:52,345 app.entity_resolver INFO LLM blocked merge: 'John Smythee' <-> 'John Smith' (Person)
+2026-09-05 03:10:52,345 app.entity_resolver INFO Created new Person: 'John Smythee' (uuid=created-2)
+ok
+test_ignored_pair_can_merge_without_overriding_an_existing_veto (tests.test_entity_decisions.EntityDecisionTests.test_ignored_pair_can_merge_without_overriding_an_existing_veto) ... 2026-09-05 03:10:52,346 app.entity_resolver INFO Merged Person 'John Smith' into 'John Smith' (score=1.000)
+ok
+test_ingestion_does_not_match_a_prohibited_fuzzy_person (tests.test_entity_decisions.EntityDecisionTests.test_ingestion_does_not_match_a_prohibited_fuzzy_person) ... 2026-09-05 03:10:52,347 app.entity_resolver INFO Created new Person: 'John Smyth' (uuid=created-1)
+ok
+test_legacy_veto_is_hydrated_before_its_graph_identity_disappears (tests.test_entity_decisions.EntityDecisionTests.test_legacy_veto_is_hydrated_before_its_graph_identity_disappears) ... ok
+test_manual_merge_rejects_a_veto_and_keeps_both_entities (tests.test_entity_decisions.EntityDecisionTests.test_manual_merge_rejects_a_veto_and_keeps_both_entities) ... ok
+test_model_cannot_override_person_name_safeguards (tests.test_entity_decisions.EntityDecisionTests.test_model_cannot_override_person_name_safeguards) ... 2026-09-05 03:10:52,350 app.entity_resolver INFO First name mismatch blocked merge: 'Jonathan Smith' <-> 'John Smith' (different first names)
+2026-09-05 03:10:52,350 app.entity_resolver INFO First name mismatch blocked merge: 'Jonathan Smith' <-> 'John Smith' (different first names)
+2026-09-05 03:10:52,350 app.entity_resolver INFO Created new Person: 'Jonathan Smith' (uuid=created-1)
+ok
+test_person_redirect_to_organization_does_not_deadlock (tests.test_entity_decisions.EntityDecisionTests.test_person_redirect_to_organization_does_not_deadlock) ... 2026-09-05 03:10:52,351 app.entity_resolver INFO Redirecting org-as-person to org resolver: 'Example Insurance'
+2026-09-05 03:10:52,351 app.entity_resolver INFO Created new Organization: 'Example Insurance' (uuid=created-1)
+ok
+test_recorded_split_survives_reindex_with_new_graph_uuids (tests.test_entity_decisions.EntityDecisionTests.test_recorded_split_survives_reindex_with_new_graph_uuids) ... ok
+test_review_routes_record_identities_and_report_a_prohibited_merge (tests.test_entity_decisions.EntityDecisionTests.test_review_routes_record_identities_and_report_a_prohibited_merge) ... ok
+test_review_serialization_covers_organizations_and_generic_entities (tests.test_entity_decisions.EntityDecisionTests.test_review_serialization_covers_organizations_and_generic_entities) ... 2026-09-05 03:10:52,359 app.entity_resolver INFO Fuzzy matched org 'Example Company' to 'Example Company' (score=1.000)
+ok
+test_same_name_person_and_organization_veto_allows_correct_source (tests.test_entity_decisions.EntityDecisionTests.test_same_name_person_and_organization_veto_allows_correct_source) ... 2026-09-05 03:10:52,362 app.entity_resolver INFO Matched 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-05 03:10:52,362 app.entity_resolver INFO Created new Person: 'Shared Name' (uuid=created-1)
+2026-09-05 03:10:52,362 app.entity_resolver INFO Matched 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-05 03:10:52,362 app.entity_resolver INFO Fuzzy matched org 'Shared Name' to 'Shared Name' (score=1.000)
+2026-09-05 03:10:52,363 app.entity_resolver INFO Created new Organization: 'Shared Name' (uuid=created-2)
+2026-09-05 03:10:52,363 app.entity_resolver INFO Fuzzy matched org 'Shared Name' to 'Shared Name' (score=1.000)
+ok
+test_same_name_split_reuses_the_entity_for_the_correct_source (tests.test_entity_decisions.EntityDecisionTests.test_same_name_split_reuses_the_entity_for_the_correct_source) ... ok
+test_split_acceptance_waits_for_inflight_identity_resolution (tests.test_entity_decisions.EntityDecisionTests.test_split_acceptance_waits_for_inflight_identity_resolution) ... 2026-09-05 03:10:52,366 app.entity_resolver INFO Matched 'John Smith' to 'John Smith' (score=1.000)
+ok
+test_split_prevents_an_otherwise_eligible_bulk_merge (tests.test_entity_decisions.EntityDecisionTests.test_split_prevents_an_otherwise_eligible_bulk_merge) ... ok
+test_steward_records_review_for_unsafe_agent_merge (tests.test_entity_decisions.EntityDecisionTests.test_steward_records_review_for_unsafe_agent_merge) ... 2026-09-05 03:10:52,369 app.entity_steward INFO Entity steward completed: 1 candidates, 0 merge suggestions, 0 split suggestions
+ok
+test_invalid_support_rolls_back_all_graph_changes (tests.test_entity_decisions.GraphEntityMergeTests.test_invalid_support_rolls_back_all_graph_changes) ... skipped 'Set NEO4J_TEST_BOLT to explicitly authorized disposable localhost Neo4j'
+test_merge_preserves_aliases_and_each_documents_relationship_support (tests.test_entity_decisions.GraphEntityMergeTests.test_merge_preserves_aliases_and_each_documents_relationship_support) ... skipped 'Set NEO4J_TEST_BOLT to explicitly authorized disposable localhost Neo4j'
+test_merge_preserves_inbound_support_and_distinct_same_document_quotes (tests.test_entity_decisions.GraphEntityMergeTests.test_merge_preserves_inbound_support_and_distinct_same_document_quotes) ... skipped 'Set NEO4J_TEST_BOLT to explicitly authorized disposable localhost Neo4j'
+test_merge_rejects_partial_uuid_without_mutation (tests.test_entity_decisions.GraphEntityMergeTests.test_merge_rejects_partial_uuid_without_mutation) ... skipped 'Set NEO4J_TEST_BOLT to explicitly authorized disposable localhost Neo4j'
+test_merge_suggestion_requires_both_low_risk_and_confident_assessment (tests.test_entity_decisions.StewardRecommendationTests.test_merge_suggestion_requires_both_low_risk_and_confident_assessment) ... ok
+test_all_six_old_keyword_only_forgeries_fail (tests.test_eval_harness.EvaluationTests.test_all_six_old_keyword_only_forgeries_fail) ... ok
+test_answer_cannot_hide_an_extra_claim_behind_correct_keywords (tests.test_eval_harness.EvaluationTests.test_answer_cannot_hide_an_extra_claim_behind_correct_keywords) ... ok
+test_correct_low_confidence_supported_answer_passes (tests.test_eval_harness.EvaluationTests.test_correct_low_confidence_supported_answer_passes) ... ok
+test_correct_timeline_passes_and_invented_event_with_real_quote_fails (tests.test_eval_harness.EvaluationTests.test_correct_timeline_passes_and_invented_event_with_real_quote_fails) ... ok
+test_expected_abstention_passes_but_appended_factual_guess_fails (tests.test_eval_harness.EvaluationTests.test_expected_abstention_passes_but_appended_factual_guess_fails) ... ok
+test_invalid_timeline_date_is_rejected_even_with_valid_claim (tests.test_eval_harness.EvaluationTests.test_invalid_timeline_date_is_rejected_even_with_valid_claim) ... ok
+test_manifest_loading_attaches_independent_corpus (tests.test_eval_harness.EvaluationTests.test_manifest_loading_attaches_independent_corpus) ... ok
+test_unknown_document_and_real_quote_with_wrong_offsets_fail (tests.test_eval_harness.EvaluationTests.test_unknown_document_and_real_quote_with_wrong_offsets_fail) ... ok
+test_wrong_high_confidence_value_or_unit_fails (tests.test_eval_harness.EvaluationTests.test_wrong_high_confidence_value_or_unit_fails) ... ok
+test_budget_drops_whole_spans_with_explicit_coverage_and_content_changes_identity (tests.test_evidence_inputs.EvidenceInputTests.test_budget_drops_whole_spans_with_explicit_coverage_and_content_changes_identity) ... ok
+test_synthesis_sees_relevant_tail_and_declares_selected_windows (tests.test_evidence_inputs.EvidenceInputTests.test_synthesis_sees_relevant_tail_and_declares_selected_windows) ... ok
+test_conflicting_duplicate_relationship_reviews_cannot_promote_support (tests.test_extraction.ExtractionTests.test_conflicting_duplicate_relationship_reviews_cannot_promote_support) ... ok
+test_conflicting_entity_types_are_omitted_instead_of_arbitrarily_merged (tests.test_extraction.ExtractionTests.test_conflicting_entity_types_are_omitted_instead_of_arbitrarily_merged) ... ok
+test_empty_document_is_failed_not_successful_empty_extraction (tests.test_extraction.ExtractionTests.test_empty_document_is_failed_not_successful_empty_extraction) ... ok
+test_fabricated_entity_quote_and_verifier_added_names_are_rejected (tests.test_extraction.ExtractionTests.test_fabricated_entity_quote_and_verifier_added_names_are_rejected) ... ok
+test_fabricated_metadata_value_cannot_borrow_a_real_quote (tests.test_extraction.ExtractionTests.test_fabricated_metadata_value_cannot_borrow_a_real_quote) ... ok
+test_independent_relationship_review_rejects_cooccurrence (tests.test_extraction.ExtractionTests.test_independent_relationship_review_rejects_cooccurrence) ... ok
+test_inferred_relationship_remains_inferred (tests.test_extraction.ExtractionTests.test_inferred_relationship_remains_inferred) ... ok
+test_long_document_tail_is_processed_with_original_source_offsets (tests.test_extraction.ExtractionTests.test_long_document_tail_is_processed_with_original_source_offsets) ... ok
+test_malformed_window_and_unavailable_verifier_are_incomplete (tests.test_extraction.ExtractionTests.test_malformed_window_and_unavailable_verifier_are_incomplete) ... 2026-09-05 03:10:52,396 app.extractor WARNING Extraction window 0:36 failed during entity proposals: Response must contain a entities list of objects
+2026-09-05 03:10:52,396 app.extractor WARNING Extraction window 0:36 failed during metadata: Metadata response must contain metadata object and evidence list
+2026-09-05 03:10:52,397 app.extractor WARNING pass4_verification: Unexpected error (attempt 1/3): synthetic provider failure
+2026-09-05 03:10:52,397 app.extractor WARNING pass4_verification: Unexpected error (attempt 2/3): synthetic provider failure
+2026-09-05 03:10:52,397 app.extractor WARNING pass4_verification: Unexpected error (attempt 3/3): synthetic provider failure
+2026-09-05 03:10:52,397 app.extractor ERROR pass4_verification: All 3 attempts failed, using empty dict. Last error: synthetic provider failure
+2026-09-05 03:10:52,397 app.extractor WARNING Extraction window 0:36 failed during entity verification: Response must contain a entities list of objects
+2026-09-05 03:10:52,397 app.extractor WARNING Extraction window 0:36 failed during relationship verification: Response must contain a relationships list of objects
+ok
+test_metadata_number_cannot_match_a_prefix_or_drop_a_negative_sign (tests.test_extraction.ExtractionTests.test_metadata_number_cannot_match_a_prefix_or_drop_a_negative_sign) ... ok
+test_overlap_does_not_duplicate_entities_or_relationships (tests.test_extraction.ExtractionTests.test_overlap_does_not_duplicate_entities_or_relationships) ... ok
+test_relationship_with_invented_quote_is_rejected (tests.test_extraction.ExtractionTests.test_relationship_with_invented_quote_is_rejected) ... ok
+test_repeated_metadata_rows_are_unioned_with_window_provenance (tests.test_extraction.ExtractionTests.test_repeated_metadata_rows_are_unioned_with_window_provenance) ... ok
+test_scalar_metadata_conflict_is_not_last_window_wins (tests.test_extraction.ExtractionTests.test_scalar_metadata_conflict_is_not_last_window_wins) ... ok
+test_single_entity_is_reviewed_against_actual_source (tests.test_extraction.ExtractionTests.test_single_entity_is_reviewed_against_actual_source) ... ok
+test_truncated_completion_is_not_accepted_as_a_complete_window (tests.test_extraction.ExtractionTests.test_truncated_completion_is_not_accepted_as_a_complete_window) ... 2026-09-05 03:10:52,407 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 1/3): Model output truncated by completion budget
+2026-09-05 03:10:52,408 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 2/3): Model output truncated by completion budget
+2026-09-05 03:10:52,408 app.extractor WARNING pass1_metadata:insurance: Unexpected error (attempt 3/3): Model output truncated by completion budget
+2026-09-05 03:10:52,408 app.extractor ERROR pass1_metadata:insurance: All 3 attempts failed, using empty dict. Last error: Model output truncated by completion budget
+2026-09-05 03:10:52,408 app.extractor WARNING Extraction window 0:13 failed during metadata: Metadata response must contain metadata object and evidence list
+ok
+test_unknown_relationship_endpoint_is_never_created (tests.test_extraction.ExtractionTests.test_unknown_relationship_endpoint_is_never_created) ... ok
+test_window_budget_reports_unprocessed_tail (tests.test_extraction.ExtractionTests.test_window_budget_reports_unprocessed_tail) ... ok
+test_existing_rows_migrate_to_open_and_schema_is_idempotent (tests.test_feedback_postgres.FeedbackPostgresTests.test_existing_rows_migrate_to_open_and_schema_is_idempotent) ... skipped 'Set FEEDBACK_TEST_DSN to a disposable PostgreSQL instance'
+test_open_resolved_lifecycle_survives_reads_and_scopes_lookup (tests.test_feedback_postgres.FeedbackPostgresTests.test_open_resolved_lifecycle_survives_reads_and_scopes_lookup) ... skipped 'Set FEEDBACK_TEST_DSN to a disposable PostgreSQL instance'
+test_reindex_resolution_requires_same_successful_hash_at_mutation_time (tests.test_feedback_postgres.FeedbackPostgresTests.test_reindex_resolution_requires_same_successful_hash_at_mutation_time) ... skipped 'Set FEEDBACK_TEST_DSN to a disposable PostgreSQL instance'
+test_document_neighbors_preserve_identity_and_sources (tests.test_graph_browser.GraphBrowserTests.test_document_neighbors_preserve_identity_and_sources) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_initial_and_expansion_share_stable_unique_edge_ids (tests.test_graph_browser.GraphBrowserTests.test_initial_and_expansion_share_stable_unique_edge_ids) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_no_apoc_matches_one_hop_contract (tests.test_graph_browser.GraphBrowserTests.test_no_apoc_matches_one_hop_contract) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_no_apoc_retains_isolated_node (tests.test_graph_browser.GraphBrowserTests.test_no_apoc_retains_isolated_node) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_node_details_report_real_edge_direction (tests.test_graph_browser.GraphBrowserTests.test_node_details_report_real_edge_direction) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_unrelated_database_errors_are_not_hidden (tests.test_graph_browser.GraphBrowserTests.test_unrelated_database_errors_are_not_hidden) ... skipped 'Set NEO4J_TEST_URL to a disposable local Neo4j HTTP transaction endpoint'
+test_already_cancelled_reindex_preserves_existing_indexes (tests.test_ingestion.IngestionTests.test_already_cancelled_reindex_preserves_existing_indexes) ... ok
+test_answers_cached_during_replacement_are_invalidated_on_success_and_failure (tests.test_ingestion.IngestionTests.test_answers_cached_during_replacement_are_invalidated_on_success_and_failure) ... 2026-09-05 03:10:52,415 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,415 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,415 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,415 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,415 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,416 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,417 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,417 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,417 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,417 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,417 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,417 app.pipeline ERROR Failed to process doc 1: chunk write failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 400, in process_document
+    await embeddings_store.store_document_embedding(
+  File "/app/tests/test_ingestion.py", line 119, in store_document_embedding
+    raise RuntimeError('chunk write failed')
+RuntimeError: chunk write failed
+ok
+test_background_sync_and_reindex_report_errors_as_failed (tests.test_ingestion.IngestionTests.test_background_sync_and_reindex_report_errors_as_failed) ... 2026-09-05 03:10:52,421 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,421 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,421 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-05 03:10:52,425 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,425 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,425 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+ok
+test_cancellation_drains_active_document_and_retries_pending_document (tests.test_ingestion.IngestionTests.test_cancellation_drains_active_document_and_retries_pending_document) ... 2026-09-05 03:10:52,429 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,429 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,430 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,430 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,430 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,430 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,432 app.pipeline INFO Doc 1 unchanged, skipping
+2026-09-05 03:10:52,432 app.pipeline INFO Processing doc 2: Document 2
+2026-09-05 03:10:52,432 app.pipeline INFO Doc 2 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,432 app.pipeline INFO Doc 2 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,432 app.pipeline WARNING Doc 2 'Document 2': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,432 app.pipeline INFO Doc 2: generated summary (379 chars)
+2026-09-05 03:10:52,433 app.pipeline INFO Doc 2: stored 1 embedding chunks
+ok
+test_cancelled_task_keeps_admission_until_writers_finish (tests.test_ingestion.IngestionTests.test_cancelled_task_keeps_admission_until_writers_finish) ... 2026-09-05 03:10:52,436 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,436 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,437 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,437 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,437 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,437 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_coverage_and_complete_source_text_are_persisted (tests.test_ingestion.IngestionTests.test_coverage_and_complete_source_text_are_persisted) ... 2026-09-05 03:10:52,441 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,441 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,441 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,441 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,441 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,442 app.pipeline INFO Doc 1: stored 2 embedding chunks
+ok
+test_deletion_failure_retains_checkpoint_and_retries_orphan_stores (tests.test_ingestion.IngestionTests.test_deletion_failure_retains_checkpoint_and_retries_orphan_stores) ... 2026-09-05 03:10:52,444 app.pipeline ERROR Failed to purge stale document 1
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 1425, in _ingest_documents
+    await _purge_document_index(doc_id)
+  File "/app/app/pipeline.py", line 244, in _purge_document_index
+    await graph_store.delete_document_graph(doc_id)
+  File "/app/tests/test_ingestion.py", line 51, in delete_document_graph
+    raise RuntimeError('graph delete failed')
+RuntimeError: graph delete failed
+ok
+test_failed_document_retries_without_paperless_change (tests.test_ingestion.IngestionTests.test_failed_document_retries_without_paperless_change) ... 2026-09-05 03:10:52,449 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,449 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,449 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-05 03:10:52,451 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,451 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,451 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,451 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,451 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,451 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_failed_targeted_preparation_retries_in_later_sync (tests.test_ingestion.IngestionTests.test_failed_targeted_preparation_retries_in_later_sync) ... 2026-09-05 03:10:52,454 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,454 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,454 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-05 03:10:52,455 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,456 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,456 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,456 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,456 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,456 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_freshness_exposes_metadata_drift_behind_checkpoint (tests.test_ingestion.IngestionTests.test_freshness_exposes_metadata_drift_behind_checkpoint) ... 2026-09-05 03:10:52,459 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,459 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,459 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,459 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,459 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,460 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,462 httpx INFO HTTP Request: GET http://test/freshness?force=true "HTTP/1.1 200 OK"
+ok
+test_full_reindex_does_not_clear_old_data_before_preparation (tests.test_ingestion.IngestionTests.test_full_reindex_does_not_clear_old_data_before_preparation) ... 2026-09-05 03:10:52,465 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,465 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,465 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+ok
+test_legacy_completion_without_metadata_fingerprint_is_reconciled (tests.test_ingestion.IngestionTests.test_legacy_completion_without_metadata_fingerprint_is_reconciled) ... 2026-09-05 03:10:52,468 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,468 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,468 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,468 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,468 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,469 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_metadata_corrections_refresh_index_without_changing_ocr_hash (tests.test_ingestion.IngestionTests.test_metadata_corrections_refresh_index_without_changing_ocr_hash) ... 2026-09-05 03:10:52,472 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,472 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,472 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,472 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,472 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,473 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,474 app.pipeline INFO Processing doc 1: Corrected title
+2026-09-05 03:10:52,475 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,475 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,475 app.pipeline WARNING Doc 1 'Corrected title': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,475 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,476 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_metadata_only_vector_failure_preserves_old_index (tests.test_ingestion.IngestionTests.test_metadata_only_vector_failure_preserves_old_index) ... 2026-09-05 03:10:52,479 app.pipeline WARNING Doc 1 has no content, recording metadata-only index
+2026-09-05 03:10:52,479 app.pipeline ERROR Failed to process metadata-only doc 1: Metadata-only document embedding was not generated
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 285, in process_document
+    raise ValueError("Metadata-only document embedding was not generated")
+ValueError: Metadata-only document embedding was not generated
+2026-09-05 03:10:52,480 app.pipeline WARNING Doc 1 has no content, recording metadata-only index
+ok
+test_missing_derived_state_recovers_old_documents (tests.test_ingestion.IngestionTests.test_missing_derived_state_recovers_old_documents) ... 2026-09-05 03:10:52,484 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,484 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,484 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,484 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,484 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,484 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,486 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,486 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,486 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,486 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,486 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,487 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,489 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,489 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,489 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,489 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,489 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,489 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_owner_cancellation_also_drains_admitted_writer (tests.test_ingestion.IngestionTests.test_owner_cancellation_also_drains_admitted_writer) ... 2026-09-05 03:10:52,493 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,493 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,493 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,493 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,493 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,494 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_partial_repair_does_not_advance_corpus_checkpoint (tests.test_ingestion.IngestionTests.test_partial_repair_does_not_advance_corpus_checkpoint) ... 2026-09-05 03:10:52,497 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,497 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,497 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,497 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,497 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,497 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_partial_storage_write_is_uncommitted_and_retry_converges (tests.test_ingestion.IngestionTests.test_partial_storage_write_is_uncommitted_and_retry_converges) ... 2026-09-05 03:10:52,501 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,501 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,501 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,501 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,501 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,501 app.pipeline ERROR Failed to process doc 1: graph create failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 383, in process_document
+    doc_node_id = await graph_store.create_document_node(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 56, in create_document_node
+    raise RuntimeError('graph create failed')
+RuntimeError: graph create failed
+2026-09-05 03:10:52,503 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,503 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,503 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,503 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,503 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,503 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,504 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,505 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,505 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,505 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,505 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,505 app.pipeline ERROR Failed to process doc 1: chunk write failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 400, in process_document
+    await embeddings_store.store_document_embedding(
+  File "/app/tests/test_ingestion.py", line 119, in store_document_embedding
+    raise RuntimeError('chunk write failed')
+RuntimeError: chunk write failed
+2026-09-05 03:10:52,506 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,506 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,506 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,507 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,507 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,507 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_preparation_failures_preserve_existing_graph_and_chunks (tests.test_ingestion.IngestionTests.test_preparation_failures_preserve_existing_graph_and_chunks) ... 2026-09-05 03:10:52,510 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,510 app.pipeline ERROR Failed to process doc 1: classification failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 337, in process_document
+    classification = await classifier.classify(title, content)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 133, in classify
+    raise RuntimeError('classification failed')
+RuntimeError: classification failed
+2026-09-05 03:10:52,511 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,511 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,511 app.pipeline ERROR Failed to process doc 1: extraction failed
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 342, in process_document
+    extracted = await extractor.extract(title, content, doc_type)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/test_ingestion.py", line 151, in extract
+    raise RuntimeError('extraction failed')
+RuntimeError: extraction failed
+2026-09-05 03:10:52,512 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,512 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,512 app.pipeline ERROR Failed to process doc 1: Extraction coverage is incomplete; previous index retained
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 347, in process_document
+    raise ValueError("Extraction coverage is incomplete; previous index retained")
+ValueError: Extraction coverage is incomplete; previous index retained
+2026-09-05 03:10:52,512 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,513 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,513 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,513 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,513 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,513 app.pipeline ERROR Failed to process doc 1: Document embedding was not generated for chunk 0
+Traceback (most recent call last):
+  File "/app/app/pipeline.py", line 370, in process_document
+    raise ValueError(f"Document embedding was not generated for chunk {index}")
+ValueError: Document embedding was not generated for chunk 0
+ok
+test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint (tests.test_ingestion.IngestionTests.test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint) ... 2026-09-05 03:10:52,516 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,516 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,516 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,516 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,516 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,516 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_scan_watermark_retains_changes_made_during_processing (tests.test_ingestion.IngestionTests.test_scan_watermark_retains_changes_made_during_processing) ... 2026-09-05 03:10:52,519 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,519 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,519 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,519 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,519 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,520 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-05 03:10:52,521 app.pipeline INFO Processing doc 1: Document 1
+2026-09-05 03:10:52,521 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-05 03:10:52,521 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-05 03:10:52,521 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-05 03:10:52,521 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-05 03:10:52,522 app.pipeline INFO Doc 1: stored 1 embedding chunks
+ok
+test_skip_tag_purges_all_derived_state (tests.test_ingestion.IngestionTests.test_skip_tag_purges_all_derived_state) ... ok
+test_cancel_draining_task_blocks_delete_and_manual_merge (tests.test_mutation_admission.MutationAdmissionTests.test_cancel_draining_task_blocks_delete_and_manual_merge) ... 2026-09-05 03:10:52,527 httpx INFO HTTP Request: DELETE http://test/document/101 "HTTP/1.1 409 Conflict"
+2026-09-05 03:10:52,528 httpx INFO HTTP Request: POST http://test/entity-review/merge "HTTP/1.1 409 Conflict"
+2026-09-05 03:10:52,529 httpx INFO HTTP Request: POST http://test/entity-review/split "HTTP/1.1 409 Conflict"
+ok
+test_inflight_http_mutation_holds_ingestion_admission_and_partial_failure_invalidates (tests.test_mutation_admission.MutationAdmissionTests.test_inflight_http_mutation_holds_ingestion_admission_and_partial_failure_invalidates) ... 2026-09-05 03:10:52,534 httpx INFO HTTP Request: POST http://test/sync "HTTP/1.1 409 Conflict"
+2026-09-05 03:10:52,535 httpx INFO HTTP Request: DELETE http://test/document/101 "HTTP/1.1 500 Internal Server Error"
+ok
+test_auditor_receives_full_followup_context_without_echoing_history_publicly (tests.test_query_delivery.QueryDeliveryTests.test_auditor_receives_full_followup_context_without_echoing_history_publicly) ... ok
+test_cached_answers_recheck_incomplete_source_markers (tests.test_query_delivery.QueryDeliveryTests.test_cached_answers_recheck_incomplete_source_markers) ... ok
+test_cached_answers_recheck_snapshot_before_ordinary_and_stream_delivery (tests.test_query_delivery.QueryDeliveryTests.test_cached_answers_recheck_snapshot_before_ordinary_and_stream_delivery) ... ok
+test_concurrent_models_and_full_history_have_distinct_cache_identity (tests.test_query_delivery.QueryDeliveryTests.test_concurrent_models_and_full_history_have_distinct_cache_identity) ... ok
+test_inflight_mutation_or_incomplete_replacement_cannot_finalize (tests.test_query_delivery.QueryDeliveryTests.test_inflight_mutation_or_incomplete_replacement_cannot_finalize) ... ok
+test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) ... ok
+test_new_generation_misses_previous_completed_answer (tests.test_query_delivery.QueryDeliveryTests.test_new_generation_misses_previous_completed_answer) ... ok
+test_ordinary_and_sse_have_identical_final_payload_no_draft_chunks (tests.test_query_delivery.QueryDeliveryTests.test_ordinary_and_sse_have_identical_final_payload_no_draft_chunks) ... ok
+test_unavailable_auditor_sends_same_abstention_through_both_paths (tests.test_query_delivery.QueryDeliveryTests.test_unavailable_auditor_sends_same_abstention_through_both_paths) ... ok
+test_complete_without_answer_does_not_promote_accumulated_draft (tests.test_query_persistence.QueryPersistenceTests.test_complete_without_answer_does_not_promote_accumulated_draft) ... 2026-09-05 03:10:52,862 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+ok
+test_disconnect_preserves_background_completion_and_only_saves_terminal_answer (tests.test_query_persistence.QueryPersistenceTests.test_disconnect_preserves_background_completion_and_only_saves_terminal_answer) ... ok
+test_ordinary_and_sse_persist_identical_complete_metadata (tests.test_query_persistence.QueryPersistenceTests.test_ordinary_and_sse_persist_identical_complete_metadata) ... 2026-09-05 03:10:52,868 httpx INFO HTTP Request: POST http://synthetic.local/query "HTTP/1.1 200 OK"
+2026-09-05 03:10:52,870 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+ok
+test_stream_error_does_not_persist_draft_as_assistant (tests.test_query_persistence.QueryPersistenceTests.test_stream_error_does_not_persist_draft_as_assistant) ... 2026-09-05 03:10:52,873 httpx INFO HTTP Request: POST http://synthetic.local/query/stream "HTTP/1.1 200 OK"
+ok
+test_feedback_added_before_final_gate_removes_earlier_timeline_event (tests.test_query_timeline_delivery.TimelineDeliveryTests.test_feedback_added_before_final_gate_removes_earlier_timeline_event) ... ok
+test_timeline_only_source_and_tail_quote_are_publicly_resolvable (tests.test_query_timeline_delivery.TimelineDeliveryTests.test_timeline_only_source_and_tail_quote_are_publicly_resolvable) ... ok
+test_literal_prefix_and_shared_corpus_generation (tests.test_redis_storage.RedisStorageTests.test_literal_prefix_and_shared_corpus_generation) ... skipped 'Set REDIS_TEST_URL for disposable Redis'
+test_namespace_clear_propagates_to_other_clients_and_values_are_copies (tests.test_redis_storage.RedisStorageTests.test_namespace_clear_propagates_to_other_clients_and_values_are_copies) ... skipped 'Set REDIS_TEST_URL for disposable Redis'
+test_generated_legacy_summary_cannot_certify_an_answer (tests.test_source_origin.SourceOriginTests.test_generated_legacy_summary_cannot_certify_an_answer) ... ok
+test_live_source_metadata_is_not_quoteable_ocr (tests.test_source_origin.SourceOriginTests.test_live_source_metadata_is_not_quoteable_ocr) ... 2026-09-05 03:10:53,151 asyncio WARNING Executing <Task pending name='Task-627' coro=<QueryEngine._execute_retrieval_plan.<locals>._retrieve_one() running at /app/app/query.py:197> wait_for=<Future pending cb=[_chain_future.<locals>._call_check_cancel() at /usr/local/lib/python3.12/asyncio/futures.py:389, Task.task_wakeup()] created at /usr/local/lib/python3.12/asyncio/base_events.py:448> cb=[gather.<locals>._done_callback() at /usr/local/lib/python3.12/asyncio/tasks.py:767] created at /usr/local/lib/python3.12/asyncio/tasks.py:695> took 0.223 seconds
+2026-09-05 03:10:53,163 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,170 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,171 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,173 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,173 app.query INFO Chunk selection: 1 total (1 vector, 0 graph), limit=55
+2026-09-05 03:10:53,173 app.query INFO Final selection: 1 chunks from 1 unique documents
+2026-09-05 03:10:53,174 app.query INFO Expanded 1 full-document evidence chunks from 1 source docs
+2026-09-05 03:10:53,174 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,175 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,177 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+ok
+test_origins_and_generated_metadata_are_excluded_from_exact_quotes (tests.test_source_origin.SourceOriginTests.test_origins_and_generated_metadata_are_excluded_from_exact_quotes) ... ok
+test_query_hydrates_original_ocr_or_abstains_when_only_a_summary_is_retrieved (tests.test_source_origin.SourceOriginTests.test_query_hydrates_original_ocr_or_abstains_when_only_a_summary_is_retrieved) ... 2026-09-05 03:10:53,196 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,197 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,197 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,198 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,199 app.query INFO Chunk selection: 1 total (1 vector, 0 graph), limit=55
+2026-09-05 03:10:53,199 app.query INFO Final selection: 1 chunks from 1 unique documents
+2026-09-05 03:10:53,199 app.query WARNING Full source fetch failed for Paperless doc 101: source unavailable
+2026-09-05 03:10:53,199 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,201 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,202 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,215 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,216 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,217 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,218 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,219 app.query INFO Chunk selection: 1 total (1 vector, 0 graph), limit=55
+2026-09-05 03:10:53,219 app.query INFO Final selection: 1 chunks from 1 unique documents
+2026-09-05 03:10:53,219 app.query INFO Expanded 1 full-document evidence chunks from 1 source docs
+2026-09-05 03:10:53,219 app.query INFO Synthesis context: 1 chunks from 1 unique documents (broad=False)
+2026-09-05 03:10:53,220 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+2026-09-05 03:10:53,222 httpx INFO HTTP Request: POST http://synthetic.invalid/v1/chat/completions "HTTP/1.1 200 OK"
+ok
+test_timeline_dates_require_original_ocr_even_when_a_generated_quote_matches (tests.test_source_origin.SourceOriginTests.test_timeline_dates_require_original_ocr_even_when_a_generated_quote_matches) ... ok
+test_3072_index_exact_baseline_and_optional_candidate_recall (tests.test_storage_integrity.PostgresIntegrityTests.test_3072_index_exact_baseline_and_optional_candidate_recall) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_dimension_mismatch_fails_without_erasing_existing_data (tests.test_storage_integrity.PostgresIntegrityTests.test_dimension_mismatch_fails_without_erasing_existing_data) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_legacy_origin_migration_preserves_ocr_and_requires_reconciliation (tests.test_storage_integrity.PostgresIntegrityTests.test_legacy_origin_migration_preserves_ocr_and_requires_reconciliation) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_ocr_origin_and_ingestion_fingerprint_survive_storage_reads (tests.test_storage_integrity.PostgresIntegrityTests.test_ocr_origin_and_ingestion_fingerprint_survive_storage_reads) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_prepared_embedding_writes_and_empty_generation_fails (tests.test_storage_integrity.PostgresIntegrityTests.test_prepared_embedding_writes_and_empty_generation_fails) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_review_snapshot_reorders_with_ids_and_roundtrips (tests.test_storage_integrity.PostgresIntegrityTests.test_review_snapshot_reorders_with_ids_and_roundtrips) ... skipped 'Set STORAGE_TEST_DSN for disposable PostgreSQL'
+test_shared_support_is_idempotent_and_either_deletion_preserves_other (tests.test_storage_integrity.RelationshipIntegrityTests.test_shared_support_is_idempotent_and_either_deletion_preserves_other) ... skipped 'Set STORAGE_TEST_NEO4J for disposable Neo4j'
+test_any_dated_source_does_not_resolve_current_state (tests.test_temporal_accuracy.TemporalTests.test_any_dated_source_does_not_resolve_current_state) ... ok
+test_calendar_validation_preserves_precision (tests.test_temporal_accuracy.TemporalTests.test_calendar_validation_preserves_precision) ... ok
+test_coarse_verified_status_cannot_override_unsupported_ledger (tests.test_temporal_accuracy.TemporalTests.test_coarse_verified_status_cannot_override_unsupported_ledger) ... ok
+test_current_claim_is_not_certified_by_an_explicit_active_term_alone (tests.test_temporal_accuracy.TemporalTests.test_current_claim_is_not_certified_by_an_explicit_active_term_alone) ... ok
+test_historical_answer_can_be_qualified_without_claiming_current_value (tests.test_temporal_accuracy.TemporalTests.test_historical_answer_can_be_qualified_without_claiming_current_value) ... ok
+test_timeline_accepts_sourced_event_and_rejects_unknown_source_and_invalid_date (tests.test_temporal_accuracy.TemporalTests.test_timeline_accepts_sourced_event_and_rejects_unknown_source_and_invalid_date) ... ok
+
+----------------------------------------------------------------------
+Ran 170 tests in 1.031s
+
+OK (skipped=27)

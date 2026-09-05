@@ -79,6 +79,17 @@ jobs:
       - name: Build production frontend
         run: npm run build
 
+      - name: Set up Python for synthetic UI fixture
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Run production browser regressions
+        run: npm run test:browser
+
   build:
     name: Build and push
     needs: [backend, frontend]

@@ -1,0 +1,25 @@
+2026-09-04 22:43:56,490 app.pipeline INFO Processing doc 1: Document 1
+2026-09-04 22:43:56,490 app.pipeline INFO Doc 1 classified as generic (confidence=0.90)
+2026-09-04 22:43:56,490 app.pipeline INFO Doc 1 extracted 0 fields (confidence=0.9)
+2026-09-04 22:43:56,490 app.pipeline WARNING Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+2026-09-04 22:43:56,491 app.pipeline INFO Doc 1: generated summary (379 chars)
+2026-09-04 22:43:56,491 app.pipeline INFO Doc 1: stored 1 embedding chunks
+2026-09-04 22:43:56,494 httpx INFO HTTP Request: GET http://test/freshness?force=true "HTTP/1.1 200 OK"
+======================================================================
+FAIL: test_freshness_exposes_metadata_drift_behind_checkpoint (tests.test_ingestion.IngestionTests.test_freshness_exposes_metadata_drift_behind_checkpoint)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_ingestion.py", line 277, in test_freshness_exposes_metadata_drift_behind_checkpoint
+    self.assertTrue(response.json()["stale"])
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 1 test in 0.092s
+
+FAILED (failures=1)

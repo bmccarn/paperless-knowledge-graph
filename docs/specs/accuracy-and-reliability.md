@@ -1,6 +1,6 @@
 # Accuracy and reliability implementation specification
 
-Status: partially implemented; the [completion review](../audits/2026-09-04-completion-review.md) reproduces eight remaining defects and supersedes the earlier completion claim. See the [implementation report](../audits/2026-09-04-implementation-report.md) for prior validation and limits. Authorized by the request to explore, specify, implement, and validate the remaining audit gaps. This specification is local to the repository; no issue publication or production operation is required.
+Status: locally implemented and regression-validated, including closure of C01–C08 from the [completion review](../audits/2026-09-04-completion-review.md). See the [closure report](../audits/2026-09-04-completion-closure.md) for current evidence and the remaining production evaluation/migration limits, and the [implementation report](../audits/2026-09-04-implementation-report.md) for prior validation. Authorized by the request to explore, specify, implement, and validate the remaining audit gaps. This specification is local to the repository; no issue publication or production operation is required.
 
 ## Problem and scope
 

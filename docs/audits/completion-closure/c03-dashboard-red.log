@@ -1,0 +1,65 @@
+
+> frontend@0.1.0 test:browser
+> node tests/run-browser-checks.mjs
+
+Synthetic accuracy fixture listening on http://127.0.0.1:49889
+▲ Next.js 16.3.4
+- Local:         http://127.0.0.1:49893
+- Network:       http://127.0.0.1:49893
+✓ Ready in 97ms
+✓ Running next.config.ts took 69ms
+⚠ "next start" does not work with "output: standalone" configuration. Use "node .next/standalone/server.js" instead.
+✖ metadata-only freshness drift is explained and offers targeted repair (585.63375ms)
+✔ failed recovery from an old conversation cannot overwrite a new pending question (531.470875ms)
+✔ conversation switching isolates delayed completion and subsequent questions (518.913209ms)
+✔ single reindex refreshes the current document view (717.593541ms)
+✔ batch reindex refreshes the current document view (683.6175ms)
+✔ initial graph arrival preserves a selected search node and expansion (611.954375ms)
+✔ reset graph arrival preserves a selected search node and expansion (668.3275ms)
+✔ seed graph arrival preserves a selected search node and expansion (634.251458ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5166.863959
+
+✖ failing tests:
+
+test at tests/completion-ui.mjs:44:1
+✖ metadata-only freshness drift is explained and offers targeted repair (585.63375ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 1
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/completion-ui.mjs:53:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: completion-ui failed
+
+1 !== 0
+
+    at file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/run-browser-checks.mjs:68:12
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.20.0

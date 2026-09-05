@@ -13,6 +13,7 @@ import json
 import re
 from collections import defaultdict
 from typing import Any
+from app.source_text import certifying_text
 
 QUERY_STOPWORDS = {
     "a", "about", "an", "and", "answer", "are", "as", "at", "be", "by",
@@ -106,13 +107,13 @@ def is_high_stakes_query(question: str, plan: dict[str, Any] | None = None) -> b
 
 
 def build_evidence_item(result: dict[str, Any], rank: int, question: str = "") -> dict[str, Any]:
-    content = str(result.get("content") or "")
+    content = certifying_text(result) or ""
     title = str(result.get("title") or "")
     doc_type = str(result.get("doc_type") or "")
     quality = infer_source_quality(title=title, doc_type=doc_type, content=content)
     date_signals = extract_date_signals(content=content, title=title, fallback_date=result.get("date"))
     exact_terms = exact_term_hits(question, f"{title} {doc_type} {content}")
-    item_id = evidence_item_id(result)
+    item_id = evidence_item_id({**result, "content": content})
     return {
         "id": item_id,
         "document_id": result.get("document_id"),
@@ -127,6 +128,7 @@ def build_evidence_item(result: dict[str, Any], rank: int, question: str = "") -
         "structured_fact_count": structured_fact_count(content),
         "excerpt": content[:1200],
         "content": content,
+        "source_kind": "ocr",
     }
 
 
@@ -140,6 +142,8 @@ def build_evidence_pack(
     seen = set()
     items = []
     for result in chunks:
+        if certifying_text(result) is None:
+            continue
         key = (result.get("document_id"), result.get("chunk_index", 0))
         if key in seen:
             continue

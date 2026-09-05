@@ -1,5 +1,7 @@
 # Completion review — September 4, 2026
 
+**Follow-up:** all eight findings below were subsequently fixed and validated on `codex/accuracy-completion-fixes`. See the [closure report](2026-09-04-completion-closure.md) for current status. This review and its probes preserve the pre-fix evidence.
+
 **Verdict: incomplete. Eight additional defects are reproduced: three P1 correctness/integrity blockers and five P2 defects.** The earlier implementation report overstated completion. Its passing test results remain valid, but its blanket per-finding closure does not. Application source was unchanged during this review; only audit artifacts and status documentation were added.
 
 The review compares the current working tree, including new files, with baseline `caaaa5a86d2eb17c5d4260a42077f488646242e6`. All 118 source/configuration hashes in the earlier validation record still match. The installed review skill's standards and specification axes were reviewed independently; an additional local review covered query finalization, source handling, cache delivery and the enabled model adapter. Findings below are observed defects, not speculative code smells.

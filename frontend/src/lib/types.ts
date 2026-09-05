@@ -25,6 +25,7 @@ export interface FreshnessStatus {
   missing_hash_documents?: number;
   extra_hash_documents?: number;
   modified_after_last_sync_documents?: number;
+  changed_since_index_documents?: number;
   exact_id_check?: boolean;
   drift?: {
     sample_limit: number;
@@ -35,6 +36,7 @@ export interface FreshnessStatus {
     missing_hashes: FreshnessDocumentRef[];
     extra_hashes: number[];
     modified_after_last_sync: FreshnessDocumentRef[];
+    changed_since_index?: FreshnessDocumentRef[];
   };
   last_sync: string | null;
   latest_paperless_modified: string | null;

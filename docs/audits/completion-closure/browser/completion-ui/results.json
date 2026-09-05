@@ -1,0 +1,34 @@
+[
+  {
+    "name": "metadata-freshness-repair",
+    "status": "passed"
+  },
+  {
+    "name": "conversation-recovery-isolation",
+    "status": "passed"
+  },
+  {
+    "name": "conversation-switch",
+    "status": "passed"
+  },
+  {
+    "name": "document-single-refresh",
+    "status": "passed"
+  },
+  {
+    "name": "document-batch-refresh",
+    "status": "passed"
+  },
+  {
+    "name": "graph-initial-selection",
+    "status": "passed"
+  },
+  {
+    "name": "graph-reset-selection",
+    "status": "passed"
+  },
+  {
+    "name": "graph-seed-selection",
+    "status": "passed"
+  }
+]

@@ -1,0 +1,14 @@
+Resolver assertion excerpt from the original red run. An unrelated ASGI mock-serialization setup error and repeated stack frames are omitted.
+
+FAIL: test_split_acceptance_waits_for_inflight_identity_resolution (tests.test_entity_decisions.EntityDecisionTests.test_split_acceptance_waits_for_inflight_identity_resolution)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_entity_decisions.py", line 178, in test_split_acceptance_waits_for_inflight_identity_resolution
+    self.assertFalse(accepted.is_set(), "A split cannot be acknowledged while an older lookup is still deciding")
+AssertionError: True is not false : A split cannot be acknowledged while an older lookup is still deciding

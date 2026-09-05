@@ -253,6 +253,7 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
     title = doc.get("title", "")
     content = doc.get("content", "") or ""
     content_hash = PaperlessClient.content_hash(content)
+    fingerprint = PaperlessClient.ingestion_fingerprint(doc)
 
     skip_tag_ids = await paperless_client.get_skip_tag_ids()
     if paperless_client.has_any_tag(doc, skip_tag_ids):
@@ -303,8 +304,9 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
                 title=title,
                 doc_type=doc_type,
                 embedding=embedding,
+                source_kind="metadata",
             )
-            await embeddings_store.set_doc_hash(doc_id, content_hash)
+            await embeddings_store.set_doc_hash(doc_id, content_hash, ingestion_fingerprint=fingerprint)
             return {
                 "doc_id": doc_id,
                 "status": "processed",
@@ -323,7 +325,8 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
 
     # Check if already processed with same content
     existing_hash = await embeddings_store.get_doc_hash(doc_id)
-    if not force and existing_hash == content_hash:
+    indexed_fingerprint = (await embeddings_store.get_ingestion_fingerprints([doc_id])).get(doc_id)
+    if not force and existing_hash == content_hash and indexed_fingerprint == fingerprint:
         logger.info(f"Doc {doc_id} unchanged, skipping")
         return {"doc_id": doc_id, "status": "skipped", "reason": "unchanged"}
 
@@ -356,16 +359,16 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         doc_date = _extract_date(doc, extracted)
         chunks = chunk_text(content, chunk_size=4000, overlap=800)
         metadata_prefix = f"Document: {title}\nType: {doc_type}\nDate: {doc_date or 'unknown'}\n\n"
-        prepared_chunks = [(i, metadata_prefix + chunk) for i, chunk in enumerate(chunks)]
+        prepared_chunks = [(i, metadata_prefix + chunk, chunk, "ocr") for i, chunk in enumerate(chunks)]
         doc_summary = await _generate_document_summary(doc_id, title, doc_type, content, extracted)
         if doc_summary:
-            prepared_chunks.append((9999, doc_summary))
+            prepared_chunks.append((9999, doc_summary, None, "generated"))
         prepared_vectors = []
-        for index, text in prepared_chunks:
+        for index, text, source_content, source_kind in prepared_chunks:
             embedding = await embeddings_store.generate_embedding(text)
             if not embedding:
                 raise ValueError(f"Document embedding was not generated for chunk {index}")
-            prepared_vectors.append((index, text, embedding))
+            prepared_vectors.append((index, text, embedding, source_content, source_kind))
 
         await entity_resolver.hydrate_review_identities()
         mutation_started = True
@@ -393,10 +396,10 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         # Step 5b: Process implied relationships
         await _process_implied_relationships(doc_id, extracted)
 
-        for index, text, embedding in prepared_vectors:
+        for index, text, embedding, source_content, source_kind in prepared_vectors:
             await embeddings_store.store_document_embedding(
                 doc_id, text, chunk_index=index, title=title, doc_type=doc_type,
-                embedding=embedding,
+                embedding=embedding, source_content=source_content, source_kind=source_kind,
             )
         logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
 
@@ -404,7 +407,7 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         await _store_entity_embeddings(doc_id, extracted)
 
         # Step 7: Update hash
-        await embeddings_store.set_doc_hash(doc_id, content_hash)
+        await embeddings_store.set_doc_hash(doc_id, content_hash, ingestion_fingerprint=fingerprint)
 
         return {"doc_id": doc_id, "status": "processed", "doc_type": doc_type,
                 "entities_extracted": entity_count,
@@ -1399,8 +1402,11 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
     hash_ids = await embeddings_store.get_document_hash_ids()
     complete_ids = graph_ids & embedding_ids & hash_ids
     missing_ids = set(current) - complete_ids
+    fingerprints = await embeddings_store.get_ingestion_fingerprints()
+    changed_index_ids = {doc_id for doc_id, doc in current.items()
+                         if fingerprints.get(doc_id) != PaperlessClient.ingestion_fingerprint(doc)}
     changed_ids = {int(doc["id"]) for doc in changed}
-    selected_ids = set(current) if force else (changed_ids | missing_ids) & set(current)
+    selected_ids = set(current) if force else (changed_ids | missing_ids | changed_index_ids) & set(current)
     docs = [current[doc_id] for doc_id in sorted(selected_ids)]
     force_ids = selected_ids if force else missing_ids
     deleted_ids = (graph_ids | embedding_ids | hash_ids) - set(current)
@@ -1433,7 +1439,10 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
         try:
             await embeddings_store.create_vector_indexes()
             if not cancel_event.is_set():
-                await entity_resolver.resolve_all_entities()
+                resolution = await entity_resolver.resolve_all_entities()
+                if not isinstance(resolution, dict):
+                    raise ValueError("Entity resolution returned no completion report")
+                postprocess_errors.extend(str(error) for error in resolution.get("errors", []))
         except Exception as exc:
             logger.exception("Reindex post-processing failed")
             postprocess_errors.append(str(exc))

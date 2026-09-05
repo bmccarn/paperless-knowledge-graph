@@ -13,11 +13,12 @@ The backend image uses Python 3.12 and the frontend uses Node 24 LTS. Package ma
 - Graph data regressions: `npm --prefix frontend test`.
 - Type check: `npm --prefix frontend run typecheck`.
 - Build: `npm --prefix frontend run build`. The layout downloads Google Fonts, so a build needs network access unless fonts have been made local.
+- Production browser contracts: after building, install Chromium with `cd frontend && npx --no-install playwright install chromium`, then run `npm --prefix frontend run test:browser` from the repo root. The runner owns a localhost-only synthetic backend and the standalone frontend, closes them on exit, and stores evidence under `frontend/.browser-artifacts/` (override with `UI_TEST_ARTIFACTS`). CI installs Chromium's Linux dependencies too. The suite covers conversation isolation, document refresh, graph loading, source inspection, feedback and domain browsing; it does not call production models.
 - Check patch whitespace: `git diff --check`.
 
 Graph browsing has frontend regression tests and an opt-in real-Neo4j suite in `tests/test_graph_browser.py`; see [graph validation](../audits/graph-validation.md). Query delivery, extraction, ingestion, review decisions, feedback and cache behavior have offline regression tests. Those controlled fixtures validate acceptance rules and failure handling; measuring model accuracy requires a reviewed corpus. Record failing checks with their existing error counts; do not silently weaken rules to make them pass.
 
-Pull requests and `main` pushes run backend behavior checks plus frontend regressions, lint, type checks, advisory checks, and a production build. Image publication on `main` requires both validation jobs. See [dependency and delivery validation](../specs/dependency-and-delivery-validation.md) for the checked dependency refresh and local validation evidence.
+Pull requests and `main` pushes run backend behavior checks plus frontend regressions, lint, type checks, advisory checks, a production build and production browser contracts. Image publication on `main` requires both validation jobs. See [dependency and delivery validation](../specs/dependency-and-delivery-validation.md) for the checked dependency refresh and local validation evidence, and [completion closure](../audits/2026-09-04-completion-closure.md) for the C01–C08 regression results.
 
 ## Integration checks
 

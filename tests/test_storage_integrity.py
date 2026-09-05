@@ -53,6 +53,43 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["left_uuid"], "a")
         self.assertEqual(row["left_identity"]["source_doc_ids"], [12])
 
+    async def test_ocr_origin_and_ingestion_fingerprint_survive_storage_reads(self):
+        from app.evidence import build_evidence_pack
+        vector = [1.0] + [0.0] * 3071
+        await self.store.store_document_embedding(101, "Date: 2099-01-01\n\nPremium $321.",
+            embedding=vector, source_kind="ocr", source_content="Premium $321.")
+        await self.store.store_document_embedding(101, "Invented premium $999.", chunk_index=9999,
+            embedding=vector, source_kind="generated")
+        await self.store.set_doc_hash(101, "original-ocr-hash", ingestion_fingerprint="metadata-fingerprint")
+        self.assertEqual(await self.store.get_doc_hash(101), "original-ocr-hash")
+        self.assertEqual(await self.store.get_ingestion_fingerprints([101]), {101: "metadata-fingerprint"})
+        self.store.generate_embedding = AsyncMock(return_value=vector)
+        for rows in (await self.store.get_chunks_for_document(101),
+                     await self.store.get_chunks_for_documents([101]),
+                     await self.store.vector_search("premium"),
+                     await self.store.keyword_search("premium")):
+            pack = build_evidence_pack("premium", {}, rows, [])
+            self.assertEqual([item["content"] for item in pack["items"]], ["Premium $321."])
+        await self.store.delete_doc_hash(101)
+        self.assertEqual(await self.store.get_ingestion_fingerprints([101]), {})
+
+    async def test_legacy_origin_migration_preserves_ocr_and_requires_reconciliation(self):
+        from app.evidence import build_evidence_pack
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("ALTER TABLE document_embeddings DROP COLUMN source_kind, DROP COLUMN source_content")
+            await conn.execute("ALTER TABLE document_hashes DROP COLUMN ingestion_fingerprint")
+            await conn.execute("INSERT INTO document_embeddings (document_id, chunk_index, content, title, doc_type) "
+                               "VALUES (101, 0, $1, 'Statement', 'invoice'), (101, 9999, 'Invented premium $999.', 'Statement', 'invoice')",
+                               "Document: Statement\nType: invoice\nDate: 2099-01-01\n\nPremium $321.")
+            await conn.execute("INSERT INTO document_hashes (document_id, content_hash) VALUES (101, 'legacy-ocr-hash')")
+            await conn.execute(INIT_SQL)
+            await conn.execute(INIT_SQL)
+        self.assertEqual(await self.store.get_doc_hash(101), "legacy-ocr-hash")
+        self.assertEqual(await self.store.get_ingestion_fingerprints([101]), {101: None})
+        rows = await self.store.get_chunks_for_document(101)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([item["content"] for item in build_evidence_pack("premium", {}, rows, [])["items"]], ["Premium $321."])
+
     async def test_prepared_embedding_writes_and_empty_generation_fails(self):
         self.store.generate_embedding = AsyncMock(side_effect=AssertionError("must not regenerate prepared vector"))
         vector = [1.0] + [0.0] * 3071

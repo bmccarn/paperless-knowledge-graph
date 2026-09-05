@@ -1,0 +1,68 @@
+✖ single reindex refreshes the current document view (1044.879667ms)
+✖ batch reindex refreshes the current document view (804.279709ms)
+✖ initial graph arrival preserves a selected search node and expansion (444.001708ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 0
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2495.639917
+
+✖ failing tests:
+
+test at frontend/tests/completion-ui.mjs:82:36
+✖ single reindex refreshes the current document view (1044.879667ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + ''
+  - 'Synthetic archive'
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/completion-ui.mjs:113:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: 'Synthetic archive',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at frontend/tests/completion-ui.mjs:82:36
+✖ batch reindex refreshes the current document view (804.279709ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + ''
+  - 'Synthetic archive'
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/completion-ui.mjs:113:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: 'Synthetic archive',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at frontend/tests/completion-ui.mjs:120:1
+✖ initial graph arrival preserves a selected search node and expansion (444.001708ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 1
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/completion-ui.mjs:134:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

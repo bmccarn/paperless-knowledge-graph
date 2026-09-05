@@ -1,0 +1,33 @@
+Doc 1 'Document 1': no entities extracted (type=generic, classification_conf=0.90)
+======================================================================
+FAIL: test_metadata_corrections_refresh_index_without_changing_ocr_hash (tests.test_ingestion.IngestionTests.test_metadata_corrections_refresh_index_without_changing_ocr_hash)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_ingestion.py", line 244, in test_metadata_corrections_refresh_index_without_changing_ocr_hash
+    self.assertEqual(result["processed"], 1)
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_legacy_completion_without_metadata_fingerprint_is_reconciled (tests.test_ingestion.IngestionTests.test_legacy_completion_without_metadata_fingerprint_is_reconciled)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_ingestion.py", line 254, in test_legacy_completion_without_metadata_fingerprint_is_reconciled
+    self.assertEqual((await pipeline.sync_documents())["processed"], 1)
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.006s
+
+FAILED (failures=2)

@@ -1,5 +1,7 @@
 # Accuracy and reliability implementation — September 4, 2026
 
+**Current status:** the eight subsequent review findings have now been fixed; see the [completion closure](2026-09-04-completion-closure.md). The results below describe the earlier source snapshot.
+
 **Completion status superseded:** the subsequent [completion review](2026-09-04-completion-review.md) reproduces eight additional defects. The test/build results below remain valid for the recorded source snapshot, but the table does not establish full closure of the original findings.
 
 The requested exploration, specification and implementation are in the working tree. The [main specification](../specs/accuracy-and-reliability.md) defines the acceptance policy; the narrower explorations record alternatives and implementation tradeoffs. This report supersedes the open-status descriptions in the two historical audits. No production documents or model endpoints were used for validation.

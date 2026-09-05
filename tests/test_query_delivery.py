@@ -121,6 +121,66 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["confidence"], 0)
         self.assertEqual(result["finalization"]["disposition"], "incomplete")
 
+    async def test_cached_answers_recheck_snapshot_before_ordinary_and_stream_delivery(self):
+        import app.query as query_module
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                invalidate_on_sync()
+                await self.engine.query("Recorded premium?")
+                original_get = query_module.cache_get
+                read_started, resume = asyncio.Event(), asyncio.Event()
+                async def delayed_get(cache, key):
+                    value = await original_get(cache, key)
+                    if value is not None:
+                        read_started.set()
+                        await resume.wait()
+                    return value
+                async def deliver():
+                    if streaming:
+                        return [event async for event in self.engine.query_stream("Recorded premium?")][-1]
+                    return await self.engine.query("Recorded premium?")
+                with patch("app.query.cache_get", delayed_get):
+                    request = asyncio.create_task(deliver())
+                    await read_started.wait()
+                    invalidate_on_sync()
+                    resume.set()
+                    result = await request
+                self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+                self.assertFalse(result["finalization"]["complete"])
+                self.assertNotIn("321", result["answer"])
+
+    async def test_cached_answers_recheck_incomplete_source_markers(self):
+        await self.engine.query("Recorded premium?")
+        with patch("app.query.embeddings_store.get_incomplete_document_ids", AsyncMock(return_value={101})):
+            result = await self.engine.query("Recorded premium?")
+        self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+        self.assertEqual(result["confidence"], 0)
+
+    async def test_mutation_during_cache_write_is_rejected_at_final_delivery(self):
+        import app.query as query_module
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                invalidate_on_sync()
+                original_set = query_module.cache_set
+                write_started, resume = asyncio.Event(), asyncio.Event()
+                async def delayed_set(cache, key, value):
+                    write_started.set()
+                    await resume.wait()
+                    await original_set(cache, key, value)
+                async def deliver():
+                    if streaming:
+                        return [event async for event in self.engine.query_stream("Recorded premium?")][-1]
+                    return await self.engine.query("Recorded premium?")
+                with patch("app.query.cache_set", delayed_set):
+                    request = asyncio.create_task(deliver())
+                    await write_started.wait()
+                    invalidate_on_sync()
+                    resume.set()
+                    result = await request
+                self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+                self.assertFalse(result["finalization"]["complete"])
+                self.assertNotIn("321", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()

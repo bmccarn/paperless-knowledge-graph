@@ -16,7 +16,7 @@ from typing import Optional
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.pipeline import sync_documents, reindex_all, reindex_document, close_clients as close_pipeline_clients
-from app.paperless import paperless_client
+from app.paperless import paperless_client, PaperlessClient
 from app.query import query_engine
 from app.classifier import classifier
 from app.extractor import extractor
@@ -219,6 +219,7 @@ def _freshness_repair_targets(snapshot: dict) -> tuple[list[int], list[int]]:
     reindex_ids |= _doc_ref_ids(drift.get("missing_embeddings", []))
     reindex_ids |= _doc_ref_ids(drift.get("missing_hashes", []))
     reindex_ids |= _doc_ref_ids(drift.get("modified_after_last_sync", []))
+    reindex_ids |= _doc_ref_ids(drift.get("changed_since_index", []))
 
     delete_ids = set()
     delete_ids |= _ids_from_values(drift.get("extra_in_graph", []))
@@ -255,6 +256,9 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     graph_ids = {int(doc_id) for doc_id in await graph_store.get_all_document_ids()}
     embedding_ids = await embeddings_store.get_document_embedding_ids()
     hash_ids = await embeddings_store.get_document_hash_ids()
+    fingerprints = await embeddings_store.get_ingestion_fingerprints()
+    changed_since_index = {doc_id for doc_id, doc in docs_by_id.items()
+                           if fingerprints.get(doc_id) != PaperlessClient.ingestion_fingerprint(doc)}
     last_sync = await embeddings_store.get_last_sync()
     indexed_docs = counts.get("documents", 0)
     paperless_docs = len(paperless_ids)
@@ -286,6 +290,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
         or missing_hashes
         or extra_hashes
         or modified_after_last_sync
+        or changed_since_index
     )
     if latest_modified and not latest_dt:
         stale = True
@@ -305,6 +310,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
         "missing_hash_documents": len(missing_hashes),
         "extra_hash_documents": len(extra_hashes),
         "modified_after_last_sync_documents": len(modified_after_last_sync),
+        "changed_since_index_documents": len(changed_since_index),
         "exact_id_check": True,
         "drift": {
             "sample_limit": FRESHNESS_SAMPLE_LIMIT,
@@ -315,6 +321,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
             "missing_hashes": _sample_document_refs(missing_hashes, docs_by_id),
             "extra_hashes": _sample_ids(extra_hashes),
             "modified_after_last_sync": _sample_document_refs(modified_after_last_sync, docs_by_id),
+            "changed_since_index": _sample_document_refs(changed_since_index, docs_by_id),
             "held_by_skip_tag": _sample_document_refs(held_ids, all_docs_by_id),
         },
         "last_sync": last_sync.isoformat() if last_sync else None,
@@ -1492,19 +1499,21 @@ async def entity_review_steward_task(limit: int = 75):
 
 @app.post("/entity-review/ignore")
 async def entity_review_ignore(req: EntityDecisionRequest):
-    try:
-        decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "ignore", req.note)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    async with _graph_mutation("ignore-entity-pair"):
+        try:
+            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "ignore", req.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "ignored", "decision": decision}
 
 
 @app.post("/entity-review/split")
 async def entity_review_split(req: EntityDecisionRequest):
-    try:
-        decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "split", req.note)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    async with _graph_mutation("split-entity-pair"):
+        try:
+            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "split", req.note)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "split_requested", "decision": decision}
 
 

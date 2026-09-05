@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 from datetime import datetime
 
@@ -155,6 +156,17 @@ class PaperlessClient:
     def content_hash(content: str) -> str:
         """Generate SHA-256 hash of document content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def ingestion_fingerprint(doc: dict) -> str:
+        """Versioned derived-index identity, separate from the original OCR hash."""
+        fields = {key: doc.get(key) for key in (
+            "title", "created", "document_type", "correspondent", "storage_path",
+            "archive_serial_number", "custom_fields")}
+        fields["tags"] = sorted(doc.get("tags") or [], key=lambda value: json.dumps(value, sort_keys=True))
+        fields["content_hash"] = PaperlessClient.content_hash(doc.get("content") or "")
+        fields["index_policy"] = "source-origin-v2"
+        return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 paperless_client = PaperlessClient()

@@ -17,6 +17,10 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.status_code, 409)
                 result = await client.post("/entity-review/merge", json={"primary_uuid": "a", "duplicate_uuid": "b"})
                 self.assertEqual(result.status_code, 409)
+                with patch.object(main.entity_resolver, "record_decision", AsyncMock()) as decide:
+                    result = await client.post("/entity-review/split", json={"left_uuid": "a", "right_uuid": "b"})
+                    self.assertEqual(result.status_code, 409)
+                    decide.assert_not_awaited()
                 delete.assert_not_awaited()
 
     async def test_inflight_http_mutation_holds_ingestion_admission_and_partial_failure_invalidates(self):

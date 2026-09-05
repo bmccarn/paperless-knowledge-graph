@@ -19,7 +19,7 @@ class PaperlessFixture:
         self.documents = {doc['id']: copy.deepcopy(doc) for doc in documents}
         self.fetches = []
 
-    async def get_all_documents(self, modified_after=None):
+    async def get_all_documents(self, modified_after=None, page_size=100):
         self.fetches.append(modified_after)
         return [copy.deepcopy(doc) for doc in self.documents.values()
                 if modified_after is None or datetime.fromisoformat(doc['modified']) > modified_after]
@@ -67,6 +67,7 @@ class GraphFixture:
 class EmbeddingsFixture:
     def __init__(self):
         self.hashes = {}
+        self.fingerprints = {}
         self.chunks = {}
         self.last_sync = datetime(2026, 1, 1, tzinfo=timezone.utc)
         self.fail_generate = False
@@ -92,10 +93,16 @@ class EmbeddingsFixture:
 
     async def delete_doc_hash(self, doc_id):
         self.hashes.pop(doc_id, None)
+        self.fingerprints.pop(doc_id, None)
         self.writes.append(('delete_hash', doc_id))
 
-    async def set_doc_hash(self, doc_id, value):
+    async def get_ingestion_fingerprints(self, doc_ids=None):
+        return {doc_id: self.fingerprints.get(doc_id) for doc_id in self.hashes
+                if doc_ids is None or doc_id in doc_ids}
+
+    async def set_doc_hash(self, doc_id, value, *, ingestion_fingerprint=None):
         self.hashes[doc_id] = value
+        self.fingerprints[doc_id] = ingestion_fingerprint
         self.writes.append(('commit_hash', doc_id))
 
     async def delete_document_embeddings(self, doc_id):
@@ -222,6 +229,53 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['checkpoint_advanced'])
         self.assertEqual(self.embeddings.last_sync.isoformat(), result['scan_started_at'])
         self.assertIn(1, self.embeddings.hashes)
+
+    async def test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint(self):
+        previous = self.embeddings.last_sync
+        async def failed_resolution():
+            return {"total_merged": 0, "errors": ["Synthetic merge failure"]}
+        self.resolver.resolve_all_entities = failed_resolution
+        result = await pipeline.reindex_all()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["errors"], 1)
+        self.assertFalse(result["checkpoint_advanced"])
+        self.assertEqual(self.embeddings.last_sync, previous)
+        self.assertIn("Synthetic merge failure", result["postprocess_errors"][0])
+
+    async def test_metadata_corrections_refresh_index_without_changing_ocr_hash(self):
+        await pipeline.sync_documents()
+        original_hash = self.embeddings.hashes[1]
+        self.paperless.documents[1].update(title="Corrected title", created="2026-03-01")
+        # Reconciliation must find metadata drift even behind a prior checkpoint.
+        result = await pipeline.sync_documents()
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(self.graph.documents[1]["title"], "Corrected title")
+        self.assertEqual(self.graph.documents[1]["date"], "2026-03-01")
+        self.assertIn("Corrected title", self.embeddings.chunks[1, 0])
+        self.assertEqual(self.embeddings.hashes[1], original_hash)
+        self.assertEqual((await pipeline.sync_documents())["processed"], 0)
+
+    async def test_legacy_completion_without_metadata_fingerprint_is_reconciled(self):
+        self.existing()
+        self.embeddings.last_sync = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        self.assertEqual((await pipeline.sync_documents())["processed"], 1)
+
+    async def test_freshness_exposes_metadata_drift_behind_checkpoint(self):
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        await pipeline.sync_documents()
+        self.paperless.documents[1]["title"] = "Corrected after index"
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", AsyncMock(return_value={1})), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": 1})), \
+             patch.object(main, "_freshness_cache", None):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                response = await client.get("/freshness", params={"force": "true"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["stale"])
+        self.assertEqual(response.json()["drift"]["changed_since_index"][0]["id"], 1)
 
     async def test_scan_watermark_retains_changes_made_during_processing(self):
         self.extractor.started, self.extractor.release = asyncio.Event(), asyncio.Event()

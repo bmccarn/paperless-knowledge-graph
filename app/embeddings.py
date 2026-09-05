@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS entity_embeddings (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE document_embeddings ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE document_embeddings ADD COLUMN IF NOT EXISTS source_content TEXT;
+
 CREATE TABLE IF NOT EXISTS sync_state (
     id INTEGER PRIMARY KEY DEFAULT 1,
     last_sync_at TIMESTAMPTZ,
@@ -50,6 +53,8 @@ CREATE TABLE IF NOT EXISTS document_hashes (
     content_hash VARCHAR(64) NOT NULL,
     processed_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE document_hashes ADD COLUMN IF NOT EXISTS ingestion_fingerprint VARCHAR(64);
 
 CREATE TABLE IF NOT EXISTS document_feedback (
     id SERIAL PRIMARY KEY,
@@ -321,8 +326,13 @@ class EmbeddingsStore:
 
     async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0,
                                         title: str = None, doc_type: str = None,
-                                        embedding: list[float] | None = None):
+                                        embedding: list[float] | None = None, *,
+                                        source_kind: str = "ocr", source_content: str | None = None):
         """Store document content and its embedding."""
+        if source_kind not in {"ocr", "generated", "metadata"}:
+            raise ValueError("Unknown document source origin")
+        if source_kind == "ocr" and source_content is None:
+            source_content = content
         if embedding is None:
             embedding = await self.generate_embedding(content)
         if not embedding:
@@ -331,12 +341,13 @@ class EmbeddingsStore:
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO document_embeddings (document_id, chunk_index, content, title, doc_type, embedding)
-                    VALUES ($1, $2, $3, $4, $5, $6::vector)
+                    INSERT INTO document_embeddings (document_id, chunk_index, content, title, doc_type, embedding, source_kind, source_content)
+                    VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
                     ON CONFLICT (document_id, chunk_index) DO UPDATE
-                    SET content = $3, title = $4, doc_type = $5, embedding = $6::vector, created_at = NOW()
+                    SET content = $3, title = $4, doc_type = $5, embedding = $6::vector,
+                        source_kind = $7, source_content = $8, created_at = NOW()
                     """,
-                    doc_id, chunk_index, content[:50000], title, doc_type, str(embedding),
+                    doc_id, chunk_index, content[:50000], title, doc_type, str(embedding), source_kind, source_content,
                 )
         await retry_db(_op, operation='store_document_embedding')
 
@@ -346,7 +357,7 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT document_id, chunk_index, content, title, doc_type
+                SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content
                 FROM document_embeddings
                 WHERE document_id = $1
                 ORDER BY chunk_index ASC
@@ -361,6 +372,8 @@ class EmbeddingsStore:
                     'content': r['content'],
                     'title': r['title'],
                     'doc_type': r['doc_type'],
+                    'source_kind': r['source_kind'],
+                    'source_content': r['source_content'],
                     'similarity': 0.5,  # neutral score for graph-driven results
                 }
                 for r in rows
@@ -375,9 +388,9 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT document_id, chunk_index, content, title, doc_type
+                SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content
                 FROM (
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY chunk_index) AS rn
                     FROM document_embeddings
                     WHERE document_id = ANY($1::int[])
@@ -394,6 +407,8 @@ class EmbeddingsStore:
                     'content': r['content'],
                     'title': r['title'],
                     'doc_type': r['doc_type'],
+                    'source_kind': r['source_kind'],
+                    'source_content': r['source_content'],
                     'similarity': 0.4,  # lower base score for graph-driven results
                 }
                 for r in rows
@@ -418,13 +433,13 @@ class EmbeddingsStore:
                             ORDER BY embedding::halfvec({EMBEDDING_DIMENSIONS}) <=> $1::halfvec({EMBEDDING_DIMENSIONS})
                             LIMIT $3
                         )
-                        SELECT document_id, chunk_index, content, title, doc_type,
+                        SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                                1 - (embedding <=> $1::vector) AS similarity
                         FROM candidates ORDER BY embedding <=> $1::vector, document_id, chunk_index LIMIT $2
                         """, str(embedding), limit, max(100, limit * 5))
             else:
                 rows = await conn.fetch("""
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            1 - (embedding <=> $1::vector) AS similarity
                     FROM document_embeddings
                     ORDER BY (embedding <=> $1::vector) + 0, document_id, chunk_index LIMIT $2
@@ -440,7 +455,7 @@ class EmbeddingsStore:
             if doc_type:
                 rows = await conn.fetch(
                     """
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            1 - (embedding <=> $1::vector) as similarity
                     FROM document_embeddings
                     WHERE doc_type = $3
@@ -452,7 +467,7 @@ class EmbeddingsStore:
             else:
                 rows = await conn.fetch(
                     """
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            1 - (embedding <=> $1::vector) as similarity
                     FROM document_embeddings
                     ORDER BY (embedding <=> $1::vector) + 0
@@ -475,7 +490,7 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT document_id, chunk_index, content, title, doc_type,
+                SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                        1 - (embedding <=> $1::vector) as similarity
                 FROM document_embeddings
                 WHERE document_id = ANY($3::int[])
@@ -552,7 +567,7 @@ class EmbeddingsStore:
                 # Trigram similarity (uses GIN index)
                 trgm_rows = await conn.fetch(
                     """
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            similarity(content, $1) AS rank_score
                     FROM document_embeddings
                     WHERE content % $1
@@ -564,7 +579,7 @@ class EmbeddingsStore:
                 # Exact substring match (for IDs, account numbers, etc.)
                 exact_rows = await conn.fetch(
                     """
-                    SELECT document_id, chunk_index, content, title, doc_type,
+                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            1.0::float AS rank_score
                     FROM document_embeddings
                     WHERE content ILIKE '%' || $1 || '%'
@@ -603,16 +618,23 @@ class EmbeddingsStore:
             )
             return row["content_hash"] if row else None
 
-    async def set_doc_hash(self, doc_id: int, content_hash: str):
+    async def get_ingestion_fingerprints(self, doc_ids: list[int] | None = None) -> dict[int, str | None]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT document_id, ingestion_fingerprint FROM document_hashes "
+                "WHERE $1::int[] IS NULL OR document_id = ANY($1::int[])", doc_ids)
+            return {row["document_id"]: row["ingestion_fingerprint"] for row in rows}
+
+    async def set_doc_hash(self, doc_id: int, content_hash: str, *, ingestion_fingerprint: str | None = None):
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO document_hashes (document_id, content_hash, processed_at)
-                VALUES ($1, $2, NOW())
+                INSERT INTO document_hashes (document_id, content_hash, ingestion_fingerprint, processed_at)
+                VALUES ($1, $2, $3, NOW())
                 ON CONFLICT (document_id) DO UPDATE
-                SET content_hash = $2, processed_at = NOW()
+                SET content_hash = $2, ingestion_fingerprint = $3, processed_at = NOW()
                 """,
-                doc_id, content_hash,
+                doc_id, content_hash, ingestion_fingerprint,
             )
 
     async def delete_doc_hash(self, doc_id: int):

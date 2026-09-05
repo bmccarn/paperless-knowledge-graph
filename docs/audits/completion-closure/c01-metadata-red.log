@@ -1,0 +1,19 @@
+Full source fetch failed for Paperless doc 101: source unavailable
+======================================================================
+FAIL: test_live_source_metadata_is_not_quoteable_ocr (tests.test_source_origin.SourceOriginTests.test_live_source_metadata_is_not_quoteable_ocr)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_source_origin.py", line 88, in test_live_source_metadata_is_not_quoteable_ocr
+    self.assertFalse(result["finalization"]["complete"])
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.021s
+
+FAILED (failures=1)

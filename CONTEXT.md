@@ -8,11 +8,11 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Eligible document**: A Paperless document whose tags do not match the configured skip tags, which default to `needs-review`.
 
-**Sync**: Incremental ingestion of eligible documents, using the last-sync timestamp and stored content hashes to avoid repeated work.
+**Sync**: Incremental ingestion of eligible documents, reconciling the full eligible snapshot with completion records and a versioned ingestion fingerprint. The fingerprint covers OCR and source metadata; the separate OCR content hash remains the feedback-review identity.
 
 **Reindex**: Rebuilding derived state for one document or the entire corpus. Full reindex prepares and replaces each document individually. Missing completion hashes mark partial writes for retry; cross-store replacement is recoverable, not atomic.
 
-**Freshness**: Comparison of exact document ID sets in Paperless, the graph, embeddings, and processing hashes, plus modification timestamps. Equal counts alone do not establish freshness.
+**Freshness**: Comparison of exact document ID sets in Paperless, the graph, embeddings, and processing hashes, plus modification timestamps and ingestion fingerprints. Equal counts alone do not establish freshness.
 
 **Drift**: Missing, stale, or orphaned derived document state reported by freshness checks. Targeted repair reindexes or purges the affected document IDs.
 
@@ -22,7 +22,7 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Entity steward**: A conservative reviewer that records merge, split, or ignore suggestions. Suggestions are distinct from the mutations performed by entity resolution or an explicit merge.
 
-**Chunk**: A text segment from a document stored with its embedding for retrieval. Chunk count and document count are different measures.
+**Chunk**: A text segment stored with its embedding for retrieval. Raw OCR is stored separately from embedding metadata; generated summary chunks can guide retrieval but cannot certify facts. Chunk count and document count are different measures.
 
 **Hybrid retrieval**: Combining vector, keyword, and graph evidence for a question, with additional planning and expansion depending on query mode.
 

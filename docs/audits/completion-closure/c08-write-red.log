@@ -1,0 +1,30 @@
+test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) ...
+  test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) (streaming=False) ... FAIL
+  test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) (streaming=True) ... FAIL
+
+======================================================================
+FAIL: test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) (streaming=False)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_query_delivery.py", line 180, in test_mutation_during_cache_write_is_rejected_at_final_delivery
+    self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+AssertionError: 'supported' != 'corpus_changed'
+- supported
++ corpus_changed
+
+
+======================================================================
+FAIL: test_mutation_during_cache_write_is_rejected_at_final_delivery (tests.test_query_delivery.QueryDeliveryTests.test_mutation_during_cache_write_is_rejected_at_final_delivery) (streaming=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/development/paperless-knowledge-graph/tests/test_query_delivery.py", line 180, in test_mutation_during_cache_write_is_rejected_at_final_delivery
+    self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+AssertionError: 'supported' != 'corpus_changed'
+- supported
++ corpus_changed
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.033s
+
+FAILED (failures=2)

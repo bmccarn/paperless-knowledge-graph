@@ -294,6 +294,20 @@ function QueryContent() {
   const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("strict");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const viewVersion = useRef(0);
+  const activeConversation = useRef<string | null>(null);
+  const busy = useRef(false);
+  const invalidateView = () => {
+    viewVersion.current++;
+    busy.current = false;
+    setLoading(false);
+    setStreamingContent("");
+    setStatusMessage("");
+    setActivitySteps([]);
+    setFollowUpSuggestions([]);
+    setSelectedSource(null);
+  };
+  useEffect(() => () => { viewVersion.current++; busy.current = false; }, []);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -329,6 +343,8 @@ function QueryContent() {
   }, []);
 
   const handleNewConversation = () => {
+    invalidateView();
+    activeConversation.current = null;
     setActiveConvId(null);
     setMessages([]);
     setInput("");
@@ -339,22 +355,29 @@ function QueryContent() {
 
   const handleSubmit = async (question?: string) => {
     const q = question || input.trim();
-    if (!q || loading) return;
+    if (!q || busy.current) return;
+    const version = ++viewVersion.current;
+    const isCurrent = () => version === viewVersion.current;
+    busy.current = true;
+    setLoading(true);
     setInput("");
     setStreamingContent("");
     setStatusMessage("");
     setFollowUpSuggestions([]);
 
-    let convId = activeConvId;
+    let convId = activeConversation.current;
     if (!convId) {
       try {
         const conv = await createConversation();
+        if (!isCurrent()) return;
         convId = conv.id;
+        activeConversation.current = convId;
         setActiveConvId(convId);
       } catch (e) {
         console.error("Failed to create conversation:", e);
       }
     }
+    if (!isCurrent()) return;
 
     const userMsg: Message = { role: "user", content: q, timestamp: Date.now() };
     const newMessages = [...messages, userMsg];
@@ -407,6 +430,7 @@ function QueryContent() {
       };
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
+        if (!isCurrent()) return;
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
@@ -496,6 +520,7 @@ function QueryContent() {
         }
       }
 
+      if (!isCurrent()) return;
       if (!completed) throw new Error("Stream ended before final verification");
       const queryTime = Date.now() - startTime;
       const assistantMsg: Message = {
@@ -543,10 +568,12 @@ function QueryContent() {
         }
       }
     } catch {
+      if (!isCurrent()) return;
       // Stream broke - try recovering from conversation history
       if (convId) {
         try {
           const full = await getConversation(convId);
+          if (!isCurrent()) return;
           if (full.messages && full.messages.length > newMessages.length) {
             setMessages(full.messages);
             const lastA = [...full.messages].reverse().find((m: Message) => m.role === "assistant");
@@ -560,6 +587,7 @@ function QueryContent() {
           }
         } catch { /* recovery failed */ }
       }
+      if (!isCurrent()) return;
       const errMsg: Message = {
         role: "assistant",
         content: "Connection lost. The answer may still be processing \u2014 try refreshing in a moment.",
@@ -570,7 +598,7 @@ function QueryContent() {
       setStatusMessage("");
       setActivitySteps([]);
     } finally {
-      setLoading(false);
+      if (isCurrent()) { busy.current = false; setLoading(false); }
     }
   };
 
@@ -582,9 +610,17 @@ function QueryContent() {
   };
 
   const loadConversation = async (conv: Conversation) => {
+    invalidateView();
+    const version = viewVersion.current;
+    activeConversation.current = conv.id;
+    setActiveConvId(conv.id);
+    setMessages([]);
+    busy.current = true;
+    setLoading(true);
+    setStatusMessage("Loading conversation...");
     try {
       const full = await getConversation(conv.id);
-      setActiveConvId(conv.id);
+      if (version !== viewVersion.current) return;
       setMessages(full.messages || []);
       setFollowUpSuggestions([]);
       setShowHistory(false);
@@ -593,18 +629,21 @@ function QueryContent() {
         setFollowUpSuggestions(lastAssistant.follow_ups);
       }
     } catch (e) {
+      if (version !== viewVersion.current) return;
       console.error("Failed to load conversation:", e);
+    } finally {
+      if (version === viewVersion.current) {
+        busy.current = false;
+        setLoading(false);
+        setStatusMessage("");
+      }
     }
   };
 
   const handleDeleteConversation = async (id: string) => {
     try {
       await deleteConversation(id);
-      if (activeConvId === id) {
-        setActiveConvId(null);
-        setMessages([]);
-        setFollowUpSuggestions([]);
-      }
+      if (activeConversation.current === id) handleNewConversation();
       loadConversations();
     } catch (e) {
       console.error("Failed to delete conversation:", e);

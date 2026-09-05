@@ -14,8 +14,9 @@ import unicodedata
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v1"
+POLICY_VERSION = "source-audit-v2"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -72,7 +73,9 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         if type(item.get("document_id")) is not int or item["document_id"] < 1:
             continue
-        content = item.get("content") or item.get("excerpt") or ""
+        content = certifying_text(item)
+        if content is None:
+            continue
         if not isinstance(content, str):
             raise ValueError("Evidence source content must be text")
         identity = (item["document_id"], item.get("chunk_index"), item.get("title"), content, bool(item.get("feedback_open")))

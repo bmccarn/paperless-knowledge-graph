@@ -88,9 +88,10 @@ function GraphContent() {
     setFocused(false);
     setExpanding(null);
     setSearching(false);
+    setGraph(emptyGraph());
     try {
       const data = await getGraphInitial(seedLimit);
-      if (version === epoch.current) setGraph(mergeGraph(emptyGraph(), data));
+      if (version === epoch.current) setGraph(current => mergeGraph(current, data));
     } catch (error) {
       if (version === epoch.current) setError(message(error));
     } finally {

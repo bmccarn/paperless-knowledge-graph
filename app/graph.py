@@ -177,14 +177,14 @@ class GraphStore:
     async def get_all_persons(self) -> list[dict]:
         async with self.driver.session() as session:
             result = await session.run(
-                "MATCH (p:Person) RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases"
+                "MATCH (p:Person) RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases, p.source_doc_ids AS source_doc_ids"
             )
             return [dict(r) async for r in result]
 
     async def get_all_organizations(self) -> list[dict]:
         async with self.driver.session() as session:
             result = await session.run(
-                "MATCH (o:Organization) RETURN o.uuid AS uuid, o.name AS name, o.aliases AS aliases, o.type AS type"
+                "MATCH (o:Organization) RETURN o.uuid AS uuid, o.name AS name, o.aliases AS aliases, o.type AS type, o.source_doc_ids AS source_doc_ids"
             )
             return [dict(r) async for r in result]
 

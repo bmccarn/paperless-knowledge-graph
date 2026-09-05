@@ -5,7 +5,7 @@ A knowledge graph system that extracts structured entities and relationships fro
 ## Features
 
 - **Document-type-aware extraction** — Classifies documents first (invoice, medical, tax, etc.), then uses specialized extraction prompts per type
-- **Entity resolution** — Fuzzy matching + embedding similarity to merge duplicate entities automatically
+- **Entity resolution** — Fuzzy matching + embedding similarity to merge duplicate entities automatically; bulk resolution preserves source-document identities so human split decisions block different entities without blocking duplicates of the same entity
 - **Hybrid search** — Vector similarity (pgvector) + trigram keyword search + graph traversal combined
 - **Graph-aware retrieval** — Multi-hop subgraph expansion from discovered entities (2-3 hops)
 - **Strands-planned query pipeline** — Query planning → retrieval → synthesis → complete source audit → bounded repair or evidence-limited response
@@ -17,6 +17,8 @@ A knowledge graph system that extracts structured entities and relationships fro
 - **TTL-based caching** — Query, vector, graph, and entity caches to reduce redundant LLM/DB calls
 - **Live progress tracking** — Real-time progress for reindex/sync tasks via polling
 - **Interactive frontend** — Next.js app with 2D/3D graph explorer, document browser, natural language query, evidence/trust review, entity review, and live debug logs
+
+Saved conversations retain their complete messages for display. Model prompts use only the latest 10 messages within a shared 12,000-character conversation budget across planning, synthesis, and source auditing. When that budget is exceeded, older context is omitted first; an oversized retained message keeps its ending with an explicit truncation marker. Query-cache versioning prevents reuse of answers generated under the previous unbounded-context policy.
 
 ## Architecture
 

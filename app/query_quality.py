@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from app.answer_finalization import parse_date, current_state
 from typing import Any
 
 from app.evidence import exact_term_hits as evidence_exact_term_hits
@@ -268,12 +269,12 @@ def compute_evidence_grade(
         contradiction_score -= min(0.45, superseded_count * 0.12)
         penalties.append(f"{superseded_count} retrieved source(s) look superseded or expired")
 
-    claim_support_score = 0.5
+    claim_support_score = 0.0
     supported = int(claim_summary.get("supported") or 0)
     partial = int(claim_summary.get("partial") or 0)
     unsupported_claims = int(claim_summary.get("unsupported") or 0)
     conflicting_claims = int(claim_summary.get("conflicting") or 0)
-    ledger_total = supported + partial + unsupported_claims + conflicting_claims + int(claim_summary.get("unknown") or 0)
+    ledger_total = supported + partial + unsupported_claims + conflicting_claims + (int(claim_summary.get("unknown") or 0) + int(claim_summary.get("unchecked") or 0) + int(claim_summary.get("missing") or 0))
     if ledger_total:
         claim_support_score = (supported + 0.5 * partial) / max(ledger_total, 1)
         if supported:
@@ -287,8 +288,7 @@ def compute_evidence_grade(
         unsupported = verification.get("unsupported_claims") or []
         stale = verification.get("stale_or_conflicting_claims") or []
         if not unsupported and not stale and verification.get("status") in {"verified", "ok"}:
-            claim_support_score = max(claim_support_score, 0.9)
-            reasons.append("Verifier found no unsupported or stale claims")
+            reasons.append("Verifier reported no unsupported claims; ledger still determines support")
         if unsupported:
             claim_support_score = min(claim_support_score, max(0.0, 0.65 - 0.08 * len(unsupported)))
             penalties.append(f"{len(unsupported)} unsupported claim(s) flagged by verifier")
@@ -298,7 +298,7 @@ def compute_evidence_grade(
 
     audit_score = 1.0 if ledger_total else 0.5
     audit_status = "claim_audited" if ledger_total else "not_claim_audited"
-    score_cap = 1.0
+    score_cap = 1.0 if ledger_total and supported == ledger_total and (claim_ledger or {}).get("complete") else 0.49
     if verification_status == "checking":
         audit_score = 0.35
         audit_status = "checking"
@@ -375,31 +375,27 @@ def compute_evidence_grade(
 
 
 def current_state_summary(plan: dict[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any]:
-    dated = [s for s in sources if s.get("date")]
-    latest = max((s["date"] for s in dated), default=None)
-    expired = [s for s in sources if _looks_superseded_text(s.get("excerpt", ""))]
-    return {
-        "required": bool(plan.get("requires_current")),
-        "latest_source_date": latest,
-        "dated_source_count": len(dated),
-        "superseded_source_count": len(expired),
-        "status": "resolved" if latest else ("not_required" if not plan.get("requires_current") else "needs_review"),
-    }
+    dated = [parse_date(s.get("date")) for s in sources]
+    dates = [d[0] for d in dated if d]
+    result = current_state(plan, {"items": []}, plan.get("evaluated_at") or datetime.now(timezone.utc).date().isoformat())
+    result.update(latest_source_date=max(dates, default=None), dated_source_count=len(dates))
+    return result
 
 
 def timeline_fallback_events(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     events = []
     for source in sources:
         date = source.get("date")
-        if not date:
+        if not parse_date(date):
             continue
         events.append({
             "date": str(date),
             "title": source.get("title") or f"Document {source.get('document_id')}",
-            "summary": (source.get("excerpt") or "")[:180],
+            "summary": "Document dated " + str(date) + ". This is a document date, not a verified event date.",
             "document_id": source.get("document_id"),
             "source_title": source.get("title"),
-            "status": "source_event",
+            "status": "document_date",
+            "precision": parse_date(date)[1],
         })
     return sort_timeline_events(events)[:20]
 
@@ -409,20 +405,12 @@ def sort_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raw = str(event.get("date") or "")
         normalized = _normalize_date_key(raw)
         return normalized, str(event.get("title") or event.get("summary") or "")
-    return sorted(events, key=key)
+    return sorted([e for e in events if parse_date(e.get("date"))], key=key)
 
 
 def _normalize_date_key(value: str) -> str:
-    match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", value)
-    if match:
-        year, month, day = match.groups()
-        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
-    match = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", value)
-    if match:
-        month, day, year = match.groups()
-        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
-    match = re.search(r"\b(19|20)\d{2}\b", value)
-    return match.group(0) if match else "9999"
+    parsed = parse_date(value)
+    return parsed[0] if parsed else "9999"
 
 
 def _required_doc_types(domain: str) -> list[str]:

@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings
 
 
@@ -18,6 +20,7 @@ class Settings(BaseSettings):
     strands_model: str = ""
     strands_call_timeout_seconds: float = 45
     stream_verification_timeout_seconds: float = 60
+    answer_audit_timeout_seconds: float = 60
 
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"
@@ -39,7 +42,7 @@ class Settings(BaseSettings):
     entity_steward_interval_minutes: int = 360
     entity_steward_candidate_limit: int = 40
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {"env_file": os.environ.get("KG_ENV_FILE", ".env") or None, "extra": "ignore"}
 
     @property
     def postgres_dsn(self) -> str:

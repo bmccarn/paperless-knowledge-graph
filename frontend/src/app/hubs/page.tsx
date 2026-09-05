@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,29 +71,65 @@ interface SearchResult {
   properties: Record<string, unknown>;
 }
 
+const PAGE_SIZE = 12;
+
 export default function HubsPage() {
   const [activeId, setActiveId] = useState(DOMAINS[0].id);
-  const [results, setResults] = useState<Record<string, SearchResult[]>>({});
-  const [loading, setLoading] = useState("");
+  const [pages, setPages] = useState<Record<string, number>>({});
+  const [docs, setDocs] = useState<SearchResult[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
   const active = DOMAINS.find((d) => d.id === activeId) || DOMAINS[0];
+  const page = pages[active.id] || 0;
 
-  const loadDomain = useCallback(async (domain = active) => {
-    if (results[domain.id]) return;
-    setLoading(domain.id);
+  const loadDomain = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    setError(null);
+    setDocs([]);
+    setTotal(null);
     try {
-      const data = await graphSearch(domain.query, "Document", 12);
-      setResults((prev) => ({ ...prev, [domain.id]: data.results || [] }));
+      const data = await graphSearch(active.query, "Document", PAGE_SIZE, page * PAGE_SIZE);
+      if (version !== requestVersion.current) return;
+      setDocs(data.results || []);
+      setTotal(data.total);
+      if (page > 0 && page * PAGE_SIZE >= data.total) {
+        setPages((previous) => ({ ...previous, [active.id]: Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) }));
+      }
+    } catch (e) {
+      if (version === requestVersion.current) setError(e instanceof Error ? e.message : "Failed to load hub documents");
     } finally {
-      setLoading("");
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [active, results]);
+  }, [active, page]);
 
   useEffect(() => { getConfig().then((c) => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
-  useEffect(() => { loadDomain(active); }, [active, loadDomain]);
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  useEffect(() => {
+    void loadDomain();
+    return invalidateRequests;
+  }, [loadDomain, invalidateRequests]);
+
+  const selectDomain = (id: string) => {
+    if (id === activeId) return;
+    invalidateRequests();
+    setLoading(true);
+    setError(null);
+    setDocs([]);
+    setTotal(null);
+    setActiveId(id);
+  };
+  const selectPage = (next: number) => {
+    invalidateRequests();
+    setLoading(true);
+    setPages((previous) => ({ ...previous, [active.id]: next }));
+  };
 
   const ActiveIcon = active.icon;
-  const docs = results[active.id] || [];
+  const pageCount = total === null ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6 lg:p-8 space-y-4">
@@ -108,7 +144,8 @@ export default function HubsPage() {
           return (
             <button
               key={domain.id}
-              onClick={() => setActiveId(domain.id)}
+              onClick={() => selectDomain(domain.id)}
+              aria-pressed={activeId === domain.id}
               className={
                 "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors " +
                 (activeId === domain.id ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent")
@@ -124,10 +161,16 @@ export default function HubsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><ActiveIcon className="h-4 w-4" /> {active.title} Documents</CardTitle>
+            {total !== null && !loading && !error && <p className="text-sm text-muted-foreground">{total} matching indexed documents</p>}
           </CardHeader>
           <CardContent className="space-y-2">
-            {loading === active.id ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading documents...</div>
+            {loading ? (
+              <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading documents...</div>
+            ) : error ? (
+              <div role="alert" className="space-y-2">
+                <p className="text-sm text-destructive">{error}</p>
+                <Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button>
+              </div>
             ) : docs.length ? docs.map((doc) => {
               const p = doc.properties || {};
               const docId = p.paperless_id as number;
@@ -150,6 +193,16 @@ export default function HubsPage() {
               );
             }) : (
               <p className="text-sm text-muted-foreground">No documents found for this hub search.</p>
+            )}
+            {total !== null && !loading && !error && (
+              <nav aria-label="Hub document pages" className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
+                <p>{total ? page * PAGE_SIZE + 1 : 0}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total} · Page {page + 1} of {pageCount}</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" aria-label="Previous hub page" disabled={page === 0} onClick={() => selectPage(page - 1)}>Previous</Button>
+                  <Button variant="outline" size="sm" aria-label="Next hub page" disabled={page + 1 >= pageCount} onClick={() => selectPage(page + 1)}>Next</Button>
+                  <Button variant="outline" size="sm" aria-label="Last hub page" disabled={page + 1 >= pageCount} onClick={() => selectPage(pageCount - 1)}>Last</Button>
+                </div>
+              </nav>
             )}
           </CardContent>
         </Card>

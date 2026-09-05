@@ -8,7 +8,7 @@ A knowledge graph system that extracts structured entities and relationships fro
 - **Entity resolution** — Fuzzy matching + embedding similarity to merge duplicate entities automatically
 - **Hybrid search** — Vector similarity (pgvector) + trigram keyword search + graph traversal combined
 - **Graph-aware retrieval** — Multi-hop subgraph expansion from discovered entities (2-3 hops)
-- **Strands-planned query pipeline** — Query planning → parallel retrieval → gap repair → synthesis → verifier pass
+- **Strands-planned query pipeline** — Query planning → retrieval → synthesis → complete source audit → bounded repair or evidence-limited response
 - **Evidence-backed strict mode** — Builds canonical evidence packs, claim ledgers, trust dimensions, and answer repair notes for high-stakes queries
 - **Timeline mode** — Extracts dated events and sorts them chronologically for change-over-time questions
 - **Entity steward** — Conservative merge/split/review suggestions after manual merges and on a periodic schedule
@@ -52,7 +52,7 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 - **Vector DB:** PostgreSQL 16 + pgvector + pg_trgm
 - **LLM Routing:** LiteLLM (centralized model management, usage tracking, caching)
 - **Embeddings:** OpenAI text-embedding-3-large (3072-dim) via LiteLLM
-- **Frontend:** Next.js 14 + shadcn/ui + react-force-graph-2d/3d + zustand + d3-force
+- **Frontend:** Next.js 16 + React 19 on Node 24 LTS, with shadcn/ui and react-force-graph
 
 ## Quick Start
 
@@ -112,6 +112,8 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `GEMINI_MODEL` | LLM model for extraction/query synthesis | `gemini-3.5-flash` |
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
+| `ANSWER_AUDIT_TIMEOUT_SECONDS` | Total finalization audit/repair budget; timeout returns an evidence-limited response | `60` |
+| `BACKEND_URL` | Frontend server runtime destination for both ordinary API calls and streaming | `http://app:8000` |
 | `STRANDS_MODEL` | Optional model override for Strands helper calls | Same as `GEMINI_MODEL` |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials | `neo4j` / — |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | pgvector credentials | `knowledge_graph` / `kguser` / — |
@@ -136,7 +138,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health, and recent error alerts |
 | `/config` | GET | Frontend configuration (paperless URL) |
 | `/sync` | POST | Incremental sync — processes new/changed documents |
-| `/reindex` | POST | Full reindex — clears graph + embeddings, reprocesses all documents |
+| `/reindex` | POST | Full reindex — prepares and replaces each document individually, preserving usable state until preparation succeeds |
 | `/reindex/{doc_id}` | POST | Start a background task to reindex a single document |
 | `/freshness/repair` | POST | Start a targeted background repair for exact drift IDs reported by `/freshness?force=true` |
 | `/task/{task_id}` | GET | Live task progress (processed, errors, ETA, current doc) |
@@ -210,13 +212,13 @@ See [`.env.example`](.env.example) for all available configuration options.
 
 ## Evaluation Harness
 
-Run the canonical document QA checks after prompt, model, retrieval, or indexing changes:
+Run factual evaluation against a disposable API loaded with the versioned synthetic corpus described in [evals/README.md](evals/README.md):
 
 ```bash
 python3 scripts/eval_harness.py --base-url http://localhost:8484
 ```
 
-The cases live in `evals/canonical_questions.json`. Each case can require answer terms, minimum confidence, and specific source document IDs. Use `--json` in CI or automation.
+The default cases are `evals/fixtures/accuracy-v1.json`: known values, units, source spans and expected abstentions. Self-reported confidence cannot make a case pass. `evals/canonical_questions.json` contains separate smoke checks. Use `--json` for machine-readable output; live API evaluation may invoke the configured model.
 
 ## Operational Guardrails
 
@@ -239,6 +241,25 @@ Export graph/vector state before risky changes:
 ```bash
 bash scripts/export_state.sh
 ```
+
+## Agent Skills and Repo Audit
+
+Matt Pocock's engineering and productivity skills are installed for this repo
+under `.agents/skills/`. Start with [`AGENTS.md`](AGENTS.md) and the
+[skill setup guide](docs/agents/skills.md) for available workflows, pinned
+upstream provenance, and project conventions.
+
+The [September 4, 2026 audit](docs/audits/2026-09-04-repo-audit.md) records
+prioritized findings, offline reproductions, validation results, and suggested
+next steps. Use `$improve-codebase-architecture` for another architecture survey,
+or `$code-review` with a baseline commit and spec to review a change.
+
+The [functional and accuracy audit](docs/audits/2026-09-04-functional-accuracy-audit.md)
+extends that review across backend features, evidence verification, entity review,
+and the graph explorer. The subsequent [specification](docs/specs/accuracy-and-reliability.md) and [implementation report](docs/audits/2026-09-04-implementation-report.md) document the implemented fixes, validation and remaining accuracy limits.
+See [graph validation](docs/audits/graph-validation.md) for regression tests and a
+synthetic UI preview. The explorer defaults to 2D and supports explicit expansion,
+source inspection, type filters, neighborhood focus, and optional 3D.
 
 ## License
 

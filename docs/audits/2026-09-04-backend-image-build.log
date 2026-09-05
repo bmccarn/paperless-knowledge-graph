@@ -1,0 +1,51 @@
+#0 building with "orbstack" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 385B done
+#1 DONE 0.0s
+
+#2 [auth] library/python:pull token for registry-1.docker.io
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.12-slim
+#3 DONE 0.3s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 122B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 149.00kB 0.0s done
+#5 DONE 0.0s
+
+#6 [1/6] FROM docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+#6 resolve docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea 0.1s done
+#6 DONE 0.1s
+
+#7 [4/6] COPY requirements.lock .
+#7 CACHED
+
+#8 [2/6] WORKDIR /app
+#8 CACHED
+
+#9 [3/6] RUN apt-get update && apt-get install -y --no-install-recommends     build-essential     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [5/6] RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+#10 CACHED
+
+#11 [6/6] COPY app/ ./app/
+#11 DONE 0.1s
+
+#12 exporting to image
+#12 exporting layers 0.1s done
+#12 exporting manifest sha256:bc57e0f869a14a8bd3fc5007c9d3cf4a9f9243ebf6af3c6031733fba2d6af0da
+#12 exporting manifest sha256:bc57e0f869a14a8bd3fc5007c9d3cf4a9f9243ebf6af3c6031733fba2d6af0da 0.0s done
+#12 exporting config sha256:5ce6b1a310c152c72bfa5367b7c5395f4891ddb96f2b656f01e5fac4b55d432f 0.0s done
+#12 exporting attestation manifest sha256:845bce1482c4f472c0951dde15d752125dd02390629853961afde838099fcd8a 0.0s done
+#12 exporting manifest list sha256:ee5d50a1fd2cf64d220e28058bc8ce861465e27abd55331f39dbb8cdfc459f82 0.0s done
+#12 naming to docker.io/library/paperless-backend-audit:2026-09-04
+#12 naming to docker.io/library/paperless-backend-audit:2026-09-04 done
+#12 DONE 0.3s
+
+View build details: docker-desktop://dashboard/build/orbstack/orbstack/61hi4hmf3fpqrpktk9h64ujtx

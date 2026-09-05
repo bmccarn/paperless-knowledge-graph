@@ -9,6 +9,7 @@ entities.
 from __future__ import annotations
 
 import json
+import math
 import logging
 import re
 from typing import Any
@@ -185,15 +186,20 @@ def choose_recommendation(deterministic: dict[str, Any], agent_review: dict[str,
     if not agent_review:
         return det_rec
     agent_rec = str(agent_review.get("recommendation") or "review").lower()
-    confidence = float(agent_review.get("confidence") or 0)
-    risk = str(agent_review.get("risk") or deterministic.get("risk") or "medium")
-    if agent_rec == "merge" and confidence >= 0.82 and risk == "low":
+    if isinstance(agent_review.get("confidence"), bool):
+        return "review"
+    try:
+        confidence = float(agent_review.get("confidence") or 0)
+    except (TypeError, ValueError):
+        return "review"
+    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        return "review"
+    risk = str(agent_review.get("risk") or "unknown").lower()
+    if agent_rec == "merge" and confidence >= 0.82 and risk == "low" and deterministic.get("risk") == "low":
         return "merge"
     if agent_rec == "split" and confidence >= 0.65:
         return "split"
-    if det_rec == "merge" and confidence < 0.82:
-        return "review"
-    return "review" if agent_rec not in {"merge", "split"} else agent_rec
+    return "review"
 
 
 def recommendation_to_decision(recommendation: str) -> str:

@@ -12,6 +12,7 @@ from app.extractor import extractor
 from app.entity_resolver import entity_resolver
 from app.graph import graph_store
 from app.embeddings import embeddings_store, chunk_text
+from app.cache import invalidate_on_sync
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +235,19 @@ async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str)
 
 
 
-async def process_document(doc: dict) -> dict:
+async def _purge_document_index(doc_id: int) -> None:
+    """Remove a document's derived state, leaving interrupted work retryable."""
+    await entity_resolver.hydrate_review_identities()
+    try:
+        await asyncio.to_thread(invalidate_on_sync)
+        await embeddings_store.delete_doc_hash(doc_id)
+        await graph_store.delete_document_graph(doc_id)
+        await embeddings_store.delete_document_embeddings(doc_id)
+    finally:
+        await asyncio.to_thread(invalidate_on_sync)
+
+
+async def process_document(doc: dict, *, force: bool = False) -> dict:
     """Process a single Paperless document through the full pipeline."""
     doc_id = doc["id"]
     title = doc.get("title", "")
@@ -244,19 +257,37 @@ async def process_document(doc: dict) -> dict:
     skip_tag_ids = await paperless_client.get_skip_tag_ids()
     if paperless_client.has_any_tag(doc, skip_tag_ids):
         logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
-        await graph_store.delete_document_graph(doc_id)
-        await embeddings_store.delete_document_embeddings(doc_id)
-        await embeddings_store.delete_doc_hash(doc_id)
+        await _purge_document_index(doc_id)
         return {"doc_id": doc_id, "status": "skipped", "reason": "configured skip tag present"}
+
+    mutation_started = False
+    if force:
+        # The old graph/chunks remain usable during preparation. A missing
+        # completion marker makes a failed forced attempt discoverable by sync.
+        await embeddings_store.delete_doc_hash(doc_id)
+        await asyncio.to_thread(invalidate_on_sync)
 
     if not content or not content.strip():
         logger.warning(f"Doc {doc_id} has no content, recording metadata-only index")
         try:
-            await graph_store.delete_document_graph(doc_id)
-            await embeddings_store.delete_document_embeddings(doc_id)
-
             doc_type = "no_content"
             doc_date = _extract_date(doc, {})
+            metadata_content = (
+                f"Document: {title or f'Document {doc_id}'}\n"
+                f"Type: {doc_type}\n"
+                f"Date: {doc_date or 'unknown'}\n"
+                f"Paperless ID: {doc_id}\n\n"
+                "No OCR content is available for this Paperless document."
+            )
+            embedding = await embeddings_store.generate_embedding(metadata_content)
+            if not embedding:
+                raise ValueError("Metadata-only document embedding was not generated")
+            await entity_resolver.hydrate_review_identities()
+            mutation_started = True
+            await asyncio.to_thread(invalidate_on_sync)
+            await embeddings_store.delete_doc_hash(doc_id)
+            await graph_store.delete_document_graph(doc_id)
+            await embeddings_store.delete_document_embeddings(doc_id)
             await graph_store.create_document_node(
                 paperless_id=doc_id,
                 title=title,
@@ -265,19 +296,13 @@ async def process_document(doc: dict) -> dict:
                 content_hash=content_hash,
             )
 
-            metadata_content = (
-                f"Document: {title or f'Document {doc_id}'}\n"
-                f"Type: {doc_type}\n"
-                f"Date: {doc_date or 'unknown'}\n"
-                f"Paperless ID: {doc_id}\n\n"
-                "No OCR content is available for this Paperless document."
-            )
             await embeddings_store.store_document_embedding(
                 doc_id,
                 metadata_content,
                 chunk_index=0,
                 title=title,
                 doc_type=doc_type,
+                embedding=embedding,
             )
             await embeddings_store.set_doc_hash(doc_id, content_hash)
             return {
@@ -292,10 +317,13 @@ async def process_document(doc: dict) -> dict:
         except Exception as e:
             logger.error(f"Failed to process metadata-only doc {doc_id}: {e}", exc_info=True)
             return {"doc_id": doc_id, "status": "error", "error": str(e)}
+        finally:
+            if mutation_started or force:
+                await asyncio.to_thread(invalidate_on_sync)
 
     # Check if already processed with same content
     existing_hash = await embeddings_store.get_doc_hash(doc_id)
-    if existing_hash == content_hash:
+    if not force and existing_hash == content_hash:
         logger.info(f"Doc {doc_id} unchanged, skipping")
         return {"doc_id": doc_id, "status": "skipped", "reason": "unchanged"}
 
@@ -309,12 +337,11 @@ async def process_document(doc: dict) -> dict:
 
         # Step 2: Extract (3-pass pipeline - no fallback)
         extracted = await extractor.extract(title, content, doc_type)
-        if isinstance(extracted, list):
-            logger.warning(f"Doc {doc_id}: extraction returned list instead of dict, wrapping")
-            extracted = {"items": extracted} if extracted else {}
         if not isinstance(extracted, dict):
-            logger.warning(f"Doc {doc_id}: extraction returned {type(extracted).__name__}, using empty dict")
-            extracted = {}
+            raise ValueError("Extraction did not return a structured document")
+        coverage = extracted.get("extraction_coverage") or {}
+        if coverage.get("status") != "complete":
+            raise ValueError("Extraction coverage is incomplete; previous index retained")
 
         # Log extraction confidence
         extraction_confidence = extracted.get("confidence", 1.0)
@@ -324,15 +351,40 @@ async def process_document(doc: dict) -> dict:
         if entity_count == 0:
             logger.warning(f"Doc {doc_id} '{title}': no entities extracted (type={doc_type}, classification_conf={classification['confidence']:.2f})")
 
-        # Step 3: Clean old graph data for this doc
+        # Prepare all required document vectors before deleting usable state.
+        # Keep the complete OCR text; boilerplate heuristics must not remove facts.
+        doc_date = _extract_date(doc, extracted)
+        chunks = chunk_text(content, chunk_size=4000, overlap=800)
+        metadata_prefix = f"Document: {title}\nType: {doc_type}\nDate: {doc_date or 'unknown'}\n\n"
+        prepared_chunks = [(i, metadata_prefix + chunk) for i, chunk in enumerate(chunks)]
+        doc_summary = await _generate_document_summary(doc_id, title, doc_type, content, extracted)
+        if doc_summary:
+            prepared_chunks.append((9999, doc_summary))
+        prepared_vectors = []
+        for index, text in prepared_chunks:
+            embedding = await embeddings_store.generate_embedding(text)
+            if not embedding:
+                raise ValueError(f"Document embedding was not generated for chunk {index}")
+            prepared_vectors.append((index, text, embedding))
+
+        await entity_resolver.hydrate_review_identities()
+        mutation_started = True
+        await asyncio.to_thread(invalidate_on_sync)
+        # The completion marker commits last. A write failure is retryable even
+        # when this forced document predates the corpus checkpoint.
+        await embeddings_store.delete_doc_hash(doc_id)
         await graph_store.delete_document_graph(doc_id)
         await embeddings_store.delete_document_embeddings(doc_id)
 
         # Step 4: Create document node
-        doc_date = _extract_date(doc, extracted)
         doc_node_id = await graph_store.create_document_node(
             paperless_id=doc_id, title=title, doc_type=doc_type,
             date=doc_date, content_hash=content_hash,
+            extraction_metadata={
+                key: extracted.get(key)
+                for key in ("extraction_coverage", "metadata_evidence", "metadata_conflicts", "extraction_issues")
+                if extracted.get(key) is not None
+            },
         )
 
         # Step 5: Process extracted entities based on doc type
@@ -341,29 +393,12 @@ async def process_document(doc: dict) -> dict:
         # Step 5b: Process implied relationships
         await _process_implied_relationships(doc_id, extracted)
 
-        # Step 6: Store embeddings — chunk content for granular retrieval
-        # D: Filter boilerplate before chunking
-        filtered_content = _filter_boilerplate(content)
-        
-        chunks = chunk_text(filtered_content, chunk_size=4000, overlap=800)
-        
-        # C: Prefix each chunk with document metadata for better retrieval context
-        metadata_prefix = f"Document: {title}\nType: {doc_type}\nDate: {doc_date or 'unknown'}\n\n"
-        
-        for i, chunk in enumerate(chunks):
-            prefixed_chunk = metadata_prefix + chunk
+        for index, text, embedding in prepared_vectors:
             await embeddings_store.store_document_embedding(
-                doc_id, prefixed_chunk, chunk_index=i, title=title, doc_type=doc_type
+                doc_id, text, chunk_index=index, title=title, doc_type=doc_type,
+                embedding=embedding,
             )
         logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
-        
-        # A: Generate document-level summary and store as special chunk (index 9999)
-        doc_summary = await _generate_document_summary(doc_id, title, doc_type, content, extracted)
-        if doc_summary:
-            await embeddings_store.store_document_embedding(
-                doc_id, doc_summary, chunk_index=9999, title=title, doc_type=doc_type
-            )
-            logger.info(f"Doc {doc_id}: stored document summary embedding")
 
         # Step 6b: Store entity embeddings for resolved entities (ALL entity types)
         await _store_entity_embeddings(doc_id, extracted)
@@ -379,6 +414,9 @@ async def process_document(doc: dict) -> dict:
     except Exception as e:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
+    finally:
+        if mutation_started or force:
+            await asyncio.to_thread(invalidate_on_sync)
 
 
 # Protected entity names - NEVER rejected by LLM validation or blocklist.
@@ -728,6 +766,7 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict):
 
     except Exception as e:
         logger.warning(f"Entity embedding storage failed for doc {doc_id}: {e}")
+        raise
 
 
 async def _process_implied_relationships(doc_id: int, extracted: dict):
@@ -758,7 +797,13 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
             to_uuid = await _resolve_entity(to_name, to_type, doc_id)
 
             if from_uuid and to_uuid:
-                props = {**source_props, "confidence": confidence}
+                props = {
+                    **source_props,
+                    "confidence": confidence,
+                    "implied": bool(rel.get("inferred", True)),
+                    "rationale": _coerce_text(rel.get("rationale") or rel.get("explanation")),
+                    "evidence_json": _json.dumps(rel.get("evidence") or []),
+                }
                 await graph_store.create_relationship(
                     from_uuid, from_type, to_uuid, to_type,
                     rel_type, props
@@ -767,6 +812,7 @@ async def _process_implied_relationships(doc_id: int, extracted: dict):
 
         except Exception as e:
             logger.warning(f"Failed to create implied relationship: {e}")
+            raise
 
 
 
@@ -886,12 +932,14 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
                 label = _neo4j_label(entity_type)
                 await graph_store.create_relationship(
                     doc_node_id, "Document", entity_uuid, label, 
-                    "MENTIONS", {**source_props, "confidence": confidence}
+                    "MENTIONS", {**source_props, "confidence": confidence,
+                                 "evidence_json": _json.dumps(entity.get("evidence") or [])}
                 )
                 logger.debug(f"Created entity relationship: Document {doc_id} -[MENTIONS]-> {label} {name}")
                 
         except Exception as e:
             logger.warning(f"Failed to process enhanced entity {entity}: {e}")
+            raise
 
 
 async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict, title: str = ""):
@@ -1303,204 +1351,133 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def sync_documents(progress_callback=None, cancel_event=None):
-    """Incremental sync - process new/modified documents."""
-    last_sync = await embeddings_store.get_last_sync()
-    logger.info(f"Starting sync (last sync: {last_sync})")
+async def _process_document_batch(docs, force_ids, progress_callback, cancel_event):
+    semaphore = asyncio.Semaphore(max(1, settings.max_concurrent_docs))
 
-    start_time = time.time()
-    all_docs = await paperless_client.get_all_documents(modified_after=last_sync)
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
-    docs, held_docs = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
-    logger.info(f"Found {len(docs)} indexable documents to check ({len(held_docs)} held by skip tags)")
-
-    if progress_callback:
-        progress_callback("init", {"total_docs": len(docs)})
-
-    semaphore = asyncio.Semaphore(settings.max_concurrent_docs)
-
-    async def _process_with_semaphore(doc):
-        if cancel_event and cancel_event.is_set():
-            return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+    async def process(doc):
         async with semaphore:
-            if cancel_event and cancel_event.is_set():
-                return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
-            if progress_callback:
-                progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
-            result = await process_document(doc)
+            if cancel_event.is_set():
+                result = {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
+            else:
+                if progress_callback:
+                    progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
+                try:
+                    result = await process_document(doc, force=doc["id"] in force_ids)
+                except Exception as exc:
+                    logger.exception("Unexpected error processing document %s", doc["id"])
+                    result = {"doc_id": doc["id"], "status": "error", "error": str(exc)}
             if progress_callback:
                 progress_callback("result", result)
             return result
 
-    tasks = [_process_with_semaphore(doc) for doc in docs]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Convert exceptions to error results
-    clean_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            doc_id = docs[i]["id"] if i < len(docs) else "unknown"
-            logger.error(f"Unexpected error processing doc {doc_id}: {result}")
-            clean_results.append({"doc_id": doc_id, "status": "error", "error": str(result)})
-        else:
-            clean_results.append(result)
-    results = clean_results
-
-    # Detect and remove deleted documents
-    deleted_count = 0
+    # Cooperative cancellation stops new work; already admitted writers drain.
+    # Also drain when our owning task is cancelled directly during shutdown.
+    tasks = [asyncio.create_task(process(doc)) for doc in docs]
+    pending = asyncio.gather(*tasks)
     try:
-        current_docs = await paperless_client.get_all_documents()
-        indexable_docs, held_current_docs = paperless_client.partition_indexable_documents(current_docs, skip_tag_ids)
-        paperless_ids = {doc["id"] for doc in indexable_docs}
-        graph_ids = await graph_store.get_all_document_ids()
-        deleted_ids = graph_ids - paperless_ids
-        if deleted_ids:
-            logger.info(f"Detected {len(deleted_ids)} deleted documents: {deleted_ids}")
+        return await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        cancel_event.set()
+        await pending
+        raise
+
+
+async def _ingest_documents(*, force=False, progress_callback=None, cancel_event=None):
+    cancel_event = cancel_event or asyncio.Event()
+    start_time = time.time()
+    scan_started_at = datetime.now(timezone.utc)
+    last_sync = await embeddings_store.get_last_sync()
+    changed = [] if force else await paperless_client.get_all_documents(modified_after=last_sync)
+    # This reconciliation was already required for deletion detection. Use the
+    # same complete snapshot to discover interrupted replacements across stores.
+    all_docs = await paperless_client.get_all_documents()
+    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    indexable, held = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
+    current = {int(doc["id"]): doc for doc in indexable}
+    graph_ids = await graph_store.get_all_document_ids()
+    embedding_ids = await embeddings_store.get_document_embedding_ids()
+    hash_ids = await embeddings_store.get_document_hash_ids()
+    complete_ids = graph_ids & embedding_ids & hash_ids
+    missing_ids = set(current) - complete_ids
+    changed_ids = {int(doc["id"]) for doc in changed}
+    selected_ids = set(current) if force else (changed_ids | missing_ids) & set(current)
+    docs = [current[doc_id] for doc_id in sorted(selected_ids)]
+    force_ids = selected_ids if force else missing_ids
+    deleted_ids = (graph_ids | embedding_ids | hash_ids) - set(current)
+
+    if progress_callback:
+        progress_callback("init", {"total_docs": len(docs) + len(deleted_ids)})
+    results = await _process_document_batch(docs, force_ids, progress_callback, cancel_event)
+    deleted_count = 0
+    for doc_id in sorted(deleted_ids):
+        if cancel_event.is_set():
+            result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
+        else:
             if progress_callback:
-                progress_callback("current", {"title": f"Removing {len(deleted_ids)} deleted documents..."})
-            for del_id in deleted_ids:
-                try:
-                    await graph_store.delete_document_graph(del_id)
-                    await embeddings_store.delete_document_embeddings(del_id)
-                    await embeddings_store.delete_doc_hash(del_id)
-                    logger.info(f"Removed deleted document {del_id} from knowledge graph")
-                    deleted_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to remove deleted doc {del_id}: {e}")
-    except Exception as e:
-        logger.error(f"Deletion detection failed: {e}")
+                progress_callback("current", {"title": f"Removing stale document #{doc_id}"})
+            try:
+                await _purge_document_index(doc_id)
+                deleted_count += 1
+                result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale document"}
+            except Exception as exc:
+                logger.exception("Failed to purge stale document %s", doc_id)
+                result = {"doc_id": doc_id, "status": "error", "error": str(exc)}
+        results.append(result)
+        if progress_callback:
+            progress_callback("result", result)
 
-    now = datetime.now(timezone.utc)
-    await embeddings_store.set_last_sync(now)
-
+    errors = sum(result["status"] == "error" for result in results)
+    processed = sum(result["status"] == "processed" for result in results) - deleted_count
+    postprocess_errors = []
+    if force and processed and not cancel_event.is_set():
+        try:
+            await embeddings_store.create_vector_indexes()
+            if not cancel_event.is_set():
+                await entity_resolver.resolve_all_entities()
+        except Exception as exc:
+            logger.exception("Reindex post-processing failed")
+            postprocess_errors.append(str(exc))
+    errors += len(postprocess_errors)
+    cancelled = cancel_event.is_set()
+    checkpoint_advanced = not cancelled and errors == 0
+    if checkpoint_advanced:
+        # A completion-time watermark loses changes made while scanning.
+        await embeddings_store.set_last_sync(scan_started_at)
     elapsed = time.time() - start_time
-    processed = sum(1 for r in results if r["status"] == "processed")
-    skipped = sum(1 for r in results if r["status"] == "skipped")
-    errors = sum(1 for r in results if r["status"] == "error")
-    docs_per_minute = (processed / (elapsed / 60)) if elapsed > 0 and processed > 0 else 0
-    avg_entities = 0
-    if processed > 0:
-        total_entities = sum(r.get("entities_extracted", 0) for r in results if r["status"] == "processed")
-        avg_entities = total_entities / processed
-
-    logger.info(
-        f"Sync complete: {processed} processed, {skipped} skipped, {errors} errors, {deleted_count} deleted "
-        f"| {elapsed:.1f}s | {docs_per_minute:.1f} docs/min | {avg_entities:.1f} entities/doc avg"
-    )
+    skipped = sum(result["status"] == "skipped" for result in results)
+    entity_count = sum(result.get("entities_extracted", 0) for result in results if result["status"] == "processed")
+    await asyncio.to_thread(invalidate_on_sync)
     return {
-        "total": len(docs),
+        "total": len(docs) + len(deleted_ids),
         "processed": processed,
         "skipped": skipped,
-        "held": len(held_docs),
+        "held": len(held),
         "errors": errors,
         "deleted": deleted_count,
+        "cancelled": cancelled,
+        "status": "cancelled" if cancelled else ("failed" if errors else "completed"),
+        "checkpoint_advanced": checkpoint_advanced,
+        "scan_started_at": scan_started_at.isoformat(),
+        "previous_checkpoint": last_sync.isoformat() if last_sync else None,
         "elapsed_seconds": round(elapsed, 1),
-        "docs_per_minute": round(docs_per_minute, 1),
-        "avg_entities_per_doc": round(avg_entities, 1),
+        "docs_per_minute": round(processed / (elapsed / 60), 1) if elapsed > 0 else 0,
+        "avg_entities_per_doc": round(entity_count / processed, 1) if processed else 0,
+        "postprocess_errors": postprocess_errors,
         "results": results,
     }
+
+
+async def sync_documents(progress_callback=None, cancel_event=None):
+    """Incremental scan with complete-store reconciliation and retryable markers."""
+    return await _ingest_documents(progress_callback=progress_callback, cancel_event=cancel_event)
 
 
 async def reindex_all(progress_callback=None, cancel_event=None):
-    """Full reindex - clear everything and reprocess all documents."""
-    logger.info("Starting full reindex")
-    await graph_store.clear_all()
-    await embeddings_store.clear_all()
-
-    start_time = time.time()
-    all_docs = await paperless_client.get_all_documents()
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
-    docs, held_docs = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
-    logger.info(f"Reindexing {len(docs)} indexable documents ({len(held_docs)} held by skip tags)")
-
-    if progress_callback:
-        progress_callback("init", {"total_docs": len(docs)})
-
-    semaphore = asyncio.Semaphore(settings.max_concurrent_docs)
-
-    async def _process_with_semaphore(doc):
-        if cancel_event and cancel_event.is_set():
-            return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
-        async with semaphore:
-            if cancel_event and cancel_event.is_set():
-                return {"doc_id": doc["id"], "status": "skipped", "reason": "cancelled"}
-            if progress_callback:
-                progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
-            result = await process_document(doc)
-            if progress_callback:
-                progress_callback("result", result)
-            return result
-
-    tasks = [_process_with_semaphore(doc) for doc in docs]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Convert exceptions to error results
-    clean_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            doc_id = docs[i]["id"] if i < len(docs) else "unknown"
-            logger.error(f"Unexpected error processing doc {doc_id}: {result}")
-            clean_results.append({"doc_id": doc_id, "status": "error", "error": str(result)})
-        else:
-            clean_results.append(result)
-    results = clean_results
-
-    now = datetime.now(timezone.utc)
-    await embeddings_store.set_last_sync(now)
-
-    elapsed = time.time() - start_time
-    processed = sum(1 for r in results if r["status"] == "processed")
-    errors = sum(1 for r in results if r["status"] == "error")
-
-    logger.info(f"Reindex complete: {processed} processed, {errors} errors | {elapsed:.1f}s")
-
-    # Post-reindex: build vector indexes and resolve entities
-    if processed > 0 and not (cancel_event and cancel_event.is_set()):
-        if progress_callback:
-            progress_callback("current", {"title": "Building vector indexes..."})
-        try:
-            logger.info("Post-reindex: creating IVFFlat vector indexes")
-            await embeddings_store.create_vector_indexes()
-            logger.info("Post-reindex: vector indexes created")
-        except Exception as e:
-            logger.error(f"Post-reindex: failed to create indexes: {e}")
-
-        if progress_callback:
-            progress_callback("current", {"title": "Resolving duplicate entities..."})
-        try:
-            logger.info("Post-reindex: running entity resolution")
-            report = await entity_resolver.resolve_all_entities()
-            merged = report.get("total_merged", 0)
-            logger.info(f"Post-reindex: entity resolution complete — {merged} entities merged")
-        except Exception as e:
-            logger.error(f"Post-reindex: entity resolution failed: {e}")
-
-    return {
-        "total": len(docs),
-        "processed": processed,
-        "held": len(held_docs),
-        "errors": errors,
-        "elapsed_seconds": round(elapsed, 1),
-        "results": results,
-    }
+    """Prepare and replace every source document without clearing usable data."""
+    return await _ingest_documents(force=True, progress_callback=progress_callback, cancel_event=cancel_event)
 
 
 async def reindex_document(doc_id: int):
-    """Reindex a single document."""
-    logger.info(f"Reindexing document {doc_id}")
+    """Force preparation before replacing a single document's usable index."""
     doc = await paperless_client.get_document(doc_id)
-
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
-    if paperless_client.has_any_tag(doc, skip_tag_ids):
-        logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
-        await embeddings_store.delete_doc_hash(doc_id)
-        await graph_store.delete_document_graph(doc_id)
-        await embeddings_store.delete_document_embeddings(doc_id)
-        return {"doc_id": doc_id, "status": "skipped", "reason": "configured skip tag present"}
-
-    await embeddings_store.delete_doc_hash(doc_id)
-    await graph_store.delete_document_graph(doc_id)
-    await embeddings_store.delete_document_embeddings(doc_id)
-
-    result = await process_document(doc)
-    return result
+    return await process_document(doc, force=True)

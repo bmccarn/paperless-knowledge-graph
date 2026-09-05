@@ -1,0 +1,170 @@
+{
+  "unvalidated_ledger_reference": {
+    "claims": [
+      {
+        "claim": "Premium is $999.",
+        "support_status": "supported",
+        "document_id": 999999,
+        "source_title": null,
+        "evidence_id": "NOT-IN-PACK",
+        "evidence_excerpt": "FABRICATED QUOTE",
+        "date": null,
+        "source_quality": null,
+        "notes": ""
+      }
+    ],
+    "summary": {
+      "supported": 1,
+      "partial": 0,
+      "unsupported": 0,
+      "conflicting": 0,
+      "unknown": 0
+    }
+  },
+  "selected_chunk_evidence_tail_lost": {
+    "full_item_contains_fact": true,
+    "serialized_evidence_contains_fact": false
+  },
+  "contradictory_audits": {
+    "score": 0.945,
+    "level": "high",
+    "reasons": [
+      "5 source documents retrieved",
+      "Strong direct term overlap with retrieved sources",
+      "Current-state query has dated source coverage",
+      "Evidence pack uses strong original/direct sources",
+      "Verifier found no unsupported or stale claims",
+      "Structured values/tables are present in evidence"
+    ],
+    "penalties": [
+      "1 ledger claim(s) unsupported"
+    ],
+    "source_count": 5,
+    "exact_term_hits": 3,
+    "dimensions": {
+      "retrieval_coverage": 1.0,
+      "source_freshness": 0.9,
+      "claim_support": 0.9,
+      "source_quality": 0.95,
+      "contradiction_check": 1.0,
+      "structured_evidence": 1.0,
+      "audit_coverage": 0.9
+    },
+    "audit_status": "claim_audited",
+    "claim_summary": {
+      "supported": 0,
+      "partial": 0,
+      "unsupported": 1,
+      "conflicting": 0,
+      "unknown": 0
+    },
+    "coverage": {
+      "average_source_quality": 0.95,
+      "structured_fact_count": 20,
+      "date_signal_counts": {
+        "expiration_date": 1
+      }
+    }
+  },
+  "expired_current_state": {
+    "required": true,
+    "latest_source_date": "2001-01-01",
+    "dated_source_count": 1,
+    "superseded_source_count": 1,
+    "status": "resolved"
+  },
+  "strict_empty_evidence_verifier_unavailable": {
+    "answer": "Your current insurance premium is $999.",
+    "verification": {
+      "status": "not_run",
+      "supported_claims": [],
+      "unsupported_claims": [],
+      "stale_or_conflicting_claims": [],
+      "missing_evidence": [],
+      "notes": [
+        "Verifier unavailable; answer is retrieval-backed but not claim-audited."
+      ],
+      "confidence_adjustment": -0.12
+    },
+    "trust": 0.47
+  },
+  "missing_evidence_without_repair": {
+    "answer": "Your current insurance premium is $999.",
+    "repair_calls": 0
+  },
+  "unsupported_ledger_after_repair": {
+    "answer": "Your current insurance premium is $999.",
+    "repair_calls": 0,
+    "ledger": {
+      "claims": [
+        {
+          "claim": "Your current insurance premium is $999.",
+          "support_status": "unsupported",
+          "document_id": null,
+          "source_title": null,
+          "evidence_id": null,
+          "evidence_excerpt": "",
+          "date": null,
+          "source_quality": null,
+          "notes": ""
+        }
+      ],
+      "summary": {
+        "supported": 0,
+        "partial": 0,
+        "unsupported": 1,
+        "conflicting": 0,
+        "unknown": 0
+      }
+    }
+  },
+  "unvalidated_timeline": {
+    "events": [
+      {
+        "date": "2099-02-31",
+        "title": "Invented event",
+        "document_id": 999999
+      }
+    ],
+    "trace": [
+      {
+        "step": "timeline",
+        "status": "ok",
+        "detail": "Extracted and sorted 1 timeline events with Strands",
+        "timestamp": "2026-09-04T20:15:40.816568+00:00"
+      }
+    ]
+  },
+  "verifier_truncation": {
+    "answer_tail_present": false,
+    "evidence_tail_present": false
+  },
+  "extraction_tail_omitted": {
+    "tail_present_by_pass": [
+      false,
+      false,
+      false
+    ],
+    "scope": "actual prompt constructors with capture-only completion client"
+  },
+  "split_decision_ignored": {
+    "decisions_read": false,
+    "merged": 1,
+    "scope": "actual merger orchestration; deterministic eligible scorer and in-memory stores"
+  },
+  "unchecked_relationship_endpoint": [
+    {
+      "from_entity": "Alice Example",
+      "from_type": "Person",
+      "to_entity": "Fabricated Person",
+      "to_type": "Person",
+      "relationship": "WORKS_WITH",
+      "confidence": 0.99
+    }
+  ],
+  "steward_threshold_bypass": "merge",
+  "canonical_evals_accept_fabricated_zero_source_response": {
+    "passed": 6,
+    "total": 6
+  }
+}

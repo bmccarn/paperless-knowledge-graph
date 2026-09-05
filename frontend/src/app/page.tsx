@@ -145,7 +145,7 @@ export default function DashboardPage() {
     const runningTasks = Object.entries(status.active_tasks).filter(
       ([, info]) => {
         const s = typeof info === "object" && info !== null ? (info as Record<string, string>).status : info;
-        return s === "running";
+        return s === "running" || s === "cancelling";
       }
     );
     if (runningTasks.length > 0) {
@@ -165,7 +165,7 @@ export default function DashboardPage() {
       try {
         const t = await getTask(activeTaskId);
         setTaskProgress(t as TaskProgress);
-        if (t.status === "completed" || t.status === "failed") {
+        if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
           clearInterval(interval);
           fetchStatus();
         }
@@ -212,7 +212,7 @@ export default function DashboardPage() {
     setConfirmDialog({
       open: true,
       title: "Full Reindex",
-      description: "This will clear all graph data and re-process every document from scratch. This can take a while depending on the number of documents. Vector indexes and entity resolution will run automatically after.",
+      description: "This will prepare and replace the index for every document. Existing document data remains available while its replacement is prepared. This can take a while; vector indexes and entity resolution run afterwards.",
       variant: "destructive",
       action: async () => {
         try {
@@ -271,8 +271,8 @@ export default function DashboardPage() {
   const handleCancel = async () => {
     if (!activeTaskId) return;
     try {
-      await cancelTask(activeTaskId);
-      setTaskProgress((prev) => prev ? { ...prev, status: "cancelled" } : null);
+      const result = await cancelTask(activeTaskId);
+      setTaskProgress((prev) => prev ? { ...prev, status: result.status } : null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -365,7 +365,8 @@ export default function DashboardPage() {
   ];
 
   const tp = taskProgress;
-  const isRunning = tp?.status === "running";
+  const isCancelling = tp?.status === "cancelling";
+  const isRunning = !!activeTaskId && (!tp || tp.status === "running" || isCancelling);
   const isDone = tp?.status === "completed" || tp?.status === "failed" || tp?.status === "cancelled";
   const totalDone = (tp?.processed || 0) + (tp?.skipped || 0) + (tp?.errors || 0);
   const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
@@ -581,14 +582,14 @@ export default function DashboardPage() {
                     >
                       {tp.status === "completed" ? (
                         <CheckCircle2 className="h-3 w-3" />
-                      ) : tp.status === "failed" ? (
+                      ) : tp.status === "failed" || tp.status === "cancelled" ? (
                         <XCircle className="h-3 w-3" />
                       ) : (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       )}
                       {tp.status}
                     </Badge>
-                    {isRunning && (
+                    {tp.status === "running" && (
                       <Button variant="destructive" size="sm" className="h-6 px-2 text-xs" onClick={handleCancel}>
                         Cancel
                       </Button>
@@ -603,6 +604,11 @@ export default function DashboardPage() {
 
                 {/* Progress bar */}
                 <Progress value={progressPct} className="h-2" />
+                {isCancelling && (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    Cancelling. Finishing documents already in progress before another task can start.
+                  </p>
+                )}
 
                 {/* Stats line */}
                 <p className="text-xs text-muted-foreground">

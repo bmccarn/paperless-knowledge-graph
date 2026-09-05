@@ -21,8 +21,9 @@ from app.query import query_engine
 from app.classifier import classifier
 from app.extractor import extractor
 from app.entity_resolver import entity_resolver
+from app.entity_decisions import EntityMergeProhibited
 from app.entity_steward import entity_steward, SUGGESTION_DECISIONS, TERMINAL_DECISIONS
-from app.cache import get_all_cache_stats, invalidate_on_sync
+from app.cache import get_all_cache_stats, invalidate_on_sync, invalidate_on_sync_async
 from app.strands_orchestrator import strands_orchestrator
 from app import conversations
 from starlette.responses import StreamingResponse
@@ -328,8 +329,25 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     return snapshot
 
 
+@asynccontextmanager
+async def _graph_mutation(task_type: str):
+    """Single-process admission shared with ingestion's task registry."""
+    if any(t.get("status") in {"running", "cancelling"} for t in _tasks.values()):
+        raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
+    task_id = str(uuid.uuid4())
+    _tasks[task_id] = {"status": "running", "type": task_type, "started": datetime.now(timezone.utc).isoformat()}
+    try:
+        yield
+        _tasks[task_id]["status"] = "completed"
+    except BaseException:
+        _tasks[task_id]["status"] = "failed"
+        raise
+    finally:
+        _schedule_task_cleanup(task_id)
+
+
 async def _run_sync_task(task_type: str = "sync") -> str:
-    running = [t for t in _tasks.values() if t["status"] == "running"]
+    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
     if running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
@@ -357,22 +375,25 @@ async def _run_sync_task(task_type: str = "sync") -> str:
 
     async def _run():
         try:
-            invalidate_on_sync()
+            await asyncio.to_thread(invalidate_on_sync)
             result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
             _clear_freshness_cache()
-            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["status"] = "cancelled" if cancel_event.is_set() else ("failed" if result.get("errors") else "completed")
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
-            asyncio.create_task(entity_steward.run_once(reason="post-sync"))
+            if _tasks[task_id]["status"] == "completed":
+                asyncio.create_task(entity_steward.run_once(reason="post-sync"))
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
             _tasks[task_id]["error"] = str(e)
             _tasks[task_id]["current_doc"] = ""
         finally:
+            await asyncio.to_thread(invalidate_on_sync)
+            _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
     asyncio.create_task(_run())
@@ -431,7 +452,7 @@ async def _run_reindex_documents_task(
     delete_ids: list[int] | None = None,
     update_last_sync: bool = False,
 ) -> tuple[str, str]:
-    running = [t for t in _tasks.values() if t["status"] == "running"]
+    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
     if running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
@@ -471,7 +492,7 @@ async def _run_reindex_documents_task(
         start_time = time.time()
         results = []
         try:
-            invalidate_on_sync()
+            await asyncio.to_thread(invalidate_on_sync)
             for doc_id in delete_ids:
                 if cancel_event.is_set():
                     result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
@@ -480,13 +501,16 @@ async def _run_reindex_documents_task(
                     continue
                 progress_cb("current", {"title": f"Removing stale document #{doc_id}"})
                 try:
+                    await entity_resolver.hydrate_review_identities()
+                    await embeddings_store.delete_doc_hash(doc_id)
                     await graph_store.delete_document_graph(doc_id)
                     await embeddings_store.delete_document_embeddings(doc_id)
-                    await embeddings_store.delete_doc_hash(doc_id)
                     result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale drift artifacts"}
                 except Exception as e:
                     logger.error("Failed to remove stale drift doc %s: %s", doc_id, e, exc_info=True)
                     result = {"doc_id": doc_id, "status": "error", "error": str(e)}
+                finally:
+                    await asyncio.to_thread(invalidate_on_sync)
                 progress_cb("result", result)
                 results.append(result)
 
@@ -506,8 +530,8 @@ async def _run_reindex_documents_task(
                 results.append(result)
 
             errors = sum(1 for r in results if r.get("status") == "error")
-            if update_last_sync and errors == 0 and not cancel_event.is_set():
-                await embeddings_store.set_last_sync(datetime.now(timezone.utc))
+            # A targeted repair does not inspect all source modifications and
+            # cannot establish a new corpus-wide incremental checkpoint.
 
             _clear_freshness_cache()
             elapsed = time.time() - start_time
@@ -525,8 +549,8 @@ async def _run_reindex_documents_task(
                 "processed": processed,
                 "skipped": skipped,
                 "errors": errors,
-                "reindexed": doc_ids,
-                "deleted": delete_ids,
+                "reindexed": [r["doc_id"] for r in results if r.get("status") == "processed" and r["doc_id"] in doc_id_set],
+                "deleted": [r["doc_id"] for r in results if r.get("status") == "processed" and r["doc_id"] in delete_ids],
                 "elapsed_seconds": round(elapsed, 1),
                 "docs_per_minute": round(docs_per_minute, 1),
                 "results": results,
@@ -544,6 +568,8 @@ async def _run_reindex_documents_task(
             _tasks[task_id]["current_doc"] = ""
             _clear_freshness_cache()
         finally:
+            await asyncio.to_thread(invalidate_on_sync)
+            _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
     asyncio.create_task(_run())
@@ -560,7 +586,7 @@ async def _auto_sync_loop():
     logger.info("Auto sync enabled: every %s minutes", interval)
     while True:
         await asyncio.sleep(interval * 60)
-        if any(t["status"] == "running" for t in _tasks.values()):
+        if any(t["status"] in {"running", "cancelling"} for t in _tasks.values()):
             logger.info("Auto sync skipped because a task is already running")
             continue
         try:
@@ -638,7 +664,7 @@ class QueryRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = None
     model: Optional[str] = None
-    mode: str = "deep"
+    mode: str = "strict"
 
 
 class TaskResponse(BaseModel):
@@ -650,6 +676,11 @@ class TaskResponse(BaseModel):
 class DocumentFeedbackRequest(BaseModel):
     reason: str = "extraction_wrong"
     note: str = ""
+
+
+class DocumentFeedbackResolutionRequest(BaseModel):
+    resolution: str
+    note: str
 
 
 class EntityDecisionRequest(BaseModel):
@@ -693,7 +724,7 @@ async def status():
         doc_embed_count = await embeddings_store.get_embedding_count()
         ent_embed_count = await embeddings_store.get_entity_embedding_count()
         docs_w_embeds = await embeddings_store.get_docs_with_embeddings_count()
-        cache_stats = get_all_cache_stats()
+        cache_stats = await asyncio.to_thread(get_all_cache_stats)
         return {
             "status": "healthy",
             "graph": counts,
@@ -750,7 +781,7 @@ async def health():
         components["litellm"] = {"status": "unhealthy", "error": str(e)}
 
     # Cache
-    components["cache"] = get_all_cache_stats()
+    components["cache"] = await asyncio.to_thread(get_all_cache_stats)
     components["strands"] = strands_orchestrator.status
 
     overall = "healthy"
@@ -884,7 +915,7 @@ async def sync():
 @app.post("/reindex", response_model=TaskResponse)
 async def reindex():
     # Prevent concurrent reindex/sync
-    running = [t for t in _tasks.values() if t["status"] == "running"]
+    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
     if running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
     task_id = str(uuid.uuid4())
@@ -911,10 +942,10 @@ async def reindex():
 
     async def _run():
         try:
-            invalidate_on_sync()
+            await asyncio.to_thread(invalidate_on_sync)
             result = await reindex_all(progress_callback=progress_cb, cancel_event=cancel_event)
             _clear_freshness_cache()
-            _tasks[task_id]["status"] = "completed"
+            _tasks[task_id]["status"] = "cancelled" if cancel_event.is_set() else ("failed" if result.get("errors") else "completed")
             _tasks[task_id]["result"] = result
             _tasks[task_id]["current_doc"] = ""
             elapsed = time.time() - _tasks[task_id]["_start_time"]
@@ -926,6 +957,8 @@ async def reindex():
             _tasks[task_id]["error"] = str(e)
             _tasks[task_id]["current_doc"] = ""
         finally:
+            await asyncio.to_thread(invalidate_on_sync)
+            _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
     asyncio.create_task(_run())
@@ -966,11 +999,13 @@ async def document_detail(doc_id: int):
         graph_detail = await graph_store.get_document_detail_graph(doc_id)
         chunks = await embeddings_store.get_document_chunks(doc_id)
         processing = await embeddings_store.get_document_processing_status(doc_id)
+        feedback = await embeddings_store.get_document_feedback(doc_id)
         return {
             "paperless": paperless_doc,
             "graph": graph_detail,
             "chunks": chunks,
             "processing": processing,
+            "feedback": feedback,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -980,26 +1015,70 @@ async def document_detail(doc_id: int):
 async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
     """Record that a document extraction needs human review."""
     try:
+        if doc_id < 1 or not req.reason.strip() or len(req.reason) > 200 or len(req.note) > 4000:
+            raise HTTPException(status_code=422, detail="A valid document ID, reason and note of at most 4000 characters are required")
         result = await embeddings_store.add_document_feedback(doc_id, req.reason, req.note)
+        await invalidate_on_sync_async()
         logger.warning("Document %s marked for extraction review: %s", doc_id, req.reason)
         return {"status": "recorded", "feedback": result}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/document/{doc_id}/feedback")
+async def get_document_feedback(doc_id: int):
+    rows = await embeddings_store.get_document_feedback(doc_id)
+    return {"feedback": rows, "open_count": sum(row["status"] == "open" for row in rows)}
+
+
+@app.post("/document/{doc_id}/feedback/{feedback_id}/resolve")
+async def resolve_document_feedback(doc_id: int, feedback_id: int, req: DocumentFeedbackResolutionRequest):
+    if req.resolution not in {"reindexed_and_reviewed", "dismissed_after_review"} or not req.note.strip() or len(req.note) > 4000:
+        raise HTTPException(status_code=422, detail="Choose a resolution and supply a review note of 1–4000 characters")
+    reports = await embeddings_store.get_document_feedback(doc_id)
+    report = next((row for row in reports if row["id"] == feedback_id), None)
+    if not report:
+        raise HTTPException(status_code=404, detail="Review report not found for this document")
+    if report["status"] != "open":
+        raise HTTPException(status_code=409, detail="Review report has already been resolved")
+    processing = await embeddings_store.get_document_processing_status(doc_id)
+    if req.resolution == "reindexed_and_reviewed":
+        processed_at = processing.get("processed_at")
+        processed_at = datetime.fromisoformat(processed_at) if isinstance(processed_at, str) else processed_at
+        created_at = report["created_at"]
+        created_at = datetime.fromisoformat(created_at) if isinstance(created_at, str) else created_at
+        # document_hashes.processed_at is a legacy timestamp without time zone.
+        if processed_at and processed_at.tzinfo is None:
+            processed_at = processed_at.replace(tzinfo=timezone.utc)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        if not processing.get("processed") or not processing.get("content_hash") or not processed_at or processed_at <= created_at:
+            raise HTTPException(status_code=409, detail="Complete a successful reindex after this report, inspect the result, then resolve it")
+    resolved = await embeddings_store.resolve_document_feedback(
+        doc_id, feedback_id, req.resolution, req.note, processing.get("content_hash"))
+    if not resolved:
+        raise HTTPException(status_code=409, detail="Review report changed while it was being resolved")
+    await invalidate_on_sync_async()
+    return {"status": "resolved", "feedback": resolved}
 
 
 @app.delete("/document/{doc_id}")
 async def delete_document(doc_id: int):
-    """Remove a document and all its entities/relationships from the knowledge graph."""
-    try:
-        await graph_store.delete_document_graph(doc_id)
-        await embeddings_store.delete_document_embeddings(doc_id)
-        await embeddings_store.delete_doc_hash(doc_id)
-        invalidate_on_sync()
-        _clear_freshness_cache()
-        logger.info(f"Deleted document {doc_id} from knowledge graph")
-        return {"status": "deleted", "doc_id": doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    async with _graph_mutation("delete-document"):
+        try:
+            await entity_resolver.hydrate_review_identities()
+            await invalidate_on_sync_async()
+            await embeddings_store.delete_doc_hash(doc_id)
+            await graph_store.delete_document_graph(doc_id)
+            await embeddings_store.delete_document_embeddings(doc_id)
+            return {"status": "deleted", "doc_id": doc_id}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        finally:
+            await invalidate_on_sync_async()
+            _clear_freshness_cache()
 
 
 @app.get("/task/{task_id}")
@@ -1065,15 +1144,14 @@ async def generate_title(req: GenerateTitleRequest):
 
 @app.post("/task/{task_id}/cancel")
 async def cancel_task(task_id: str):
-    """Cancel a running task."""
+    """Request cancellation; admitted writers retain the slot until drained."""
     cancel_event = _cancel_events.get(task_id)
-    if not cancel_event:
+    task = _tasks.get(task_id)
+    if not cancel_event or not task or task.get("status") not in {"running", "cancelling"}:
         raise HTTPException(status_code=404, detail="Task not found or already completed")
     cancel_event.set()
-    task = _tasks.get(task_id)
-    if task:
-        task["status"] = "cancelled"
-    return {"status": "cancelled", "task_id": task_id}
+    task["status"] = "cancelling"
+    return {"status": "cancelling", "task_id": task_id}
 
 
 
@@ -1164,6 +1242,13 @@ def _unique_sorted_models(models: list[dict]) -> list[dict]:
     unique = {model["id"]: model for model in models}
     return sorted(unique.values(), key=lambda model: model["name"].lower())
 
+def _answer_metadata(payload: dict) -> dict:
+    return {key: payload.get(key) for key in (
+        "source_summary", "query_plan", "trace", "verification", "claim_ledger",
+        "evidence_pack", "timeline_events", "evidence", "current_state", "finalization", "mode",
+    )}
+
+
 @app.post("/query")
 async def query(req: QueryRequest):
     try:
@@ -1187,15 +1272,7 @@ async def query(req: QueryRequest):
                 entities=result.get("entities_found"),
                 confidence=result.get("confidence"),
                 follow_ups=result.get("follow_up_suggestions"),
-                metadata={
-                    "source_summary": result.get("source_summary"),
-                    "query_plan": result.get("query_plan"),
-                    "trace": result.get("trace"),
-                    "verification": result.get("verification"),
-                    "claim_ledger": result.get("claim_ledger"),
-                    "evidence_pack": result.get("evidence_pack"),
-                    "timeline_events": result.get("timeline_events"),
-                },
+                metadata=_answer_metadata(result),
             )
 
         return result
@@ -1246,20 +1323,14 @@ async def query_stream(req: QueryRequest):
                     final_entities = event.get("entities_found")
                     final_confidence = event.get("confidence")
                     final_follow_ups = event.get("follow_up_suggestions")
-                    final_metadata = {
-                        "source_summary": event.get("source_summary"),
-                        "query_plan": event.get("query_plan"),
-                        "trace": event.get("trace"),
-                        "verification": event.get("verification"),
-                        "claim_ledger": event.get("claim_ledger"),
-                        "evidence_pack": event.get("evidence_pack"),
-                        "timeline_events": event.get("timeline_events"),
-                    }
+                    final_metadata = _answer_metadata(event)
 
                 await queue.put(event)
 
                 if event.get("type") == "complete" and req.conversation_id:
-                    full_answer = final_answer or "".join(full_answer_chunks)
+                    full_answer = event.get("answer")
+                    if not isinstance(full_answer, str) or not event.get("finalization"):
+                        raise ValueError("Query completed without a finalized answer")
                     await conversations.add_message(
                         req.conversation_id, "assistant", full_answer,
                         sources=final_sources,
@@ -1300,9 +1371,25 @@ async def query_stream(req: QueryRequest):
 # --- Graph Browsing ---
 
 @app.get("/graph/search")
-async def graph_search(q: str, type: str = None, limit: int = 20):
-    results = await graph_store.search_nodes(q, node_type=type, limit=limit)
-    return {"query": q, "type": type, "results": results}
+async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0):
+    try:
+        page = await graph_store.search_nodes(q, node_type=type, limit=limit, offset=offset, include_page=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"query": q, "type": type, **page}
+
+
+@app.get("/documents")
+async def documents(q: str = "", doc_type: str = "", limit: int = 25,
+                    offset: int = 0, sort: str = "title", direction: str = "asc"):
+    """Browse the complete indexed Document set, with datastore pagination."""
+    try:
+        page = await graph_store.search_nodes(q, node_type="Document", limit=limit, offset=offset,
+                                             doc_type=doc_type, sort=sort, direction=direction,
+                                             include_page=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"query": q, "scope": "indexed_documents", **page}
 
 
 @app.get("/graph/node/{node_uuid}")
@@ -1333,13 +1420,18 @@ async def graph_initial(limit: int = 300):
 
 @app.post("/resolve-entities")
 async def resolve_entities():
-    """Scan all entities and merge duplicates."""
-    try:
-        report = await entity_resolver.resolve_all_entities()
-        return report
-    except Exception as e:
-        logger.error(f"Entity resolution failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    async with _graph_mutation("resolve-entities"):
+        """Scan all entities and merge duplicates."""
+        try:
+            report = await entity_resolver.resolve_all_entities()
+            return report
+        except Exception as e:
+            logger.error(f"Entity resolution failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            # A batch can mutate the graph before a later pair/metadata write fails.
+            await invalidate_on_sync_async()
+            _clear_freshness_cache()
 
 
 @app.get("/entity-review/candidates")
@@ -1400,37 +1492,45 @@ async def entity_review_steward_task(limit: int = 75):
 
 @app.post("/entity-review/ignore")
 async def entity_review_ignore(req: EntityDecisionRequest):
-    decision = await embeddings_store.add_entity_review_decision(
-        req.left_uuid, req.right_uuid, "ignore", req.note
-    )
+    try:
+        decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "ignore", req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "ignored", "decision": decision}
 
 
 @app.post("/entity-review/split")
 async def entity_review_split(req: EntityDecisionRequest):
-    decision = await embeddings_store.add_entity_review_decision(
-        req.left_uuid, req.right_uuid, "split", req.note
-    )
+    try:
+        decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "split", req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "split_requested", "decision": decision}
 
 
 @app.post("/entity-review/merge")
 async def entity_review_merge(req: EntityMergeRequest):
-    try:
-        merged = await graph_store.merge_entities(req.primary_uuid, req.duplicate_uuid)
-        await embeddings_store.add_entity_review_decision(
-            req.primary_uuid, req.duplicate_uuid, "merged", ""
-        )
-        asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
-        return {"status": "merged", "entity": merged}
-    except Exception as e:
-        logger.error("Entity merge failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    async with _graph_mutation("merge-entities"):
+        try:
+            merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid)
+            asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
+            return {"status": "merged", "entity": merged}
+        except EntityMergeProhibited as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Entity merge failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            await invalidate_on_sync_async()
+            _clear_freshness_cache()
 
 
 
 
-# --- Log Endpoints ---
+    # --- Log Endpoints ---
+
 
 @app.get("/logs")
 async def get_logs(limit: int = 100, level: str = None, since: str = None):

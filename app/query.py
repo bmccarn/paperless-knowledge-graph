@@ -4,6 +4,7 @@ import hashlib
 import re
 import asyncio
 import contextlib
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
 from typing import Any
@@ -21,37 +22,35 @@ from app.retry import retry_with_backoff
 from app.embeddings import chunk_text, embeddings_store
 from app.paperless import paperless_client
 from app.graph import graph_store
-from app.cache import query_cache, vector_cache, graph_cache, normalize_query_key
+from app.cache import (query_cache, vector_cache, graph_cache,
+    cache_get, cache_set, get_corpus_generation_async)
+from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, select_spans
+from app.timeline import validate_timeline
 from app.query_quality import (
-    compute_evidence_grade,
     current_state_summary,
     heuristic_plan,
     merge_agent_plan,
     normalize_mode,
     retrieval_queries,
-    sort_timeline_events,
-    timeline_fallback_events,
     trace_step,
 )
 from app.evidence import (
-    answer_needs_repair,
     build_evidence_pack,
-    claim_ledger_from_verification,
     extract_date_signals,
     exact_term_matches as evidence_exact_term_matches,
     exact_term_hits as evidence_exact_term_hits,
     format_evidence_pack_for_llm,
     infer_source_quality,
     is_high_stakes_query,
-    normalize_claim_ledger,
     query_terms as evidence_query_terms,
-    repair_queries_from_verification,
     structured_fact_count,
 )
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = "evidence-v15"
+QUERY_CACHE_VERSION = POLICY_VERSION
+_REQUEST_MODEL = ContextVar("query_model", default=None)
+_REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 
 
 class QueryEngine:
@@ -61,13 +60,12 @@ class QueryEngine:
             api_key=settings.litellm_api_key,
         )
         self.model = settings.gemini_model
-        self._model_override = None
 
     async def close(self):
         await self.client.close()
 
     def _active_model(self, model_override=None):
-        return model_override or self._model_override or self.model
+        return model_override or _REQUEST_MODEL.get() or self.model
 
     async def _llm_generate(self, prompt: str) -> str:
         try:
@@ -145,9 +143,9 @@ class QueryEngine:
         if not conversation_history:
             return ""
         lines = []
-        for msg in conversation_history[-6:]:
+        for msg in conversation_history:
             role = "User" if msg.get("role") == "user" else "Assistant"
-            lines.append(f"{role}: {msg.get('content', '')[:600]}")
+            lines.append(f"{role}: {msg.get('content', '')}")
         return "\n".join(lines)
 
     async def _build_query_plan(self, question: str, mode: str, conversation_history: list = None) -> tuple[dict, list[dict]]:
@@ -350,242 +348,59 @@ class QueryEngine:
             trace.append(trace_step("graph_expansion", "skipped", "No entity candidates found for graph expansion"))
         return context, trace
 
-    async def _extract_timeline_events(
-        self,
-        question: str,
-        context: dict,
-        sources: list[dict],
-        mode: str,
-        broad: bool = False,
-    ) -> tuple[list[dict], list[dict]]:
+    async def _extract_timeline_events(self, question, context, sources, mode, broad=False, evidence_pack=None):
         if normalize_mode(mode) != "timeline":
             return [], []
-        doc_context = self._format_doc_context(context, question=question, broad=broad)
-        graph_text = self._format_graph_context(context)
-        events = await strands_orchestrator.extract_timeline(question, f"{doc_context}\n{graph_text}")
-        if events:
-            events = sort_timeline_events(events)
-            return events[:30], [trace_step("timeline", "ok", f"Extracted and sorted {len(events)} timeline events with Strands")]
-        fallback = timeline_fallback_events(sources)
-        return fallback, [trace_step("timeline", "fallback", f"Used source-date fallback for {len(fallback)} timeline events")]
+        pack = evidence_pack or {}
+        spans = select_spans(question, [], evidence_spans(pack))
+        try:
+            async with asyncio.timeout(settings.answer_audit_timeout_seconds):
+                events = await strands_orchestrator.extract_timeline(question, json.dumps(spans, ensure_ascii=False))
+                accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans)
+            return accepted, [trace_step("timeline", "ok" if accepted else "needs_review",
+                                        f"{len(accepted)} source-validated events; {len(events) - len(accepted)} rejected")]
+        except (TimeoutError, Exception):
+            return [], [trace_step("timeline", "needs_review", "Timeline audit unavailable; no unverified events published")]
 
     async def _verify_repair_and_grade(
-        self,
-        question: str,
-        answer: str,
-        context: dict,
-        sources: list[dict],
-        plan: dict,
-        mode: str,
-        broad: bool = False,
-        progress_callback: Any | None = None,
-    ) -> tuple[str, dict, dict, list[dict], dict, dict, list[dict], dict]:
-        verification = None
-        trace = []
-        evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
+        self, question, answer, context, sources, plan, mode, broad=False, progress_callback=None,
+        evidence_pack=None, timeline_events=None,
+    ):
+        if evidence_pack is None:
+            evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
+        doc_ids = list({i["document_id"] for i in evidence_pack.get("items", []) if type(i.get("document_id")) is int})
+        flagged = await embeddings_store.get_open_feedback_document_ids(doc_ids)
+        for item in evidence_pack.get("items", []):
+            item["feedback_open"] = item.get("document_id") in flagged
+        if timeline_events is not None:
+            timeline_events[:] = [event for event in timeline_events if event.get("document_id") not in flagged]
+        final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
+                                      timeout_seconds=settings.answer_audit_timeout_seconds).finalize(
+            question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
+        verification = final["verification"]
+        verification["finalization"] = final["finalization"]
+        verification["current_state"] = final["current_state"]
+        references = [r for c in final["claim_ledger"]["claims"] for r in c["references"]]
+        references.extend(r for event in (timeline_events or []) for r in event.get("references", []))
+        for item in evidence_pack.get("items", []):
+            refs = [r for r in references if r["evidence_id"] == item["id"]]
+            item["support_spans"] = refs
+            if refs:
+                item["excerpt"] = "\n…\n".join(dict.fromkeys(r["quote"] for r in refs))
+        # Keep source titles and excerpts tied to validated source membership.
+        cited = list(dict.fromkeys(final["finalization"]["cited_document_ids"] +
+                                  [event["document_id"] for event in (timeline_events or [])]))
+        if cited:
+            sources = [{"document_id": doc_id, "title": next(r["source_title"] for r in references if r["document_id"] == doc_id),
+                        "excerpt": "\n…\n".join(dict.fromkeys(r["quote"] for r in references if r["document_id"] == doc_id))}
+                       for doc_id in cited]
+        trace = [trace_step("source_audit", "ok" if final["finalization"]["complete"] else "needs_review",
+                            final["finalization"]["disposition"], final["claim_ledger"]["summary"])]
+        return final["answer"], verification, final["evidence"], trace, final["claim_ledger"], evidence_pack, sources, context
 
-        async def emit(stage: str, **payload: Any) -> None:
-            if not progress_callback:
-                return
-            payload.setdefault("stage", stage)
-            payload.setdefault("answer", answer)
-            payload.setdefault("verification", verification or {})
-            payload.setdefault("trace", list(trace))
-            payload.setdefault("evidence_pack", evidence_pack)
-            payload.setdefault("sources", sources)
-            payload.setdefault("context", context)
-            await progress_callback(payload)
-
-        preliminary_evidence = compute_evidence_grade(
-            question,
-            plan,
-            sources,
-            context,
-            {"status": "checking", "unsupported_claims": [], "stale_or_conflicting_claims": []},
-            evidence_pack=evidence_pack,
-            claim_ledger={},
-        )
-        await emit("evidence_pack", evidence=preliminary_evidence)
-
-        if normalize_mode(mode) != "quick":
-            evidence_context = format_evidence_pack_for_llm(evidence_pack)
-            verification = await strands_orchestrator.verify_answer(
-                question,
-                answer,
-                sources,
-                evidence_context,
-                plan,
-            )
-            if verification:
-                unsupported = len(verification.get("unsupported_claims") or [])
-                stale = len(verification.get("stale_or_conflicting_claims") or [])
-                status = verification.get("status") or ("needs_review" if unsupported or stale else "verified")
-                trace.append(trace_step(
-                    "verifier",
-                    "ok" if status == "verified" else "needs_review",
-                    f"Verifier status: {status}",
-                    {"unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
-                ))
-                interim_evidence = compute_evidence_grade(
-                    question,
-                    plan,
-                    sources,
-                    context,
-                    verification,
-                    evidence_pack=evidence_pack,
-                    claim_ledger={},
-                )
-                await emit("verifier", evidence=interim_evidence)
-                repair_queries = repair_queries_from_verification(question, verification, limit=5)
-                if repair_queries and (unsupported or verification.get("missing_evidence")):
-                    repaired_context = context
-                    used = []
-                    for repair_query in repair_queries:
-                        extra_context = await self._retrieve(repair_query)
-                        repaired_context = self._merge_context(repaired_context, extra_context)
-                        used.append(repair_query)
-                    context = repaired_context
-                    sources = self._build_sources(context, question=question)
-                    evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
-                    evidence_context = format_evidence_pack_for_llm(evidence_pack)
-                    verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
-                    unsupported = len(verification.get("unsupported_claims") or [])
-                    stale = len(verification.get("stale_or_conflicting_claims") or [])
-                    trace.append(trace_step(
-                        "verification_retrieval_repair",
-                        "ok" if not unsupported and not stale else "needs_review",
-                        f"Ran {len(used)} focused follow-up searches for verifier gaps",
-                        {"queries": used, "unsupported_claims": unsupported, "stale_or_conflicting_claims": stale},
-                    ))
-                    interim_evidence = compute_evidence_grade(
-                        question,
-                        plan,
-                        sources,
-                        context,
-                        verification,
-                        evidence_pack=evidence_pack,
-                        claim_ledger={},
-                    )
-                    await emit("verification_retrieval_repair", evidence=interim_evidence)
-                if answer_needs_repair(verification):
-                    repaired = await strands_orchestrator.repair_answer(question, answer, evidence_context, verification)
-                    repaired_answer = (repaired or {}).get("answer") if isinstance(repaired, dict) else None
-                    if repaired_answer and repaired_answer.strip() and repaired_answer.strip() != answer.strip():
-                        answer = repaired_answer.strip()
-                        trace.append(trace_step(
-                            "answer_editor",
-                            "ok",
-                            "Rewrote answer to remove or qualify unsupported claims",
-                            {"notes": (repaired or {}).get("notes", [])[:4]},
-                        ))
-                        verification = await strands_orchestrator.verify_answer(question, answer, sources, evidence_context, plan)
-                        interim_evidence = compute_evidence_grade(
-                            question,
-                            plan,
-                            sources,
-                            context,
-                            verification,
-                            evidence_pack=evidence_pack,
-                            claim_ledger={},
-                        )
-                        await emit("answer_editor", answer=answer, evidence=interim_evidence)
-                    else:
-                        trace.append(trace_step("answer_editor", "skipped", "No answer repair returned"))
-                        answer = self._append_evidence_limits(answer, verification)
-                        interim_evidence = compute_evidence_grade(
-                            question,
-                            plan,
-                            sources,
-                            context,
-                            verification,
-                            evidence_pack=evidence_pack,
-                            claim_ledger={},
-                        )
-                        await emit("answer_editor", answer=answer, evidence=interim_evidence)
-            else:
-                verification = {
-                    "status": "not_run",
-                    "supported_claims": [],
-                    "unsupported_claims": [],
-                    "stale_or_conflicting_claims": [],
-                    "missing_evidence": [],
-                    "notes": ["Verifier unavailable; answer is retrieval-backed but not claim-audited."],
-                    "confidence_adjustment": -0.12,
-                }
-                trace.append(trace_step("verifier", "fallback", "Verifier unavailable; answer is retrieval-backed but not claim-audited"))
-                await emit("verifier", evidence=preliminary_evidence)
-
-        claim_ledger_raw = None
-        if normalize_mode(mode) != "quick":
-            claim_ledger_raw = await strands_orchestrator.extract_claim_ledger(
-                question,
-                answer,
-                format_evidence_pack_for_llm(evidence_pack),
-                verification,
-            )
-        claim_ledger = normalize_claim_ledger(claim_ledger_raw)
-        if not claim_ledger.get("claims") and verification:
-            claim_ledger = claim_ledger_from_verification(verification)
-        if claim_ledger.get("claims"):
-            trace.append(trace_step(
-                "claim_ledger",
-                "ok",
-                f"Audited {len(claim_ledger.get('claims', []))} answer claim(s)",
-                claim_ledger.get("summary"),
-            ))
-        else:
-            trace.append(trace_step("claim_ledger", "fallback", "Claim ledger unavailable or empty"))
-
-        evidence = compute_evidence_grade(
-            question,
-            plan,
-            sources,
-            context,
-            verification,
-            evidence_pack=evidence_pack,
-            claim_ledger=claim_ledger,
-        )
-        trace.append(trace_step(
-            "evidence_grade",
-            "ok",
-            f"{evidence['level']} trust score ({evidence['score']:.2f})",
-            {"reasons": evidence.get("reasons", []), "penalties": evidence.get("penalties", [])},
-        ))
-        await emit("evidence_grade", evidence=evidence, claim_ledger=claim_ledger)
-        return answer, verification or {}, evidence, trace, claim_ledger, evidence_pack, sources, context
-
-    def _append_evidence_limits(self, answer: str, verification: dict[str, Any]) -> str:
-        unsupported = verification.get("unsupported_claims") or []
-        stale = verification.get("stale_or_conflicting_claims") or []
-        missing = verification.get("missing_evidence") or []
-        if not unsupported and not stale and not missing:
-            return answer
-        lines = ["\n\nEvidence limits:"]
-        if unsupported:
-            lines.append("The verifier could not confirm these claim groups from the retrieved evidence:")
-            lines.extend(f"- {claim}" for claim in unsupported[:6])
-        if stale:
-            lines.append("The verifier found possible stale/conflicting claim groups:")
-            lines.extend(f"- {claim}" for claim in stale[:4])
-        if missing:
-            lines.append("Missing evidence to fully certify the answer:")
-            lines.extend(f"- {gap}" for gap in missing[:4])
-        return answer.rstrip() + "\n".join(lines)
-
-    def _blend_confidence(self, llm_confidence: float, evidence: dict, verification: dict) -> float:
-        evidence_score = float(evidence.get("score", 0.5))
-        adjustment = 0.0
-        try:
-            adjustment = float(verification.get("confidence_adjustment") or 0)
-        except Exception:
-            adjustment = 0.0
-        blended = (0.35 * float(llm_confidence or 0.5)) + (0.65 * evidence_score) + adjustment
-        status = verification.get("status") if isinstance(verification, dict) else None
-        if status == "checking":
-            blended = min(blended, 0.69)
-        elif status == "not_run":
-            blended = min(blended, 0.74)
-        return round(max(0.0, min(1.0, blended)), 3)
+    def _blend_confidence(self, llm_confidence, evidence, verification):
+        # Provider self-confidence cannot raise a failed source-audit verdict.
+        return float(evidence.get("score", 0.0))
 
     # ── Main query (non-streaming, backward compat) ─────────────────
 
@@ -623,22 +438,32 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             logger.warning(f"Query decomposition failed: {e}")
         return []
 
-    async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep") -> dict:
-        """Answer a question using mode-specific retrieval + synthesis."""
+    async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "strict") -> dict:
+        token = _REQUEST_MODEL.set(model_override or self.model)
+        generation = await get_corpus_generation_async()
+        generation_token = _REQUEST_GENERATION.set(generation)
+        try:
+            return await self._query(question, conversation_history, mode)
+        finally:
+            _REQUEST_MODEL.reset(token)
+            _REQUEST_GENERATION.reset(generation_token)
+
+    async def _query(self, question, conversation_history, mode):
         mode = self._normalize_mode(mode)
-        self._model_override = model_override
-        conv_suffix = ""
-        if conversation_history:
-            conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
-            conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(f"{QUERY_CACHE_VERSION}:{mode}:{question}{conv_suffix}")
-        cached = query_cache.get(cache_key)
+        evaluated_at = datetime.now(timezone.utc).date().isoformat()
+        identity = {"policy": QUERY_CACHE_VERSION, "mode": mode, "question": question,
+                    "history": conversation_history or [], "model": self._active_model(),
+                    "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at}
+        cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        cached = await cache_get(query_cache, cache_key)
         if cached is not None:
             cached["cached"] = True
             return cached
 
         is_broad = mode != "quick" and self._is_broad_query(question)
         plan, trace = await self._build_query_plan(question, mode, conversation_history)
+        plan["evaluated_at"] = evaluated_at
+        plan["conversation_context"] = self._conversation_context(conversation_history)
         if is_broad:
             plan["broad_query"] = True
             trace.append(trace_step("broad_query", "ok", "Broad query coverage enabled"))
@@ -657,7 +482,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         sources = self._build_sources(all_context, question=question)
         evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad)
+        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad, evidence_pack=evidence_pack)
         trace.extend(timeline_trace)
         final = await self._final_synthesis(
             question,
@@ -678,6 +503,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             plan,
             mode,
             broad=is_broad,
+            evidence_pack=evidence_pack,
+            timeline_events=timeline_events,
         )
         trace.extend(verify_trace)
         confidence = self._blend_confidence(final.get("confidence", first_pass.get("confidence", 0.5)), evidence, verification)
@@ -707,328 +534,55 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "follow_up_queries_used": planned_queries_used + gap_follow_ups,
             "iterations": 1 + len(planned_queries_used) + len(gap_follow_ups),
             "mode": mode,
-            "query_plan": plan,
+            "query_plan": {key: value for key, value in plan.items() if key != "conversation_context"},
             "trace": trace,
             "verification": verification,
             "evidence": evidence,
             "claim_ledger": claim_ledger,
             "evidence_pack": self._public_evidence_pack(evidence_pack),
-            "current_state": current_state_summary(plan, sources),
+            "current_state": verification["current_state"],
+            "finalization": verification["finalization"],
             "timeline_events": timeline_events,
             "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
             "cached": False,
         }
 
-        query_cache.set(cache_key, result)
+        generation_changed = await get_corpus_generation_async() != _REQUEST_GENERATION.get()
+        source_ids = [i["document_id"] for i in evidence_pack.get("items", []) if type(i.get("document_id")) is int]
+        incomplete = await embeddings_store.get_incomplete_document_ids(source_ids)
+        if generation_changed or incomplete:
+            # A completed audit of a changing/partially replaced snapshot is not
+            # a completed request. Rejected candidate text must not be published.
+            result["answer"] = "The document index changed or is awaiting repair. Please retry after indexing finishes so the answer can be checked against a consistent set of sources."
+            result["confidence"] = 0.0
+            result["timeline_events"] = []
+            result["finalization"].update(disposition="corpus_changed", complete=False, cited_document_ids=[],
+                answer_digest=hashlib.sha256(result["answer"].encode()).hexdigest())
+            result["verification"].update(status="corpus_changed", missing_evidence=["Stable completed source index required."])
+            result["evidence"].update(score=0.0, level="low", audit_status="corpus_changed")
+            result["source_summary"].update(trust_score=0.0, trust_level="low", verification_status="corpus_changed", audit_status="corpus_changed")
+        else:
+            await cache_set(query_cache, cache_key, result)
         return result
 
     # ── Streaming query (SSE) ───────────────────────────────────────
 
-    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "deep"):
-        """Stream query response via SSE events."""
-        mode = self._normalize_mode(mode)
-        self._model_override = model_override
-        conv_suffix = ""
-        if conversation_history:
-            conv_text = " ".join(m.get("content", "")[:50] for m in conversation_history[-4:])
-            conv_suffix = hashlib.md5(conv_text.encode()).hexdigest()[:8]
-        cache_key = normalize_query_key(f"{QUERY_CACHE_VERSION}:{mode}:{question}{conv_suffix}")
-        cached = query_cache.get(cache_key)
-        if cached is not None:
-            yield {"type": "answer_chunk", "content": cached["answer"]}
-            yield {"type": "complete", "sources": cached["sources"],
-                   "source_summary": cached.get("source_summary", {}),
-                   "entities_found": cached.get("entities_found", []),
-                   "confidence": cached.get("confidence", 0.7),
-                   "follow_up_suggestions": cached.get("follow_up_suggestions", []),
-                   "query_plan": cached.get("query_plan"),
-                   "trace": cached.get("trace", []),
-                   "verification": cached.get("verification", {}),
-                   "evidence": cached.get("evidence", {}),
-                   "claim_ledger": cached.get("claim_ledger", {}),
-                   "evidence_pack": cached.get("evidence_pack", {}),
-                   "current_state": cached.get("current_state", {}),
-                   "timeline_events": cached.get("timeline_events", []),
-                   "cached": True}
-            return
-
-        yield {"type": "status", "message": "Planning query workflow..."}
-        is_broad = mode != "quick" and self._is_broad_query(question)
-        plan, trace = await self._build_query_plan(question, mode, conversation_history)
-        if is_broad:
-            plan["broad_query"] = True
-            trace.append(trace_step("broad_query", "ok", "Broad query coverage enabled"))
-        for step in trace:
-            yield {"type": "trace", "step": step}
-
-        strategy_label = "single-pass search" if mode == "quick" else "parallel planned searches"
-        if is_broad:
-            strategy_label += " plus broad graph coverage"
-        yield {"type": "status", "message": f"Running {strategy_label}..."}
-        all_context, planned_queries_used, latest_check_used, retrieval_trace = await self._execute_retrieval_plan(question, plan, mode)
-        trace.extend(retrieval_trace)
-        for step in retrieval_trace:
-            yield {"type": "trace", "step": step}
-
-        yield {"type": "status", "message": "Reviewing evidence gaps..."}
-        first_pass, all_context, gap_follow_ups, gap_trace = await self._gap_review(
-            question, all_context, conversation_history, mode, broad=is_broad
-        )
-        trace.extend(gap_trace)
-        for step in gap_trace:
-            yield {"type": "trace", "step": step}
-
-        entities_found = first_pass.get("entities_found", []) or all_context.get("entity_names", [])
-        yield {"type": "status", "message": "Expanding related graph context..."}
-        all_context, graph_trace = await self._expand_planned_graph(all_context, entities_found)
-        trace.extend(graph_trace)
-        for step in graph_trace:
-            yield {"type": "trace", "step": step}
-
-        sources = self._build_sources(all_context, question=question)
-        evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        if mode == "timeline":
-            yield {"type": "status", "message": "Extracting and sorting timeline events..."}
-        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad)
-        trace.extend(timeline_trace)
-        for step in timeline_trace:
-            yield {"type": "trace", "step": step}
-
-        yield {"type": "status", "message": "Synthesizing answer from ranked evidence..."}
-
-        prompt = self._build_final_prompt(
-            question,
-            mode,
-            self._format_doc_context(all_context, question=question, broad=is_broad),
-            self._format_graph_context(all_context),
-            first_pass.get("draft_answer", ""),
-            conversation_history,
-            plan=plan,
-            timeline_events=timeline_events,
-            evidence_pack=evidence_pack,
-        )
-
-        answer_chunks = []
-        async for chunk in self._llm_generate_stream(prompt):
-            answer_chunks.append(chunk)
-            yield {"type": "answer_chunk", "content": chunk}
-
-        full_answer = "".join(answer_chunks)
-        preliminary_verification = {
-            "status": "checking",
-            "supported_claims": [],
-            "unsupported_claims": [],
-            "stale_or_conflicting_claims": [],
-            "missing_evidence": [],
-            "notes": ["Source support verification is still running."],
-        }
-        preliminary_evidence = compute_evidence_grade(
-            question,
-            plan,
-            sources,
-            all_context,
-            preliminary_verification,
-            evidence_pack=evidence_pack,
-            claim_ledger={},
-        )
-        yield {"type": "answer_done",
-               "answer": full_answer,
-               "sources": sources,
-               "source_summary": self._build_source_summary(
-                   all_context,
-                   latest_check_used,
-                   question=question,
-                   plan=plan,
-                   evidence=preliminary_evidence,
-                   verification=preliminary_verification,
-                   evidence_pack=evidence_pack,
-                   timeline_events=timeline_events,
-               ),
-               "entities_found": [
-                   {"name": e} if isinstance(e, str) else e
-                   for e in entities_found[:30]
-               ],
-               "query_plan": plan,
-               "trace": trace,
-               "evidence_pack": self._public_evidence_pack(evidence_pack),
-               "current_state": current_state_summary(plan, sources),
-               "timeline_events": timeline_events}
-
-        yield {"type": "status", "message": "Verifying source support and trust score..."}
-        base_trace = list(trace)
-        progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-        async def progress_callback(payload: dict[str, Any]) -> None:
-            await progress_queue.put(payload)
-
-        def metadata_update_event(payload: dict[str, Any]) -> dict[str, Any]:
-            event_context = payload.get("context") or all_context
-            event_sources = payload.get("sources") or sources
-            event_evidence_pack = payload.get("evidence_pack") or evidence_pack
-            event_verification = payload.get("verification") or {}
-            event_evidence = payload.get("evidence") or preliminary_evidence
-            event_claim_ledger = payload.get("claim_ledger") or {}
-            event_trace = base_trace + list(payload.get("trace") or [])
-            return {
-                "type": "metadata_update",
-                "stage": payload.get("stage"),
-                "sources": event_sources,
-                "source_summary": self._build_source_summary(
-                    event_context,
-                    latest_check_used,
-                    question=question,
-                    plan=plan,
-                    evidence=event_evidence,
-                    verification=event_verification,
-                    timeline_events=timeline_events,
-                    evidence_pack=event_evidence_pack,
-                    claim_ledger=event_claim_ledger,
-                ),
-                "trace": event_trace,
-                "verification": event_verification,
-                "evidence": event_evidence,
-                "claim_ledger": event_claim_ledger,
-                "evidence_pack": self._public_evidence_pack(event_evidence_pack),
-            }
-
-        def fallback_verification(reason: str):
-            fallback_verification_result = {
-                "status": "not_run",
-                "supported_claims": [],
-                "unsupported_claims": [],
-                "stale_or_conflicting_claims": [],
-                "missing_evidence": [],
-                "notes": [
-                    reason,
-                    "Answer is retrieval-backed, but the post-answer claim audit did not finish.",
-                ],
-                "confidence_adjustment": -0.12,
-            }
-            fallback_evidence = compute_evidence_grade(
-                question,
-                plan,
-                sources,
-                all_context,
-                fallback_verification_result,
-                evidence_pack=evidence_pack,
-                claim_ledger={},
-            )
-            fallback_trace = [trace_step("verifier", "fallback", reason)]
-            return (
-                full_answer,
-                fallback_verification_result,
-                fallback_evidence,
-                fallback_trace,
-                {},
-                evidence_pack,
-                sources,
-                all_context,
-            )
-
-        verification_task = asyncio.create_task(self._verify_repair_and_grade(
-            question,
-            full_answer,
-            all_context,
-            sources,
-            plan,
-            mode,
-            broad=is_broad,
-            progress_callback=progress_callback,
-        ))
-        loop = asyncio.get_running_loop()
-        verification_timeout = max(1.0, float(settings.stream_verification_timeout_seconds or 60))
-        verification_deadline = loop.time() + verification_timeout
-        verification_timed_out = False
-        while not verification_task.done():
-            remaining = verification_deadline - loop.time()
-            if remaining <= 0:
-                verification_timed_out = True
-                verification_task.cancel()
+    async def query_stream(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "strict"):
+        """Progress may stream; factual prose is delivered only at the acceptance boundary."""
+        yield {"type": "status", "message": "Retrieving source evidence and auditing the complete answer…"}
+        task = asyncio.create_task(self.query(question, conversation_history, model_override, mode))
+        try:
+            while not task.done():
+                done, _ = await asyncio.wait({task}, timeout=10)
+                if not done:
+                    yield {"type": "status", "message": "Source checks are still running…"}
+            result = await task
+            yield {"type": "complete", **result}
+        finally:
+            if not task.done():
+                task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    await verification_task
-                break
-            try:
-                payload = await asyncio.wait_for(progress_queue.get(), timeout=min(0.5, remaining))
-            except asyncio.TimeoutError:
-                continue
-            yield metadata_update_event(payload)
-        while not progress_queue.empty():
-            yield metadata_update_event(progress_queue.get_nowait())
-
-        if verification_timed_out:
-            repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = fallback_verification(
-                f"Verifier exceeded {verification_timeout:.0f}s stream budget; returning retrieval-backed answer."
-            )
-        else:
-            try:
-                repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await verification_task
-            except Exception as exc:
-                logger.warning("Streaming verification failed; returning retrieval-backed answer: %s", exc, exc_info=True)
-                repaired_answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = fallback_verification(
-                    "Verifier failed; returning retrieval-backed answer."
-                )
-        if repaired_answer != full_answer:
-            full_answer = repaired_answer
-            yield {"type": "answer_replace", "content": full_answer}
-        trace.extend(verify_trace)
-        for step in verify_trace:
-            yield {"type": "trace", "step": step}
-
-        confidence = self._blend_confidence(first_pass.get("confidence", 0.7), evidence, verification)
-        source_summary = self._build_source_summary(
-            all_context,
-            latest_check_used,
-            question=question,
-            plan=plan,
-            evidence=evidence,
-            verification=verification,
-            timeline_events=timeline_events,
-            evidence_pack=evidence_pack,
-            claim_ledger=claim_ledger,
-        )
-
-        result = {
-            "question": question,
-            "answer": full_answer,
-            "confidence": confidence,
-            "sources": sources,
-            "source_summary": source_summary,
-            "entities_found": [
-                {"name": e} if isinstance(e, str) else e
-                for e in entities_found[:30]
-            ],
-            "graph_nodes_used": len(all_context.get("graph_nodes", [])),
-            "follow_up_queries_used": planned_queries_used + gap_follow_ups,
-            "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
-            "iterations": 1 + len(planned_queries_used) + len(gap_follow_ups),
-            "mode": mode,
-            "query_plan": plan,
-            "trace": trace,
-            "verification": verification,
-            "evidence": evidence,
-            "claim_ledger": claim_ledger,
-            "evidence_pack": self._public_evidence_pack(evidence_pack),
-            "current_state": current_state_summary(plan, sources),
-            "timeline_events": timeline_events,
-            "cached": False,
-        }
-        query_cache.set(cache_key, result)
-
-        yield {"type": "complete", "sources": sources,
-               "source_summary": source_summary,
-               "entities_found": result["entities_found"],
-               "confidence": result.get("confidence", 0.7),
-               "follow_up_suggestions": first_pass.get("follow_up_suggestions", []),
-               "query_plan": plan,
-               "trace": trace,
-               "verification": verification,
-               "evidence": evidence,
-               "claim_ledger": claim_ledger,
-               "evidence_pack": self._public_evidence_pack(evidence_pack),
-               "current_state": result["current_state"],
-               "timeline_events": timeline_events,
-               "answer": full_answer,
-               "cached": False}
+                    await task
 
     # ── Retrieval (TUNED: wider net) ────────────────────────────────
 
@@ -1044,13 +598,13 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         graph_nodes = []
         seen_uuids = set()
         for name in entity_names:
-            cache_key = f"gs:{hashlib.md5(name.encode()).hexdigest()}"
-            cached = graph_cache.get(cache_key)
+            cache_key = f"{_REQUEST_GENERATION.get()}:gs:{hashlib.md5(name.encode()).hexdigest()}"
+            cached = await cache_get(graph_cache, cache_key)
             if cached is not None:
                 results = cached
             else:
                 results = await graph_store.search_nodes(name, limit=8)
-                graph_cache.set(cache_key, results)
+                await cache_set(graph_cache, cache_key, results)
             for r in results:
                 uid = r.get("properties", {}).get("uuid", "")
                 if uid and uid not in seen_uuids:
@@ -1079,13 +633,13 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         subgraph = {}
         if all_uuids:
             try:
-                sg_key = f"sg:{hashlib.md5(':'.join(sorted(all_uuids[:15])).encode()).hexdigest()}"
-                cached = graph_cache.get(sg_key)
+                sg_key = f"{_REQUEST_GENERATION.get()}:sg:{hashlib.md5(':'.join(sorted(all_uuids[:15])).encode()).hexdigest()}"
+                cached = await cache_get(graph_cache, sg_key)
                 if cached is not None:
                     subgraph = cached
                 else:
                     subgraph = await graph_store.get_subgraph(all_uuids[:15], depth=3)
-                    graph_cache.set(sg_key, subgraph)
+                    await cache_set(graph_cache, sg_key, subgraph)
             except Exception as e:
                 logger.warning(f"Subgraph traversal failed: {e}")
 
@@ -1276,9 +830,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         conv_context = ""
         if conversation_history:
             conv_lines = []
-            for msg in conversation_history[-6:]:  # Last 6 messages (3 Q&A pairs)
+            for msg in conversation_history:
                 role = "User" if msg.get("role") == "user" else "Assistant"
-                conv_lines.append(f"{role}: {msg['content'][:500]}")
+                conv_lines.append(f"{role}: {msg['content']}")
             newline = "\n"
             conv_context = f"""\n\nPrevious conversation context:\n{newline.join(conv_lines)}\n"""
 
@@ -1381,9 +935,9 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         conv_section = ""
         if conversation_history:
             conv_lines = []
-            for msg in conversation_history[-6:]:
+            for msg in conversation_history:
                 role = "User" if msg.get("role") == "user" else "Assistant"
-                conv_lines.append(f"{role}: {msg['content'][:800]}")
+                conv_lines.append(f"{role}: {msg['content']}")
             newline = "\n"
             conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
 
@@ -1438,9 +992,8 @@ TEMPORAL AWARENESS — CRITICAL:
 - For addresses: distinguish between current residence and previous addresses. Do not list bills from a previous address as current obligations unless there's evidence of ongoing service.
 - When two policies/services of the same type overlap, determine which is the ACTIVE one based on effective dates and mark the other as superseded.
 - Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
-- Today's date for reference: use the most recent document dates as a proxy for "now".
-- Cite sources using document TITLES: (Source: "Document Title")
-- If no title available, use: (Document 305)
+- Evaluation date (UTC): {plan.get("evaluated_at")}. A recent document date does not establish current status.
+- Write facts without inline citations or links; the source audit attaches authoritative citations after validation.
 - Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
 - If information conflicts between documents, note BOTH, explain which is more current based on dates, and clearly label the outdated one as PREVIOUS/EXPIRED/SUPERSEDED
@@ -1455,7 +1008,7 @@ TEMPORAL AWARENESS — CRITICAL:
 	{doc_context}
 	{graph_text}
 
-	Provide your comprehensive, exhaustive answer with inline citations:"""
+	Provide a focused answer grounded in the supplied source text:"""
 
     async def _final_synthesis(
         self,
@@ -1631,13 +1184,18 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 logger.warning("Evidence neighbor chunk expansion failed: %s", e)
         selected = self._rank_evidence_chunks(selected, question, sources)
 
-        return build_evidence_pack(
+        pack = build_evidence_pack(
             question=question,
             plan=plan,
             chunks=selected,
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
+        flagged = await embeddings_store.get_open_feedback_document_ids(
+            list({item["document_id"] for item in pack["items"] if type(item.get("document_id")) is int}))
+        for item in pack["items"]:
+            item["feedback_open"] = item.get("document_id") in flagged
+        return pack
 
     async def _expand_source_documents(
         self,
@@ -1894,14 +1452,14 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         claim_ledger = claim_ledger or {}
         supporting_dates = self._supporting_evidence_dates(evidence_pack, question)
         latest_supporting_date = max(supporting_dates) if supporting_dates else None
-        current = current_state_summary(plan, sources)
+        current = verification.get("current_state") or current_state_summary(plan, sources)
         return {
             "latest_source_date": latest_supporting_date or latest_retrieved_date,
             "latest_retrieved_source_date": latest_retrieved_date,
             "latest_supporting_source_date": latest_supporting_date,
             "latest_check_used": latest_check_used,
             "source_count": len(sources),
-            "newer_docs_may_exist": not latest_check_used,
+            "newer_docs_may_exist": True,
             "trust_score": evidence.get("score"),
             "trust_level": evidence.get("level"),
             "trust_reasons": evidence.get("reasons", []),
@@ -1955,28 +1513,21 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return {term for term, count in counts.items() if count <= max_count}
 
     def _normalize_summary_date(self, value: str) -> str | None:
-        iso_match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", value)
-        if iso_match:
-            return "-".join(iso_match.groups())
-        slash_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", value)
-        if slash_match:
-            month, day, year = slash_match.groups()
-            return f"{year}-{int(month):02d}-{int(day):02d}"
-        long_match = re.search(r"\b([A-Z][a-z]+) (\d{1,2}), (20\d{2})\b", value)
-        if long_match:
-            month_name, day, year = long_match.groups()
+        parsed = parse_date(value)
+        if parsed:
+            return parsed[0]
+        for pattern in ("%m/%d/%Y", "%B %d, %Y"):
             try:
-                month = datetime.strptime(month_name, "%B").month
+                return datetime.strptime(value, pattern).date().isoformat()
             except ValueError:
-                return None
-            return f"{year}-{month:02d}-{int(day):02d}"
+                continue
         return None
 
     def _public_evidence_pack(self, evidence_pack: dict | None) -> dict:
         """Return UI-safe evidence metadata without sending full chunk bodies."""
         evidence_pack = evidence_pack or {}
         items = []
-        for item in (evidence_pack.get("items") or [])[:30]:
+        for item in (evidence_pack.get("items") or []):
             items.append({
                 "id": item.get("id"),
                 "document_id": item.get("document_id"),
@@ -1988,6 +1539,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "structured_fact_count": item.get("structured_fact_count"),
                 "exact_term_hits": item.get("exact_term_hits"),
                 "excerpt": item.get("excerpt"),
+                "support_spans": item.get("support_spans", []),
+                "feedback_open": item.get("feedback_open", False),
             })
         return {
             "coverage": evidence_pack.get("coverage") or {},
@@ -2020,12 +1573,12 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
     # ── Existing helpers ────────────────────────────────────────────
 
     async def _cached_vector_search(self, query: str, limit: int = 20) -> list[dict]:
-        cache_key = f"vs:{hashlib.md5(query.encode()).hexdigest()}:{limit}"
-        cached = vector_cache.get(cache_key)
+        cache_key = f"{_REQUEST_GENERATION.get()}:vs:{hashlib.md5(query.encode()).hexdigest()}:{limit}"
+        cached = await cache_get(vector_cache, cache_key)
         if cached is not None:
             return cached
         results = await embeddings_store.vector_search(query, limit=limit)
-        vector_cache.set(cache_key, results)
+        await cache_set(vector_cache, cache_key, results)
         return results
 
     def _diversify_chunks(self, ranked_chunks: list[dict], limit: int = 40, max_per_doc: int = 2) -> list[dict]:

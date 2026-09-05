@@ -1,0 +1,14 @@
+2026-09-04 17:23:29,106 app.main INFO Starting up...
+2026-09-04 17:23:29,187 app.graph INFO Graph store initialized
+2026-09-04 17:23:29,226 app.embeddings INFO Embeddings store initialized (exact search default, entity table, pg_trgm)
+2026-09-04 17:23:29,241 app.conversations INFO Conversation tables initialized
+2026-09-04 17:23:29,241 app.main INFO Startup complete
+2026-09-04 17:23:29,242 app.main INFO Entity steward periodic loop disabled
+2026-09-04 17:23:29,246 httpx INFO HTTP Request: GET http://local-test/documents?limit=2 "HTTP/1.1 200 OK"
+2026-09-04 17:23:29,249 httpx INFO HTTP Request: GET http://local-test/graph/search?q=__no_synthetic_match__ "HTTP/1.1 200 OK"
+2026-09-04 17:23:29,271 httpx INFO HTTP Request: GET http://local-test/graph/initial?limit=2 "HTTP/1.1 200 OK"
+2026-09-04 17:23:29,271 app.main INFO Shutting down...
+/documents?limit=2 200
+/graph/search?q=__no_synthetic_match__ 200
+/graph/initial?limit=2 200
+ACTUAL_DATASTORE_STARTUP_AND_SHUTDOWN_OK

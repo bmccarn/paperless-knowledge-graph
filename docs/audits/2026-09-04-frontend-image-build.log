@@ -1,0 +1,110 @@
+#0 building with "orbstack" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 733B done
+#1 DONE 0.0s
+
+#2 [auth] library/node:pull token for registry-1.docker.io
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:24-alpine
+#3 DONE 0.4s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 96B done
+#4 DONE 0.0s
+
+#5 [deps 1/4] FROM docker.io/library/node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+#5 resolve docker.io/library/node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf 0.0s done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 237.49kB 0.0s done
+#6 DONE 0.0s
+
+#7 [deps 2/4] WORKDIR /app
+#7 CACHED
+
+#8 [deps 3/4] COPY package.json package-lock.json ./
+#8 CACHED
+
+#9 [deps 4/4] RUN npm ci
+#9 CACHED
+
+#10 [builder 3/5] COPY --from=deps /app/node_modules ./node_modules
+#10 CACHED
+
+#11 [builder 4/5] COPY . .
+#11 DONE 0.1s
+
+#12 [builder 5/5] RUN npm run build
+#12 1.045 
+#12 1.045 > frontend@0.1.0 build
+#12 1.045 > next build
+#12 1.045 
+#12 1.890 ▲ Next.js 16.3.4 (Turbopack)
+#12 2.135 ✓ Running next.config.ts took 244ms
+#12 2.154 
+#12 2.202   Creating an optimized production build ...
+#12 9.282 ✓ Compiled successfully in 6.8s
+#12 9.287   Running TypeScript ...
+#12 14.47   Finished TypeScript in 5.2s ...
+#12 14.48   Collecting page data using 14 workers ...
+#12 15.73   Generating static pages using 14 workers (0/10) ...
+#12 16.71   Generating static pages using 14 workers (2/10) 
+#12 16.72   Generating static pages using 14 workers (4/10) 
+#12 16.72   Generating static pages using 14 workers (7/10) 
+#12 16.79 ✓ Generating static pages using 14 workers (10/10) in 1056ms
+#12 16.80   Finalizing page optimization ...
+#12 16.94 
+#12 16.94 Route (app)
+#12 16.94 ┌ ○ /
+#12 16.94 ├ ○ /_not-found
+#12 16.94 ├ ƒ /api/[...path]
+#12 16.94 ├ ƒ /api/query/stream
+#12 16.94 ├ ○ /debug
+#12 16.94 ├ ○ /documents
+#12 16.94 ├ ƒ /documents/[docId]
+#12 16.94 ├ ○ /entities/review
+#12 16.94 ├ ○ /graph
+#12 16.94 ├ ○ /hubs
+#12 16.94 └ ○ /query
+#12 16.94 
+#12 16.94 
+#12 16.94 ○  (Static)   prerendered as static content
+#12 16.94 ƒ  (Dynamic)  server-rendered on demand
+#12 16.94 
+#12 16.98 npm notice
+#12 16.98 npm notice New major version of npm available! 11.19.0 -> 12.0.2
+#12 16.98 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+#12 16.98 npm notice To update run: npm install -g npm@12.0.2
+#12 16.98 npm notice
+#12 DONE 17.1s
+
+#13 [runner 3/7] RUN addgroup --system --gid 1001 nodejs
+#13 CACHED
+
+#14 [runner 4/7] RUN adduser --system --uid 1001 nextjs
+#14 CACHED
+
+#15 [runner 5/7] COPY --from=builder /app/public ./public
+#15 CACHED
+
+#16 [runner 6/7] COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+#16 DONE 0.1s
+
+#17 [runner 7/7] COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+#17 DONE 0.1s
+
+#18 exporting to image
+#18 exporting layers
+#18 exporting layers 0.8s done
+#18 exporting manifest sha256:5506de53b34ade16e0b3af3e6f582fbf1f50c43c3d6033e126b83698e1c4b37d
+#18 exporting manifest sha256:5506de53b34ade16e0b3af3e6f582fbf1f50c43c3d6033e126b83698e1c4b37d 0.0s done
+#18 exporting config sha256:77899e73502f6f988a907509967daaf4ecf94a26293efcbc3a2315616f381720 0.0s done
+#18 exporting attestation manifest sha256:8d5da3b0633130dd6677ec4d37f30dba586a1962f8aaf647455534c5b18ca33a 0.0s done
+#18 exporting manifest list sha256:f8641dd701ea40b40e8479031833f6e10a1a40343f957488273994e28b537c03 0.0s done
+#18 naming to docker.io/library/paperless-frontend-audit:2026-09-04 done
+#18 DONE 0.9s
+
+View build details: docker-desktop://dashboard/build/orbstack/orbstack/149camli5n9wzwv8d7k79i08l

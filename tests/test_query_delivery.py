@@ -95,6 +95,36 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("important subject at the end", contexts[0])
         self.assertNotIn("conversation_context", result["query_plan"])
 
+    async def test_long_history_is_bounded_for_planning_synthesis_and_audit(self):
+        history = [{"role": "user", "content": f"old-turn-{i} " + "detail " * 3000}
+                   for i in range(40)]
+        history[-1]["content"] += "latest follow-up subject"
+        original = copy.deepcopy(history)
+        contexts = []
+        class Auditor(SupportedAuditor):
+            async def audit_answer_units(self, question, units, spans, plan):
+                contexts.append(plan["conversation_context"])
+                return await super().audit_answer_units(question, units, spans, plan)
+        with patch("app.query.strands_orchestrator", Auditor()):
+            await self.engine.query("Recorded premium?", history)
+        engine = object.__new__(QueryEngine)
+        planner = AsyncMock(return_value=None)
+        generation = AsyncMock(return_value={"draft_answer": "Recorded premium."})
+        with patch("app.query.strands_orchestrator.plan_query", planner, create=True), \
+             patch("app.query.strands_orchestrator.status", {}, create=True), \
+             patch.object(engine, "_llm_json", generation):
+            await engine._build_query_plan("Recorded premium?", "strict", history)
+            await engine._synthesize_with_gaps("Recorded premium?", {}, history)
+        contexts.append(planner.call_args.kwargs["conversation_context"])
+        contexts.append(generation.call_args.args[0])
+        contexts.append(engine._build_final_prompt("Recorded premium?", "strict", "", "", "",
+                                                   history, plan={}))
+        for context in contexts:
+            self.assertLess(len(context), 20_000)
+            self.assertIn("latest follow-up subject", context)
+            self.assertNotIn("old-turn-0 ", context)
+        self.assertEqual(history, original)
+
     async def test_inflight_mutation_or_incomplete_replacement_cannot_finalize(self):
         task = asyncio.create_task(self.engine.query("Recorded premium?"))
         await asyncio.sleep(0.005)

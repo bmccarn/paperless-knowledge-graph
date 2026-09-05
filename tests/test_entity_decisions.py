@@ -429,6 +429,34 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix DETACH DELETE n", prefix=self.prefix)
         await self.driver.close()
 
+    async def test_bulk_resolution_merges_same_source_duplicates_without_crossing_split(self):
+        for kind, name in (("Person", "John Smith"), ("Organization", "Example Company")):
+            with self.subTest(kind=kind):
+                async with self.driver.session() as session:
+                    await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix DETACH DELETE n",
+                                      prefix=self.prefix)
+                    for node_uuid, documents in ((self.keep, [11]), (self.remove, [22]), (self.org, [11])):
+                        await session.run(
+                            f"CREATE (n:{kind} {{uuid:$uuid, name:$name, entity_type:$kind, source_doc_ids:$docs}})",
+                            uuid=node_uuid, name=name, kind=kind, docs=documents)
+                left, right, duplicate = self.keep, self.remove, self.org
+                decisions = MemoryDecisions()
+                resolver = resolver_module.EntityResolver()
+                with patch.object(resolver_module, "graph_store", self.store), \
+                     patch.object(resolver_module, "embeddings_store", decisions):
+                    await resolver.record_decision(left, right, "split")
+                    report = await resolver.resolve_all_entities()
+                    self.assertEqual(report["errors"], [])
+                    survivors = [node for node in (
+                        await self.store.get_node(left), await self.store.get_node(duplicate)) if node]
+                    self.assertEqual(len(survivors), 1, report)
+                    self.assertEqual(survivors[0]["properties"]["source_doc_ids"], [11])
+                    other = await self.store.get_node(right)
+                    assert other is not None
+                    self.assertEqual(other["properties"]["source_doc_ids"], [22])
+                    with self.assertRaises(resolver_module.EntityMergeProhibited):
+                        await resolver.merge_entities(survivors[0]["properties"]["uuid"], right)
+
     async def test_merge_preserves_aliases_and_each_documents_relationship_support(self):
         merged = await self.store.merge_entities(self.keep, self.remove)
         self.assertEqual(set(merged["properties"]["aliases"]), {"First", "Second", "John Smyth"})

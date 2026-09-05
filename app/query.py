@@ -48,7 +48,8 @@ from app.evidence import (
 from app.strands_orchestrator import strands_orchestrator
 
 logger = logging.getLogger(__name__)
-QUERY_CACHE_VERSION = POLICY_VERSION
+QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
+CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 _REQUEST_MODEL = ContextVar("query_model", default=None)
 _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 
@@ -140,13 +141,25 @@ class QueryEngine:
     # ── Orchestration ─────────────────────────────────────────────────
 
     def _conversation_context(self, conversation_history: list = None) -> str:
-        if not conversation_history:
-            return ""
+        """Keep recent follow-up context within a fixed model-input budget."""
+        remaining = CONVERSATION_CONTEXT_MAX_CHARS
         lines = []
-        for msg in conversation_history:
+        for msg in reversed((conversation_history or [])[-10:]):
             role = "User" if msg.get("role") == "user" else "Assistant"
-            lines.append(f"{role}: {msg.get('content', '')}")
-        return "\n".join(lines)
+            prefix = f"{role}: "
+            content = msg.get("content", "")
+            if len(prefix) + len(content) > remaining:
+                prefix += "[earlier content omitted] "
+                available = remaining - len(prefix)
+                if available <= 0:
+                    break
+                content = content[-available:]
+            line = prefix + content
+            lines.append(line)
+            remaining -= len(line) + 1
+            if remaining <= 0:
+                break
+        return "\n".join(reversed(lines))
 
     async def _build_query_plan(self, question: str, mode: str, conversation_history: list = None) -> tuple[dict, list[dict]]:
         mode = normalize_mode(mode)
@@ -837,14 +850,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         doc_context = self._format_doc_context(context, question=question)
         graph_text = self._format_graph_context(context)
 
-        conv_context = ""
-        if conversation_history:
-            conv_lines = []
-            for msg in conversation_history:
-                role = "User" if msg.get("role") == "user" else "Assistant"
-                conv_lines.append(f"{role}: {msg['content']}")
-            newline = "\n"
-            conv_context = f"""\n\nPrevious conversation context:\n{newline.join(conv_lines)}\n"""
+        history_context = self._conversation_context(conversation_history)
+        conv_context = f"\n\nPrevious conversation context:\n{history_context}\n" if history_context else ""
 
         prompt = f"""You are a knowledge assistant analyzing personal documents belonging to {_owner_name()}.
 {conv_context}
@@ -942,14 +949,11 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         if draft_answer:
             draft_section = f"\n\nDraft answer from initial analysis:\n{draft_answer}\n"
 
-        conv_section = ""
-        if conversation_history:
-            conv_lines = []
-            for msg in conversation_history:
-                role = "User" if msg.get("role") == "user" else "Assistant"
-                conv_lines.append(f"{role}: {msg['content']}")
-            newline = "\n"
-            conv_section = f"\n\nPrevious conversation:\n{newline.join(conv_lines)}\n\nUse the conversation above to understand context for follow-up questions.\n"
+        history_context = self._conversation_context(conversation_history)
+        conv_section = (
+            f"\n\nPrevious conversation:\n{history_context}\n\n"
+            "Use the conversation above to understand context for follow-up questions.\n"
+        ) if history_context else ""
 
         mode_instruction = {
             "quick": "Answer concisely. Use the strongest available sources and avoid unnecessary expansion.",

@@ -285,8 +285,8 @@ async def add_message(
         }
 
 
-async def get_conversation_history(conv_id: str, limit: int | None = None) -> list[dict]:
-    """Get complete context by default; an explicit limit selects recent messages."""
+async def get_conversation_history(conv_id: str, limit: int | None = 10) -> list[dict]:
+    """Get recent model context; full saved conversations use get_conversation."""
     async with _pool.acquire() as conn:
         msgs = await conn.fetch("""
             SELECT role, content FROM conversation_messages

@@ -38,25 +38,25 @@
 #11 DONE 0.1s
 
 #12 [builder 5/5] RUN npm run build
-#12 1.045 
+#12 1.045
 #12 1.045 > frontend@0.1.0 build
 #12 1.045 > next build
-#12 1.045 
+#12 1.045
 #12 1.890 ▲ Next.js 16.3.4 (Turbopack)
 #12 2.135 ✓ Running next.config.ts took 244ms
-#12 2.154 
+#12 2.154
 #12 2.202   Creating an optimized production build ...
 #12 9.282 ✓ Compiled successfully in 6.8s
 #12 9.287   Running TypeScript ...
 #12 14.47   Finished TypeScript in 5.2s ...
 #12 14.48   Collecting page data using 14 workers ...
 #12 15.73   Generating static pages using 14 workers (0/10) ...
-#12 16.71   Generating static pages using 14 workers (2/10) 
-#12 16.72   Generating static pages using 14 workers (4/10) 
-#12 16.72   Generating static pages using 14 workers (7/10) 
+#12 16.71   Generating static pages using 14 workers (2/10)
+#12 16.72   Generating static pages using 14 workers (4/10)
+#12 16.72   Generating static pages using 14 workers (7/10)
 #12 16.79 ✓ Generating static pages using 14 workers (10/10) in 1056ms
 #12 16.80   Finalizing page optimization ...
-#12 16.94 
+#12 16.94
 #12 16.94 Route (app)
 #12 16.94 ┌ ○ /
 #12 16.94 ├ ○ /_not-found
@@ -69,11 +69,11 @@
 #12 16.94 ├ ○ /graph
 #12 16.94 ├ ○ /hubs
 #12 16.94 └ ○ /query
-#12 16.94 
-#12 16.94 
+#12 16.94
+#12 16.94
 #12 16.94 ○  (Static)   prerendered as static content
 #12 16.94 ƒ  (Dynamic)  server-rendered on demand
-#12 16.94 
+#12 16.94
 #12 16.98 npm notice
 #12 16.98 npm notice New major version of npm available! 11.19.0 -> 12.0.2
 #12 16.98 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2

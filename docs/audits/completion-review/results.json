@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-05T02:34:16.662830+00:00",
+  "review_date_local": "2026-09-04",
+  "verdict": "incomplete",
+  "application_source_changed_during_review": false,
+  "source_baseline_commit": "caaaa5a86d2eb17c5d4260a42077f488646242e6",
+  "prior_validation_record": "../2026-09-04-implementation-validation.json",
+  "prior_validation_record_sha256": "73ef4f06b447d4d4a2c9f9d74bf69ff6cd8ba90d7398cc30d6390015be45f2df",
+  "prior_source_hashes_verified": 118,
+  "checks": {
+    "backend_datastore": {
+      "discovered": 153,
+      "passed": 153,
+      "skipped": 0,
+      "duration_seconds": 5.425
+    },
+    "backend_offline": {
+      "discovered": 153,
+      "passed": 128,
+      "skipped": 25
+    },
+    "frontend": {
+      "tests_passed": 11,
+      "lint": "passed",
+      "typecheck": "passed"
+    },
+    "enabled_provider_adapter": {
+      "status": "passed",
+      "actual_sdk": "Strands Agent and LiteLLM provider",
+      "provider": "synthetic localhost HTTP response",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "stream": true,
+          "model": "openai/synthetic-fixture"
+        }
+      ]
+    },
+    "npm_vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "skills": {
+      "installed": 25,
+      "vendored_files_verified": 74,
+      "hash_mismatches": 0
+    },
+    "new_browser_defect_reproductions": 3,
+    "new_backend_defect_reproductions": 5,
+    "production_builds": "Prior successful host/Docker builds match all 118 unchanged source/configuration hashes; not rebuilt in this review."
+  },
+  "findings": [
+    {
+      "id": "C01",
+      "priority": "P1",
+      "axis": "standards",
+      "title": "Generated summary treated as certifying evidence",
+      "status": "reproduced_open",
+      "probe": "summary-source-probe.py",
+      "evidence": "summary-source-result.json"
+    },
+    {
+      "id": "C02",
+      "priority": "P1",
+      "axis": "standards",
+      "title": "Accepted split bypassed by in-flight resolution",
+      "status": "reproduced_open",
+      "probe": "entity-review-race-probe.py",
+      "evidence": "entity-review-race-result.json"
+    },
+    {
+      "id": "C03",
+      "priority": "P2",
+      "axis": "standards",
+      "title": "Metadata-only edits skipped and checkpoint advanced",
+      "status": "reproduced_open",
+      "probe": "metadata-sync-probe.py",
+      "evidence": "metadata-sync-result.json"
+    },
+    {
+      "id": "C04",
+      "priority": "P2",
+      "axis": "standards",
+      "title": "Returned reindex postprocessing errors ignored",
+      "status": "reproduced_open",
+      "probe": "reindex-postprocess-probe.py",
+      "evidence": "reindex-postprocess-result.json"
+    },
+    {
+      "id": "C05",
+      "priority": "P1",
+      "axis": "spec",
+      "title": "Delayed answer overwrites another conversation",
+      "status": "reproduced_open",
+      "probe": "conversation-switch-race.mjs",
+      "evidence": "conversation-switch-race.png"
+    },
+    {
+      "id": "C06",
+      "priority": "P2",
+      "axis": "spec",
+      "title": "Reindex completion overwrites newer document search",
+      "status": "reproduced_open",
+      "probe": "document-reindex-search-race.mjs",
+      "evidence": "document-reindex-search-race.png"
+    },
+    {
+      "id": "C07",
+      "priority": "P2",
+      "axis": "spec",
+      "title": "Initial graph sample discards selected search node",
+      "status": "reproduced_open",
+      "probe": "graph-initial-selection-race.mjs",
+      "evidence": "graph-initial-selection-race.png"
+    },
+    {
+      "id": "C08",
+      "priority": "P2",
+      "axis": "additional_query_review",
+      "title": "Cache hit bypasses corpus-change delivery check",
+      "status": "reproduced_open",
+      "probe": "cache-hit-race-probe.py",
+      "evidence": "cache-hit-race-result.json"
+    }
+  ],
+  "unmeasured": [
+    "Real model precision/recall on reviewed user corpus",
+    "Representative dense-graph performance",
+    "Production rollout and legacy-index repair"
+  ],
+  "artifact_sha256": {
+    "README.md": "e669073bbdfd8fb500b20956f2931d343f8320168409b0474b7999dd68c5f766",
+    "backend-datastore-tests.log": "e4d5227f18eb3ba276567ecf2ba8d6aa9ba73896a04c0174d8ee1c08450e0637",
+    "backend-offline-tests.log": "9cb3370248e9bca0bd98e51e2e3a12cb01b6671b9254475978d8faeab3474557",
+    "cache-hit-race-probe.py": "c7927499ed8202a194dbde7bc04fed766439d5e9bab107e01e43e2e4920dbc34",
+    "cache-hit-race-result.json": "04482e119afe2b844f1c6ebbc24286bf6b6e3eeb568ec24b6b702601b8bc0a19",
+    "conversation-switch-race.mjs": "5f744584a7d6f9e87a15db2aaa18d656b3ae27eb8646870bf5cf56b6dbaec5a3",
+    "conversation-switch-race.png": "298946023ec5e68bdf1b0235c4862af976fe3c422685b533eba113e1c24b23d6",
+    "document-reindex-search-race.mjs": "91f6c4770031e3dcb67c75294ce3cc7ace72b75c5a43a4e1178a2c97761e46c2",
+    "document-reindex-search-race.png": "8d77ac6130369c372d98cec83b9b69e9d523426979820d0c6bb527a2e7d8040c",
+    "enabled-model-adapter-probe.py": "f476936c64ce391164644899ea0da0f93e85cc0d9e24b194b5e464aca50c5eac",
+    "enabled-model-adapter.log": "0f80bf3d2f30395f13b094cd5e918011c6eed230cb1f1c5c8194f295b8d512bb",
+    "entity-review-race-probe.py": "0e5a882788b8c1c4220fe24b66c5b7ea1a00ef0a6a05664b24a5b1202659ab91",
+    "entity-review-race-result.json": "b43a95134399eff8b196091947a57da7aa384466fbb8b3736fbc71e145a969f3",
+    "graph-initial-selection-race.mjs": "bd541e7b38bb1757ca39fe0bbb24fcd61a141769d861f4728a553594145fdf43",
+    "graph-initial-selection-race.png": "5854fd3f218ea340861aa26cdc509ca0a2286016ffbd8e288878b587523e0b85",
+    "metadata-sync-probe.py": "0d80186b4c6f6a2e9dbaa6feeed8732d8eabb8a5429949f0f63a41bc4553fb88",
+    "metadata-sync-result.json": "61e79f84e30e757142c574fd95a9d070d345699e48b0f81136e2fa6e8bd1645d",
+    "npm-audit.json": "3a538be8806a2edebc8129e9e6fd474b078989a324076da1c784a530b29faa15",
+    "reindex-postprocess-probe.py": "86d169743b935f91cc576d8d47ac1c0cc77942a77335a0af8e9748f026cc2fc8",
+    "reindex-postprocess-result.json": "f833e1c6cd9ede22c20b5f639c12c913426cf532b4d554f8c727d55d3c11478f",
+    "summary-source-probe.py": "6c0dbf10ca311f64cee9ba00593c0229ae5c0d828abd165d512d7c156d93f180",
+    "summary-source-result.json": "5025a0447593f1a51e13e7be78c8c4aafd5d7a27db79933050efc6ecc238d0c9"
+  }
+}

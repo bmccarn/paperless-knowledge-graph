@@ -1,0 +1,69 @@
+{
+  "base": "http://127.0.0.1:3002",
+  "browser": "Playwright Chromium",
+  "browser_version": "151.0.7922.34",
+  "node_version": "v24.20.0",
+  "outcomes": [
+    {
+      "name": "documents_pagination",
+      "status": "passed",
+      "detail": "Last page reaches document 9300 among 303 indexed documents."
+    },
+    {
+      "name": "documents_type_filter",
+      "status": "passed",
+      "detail": "Global medical filter yields 150 matching documents and six real pages."
+    },
+    {
+      "name": "documents_global_search",
+      "status": "passed",
+      "detail": "A title outside the former 200-document subset is searchable."
+    },
+    {
+      "name": "documents_failure",
+      "status": "passed",
+      "detail": "Search failure is visible with retry action."
+    },
+    {
+      "name": "graph_search_pagination",
+      "status": "passed",
+      "detail": "Third search page exposes entity 119 among 120 matches and opens its inspector."
+    },
+    {
+      "name": "graph_expansion_and_safe_text",
+      "status": "passed",
+      "detail": "Repeated expansion preserves 4 nodes/3 edges; markup in description renders as text."
+    },
+    {
+      "name": "document_feedback_lifecycle",
+      "status": "passed",
+      "detail": "Premature resolution fails; reindex leaves report open; explicit review resolves it while OCR stays available."
+    },
+    {
+      "name": "query_supported_citation",
+      "status": "passed",
+      "detail": "Accepted answer displays supported claim and complete quote; Document 101 citation opens original document inspection."
+    },
+    {
+      "name": "query_interrupt",
+      "status": "passed",
+      "detail": "Uncompleted provisional draft is removed instead of finalized."
+    },
+    {
+      "name": "query_stream-error",
+      "status": "passed",
+      "detail": "Uncompleted provisional draft is removed instead of finalized."
+    },
+    {
+      "name": "query_safe_markup",
+      "status": "passed",
+      "detail": "Hostile model/source HTML is literal text and does not create an image, script or event handler."
+    },
+    {
+      "name": "documents_mobile_pagination",
+      "status": "passed",
+      "detail": "390px layout reaches second server page with visible controls."
+    }
+  ],
+  "page_errors": []
+}

@@ -1,11 +1,13 @@
 import logging
 import re
-from typing import Any, Optional
+import asyncio
+from typing import Any
 
 from rapidfuzz import fuzz
 
 from app.embeddings import embeddings_store
 from app.graph import graph_store
+from app.entity_decisions import EntityMergeProhibited, NO_MERGE_DECISIONS, carried_vetoes, entity_identity, merge_is_prohibited
 
 logger = logging.getLogger(__name__)
 
@@ -488,17 +490,17 @@ Respond with ONLY: {{"same_entity": true}} or {{"same_entity": false}}"""
         async def _call():
             response = await client.chat.completions.create(
                 model=settings.gemini_model,
-                messages=[{{"role": "user", "content": prompt}}],
-                response_format={{"type": "json_object"}},
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
             )
             raw = response.choices[0].message.content or ""
             try:
                 return _json.loads(raw)
             except _json.JSONDecodeError:
-                return {{"same_entity": False}}
+                return {"same_entity": False}
         
         result = await retry_with_backoff(_call, operation="llm_merge_tiebreaker")
-        is_same = result.get("same_entity", False)
+        is_same = isinstance(result, dict) and result.get("same_entity") is True
         _merge_llm_cache[cache_key] = is_same
         
         if is_same:
@@ -518,7 +520,104 @@ Respond with ONLY: {{"same_entity": true}} or {{"same_entity": false}}"""
 
 class EntityResolver:
     def __init__(self):
-        self._cache = {}
+        self._mutation_lock = asyncio.Lock()
+
+    async def record_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "") -> dict:
+        """Record a human decision with identities that survive derived reindex."""
+        if decision not in {"split", "never_merge", "ignore"}:
+            raise ValueError("Unsupported human entity decision")
+        if left_uuid == right_uuid:
+            raise ValueError("An entity decision requires two different entities")
+        async with self._mutation_lock:
+            left = await graph_store.get_node(left_uuid)
+            right = await graph_store.get_node(right_uuid)
+            if not left or not right:
+                raise ValueError("Entity pair not found")
+            return await embeddings_store.add_entity_review_decision(
+                left_uuid, right_uuid, decision, note,
+                left_identity=entity_identity(left), right_identity=entity_identity(right),
+            )
+
+    async def _review_decisions(self) -> list[dict]:
+        decisions = await embeddings_store.get_entity_review_decisions()
+        for row in decisions:
+            if row.get("decision") not in NO_MERGE_DECISIONS:
+                continue
+            for side in ("left", "right"):
+                if not row.get(f"{side}_identity"):
+                    node = await graph_store.get_node(row[f"{side}_uuid"])
+                    if node:
+                        row[f"{side}_identity"] = entity_identity(node)
+        return decisions
+
+    async def hydrate_review_identities(self) -> dict:
+        """Persist legacy veto identities before reindex can remove their nodes."""
+        report = {"hydrated": 0, "unresolved": []}
+        async with self._mutation_lock:
+            for row in await embeddings_store.get_entity_review_decisions():
+                if row.get("decision") not in NO_MERGE_DECISIONS:
+                    continue
+                changed = False
+                missing = []
+                for side in ("left", "right"):
+                    if row.get(f"{side}_identity"):
+                        continue
+                    node = await graph_store.get_node(row[f"{side}_uuid"])
+                    if node:
+                        row[f"{side}_identity"] = entity_identity(node)
+                        changed = True
+                    else:
+                        missing.append(row[f"{side}_uuid"])
+                if changed:
+                    await embeddings_store.add_entity_review_decision(
+                        row["left_uuid"], row["right_uuid"], row["decision"], row.get("note") or "",
+                        left_identity=row.get("left_identity"), right_identity=row.get("right_identity"),
+                    )
+                    report["hydrated"] += 1
+                if missing:
+                    report["unresolved"].append({"left_uuid": row["left_uuid"], "right_uuid": row["right_uuid"], "missing_uuid": missing})
+        if report["unresolved"]:
+            logger.warning("%s legacy no-merge decisions have missing identities; reindex persistence cannot be fully recovered", len(report["unresolved"]))
+        return report
+
+    async def _candidate_allowed(self, incoming: dict, candidate: dict, decisions: list[dict]) -> bool:
+        # Candidate lists come from fresh graph reads. Full neighborhoods are
+        # needed only to distinguish the source context of a human veto.
+        if not any(row.get("decision") in NO_MERGE_DECISIONS for row in decisions):
+            return True
+        node = await graph_store.get_node(candidate["uuid"])
+        return bool(node) and not merge_is_prohibited(incoming, entity_identity(node), decisions)
+
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str) -> dict:
+        """Merge only after checking and durably carrying human no-merge decisions."""
+        if primary_uuid == duplicate_uuid:
+            raise ValueError("An entity merge requires two different entities")
+        async with self._mutation_lock:
+            primary = await graph_store.get_node(primary_uuid)
+            duplicate = await graph_store.get_node(duplicate_uuid)
+            if not primary or not duplicate:
+                raise ValueError("Entity pair not found")
+            keep = entity_identity(primary)
+            remove = entity_identity(duplicate)
+            if not keep["type"] or keep["type"] != remove["type"]:
+                raise ValueError("Only entities of the same type may merge")
+            if "Document" in primary.get("labels", []) or "Document" in duplicate.get("labels", []):
+                raise ValueError("Paperless documents cannot be merged as entities")
+            decisions = await self._review_decisions()
+            if merge_is_prohibited(keep, remove, decisions):
+                raise EntityMergeProhibited("Human no-merge decision prohibits this entity pair")
+            for row in carried_vetoes(keep, remove, decisions):
+                await embeddings_store.add_entity_review_decision(
+                    row["left_uuid"], row["right_uuid"], row["decision"], row.get("note") or "",
+                    left_identity=row.get("left_identity"), right_identity=row.get("right_identity"),
+                )
+            merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid)
+            await embeddings_store.add_entity_review_decision(
+                primary_uuid, duplicate_uuid, "merged", "",
+                left_identity=keep, right_identity=remove,
+            )
+            return merged
+
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None, description: str = None) -> str:
         """Resolve a person name to an existing or new node. Returns uuid."""
         name = _coerce_text(name)
@@ -545,6 +644,8 @@ class EntityResolver:
         normalized = normalize_name(name)
         if not normalized:
             return ""
+        decisions = await self._review_decisions()
+        incoming = entity_identity({"name": normalized, "entity_type": "Person", "source_doc_ids": [source_doc_id]})
         
         # Detect organizations misclassified as Person
         # If name contains business suffixes, redirect to org resolver
@@ -558,13 +659,14 @@ class EntityResolver:
 
         # 1. Exact match
         existing = await graph_store.find_person(normalized)
-        if existing:
+        if existing and await self._candidate_allowed(incoming, existing, decisions):
             if name != existing["name"] and name not in (existing.get("aliases") or []):
                 await graph_store.add_person_alias(existing["uuid"], name)
             return existing["uuid"]
 
         # 2. Advanced matching against all persons (same-type only: Person↔Person)
         all_persons = await graph_store.get_all_persons()
+        all_persons = [person for person in all_persons if await self._candidate_allowed(incoming, person, decisions)]
         best_match = None
         best_score = 0.0
 
@@ -585,7 +687,8 @@ class EntityResolver:
                 if name != best_match["name"] and name not in (best_match.get("aliases") or []):
                     await graph_store.add_person_alias(best_match["uuid"], name)
                 return best_match["uuid"]
-            elif best_score >= (LLM_MERGE_LOW / 100.0) and best_score < (LLM_MERGE_HIGH / 100.0):
+            elif (best_score >= (LLM_MERGE_LOW / 100.0) and best_score < (LLM_MERGE_HIGH / 100.0)
+                  and should_auto_merge(normalized, best_match["name"], 1.0, "Person")):
                 # Gray zone — ask LLM
                 if await _llm_should_merge(normalized, best_match["name"], "Person"):
                     logger.info(f"LLM-confirmed match '{name}' to '{best_match['name']}' (score={best_score:.3f})")
@@ -617,6 +720,7 @@ class EntityResolver:
             aliases=[name] if name != normalized else [],
             role=role,
             description=description,
+            source_doc_ids=[source_doc_id],
         )
         logger.info(f"Created new Person: '{normalized}' (uuid={node_uuid})")
         return node_uuid
@@ -635,16 +739,19 @@ class EntityResolver:
         normalized = normalize_name(name)
         if not normalized:
             return ""
+        decisions = await self._review_decisions()
+        incoming = entity_identity({"name": normalized, "entity_type": "Organization", "source_doc_ids": [source_doc_id]})
 
         # Exact match
         existing = await graph_store.find_organization(normalized)
-        if existing:
+        if existing and await self._candidate_allowed(incoming, existing, decisions):
             if name != existing["name"] and name not in (existing.get("aliases") or []):
                 await graph_store.add_org_alias(existing["uuid"], name)
             return existing["uuid"]
 
         # Advanced fuzzy match (same-type only: Organization↔Organization)
         all_orgs = await graph_store.get_all_organizations()
+        all_orgs = [org for org in all_orgs if await self._candidate_allowed(incoming, org, decisions)]
         best_match = None
         best_score = 0.0
 
@@ -670,6 +777,7 @@ class EntityResolver:
             name=normalized, org_type=org_type,
             aliases=[name] if name != normalized else [],
             description=description,
+            source_doc_ids=[source_doc_id],
         )
         logger.info(f"Created new Organization: '{normalized}' (uuid={node_uuid})")
         return node_uuid
@@ -692,22 +800,19 @@ class EntityResolver:
 
         name = name.strip()
         label = self._neo4j_label(entity_type)
+        decisions = await self._review_decisions()
+        incoming = entity_identity({"name": name, "entity_type": label, "source_doc_ids": [source_doc_id]})
 
-        # Check cache
-        cache_key = f"{entity_type}:{name.lower()}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
-        # Try exact match in Neo4j
+        # Resolve against current graph state: reindex may have removed old UUIDs.
         async with graph_store.driver.session() as session:
             result = await session.run(
-                f"MATCH (n:{label}) WHERE toLower(toString(n.name)) = toLower($name) RETURN n.uuid AS uuid LIMIT 1",
+                f"MATCH (n:{label}) WHERE toLower(toString(n.name)) = toLower($name) RETURN n.uuid AS uuid",
                 name=name,
             )
-            record = await result.single()
-            if record:
+            for record in await result.data():
+                if not await self._candidate_allowed(incoming, record, decisions):
+                    continue
                 uuid = record["uuid"]
-                self._cache[cache_key] = uuid
                 # Update description if we have a new one
                 if description:
                     await session.run(
@@ -726,12 +831,12 @@ class EntityResolver:
             props["description"] = description
         new_uuid = await graph_store.create_node(label, props)
         logger.info(f"Created new {entity_type} ({label}): '{name}' (uuid={new_uuid})")
-        self._cache[cache_key] = new_uuid
         return new_uuid
 
     async def resolve_all_entities(self) -> dict:
         """Scan all entities in Neo4j and merge duplicates. Returns a report."""
         report = {"merged_persons": [], "merged_orgs": [], "skipped": [], "errors": []}
+        decisions = await self._review_decisions()
 
         # Resolve persons (same-type only: Person↔Person)
         all_persons = await graph_store.get_all_persons()
@@ -742,6 +847,9 @@ class EntityResolver:
                 continue
             for person_b in all_persons[i + 1:]:
                 if person_b["uuid"] in merged_uuids:
+                    continue
+                if merge_is_prohibited(entity_identity({**person_a, "entity_type": "Person"}), entity_identity({**person_b, "entity_type": "Person"}), decisions):
+                    report["skipped"].append({"a": person_a["name"], "b": person_b["name"], "reason": "human no-merge decision"})
                     continue
                 score = advanced_match_score(
                     person_a["name"] or "", person_b["name"] or ""
@@ -764,16 +872,8 @@ class EntityResolver:
                     continue
 
                 try:
-                    # Pick canonical name
-                    canonical = pick_canonical_name(person_a["name"] or "", person_b["name"] or "")
-                    await self._merge_nodes(
-                        keep_uuid=person_a["uuid"],
-                        remove_uuid=person_b["uuid"],
-                        remove_name=person_b["name"],
-                        remove_aliases=person_b.get("aliases") or [],
-                        label="Person",
-                        canonical_name=canonical,
-                    )
+                    merged = await self.merge_entities(person_a["uuid"], person_b["uuid"])
+                    canonical = merged["properties"].get("name", person_a["name"])
                     merged_uuids.add(person_b["uuid"])
                     report["merged_persons"].append({
                         "kept": canonical,
@@ -783,6 +883,8 @@ class EntityResolver:
                     logger.info(
                         f"Merged Person '{person_b['name']}' into '{person_a['name']}' (score={score:.3f})"
                     )
+                except EntityMergeProhibited:
+                    report["skipped"].append({"a": person_a["name"], "b": person_b["name"], "reason": "human no-merge decision"})
                 except Exception as e:
                     report["errors"].append(f"Failed to merge {person_b['name']} into {person_a['name']}: {e}")
 
@@ -798,6 +900,9 @@ class EntityResolver:
             for org_b in all_orgs[i + 1:]:
                 if org_b["uuid"] in merged_uuids:
                     continue
+                if merge_is_prohibited(entity_identity({**org_a, "entity_type": "Organization"}), entity_identity({**org_b, "entity_type": "Organization"}), decisions):
+                    report["skipped"].append({"a": org_a["name"], "b": org_b["name"], "reason": "human no-merge decision"})
+                    continue
                 score = advanced_match_score(org_a["name"] or "", org_b["name"] or "")
 
                 if not should_auto_merge(org_a["name"] or "", org_b["name"] or "", score, "Organization"):
@@ -811,89 +916,22 @@ class EntityResolver:
                     continue
 
                 try:
-                    canonical = pick_canonical_name(org_a["name"] or "", org_b["name"] or "")
-                    await self._merge_nodes(
-                        keep_uuid=org_a["uuid"],
-                        remove_uuid=org_b["uuid"],
-                        remove_name=org_b["name"],
-                        remove_aliases=org_b.get("aliases") or [],
-                        label="Organization",
-                        canonical_name=canonical,
-                    )
+                    merged = await self.merge_entities(org_a["uuid"], org_b["uuid"])
+                    canonical = merged["properties"].get("name", org_a["name"])
                     merged_uuids.add(org_b["uuid"])
                     report["merged_orgs"].append({
                         "kept": canonical,
                         "merged": org_b["name"],
                         "score": round(score, 3),
                     })
+                except EntityMergeProhibited:
+                    report["skipped"].append({"a": org_a["name"], "b": org_b["name"], "reason": "human no-merge decision"})
                 except Exception as e:
                     report["errors"].append(f"Failed to merge org: {e}")
 
         report["total_merged"] = len(report["merged_persons"]) + len(report["merged_orgs"])
         report["total_skipped"] = len(report["skipped"])
         return report
-
-    async def _merge_nodes(self, keep_uuid: str, remove_uuid: str,
-                           remove_name: str, remove_aliases: list[str],
-                           label: str, canonical_name: str = None):
-        """Merge remove_uuid node into keep_uuid node in Neo4j."""
-        async with graph_store.driver.session() as session:
-            await session.run(
-                """
-                MATCH (remove) WHERE remove.uuid = $remove_uuid
-                MATCH (keep) WHERE keep.uuid = $keep_uuid
-                OPTIONAL MATCH (remove)-[r_out]->(target)
-                WHERE target <> keep
-                WITH keep, remove, collect({type: type(r_out), target: target, props: properties(r_out)}) AS out_rels
-                UNWIND out_rels AS rel
-                WITH keep, remove, rel
-                WHERE rel.target IS NOT NULL
-                CALL apoc.create.relationship(keep, rel.type, rel.props, rel.target) YIELD rel AS newRel
-                RETURN count(newRel)
-                """,
-                keep_uuid=keep_uuid, remove_uuid=remove_uuid,
-            )
-            await session.run(
-                """
-                MATCH (remove) WHERE remove.uuid = $remove_uuid
-                MATCH (keep) WHERE keep.uuid = $keep_uuid
-                OPTIONAL MATCH (source)-[r_in]->(remove)
-                WHERE source <> keep
-                WITH keep, remove, collect({type: type(r_in), source: source, props: properties(r_in)}) AS in_rels
-                UNWIND in_rels AS rel
-                WITH keep, remove, rel
-                WHERE rel.source IS NOT NULL
-                CALL apoc.create.relationship(rel.source, rel.type, rel.props, keep) YIELD rel AS newRel
-                RETURN count(newRel)
-                """,
-                keep_uuid=keep_uuid, remove_uuid=remove_uuid,
-            )
-
-            all_aliases = [remove_name] + remove_aliases
-            for alias in _coerce_text_list(all_aliases):
-                if alias:
-                    await session.run(
-                        """
-                        MATCH (n) WHERE n.uuid = $uuid
-                        SET n.aliases = CASE
-                            WHEN NOT $alias IN coalesce(n.aliases, []) THEN coalesce(n.aliases, []) + $alias
-                            ELSE coalesce(n.aliases, [])
-                        END
-                        """,
-                        uuid=keep_uuid, alias=alias,
-                    )
-
-            # Update canonical name if provided
-            if canonical_name:
-                await session.run(
-                    "MATCH (n) WHERE n.uuid = $uuid SET n.name = $name",
-                    uuid=keep_uuid, name=_coerce_text(canonical_name),
-                )
-
-            await session.run(
-                "MATCH (n) WHERE n.uuid = $uuid DETACH DELETE n",
-                uuid=remove_uuid,
-            )
 
 
 def pick_canonical_name(name_a: str, name_b: str) -> str:

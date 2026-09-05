@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "actual_sdk": "Strands Agent and LiteLLM provider",
+  "provider": "synthetic localhost HTTP response",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "model": "openai/synthetic-fixture"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import logging
+import json
 import re
 from typing import Optional
 
@@ -58,6 +59,14 @@ CREATE TABLE IF NOT EXISTS document_feedback (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE document_feedback ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE document_feedback ADD COLUMN IF NOT EXISTS resolution TEXT;
+ALTER TABLE document_feedback ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+ALTER TABLE document_feedback ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE document_feedback ADD COLUMN IF NOT EXISTS resolved_content_hash TEXT;
+CREATE INDEX IF NOT EXISTS idx_document_feedback_open
+ON document_feedback(document_id) WHERE status = 'open';
+
 CREATE TABLE IF NOT EXISTS entity_review_decisions (
     id SERIAL PRIMARY KEY,
     left_uuid TEXT NOT NULL,
@@ -67,6 +76,9 @@ CREATE TABLE IF NOT EXISTS entity_review_decisions (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(left_uuid, right_uuid, decision)
 );
+
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS left_identity JSONB;
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS right_identity JSONB;
 
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
@@ -217,77 +229,36 @@ class EmbeddingsStore:
 
         async with self.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
-        logger.info("Embeddings store initialized (with HNSW indexes, entity table, pg_trgm)")
+        logger.info("Embeddings store initialized (exact search default, entity table, pg_trgm)")
 
     async def _migrate_dimensions(self):
-        """Check embedding column dimension and recreate table if it doesn't match."""
+        """Refuse incompatible schemas; startup must never erase existing data."""
         async with self.pool.acquire() as conn:
-            exists = await conn.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'document_embeddings')"
-            )
-            if not exists:
-                return
-            try:
+            for table in ("document_embeddings", "entity_embeddings"):
                 col_type = await conn.fetchval("""
-                    SELECT format_type(atttypid, atttypmod)
-                    FROM pg_attribute
-                    WHERE attrelid = 'document_embeddings'::regclass
-                    AND attname = 'embedding'
-                """)
-                if col_type and f"vector({EMBEDDING_DIMENSIONS})" not in col_type:
-                    logger.warning(
-                        f"Embedding dimension mismatch: current={col_type}, expected=vector({EMBEDDING_DIMENSIONS}). "
-                        f"Dropping and recreating embeddings table."
-                    )
-                    await conn.execute("DROP TABLE IF EXISTS document_embeddings CASCADE")
-                    await conn.execute("DROP TABLE IF EXISTS entity_embeddings CASCADE")
-                    await conn.execute("DELETE FROM document_hashes")
-                    await conn.execute("UPDATE sync_state SET last_sync_at = NULL, updated_at = NOW() WHERE id = 1")
-                    logger.info("Embeddings tables dropped for dimension migration.")
-            except Exception as e:
-                logger.warning(f"Dimension check failed (will proceed): {e}")
-
+                    SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+                    WHERE attrelid = to_regclass($1) AND attname = 'embedding'
+                    """, table)
+                if col_type and col_type != f"vector({EMBEDDING_DIMENSIONS})":
+                    raise RuntimeError(f"{table}.embedding is {col_type}, expected vector({EMBEDDING_DIMENSIONS}); "
+                                       "prepare an explicit backed-up migration before starting this version")
 
     async def create_vector_indexes(self):
-        """Create HNSW vector indexes. Call after data is loaded (reindex)."""
+        """3072-dimension halfvec candidate indexes; normal retrieval remains exact.
+
+        Approximate document search is an explicit method option and reranks
+        candidates using the original full-precision vectors. See vector spec.
+        """
         async with self.pool.acquire() as conn:
-            # Drop old indexes if they exist
-            await conn.execute("DROP INDEX IF EXISTS idx_embeddings_hnsw")
-            await conn.execute("DROP INDEX IF EXISTS idx_entity_embeddings_hnsw")
-            
-            # Count rows to determine lists parameter
-            doc_count = await conn.fetchval("SELECT COUNT(*) FROM document_embeddings")
-            entity_count = await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
-            
-            if doc_count > 0:
-                try:
-                    await conn.execute("""
-                        CREATE INDEX idx_embeddings_hnsw
-                        ON document_embeddings
-                        USING hnsw (embedding vector_cosine_ops)
-                        WITH (m = 16, ef_construction = 64)
+            for table, index in (("document_embeddings", "idx_embeddings_halfvec_hnsw"),
+                                 ("entity_embeddings", "idx_entity_halfvec_hnsw")):
+                await conn.execute(f"""
+                    CREATE INDEX IF NOT EXISTS {index} ON {table}
+                    USING hnsw ((embedding::halfvec({EMBEDDING_DIMENSIONS})) halfvec_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
                     """)
-                    logger.info(f"Created HNSW index on document_embeddings ({doc_count} rows)")
-                except Exception as e:
-                    if "2000 dimensions" in str(e):
-                        logger.warning(f"Skipping document embeddings index — pgvector version doesn't support >2000 dims. Upgrade to pgvector 0.9+ for HNSW indexing of 3072-dim vectors. Sequential scan will be used.")
-                    else:
-                        raise
-            
-            if entity_count > 0:
-                try:
-                    await conn.execute("""
-                        CREATE INDEX idx_entity_embeddings_hnsw
-                        ON entity_embeddings
-                        USING hnsw (embedding vector_cosine_ops)
-                        WITH (m = 16, ef_construction = 64)
-                    """)
-                    logger.info(f"Created HNSW index on entity_embeddings ({entity_count} rows)")
-                except Exception as e:
-                    if "2000 dimensions" in str(e):
-                        logger.warning(f"Skipping entity embeddings index — pgvector version doesn't support >2000 dims. Sequential scan will be used.")
-                    else:
-                        raise
+        return {"dimensions": EMBEDDING_DIMENSIONS, "default_search": "exact",
+                "optional_candidate_index": "halfvec_hnsw"}
 
     async def close(self):
         if self.pool:
@@ -333,7 +304,7 @@ class EmbeddingsStore:
             description=content, connected_names=connected_names
         )
         if not embedding:
-            return
+            raise ValueError("Entity embedding generation returned no vector")
         async def _op():
             async with self.pool.acquire() as conn:
                 await conn.execute(
@@ -349,11 +320,13 @@ class EmbeddingsStore:
         await retry_db(_op, operation='store_entity_embedding')
 
     async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0,
-                                        title: str = None, doc_type: str = None):
+                                        title: str = None, doc_type: str = None,
+                                        embedding: list[float] | None = None):
         """Store document content and its embedding."""
-        embedding = await self.generate_embedding(content)
+        if embedding is None:
+            embedding = await self.generate_embedding(content)
         if not embedding:
-            return
+            raise ValueError("Document embedding generation returned no vector")
         async def _op():
             async with self.pool.acquire() as conn:
                 await conn.execute(
@@ -430,23 +403,32 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings WHERE document_id = $1", doc_id)
 
-    async def vector_search(self, query: str, limit: int = 10) -> list[dict]:
-        """Search for similar documents using vector similarity."""
+    async def vector_search(self, query: str, limit: int = 10, *, approximate: bool = False) -> list[dict]:
+        """Exact by default; optionally rerank approximate halfvec candidates."""
         embedding = await self.generate_embedding(query)
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET hnsw.ef_search = 40")
-            rows = await conn.fetch(
-                """
-                SELECT document_id, chunk_index, content, title, doc_type,
-                       1 - (embedding <=> $1::vector) as similarity
-                FROM document_embeddings
-                ORDER BY embedding <=> $1::vector
-                LIMIT $2
-                """,
-                str(embedding), limit,
-            )
+            if approximate:
+                async with conn.transaction():
+                    await conn.execute("SET LOCAL hnsw.ef_search = 200")
+                    rows = await conn.fetch(f"""
+                        WITH candidates AS MATERIALIZED (
+                            SELECT * FROM document_embeddings
+                            ORDER BY embedding::halfvec({EMBEDDING_DIMENSIONS}) <=> $1::halfvec({EMBEDDING_DIMENSIONS})
+                            LIMIT $3
+                        )
+                        SELECT document_id, chunk_index, content, title, doc_type,
+                               1 - (embedding <=> $1::vector) AS similarity
+                        FROM candidates ORDER BY embedding <=> $1::vector, document_id, chunk_index LIMIT $2
+                        """, str(embedding), limit, max(100, limit * 5))
+            else:
+                rows = await conn.fetch("""
+                    SELECT document_id, chunk_index, content, title, doc_type,
+                           1 - (embedding <=> $1::vector) AS similarity
+                    FROM document_embeddings
+                    ORDER BY (embedding <=> $1::vector) + 0, document_id, chunk_index LIMIT $2
+                    """, str(embedding), limit)
             return [dict(r) for r in rows]
 
     async def filtered_vector_search(self, query: str, doc_type: str = None, limit: int = 10) -> list[dict]:
@@ -455,7 +437,6 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET hnsw.ef_search = 40")
             if doc_type:
                 rows = await conn.fetch(
                     """
@@ -463,7 +444,7 @@ class EmbeddingsStore:
                            1 - (embedding <=> $1::vector) as similarity
                     FROM document_embeddings
                     WHERE doc_type = $3
-                    ORDER BY embedding <=> $1::vector
+                    ORDER BY (embedding <=> $1::vector) + 0
                     LIMIT $2
                     """,
                     str(embedding), limit, doc_type,
@@ -474,7 +455,7 @@ class EmbeddingsStore:
                     SELECT document_id, chunk_index, content, title, doc_type,
                            1 - (embedding <=> $1::vector) as similarity
                     FROM document_embeddings
-                    ORDER BY embedding <=> $1::vector
+                    ORDER BY (embedding <=> $1::vector) + 0
                     LIMIT $2
                     """,
                     str(embedding), limit,
@@ -492,14 +473,13 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET hnsw.ef_search = 40")
             rows = await conn.fetch(
                 """
                 SELECT document_id, chunk_index, content, title, doc_type,
                        1 - (embedding <=> $1::vector) as similarity
                 FROM document_embeddings
                 WHERE document_id = ANY($3::int[])
-                ORDER BY embedding <=> $1::vector
+                ORDER BY (embedding <=> $1::vector) + 0
                 LIMIT $2
                 """,
                 str(embedding), limit, doc_ids,
@@ -512,13 +492,12 @@ class EmbeddingsStore:
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
-            await conn.execute("SET hnsw.ef_search = 40")
             rows = await conn.fetch(
                 """
                 SELECT entity_uuid, entity_name, entity_type, content,
                        1 - (embedding <=> $1::vector) as similarity
                 FROM entity_embeddings
-                ORDER BY embedding <=> $1::vector
+                ORDER BY (embedding <=> $1::vector) + 0
                 LIMIT $2
                 """,
                 str(embedding), limit,
@@ -667,12 +646,17 @@ class EmbeddingsStore:
                 "SELECT COUNT(*) FROM document_feedback WHERE document_id = $1",
                 doc_id,
             )
+            open_feedback_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_feedback WHERE document_id = $1 AND status = 'open'",
+                doc_id,
+            )
             return {
                 "processed": bool(row),
                 "content_hash": row["content_hash"] if row else None,
                 "processed_at": row["processed_at"].isoformat() if row else None,
                 "chunk_count": chunk_count,
                 "feedback_count": feedback_count,
+                "open_feedback_count": open_feedback_count,
             }
 
     async def add_document_feedback(self, doc_id: int, reason: str, note: str = "") -> dict:
@@ -681,31 +665,93 @@ class EmbeddingsStore:
                 """
                 INSERT INTO document_feedback (document_id, reason, note)
                 VALUES ($1, $2, $3)
-                RETURNING id, document_id, reason, note, created_at
+                RETURNING *
                 """,
                 doc_id, reason, note,
             )
             return dict(row)
 
-    async def add_entity_review_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "") -> dict:
+    async def get_document_feedback(self, doc_id: int) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM document_feedback WHERE document_id = $1 ORDER BY created_at DESC, id DESC",
+                doc_id,
+            )
+            return [dict(row) for row in rows]
+
+    async def get_open_feedback_document_ids(self, doc_ids: list[int]) -> set[int]:
+        if not doc_ids:
+            return set()
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT document_id FROM document_feedback WHERE status = 'open' AND document_id = ANY($1::int[])",
+                list(set(doc_ids)),
+            )
+            return {row["document_id"] for row in rows}
+
+    async def resolve_document_feedback(self, doc_id: int, feedback_id: int, resolution: str,
+                                        note: str, content_hash: str | None = None) -> dict | None:
+        if resolution not in {"reindexed_and_reviewed", "dismissed_after_review"} or not note.strip():
+            raise ValueError("A resolution type and review note are required")
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """UPDATE document_feedback
+                   SET status = 'resolved', resolution = $3, resolution_note = $4,
+                       resolved_at = NOW(), resolved_content_hash = $5
+                   WHERE document_id = $1 AND id = $2 AND status = 'open'
+                     AND ($3 != 'reindexed_and_reviewed' OR EXISTS (
+                         SELECT 1 FROM document_hashes h
+                         WHERE h.document_id = $1 AND h.content_hash = $5
+                           AND h.processed_at > document_feedback.created_at
+                     ))
+                   RETURNING *""",
+                doc_id, feedback_id, resolution, note.strip(), content_hash,
+            )
+            return dict(row) if row else None
+
+    async def add_entity_review_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "",
+                                         *, left_identity: dict | None = None,
+                                         right_identity: dict | None = None) -> dict:
         ordered = sorted([left_uuid, right_uuid])
+        if ordered[0] != left_uuid:
+            left_identity, right_identity = right_identity, left_identity
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
                 ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
-                SET note = EXCLUDED.note, created_at = NOW()
-                RETURNING id, left_uuid, right_uuid, decision, note, created_at
+                SET note = EXCLUDED.note, created_at = NOW(),
+                    left_identity = COALESCE(EXCLUDED.left_identity, entity_review_decisions.left_identity),
+                    right_identity = COALESCE(EXCLUDED.right_identity, entity_review_decisions.right_identity)
+                RETURNING *
                 """,
                 ordered[0], ordered[1], decision, note,
+                json.dumps(left_identity) if left_identity else None,
+                json.dumps(right_identity) if right_identity else None,
             )
-            return dict(row)
+            return self._decode_review_decision(row)
+
+    @staticmethod
+    def _decode_review_decision(row) -> dict:
+        result = dict(row)
+        for key in ("left_identity", "right_identity"):
+            if isinstance(result.get(key), str):
+                result[key] = json.loads(result[key])
+        return result
 
     async def get_entity_review_decisions(self) -> list[dict]:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT left_uuid, right_uuid, decision, note, created_at FROM entity_review_decisions")
-            return [dict(r) for r in rows]
+            rows = await conn.fetch("SELECT * FROM entity_review_decisions")
+            return [self._decode_review_decision(r) for r in rows]
+
+    async def get_incomplete_document_ids(self, doc_ids: list[int]) -> set[int]:
+        """Missing completion markers mean a replacement is pending or failed."""
+        if not doc_ids:
+            return set()
+        async with self.pool.acquire() as conn:
+            completed = await conn.fetch("SELECT document_id FROM document_hashes WHERE document_id = ANY($1::int[])", doc_ids)
+        return set(doc_ids) - {r["document_id"] for r in completed}
 
     async def clear_all(self):
         async with self.pool.acquire() as conn:

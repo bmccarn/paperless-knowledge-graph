@@ -1,4 +1,5 @@
 import logging
+import json
 import re
 import uuid
 from collections import defaultdict
@@ -9,6 +10,7 @@ from rapidfuzz import fuzz
 
 from app.config import settings
 from app.retry import retry_db
+from app.relationship_support import merge_support_properties, support_records
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +139,8 @@ class GraphStore:
         return [term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 2]
 
     async def create_document_node(self, paperless_id: int, title: str, doc_type: str,
-                                    date: str, content_hash: str) -> str:
+                                    date: str, content_hash: str,
+                                    extraction_metadata: dict | None = None) -> str:
         """Create or update a Document node. Returns the paperless_id."""
         async def _op():
             async with self.driver.session() as session:
@@ -145,10 +148,12 @@ class GraphStore:
                     """
                     MERGE (d:Document {paperless_id: $pid})
                     SET d.title = $title, d.doc_type = $doc_type, d.date = $date,
-                        d.content_hash = $hash, d.processed_at = datetime()
+                        d.content_hash = $hash, d.processed_at = datetime(),
+                        d.extraction_metadata = $metadata
                     """,
                     pid=paperless_id, title=title, doc_type=doc_type,
                     date=date or "", hash=content_hash,
+                    metadata=json.dumps(extraction_metadata or {}, ensure_ascii=False),
                 )
         await retry_db(_op, operation='create_document_node')
         return str(paperless_id)
@@ -199,7 +204,7 @@ class GraphStore:
             return dict(record) if record else None
 
     async def create_person(self, name: str, aliases: list[str] = None, role: str = None,
-                            description: str = None) -> str:
+                            description: str = None, source_doc_ids: list[int] = None) -> str:
         node_uuid = self.new_uuid()
         name = self._coerce_text(name)
         aliases = self._coerce_text_list(aliases)
@@ -209,10 +214,11 @@ class GraphStore:
             await session.run(
                 """
                 CREATE (p:Person {uuid: $uuid, name: $name, aliases: $aliases, role: $role,
-                                  description: $description, entity_type: 'Person'})
+                                  description: $description, entity_type: 'Person', source_doc_ids: $source_doc_ids})
                 """,
                 uuid=node_uuid, name=name, aliases=aliases, role=role,
                 description=description,
+                source_doc_ids=sorted(set(source_doc_ids or [])),
             )
         return node_uuid
 
@@ -233,7 +239,8 @@ class GraphStore:
             )
 
     async def create_organization(self, name: str, org_type: str = None,
-                                   aliases: list[str] = None, description: str = None) -> str:
+                                   aliases: list[str] = None, description: str = None,
+                                   source_doc_ids: list[int] = None) -> str:
         node_uuid = self.new_uuid()
         name = self._coerce_text(name)
         org_type = self._coerce_text(org_type)
@@ -243,10 +250,11 @@ class GraphStore:
             await session.run(
                 """
                 CREATE (o:Organization {uuid: $uuid, name: $name, type: $type, aliases: $aliases,
-                                        description: $description, entity_type: 'Organization'})
+                                        description: $description, entity_type: 'Organization', source_doc_ids: $source_doc_ids})
                 """,
                 uuid=node_uuid, name=name, type=org_type, aliases=aliases,
                 description=description,
+                source_doc_ids=sorted(set(source_doc_ids or [])),
             )
         return node_uuid
 
@@ -282,27 +290,33 @@ class GraphStore:
     async def create_relationship(self, from_uuid: str, from_label: str,
                                    to_uuid: str, to_label: str,
                                    rel_type: str, properties: dict = None):
-        """Create a relationship between two nodes. Increments weight on duplicate."""
+        """Upsert one source's support without overwriting other documents."""
         props = properties or {}
-        # Sanitize relationship type for Neo4j compatibility
         rel_type = _sanitize_rel_type(rel_type)
-        # Use MERGE to avoid duplicates and track weight
-        query = f"""
-            MATCH (a) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
-            MATCH (b) WHERE b.uuid = $to_uuid OR b.paperless_id = $to_pid
-            MERGE (a)-[r:{rel_type}]->(b)
-            ON CREATE SET r = $props, r.weight = 1
-            ON MATCH SET r.weight = coalesce(r.weight, 1) + 1, r += $props
-        """
-        async def _op():
-            async with self.driver.session() as session:
-                await session.run(
-                    query,
-                    from_uuid=from_uuid, from_pid=_try_int(from_uuid),
-                    to_uuid=to_uuid, to_pid=_try_int(to_uuid),
-                    props=props,
-                )
-        await retry_db(_op, operation='create_relationship')
+        async def write(tx):
+            result = await tx.run(f"""
+                MATCH (a) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
+                MATCH (b) WHERE b.uuid = $to_uuid OR b.paperless_id = $to_pid
+                MERGE (a)-[r:{rel_type}]->(b)
+                SET r._support_lock = true
+                RETURN elementId(r) AS id, properties(r) AS props
+                """, from_uuid=from_uuid, from_pid=_try_int(from_uuid),
+                to_uuid=to_uuid, to_pid=_try_int(to_uuid))
+            row = await result.single()
+            if row is None:
+                raise ValueError("Relationship endpoints do not exist")
+            previous = dict(row["props"])
+            previous.pop("_support_lock", None)
+            source = props.get("source_doc")
+            if type(source) is int:
+                records = support_records(previous)
+                records.pop(source, None)
+                previous = {"support_records": [json.dumps(r) for r in records.values()]}
+            merged = merge_support_properties(previous, props)
+            await tx.run("MATCH ()-[r]->() WHERE elementId(r) = $id SET r = $props",
+                         id=row["id"], props=merged)
+        async with self.driver.session() as session:
+            await session.execute_write(write)
 
     async def get_document_entities(self, paperless_id: int) -> list[dict]:
         """Get all entities connected to a document."""
@@ -412,26 +426,6 @@ class GraphStore:
             return {"nodes": record["nodes"][:50], "relationships": record["rels"][:100]}
 
 
-    async def get_documents_by_entity_types(self, entity_types: list[str], limit: int = 100) -> dict[str, list[dict]]:
-        """Get documents connected to entities of specific types, grouped by entity type.
-        Returns {entity_type: [{paperless_id, title, entity_name, relationship}, ...]}"""
-        results = {}
-        async with self.driver.session() as session:
-            for etype in entity_types:
-                query = """
-                MATCH (d:Document)-[r]-(e)
-                WHERE any(label IN labels(e) WHERE label = $etype)
-                  AND d.paperless_id IS NOT NULL
-                RETURN DISTINCT d.paperless_id AS doc_id, d.title AS title,
-                       e.name AS entity_name, type(r) AS rel_type
-                ORDER BY d.paperless_id DESC
-                LIMIT $limit
-                """
-                res = await session.run(query, etype=etype, limit=limit)
-                records = await res.data()
-                results[etype] = records
-        return results
-
     async def get_all_document_ids(self) -> set[int]:
         """Return all paperless_id values for Document nodes in the graph."""
         async with self.driver.session() as session:
@@ -442,30 +436,33 @@ class GraphStore:
             return {r["pid"] for r in records}
 
     async def delete_document_graph(self, paperless_id: int):
-        """Remove all nodes and relationships sourced from a document."""
+        """Remove this document's support and only its newly orphaned entities."""
+        async def write(tx):
+            result = await tx.run("""
+                MATCH (a)-[r]->(b)
+                WHERE r.source_doc = $pid OR $pid IN coalesce(r.source_doc_ids, [])
+                   OR a.paperless_id = $pid OR b.paperless_id = $pid
+                SET r._support_lock = true
+                RETURN elementId(r) AS id, properties(r) AS props,
+                       a.uuid AS a_uuid, b.uuid AS b_uuid,
+                       a.paperless_id = $pid OR b.paperless_id = $pid AS document_edge
+                """, pid=paperless_id)
+            affected = set()
+            rows = [dict(row) async for row in result]
+            for row in rows:
+                affected.update(x for x in (row["a_uuid"], row["b_uuid"]) if x)
+                records = support_records(row["props"])
+                records.pop(paperless_id, None)
+                if records and not row["document_edge"]:
+                    props = merge_support_properties({"support_records": [json.dumps(r) for r in records.values()]})
+                    await tx.run("MATCH ()-[r]->() WHERE elementId(r) = $id SET r = $props", id=row["id"], props=props)
+                else:
+                    await tx.run("MATCH ()-[r]->() WHERE elementId(r) = $id DELETE r", id=row["id"])
+            await tx.run("MATCH (d:Document {paperless_id: $pid}) DETACH DELETE d", pid=paperless_id)
+            await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
+                             AND NOT EXISTS { (n)--() } DELETE n""", affected=list(affected))
         async with self.driver.session() as session:
-            # Delete relationships with source_doc
-            await session.run(
-                """
-                MATCH ()-[r]->()
-                WHERE r.source_doc = $pid
-                DELETE r
-                """,
-                pid=paperless_id,
-            )
-            # Delete the document node
-            await session.run(
-                "MATCH (d:Document {paperless_id: $pid}) DETACH DELETE d",
-                pid=paperless_id,
-            )
-            # Clean up orphan nodes (no relationships)
-            await session.run(
-                """
-                MATCH (n)
-                WHERE NOT n:Document AND NOT EXISTS { (n)--() }
-                DELETE n
-                """
-            )
+            await session.execute_write(write)
 
     async def clear_all(self):
         async with self.driver.session() as session:
@@ -543,90 +540,163 @@ class GraphStore:
         return candidates[:limit]
 
     async def merge_entities(self, primary_uuid: str, duplicate_uuid: str) -> dict:
-        """Merge two entity nodes using APOC refactor, preserving relationships."""
-        async with self.driver.session() as session:
-            result = await session.run(
-                """
-                MATCH (primary)
-                WHERE any(
-                  value IN apoc.convert.toList(primary.uuid)
-                  WHERE toString(value) CONTAINS $primary_uuid
-                )
-                MATCH (duplicate)
-                WHERE any(
-                  value IN apoc.convert.toList(duplicate.uuid)
-                  WHERE toString(value) CONTAINS $duplicate_uuid
-                )
-                WITH primary, duplicate
-                WHERE elementId(primary) <> elementId(duplicate)
-                CALL apoc.refactor.mergeNodes([primary, duplicate], {
-                  properties: 'discard',
-                  mergeRels: true
-                })
-                YIELD node
-                SET node.uuid = $primary_uuid
-                RETURN labels(node) AS labels, properties(node) AS properties
-                """,
-                primary_uuid=primary_uuid,
-                duplicate_uuid=duplicate_uuid,
-            )
-            record = await result.single()
-            if not record:
-                raise ValueError("Entity pair not found")
-            return {"labels": record["labels"], "properties": record["properties"]}
+        """Atomically preserve canonical identity, aliases and relationship support.
 
-    async def search_nodes(self, query: str, node_type: str = None, limit: int = 20) -> list[dict]:
+        Human review policy is enforced by EntityResolver before calling this
+        storage operation. Exact UUID lookup also rejects ambiguous legacy IDs.
+        """
+        if not primary_uuid or not duplicate_uuid or primary_uuid == duplicate_uuid:
+            raise ValueError("Two different entity UUIDs are required")
+
+        async def merge(tx):
+            result = await tx.run(
+                """MATCH (n) WHERE n.uuid IN $uuids
+                   WITH n ORDER BY n.uuid
+                   SET n.uuid = n.uuid
+                   RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props""",
+                uuids=[primary_uuid, duplicate_uuid],
+            )
+            nodes = await result.data()
+            if len(nodes) != 2 or {n["props"]["uuid"] for n in nodes} != {primary_uuid, duplicate_uuid}:
+                raise ValueError("Entity pair not found")
+            primary = next(n for n in nodes if n["props"]["uuid"] == primary_uuid)
+            duplicate = next(n for n in nodes if n["props"]["uuid"] == duplicate_uuid)
+            if any("Document" in n["labels"] for n in nodes):
+                raise ValueError("Document nodes cannot be merged as entities")
+            if set(primary["labels"]) != set(duplicate["labels"]):
+                raise ValueError("Entity types must match")
+
+            result = await tx.run(
+                """MATCH (n) WHERE elementId(n) IN $ids
+                   MATCH (n)-[r]-()
+                   WITH DISTINCT r
+                   RETURN elementId(r) AS id, type(r) AS type,
+                          elementId(startNode(r)) AS start, elementId(endNode(r)) AS end,
+                          properties(r) AS props""",
+                ids=[primary["id"], duplicate["id"]],
+            )
+            grouped = defaultdict(list)
+            for edge in await result.data():
+                endpoints = tuple(primary["id"] if edge[k] == duplicate["id"] else edge[k] for k in ("start", "end"))
+                grouped[(*endpoints, edge["type"])].append(edge)
+
+            props = {**duplicate["props"], **primary["props"]}
+            aliases = set()
+            source_docs = set()
+            for node in nodes:
+                value = node["props"].get("aliases") or []
+                aliases.update(value if isinstance(value, list) else [value])
+                source_docs.update(v for v in node["props"].get("source_doc_ids", []) if type(v) is int)
+            aliases.add(duplicate["props"].get("name"))
+            aliases.discard(primary["props"].get("name"))
+            props["aliases"] = sorted(alias for alias in aliases if isinstance(alias, str) and alias)
+
+            for (start, end, rel_type), edges in grouped.items():
+                combined = merge_support_properties(*(edge["props"] for edge in edges))
+                source_docs.update(combined.get("source_doc_ids") or [])
+                # Keep the existing canonical edge ID whenever possible.
+                survivor = next((e for e in edges if e["start"] == start and e["end"] == end), None)
+                if survivor:
+                    await (await tx.run(
+                        "MATCH ()-[r]->() WHERE elementId(r) = $id SET r = $props",
+                        id=survivor["id"], props=combined,
+                    )).consume()
+                else:
+                    escaped_type = rel_type.replace("`", "``")
+                    await (await tx.run(
+                        f"MATCH (a), (b) WHERE elementId(a) = $start AND elementId(b) = $end "
+                        f"CREATE (a)-[r:`{escaped_type}`]->(b) SET r = $props",
+                        start=start, end=end, props=combined,
+                    )).consume()
+                removed_ids = [e["id"] for e in edges if not survivor or e["id"] != survivor["id"]]
+                if removed_ids:
+                    await (await tx.run(
+                        "MATCH ()-[r]->() WHERE elementId(r) IN $ids DELETE r", ids=removed_ids,
+                    )).consume()
+
+            props["source_doc_ids"] = sorted(source_docs)
+            result = await tx.run(
+                """MATCH (primary), (duplicate)
+                   WHERE elementId(primary) = $primary AND elementId(duplicate) = $duplicate
+                   SET primary = $props
+                   DELETE duplicate
+                   RETURN labels(primary) AS labels, properties(primary) AS properties""",
+                primary=primary["id"], duplicate=duplicate["id"], props=props,
+            )
+            return dict(await result.single(strict=True))
+
+        async with self.driver.session() as session:
+            return await session.execute_write(merge)
+
+    async def search_nodes(
+        self, query: str, node_type: str = None, limit: int = 20, *,
+        offset: int = 0, doc_type: str | None = None, sort: str = "relevance",
+        direction: str = "desc", include_page: bool = False,
+    ) -> list[dict] | dict:
+        """Filter the whole graph before bounded, deterministic pagination."""
         if node_type and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", node_type):
             raise ValueError(f"Invalid node type: {node_type}")
-        type_filter = f":{node_type}" if node_type else ""
+        if isinstance(limit, bool) or not 1 <= limit <= 200:
+            raise ValueError("Search limit must be between 1 and 200")
+        if isinstance(offset, bool) or offset < 0:
+            raise ValueError("Search offset must be nonnegative")
+        orders = {
+            "relevance": "score",
+            "title": "toLower(coalesce(toStringOrNull(n.title), toStringOrNull(n.name), ''))",
+            "date": "coalesce(toStringOrNull(n.date), '')",
+            "doc_type": "coalesce(toStringOrNull(n.doc_type), 'unknown')",
+            "paperless_id": "n.paperless_id",
+        }
+        if sort not in orders or direction not in {"asc", "desc"}:
+            raise ValueError("Invalid search ordering")
         terms = self._search_terms(query)
-        if not terms:
-            if not node_type:
-                return []
-            async with self.driver.session() as session:
-                result = await session.run(
-                    f"""
-                    MATCH (n{type_filter})
-                    RETURN labels(n) AS labels, properties(n) AS props
-                    LIMIT 5000
-                    """,
-                )
-                rows = [{"labels": r["labels"], "properties": r["props"]} async for r in result]
-            rows.sort(
-                key=lambda row: (
-                    self._first_text((row.get("properties") or {}).get("date")),
-                    self._first_text((row.get("properties") or {}).get("title"))
-                    or self._first_text((row.get("properties") or {}).get("name")),
-                ),
-                reverse=True,
-            )
-            return rows[:limit]
-
+        if not terms and not node_type:
+            empty = {"results": [], "total": 0, "offset": offset, "limit": limit,
+                     "has_more": False, "doc_types": {}}
+            return empty if include_page else []
+        label = f":{node_type}" if node_type else ""
+        match = f"""
+            MATCH (n{label})
+            WITH n, toLower(
+                coalesce(toStringOrNull(n.title), '') + ' ' +
+                coalesce(toStringOrNull(n.name), '') + ' ' +
+                coalesce(toStringOrNull(n.doc_type), '') + ' ' +
+                coalesce(toStringOrNull(n.date), '') + ' ' +
+                coalesce(toStringOrNull(n.paperless_id), '') + ' ' +
+                reduce(text = '', alias IN coalesce(n.aliases, []) |
+                       text + ' ' + coalesce(toStringOrNull(alias), ''))
+            ) AS searchable
+            WITH n, size([term IN $terms WHERE searchable CONTAINS term]) AS score
+            WHERE size($terms) = 0 OR score > 0
+        """
+        parameters = {"terms": terms, "doc_type": doc_type or "", "limit": limit, "offset": offset}
         async with self.driver.session() as session:
-            result = await session.run(
-                f"""
-                MATCH (n{type_filter})
+            total = None
+            facets = {}
+            if include_page:
+                counts = await session.run(match + """
+                    WITH coalesce(toStringOrNull(n.doc_type), 'unknown') AS doc_type, count(*) AS count
+                    RETURN coalesce(sum(CASE WHEN $doc_type = '' OR doc_type = $doc_type
+                                             THEN count ELSE 0 END), 0) AS total,
+                           collect({type: doc_type, count: count}) AS doc_types
+                """, **parameters)
+                record = await counts.single()
+                total = int(record["total"]) if record else 0
+                facets = {item["type"]: item["count"] for item in (record["doc_types"] if record else [])}
+            result = await session.run(match + f"""
+                WITH n, score
+                WHERE $doc_type = '' OR coalesce(toStringOrNull(n.doc_type), 'unknown') = $doc_type
                 RETURN labels(n) AS labels, properties(n) AS props
-                LIMIT 5000
-                """,
-            )
-            rows = [{"labels": r["labels"], "properties": r["props"]} async for r in result]
-
-        scored: list[tuple[int, str, dict]] = []
-        for row in rows:
-            props = row.get("properties") or {}
-            searchable = " ".join(
-                self._searchable_text(props.get(field))
-                for field in ("title", "name", "doc_type", "date", "aliases")
-            ).lower()
-            if not searchable:
-                searchable = self._searchable_text(props).lower()
-            matched = sum(1 for term in terms if term in searchable)
-            if matched:
-                scored.append((matched, self._first_text(props.get("date")), row))
-
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [row for _, _, row in scored[:limit]]
+                ORDER BY {orders[sort]} {direction.upper()},
+                         coalesce(toStringOrNull(n.date), '') DESC,
+                         coalesce(toStringOrNull(n.uuid), toStringOrNull(n.paperless_id), elementId(n)) ASC
+                SKIP $offset LIMIT $limit
+            """, **parameters)
+            rows = [{"labels": row["labels"], "properties": row["props"]} async for row in result]
+        if not include_page:
+            return rows
+        return {"results": rows, "total": total, "offset": offset, "limit": limit,
+                "has_more": offset + len(rows) < total, "doc_types": facets}
 
     async def get_node(self, node_uuid: str) -> Optional[dict]:
         async with self.driver.session() as session:
@@ -651,38 +721,46 @@ class GraphStore:
             }
 
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
+        depth = max(1, min(int(depth), 4))
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (start) WHERE start.uuid = $uuid OR start.paperless_id = $pid
+                    CALL apoc.path.subgraphAll(start, {maxLevel: $depth})
+                    YIELD nodes, relationships
+                    RETURN [n IN nodes | {labels: labels(n), props: properties(n)}] AS nodes,
+                           [r IN relationships | {id: elementId(r), type: type(r), props: properties(r),
+                            start: coalesce(startNode(r).uuid, 'doc-' + toString(startNode(r).paperless_id)),
+                            end: coalesce(endNode(r).uuid, 'doc-' + toString(endNode(r).paperless_id))}] AS rels
+                    """,
+                    uuid=node_uuid, pid=_try_int(node_uuid), depth=depth,
+                )
+                record = await result.single()
+                return {"nodes": record["nodes"], "relationships": record["rels"]} if record else {"nodes": [], "relationships": []}
+        except Exception as error:
+            # Only a missing optional procedure should trigger a different query.
+            if getattr(error, "code", "") != "Neo.ClientError.Procedure.ProcedureNotFound":
+                raise
+            return await self._get_neighbors_no_apoc(node_uuid, depth)
+
+    async def _get_neighbors_no_apoc(self, node_uuid: str, depth: int) -> dict:
+        """Fallback neighborhood query without APOC."""
+        depth = max(1, min(int(depth), 4))
         async with self.driver.session() as session:
             result = await session.run(
                 f"""
                 MATCH (start) WHERE start.uuid = $uuid OR start.paperless_id = $pid
-                CALL apoc.path.subgraphAll(start, {{maxLevel: $depth}})
-                YIELD nodes, relationships
+                MATCH path = (start)-[*0..{depth}]-(end)
+                WITH collect(DISTINCT end) AS nodes
+                UNWIND nodes AS a
+                OPTIONAL MATCH (a)-[r]->(b)
+                WHERE b IN nodes
+                WITH nodes, collect(DISTINCT r) AS relationships
                 RETURN [n IN nodes | {{labels: labels(n), props: properties(n)}}] AS nodes,
-                       [r IN relationships | {{type: type(r), props: properties(r),
-                        start: properties(startNode(r)).uuid, end: properties(endNode(r)).uuid}}] AS rels
-                """,
-                uuid=node_uuid, pid=_try_int(node_uuid), depth=depth,
-            )
-            record = await result.single()
-            if not record:
-                # Fallback without APOC
-                return await self._get_neighbors_no_apoc(node_uuid, depth)
-            return {"nodes": record["nodes"], "relationships": record["rels"]}
-
-    async def _get_neighbors_no_apoc(self, node_uuid: str, depth: int) -> dict:
-        """Fallback neighborhood query without APOC."""
-        async with self.driver.session() as session:
-            result = await session.run(
-                """
-                MATCH path = (start)-[*1..3]-(end)
-                WHERE start.uuid = $uuid OR start.paperless_id = $pid
-                UNWIND nodes(path) AS n
-                UNWIND relationships(path) AS r
-                WITH collect(DISTINCT {labels: labels(n), props: properties(n)}) AS nodes,
-                     collect(DISTINCT {type: type(r), props: properties(r),
-                             start_uuid: properties(startNode(r)).uuid,
-                             end_uuid: properties(endNode(r)).uuid}) AS rels
-                RETURN nodes, rels
+                       [r IN relationships | {{id: elementId(r), type: type(r), props: properties(r),
+                        start: coalesce(startNode(r).uuid, 'doc-' + toString(startNode(r).paperless_id)),
+                        end: coalesce(endNode(r).uuid, 'doc-' + toString(endNode(r).paperless_id))}}] AS rels
                 """,
                 uuid=node_uuid, pid=_try_int(node_uuid),
             )
@@ -721,7 +799,7 @@ class GraphStore:
                 RETURN DISTINCT
                     labels(a) AS a_labels, properties(a) AS a_props,
                     labels(b) AS b_labels, properties(b) AS b_props,
-                    type(r) AS rel_type, properties(r) AS rel_props,
+                    elementId(r) AS rel_id, type(r) AS rel_type, properties(r) AS rel_props,
                     properties(startNode(r)).uuid AS start_uuid,
                     properties(endNode(r)).uuid AS end_uuid,
                     startNode(r).paperless_id AS start_pid,
@@ -731,30 +809,31 @@ class GraphStore:
                 uuids=uuids,
             )
 
-            all_nodes = {n["props"].get("uuid"): n for n in nodes}
-            relationships = []
+            all_nodes = {_graph_node_id(n["props"]): n for n in nodes if _graph_node_id(n["props"])}
+            relationships = {}
 
             async for r in rel_result:
                 # Add connected nodes we haven't seen
                 for prefix in ["a", "b"]:
                     props = r[f"{prefix}_props"]
-                    uid = props.get("uuid") or f"doc-{props.get('paperless_id', '')}"
+                    uid = _graph_node_id(props)
                     if uid and uid not in all_nodes:
                         all_nodes[uid] = {"labels": r[f"{prefix}_labels"], "props": props}
 
-                start = r["start_uuid"] or f"doc-{r['start_pid']}"
-                end = r["end_uuid"] or f"doc-{r['end_pid']}"
-                if start and end:
-                    relationships.append({
+                start = _graph_node_id({"uuid": r["start_uuid"], "paperless_id": r["start_pid"]})
+                end = _graph_node_id({"uuid": r["end_uuid"], "paperless_id": r["end_pid"]})
+                if start in all_nodes and end in all_nodes:
+                    relationships[r["rel_id"]] = {
+                        "id": r["rel_id"],
                         "type": r["rel_type"],
                         "props": r["rel_props"],
                         "start": start,
                         "end": end,
-                    })
+                    }
 
             return {
                 "nodes": list(all_nodes.values()),
-                "relationships": relationships,
+                "relationships": list(relationships.values()),
             }
 
     async def get_documents_by_entity_types(self, entity_types: list[str], limit: int = 100) -> list[int]:
@@ -902,6 +981,18 @@ def _sanitize_rel_type(rel_type: str) -> str:
     sanitized = sanitized.upper()
     sanitized = re.sub(r'_+', '_', sanitized).strip('_')
     return sanitized or 'RELATED_TO'
+
+
+def _graph_node_id(props: dict) -> Optional[str]:
+    node_uuid = props.get("uuid")
+    if isinstance(node_uuid, str) and node_uuid.strip():
+        return node_uuid
+    pid = props.get("paperless_id")
+    if isinstance(pid, bool) or not isinstance(pid, (str, int)):
+        return None
+    if str(pid).isdigit() and int(pid) > 0:
+        return f"doc-{int(pid)}"
+    return None
 
 
 def _try_int(val: str) -> int:

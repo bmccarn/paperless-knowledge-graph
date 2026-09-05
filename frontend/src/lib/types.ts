@@ -75,6 +75,7 @@ export interface GraphNode {
 }
 
 export interface GraphRelationship {
+  id?: string;
   start: string | null;
   end: string | null;
   type: string;

@@ -1,0 +1,172 @@
+{
+  "version": "accuracy-v1",
+  "purpose": "Synthetic scoring fixtures; source chunks and answer expectations are independent of response metadata. These documents must be installed in an isolated evaluation corpus before API execution.",
+  "documents": [
+    {
+      "document_id": 9101,
+      "title": "Synthetic January utility statement",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "content": "January 2026 utility statement. Amount due: 125.00 USD. Due date: 2026-01-31."
+        }
+      ]
+    },
+    {
+      "document_id": 9102,
+      "title": "Synthetic vehicle record",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "content": "Equipment record. Vehicle: Example Roadster. Model year: 2020."
+        }
+      ]
+    },
+    {
+      "document_id": 9103,
+      "title": "Synthetic expired insurance policy",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "content": "Historical insurance policy. Effective date: 2001-01-01. Expiration date: 2002-01-01. Premium: 300.00 USD."
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact-premium",
+      "question": "What amount is due on the synthetic January 2026 utility statement?",
+      "mode": "strict",
+      "suite": "factual",
+      "expected_disposition": "supported",
+      "required_source_doc_ids": [
+        9101
+      ],
+      "expected_facts": [
+        {
+          "name": "amount due",
+          "value": "125.00",
+          "unit": "USD",
+          "document_id": 9101,
+          "quote": "Amount due: 125.00 USD."
+        }
+      ],
+      "forbidden_terms": [
+        "152.00",
+        "EUR"
+      ],
+      "accepted_answers": [
+        "The amount due is 125.00 USD.",
+        "The January 2026 utility statement lists an amount due of 125.00 USD."
+      ]
+    },
+    {
+      "id": "same-source-date",
+      "question": "What is the due date on the synthetic January utility statement?",
+      "mode": "strict",
+      "suite": "factual",
+      "expected_disposition": "supported",
+      "required_source_doc_ids": [
+        9101
+      ],
+      "expected_facts": [
+        {
+          "name": "due date",
+          "value": "2026-01-31",
+          "document_id": 9101,
+          "quote": "Due date: 2026-01-31."
+        }
+      ],
+      "accepted_answers": [
+        "The due date is 2026-01-31."
+      ]
+    },
+    {
+      "id": "named-vehicle",
+      "question": "Which vehicle is named in the synthetic equipment record?",
+      "mode": "deep",
+      "suite": "factual",
+      "expected_disposition": "supported",
+      "required_source_doc_ids": [
+        9102
+      ],
+      "expected_facts": [
+        {
+          "name": "vehicle",
+          "value": "Example Roadster",
+          "document_id": 9102,
+          "quote": "Vehicle: Example Roadster."
+        }
+      ],
+      "accepted_answers": [
+        "The vehicle is Example Roadster.",
+        "The equipment record names Example Roadster."
+      ]
+    },
+    {
+      "id": "expired-policy-current-abstention",
+      "question": "Does the synthetic expired policy prove that I am insured today?",
+      "mode": "strict",
+      "suite": "factual",
+      "expected_disposition": "abstained",
+      "allowed_abstention_dispositions": [
+        "current_unresolved",
+        "unsupported",
+        "incomplete"
+      ],
+      "expected_answer": "I could not verify a complete answer from the retrieved source text. Please review the source documents or narrow the question before relying on specific facts.",
+      "forbidden_terms": [
+        "currently insured",
+        "coverage is active"
+      ]
+    },
+    {
+      "id": "missing-source-abstention",
+      "question": "What is the current balance of a nonexistent synthetic bank account?",
+      "mode": "strict",
+      "suite": "factual",
+      "expected_disposition": "abstained",
+      "allowed_abstention_dispositions": [
+        "unsupported",
+        "incomplete"
+      ],
+      "expected_answer": "I could not verify a complete answer from the retrieved source text. Please review the source documents or narrow the question before relying on specific facts.",
+      "forbidden_terms": [
+        "999",
+        "1000"
+      ]
+    },
+    {
+      "id": "source-bound-due-date-timeline",
+      "question": "Show the due date event from the synthetic utility statement.",
+      "mode": "timeline",
+      "suite": "factual",
+      "expected_disposition": "supported",
+      "required_source_doc_ids": [
+        9101
+      ],
+      "expected_facts": [
+        {
+          "name": "due date",
+          "value": "2026-01-31",
+          "document_id": 9101,
+          "quote": "Due date: 2026-01-31."
+        }
+      ],
+      "accepted_answers": [
+        "The due date is 2026-01-31."
+      ],
+      "require_timeline": true,
+      "expected_timeline_events": [
+        {
+          "date": "2026-01-31",
+          "precision": "day",
+          "document_id": 9101,
+          "title": "Utility payment due",
+          "summary": "Due date: 2026-01-31."
+        }
+      ]
+    }
+  ]
+}

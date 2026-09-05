@@ -18,6 +18,17 @@ test("per-document support retains quotes and rationale while rejecting malforme
   assert.deepEqual(support, [{documentId: 101, inferred: true, quotes: ["Alice owns <Example>"], rationale: ["The source records ownership."]}]);
 });
 
+test("ingestion and legacy relationship evidence stays visible without duplicate quotes", () => {
+  const stored = {source_doc: 101, implied: true,
+    evidence_json: JSON.stringify([{quote: "Alice owns <Example>"}, {quote: "Recorded in the source."}]),
+    evidence_spans: JSON.stringify([{quote: "Alice owns <Example>"}]), rationale: "Source ownership."};
+  for (const props of [stored, {support_records: [JSON.stringify(stored)]},
+    {...stored, support_records: [JSON.stringify(stored)]}]) {
+    assert.deepEqual(relationshipSupport(props), [{documentId: 101, inferred: true,
+      quotes: ["Alice owns <Example>", "Recorded in the source."], rationale: ["Source ownership."]}]);
+  }
+});
+
 const payload = {
   nodes: [
     { labels: ["Person"], props: { uuid: "p", name: "Person" } },

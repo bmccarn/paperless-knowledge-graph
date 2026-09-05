@@ -1,0 +1,61 @@
+
+> frontend@0.1.0 test
+> tsc src/lib/graph-data.ts src/lib/answer-format.ts --outDir .test-build --module commonjs --target ES2020 --skipLibCheck && node --test tests/*.test.mjs
+
+✔ source markup cannot create active HTML or external citation links (0.46925ms)
+✔ only matching document ID citations become navigable links (0.065041ms)
+✔ per-document support retains quotes and rationale while rejecting malformed records (1.1015ms)
+✖ ingestion and legacy relationship evidence stays visible without duplicate quotes (0.681417ms)
+✔ repeated neighborhood expansion preserves relationship count and evidence (0.234958ms)
+✔ different source support and relationship types remain distinct (0.086542ms)
+✔ stable backend relationship IDs update properties without duplication (0.09875ms)
+✔ missing identities and dangling relationships are reported, never fabricated (0.091875ms)
+✔ backend fallback endpoint names normalize consistently (0.069ms)
+✔ source records do not determine relationship direction (0.0895ms)
+✔ source strings cannot inject HTML into canvas library tooltips (0.085375ms)
+✔ graph metadata is detached from response objects (0.103ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 11
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 48.502417
+
+✖ failing tests:
+
+test at tests/graph-data.test.mjs:21:1
+✖ ingestion and legacy relationship evidence stays visible without duplicate quotes (0.681417ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+  + []
+  - [
+  -   {
+  -     documentId: 101,
+  -     inferred: true,
+  -     quotes: [
+  -       'Alice owns <Example>',
+  -       'Recorded in the source.'
+  -     ],
+  -     rationale: [
+  -       'Source ownership.'
+  -     ]
+  -   }
+  - ]
+
+      at TestContext.<anonymous> (file:///Users/blake/development/paperless-knowledge-graph/frontend/tests/graph-data.test.mjs:27:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1397:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:969:18)
+      at Test.postRun (node:internal/test_runner/test:1537:19)
+      at Test.run (node:internal/test_runner/test:1462:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ { documentId: 101, inferred: true, quotes: [Array], rationale: [Array] } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

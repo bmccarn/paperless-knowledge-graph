@@ -1,0 +1,24 @@
+
+> frontend@0.1.0 test
+> tsc src/lib/graph-data.ts src/lib/answer-format.ts --outDir .test-build --module commonjs --target ES2020 --skipLibCheck && node --test tests/*.test.mjs
+
+✔ source markup cannot create active HTML or external citation links (0.427625ms)
+✔ only matching document ID citations become navigable links (0.064667ms)
+✔ per-document support retains quotes and rationale while rejecting malformed records (1.165209ms)
+✔ ingestion and legacy relationship evidence stays visible without duplicate quotes (0.174208ms)
+✔ repeated neighborhood expansion preserves relationship count and evidence (0.242083ms)
+✔ different source support and relationship types remain distinct (0.089333ms)
+✔ stable backend relationship IDs update properties without duplication (0.093167ms)
+✔ missing identities and dangling relationships are reported, never fabricated (0.083166ms)
+✔ backend fallback endpoint names normalize consistently (0.065333ms)
+✔ source records do not determine relationship direction (0.11175ms)
+✔ source strings cannot inject HTML into canvas library tooltips (0.113875ms)
+✔ graph metadata is detached from response objects (0.107917ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 46.480292

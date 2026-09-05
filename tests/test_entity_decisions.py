@@ -468,6 +468,22 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbound["direction"], "in")
         self.assertEqual(inbound["rel_props"]["source_doc_ids"], [22])
 
+    async def test_merge_preserves_ingestion_quotes_across_both_evidence_fields(self):
+        first = {"quote": "John Smith works at Example.", "start": 0, "end": 28}
+        second = {"quote": "John Smyth is employed by Example.", "start": 40, "end": 73}
+        await self.store.create_relationship(self.keep, "Person", self.org, "Organization", "WORKS_AT",
+            {"source_doc": 11, "evidence_json": json.dumps([first])})
+        await self.store.create_relationship(self.remove, "Person", self.org, "Organization", "WORKS_AT",
+            {"source_doc": 11, "evidence_json": json.dumps([second]), "evidence_spans": [first]})
+        await self.store.merge_entities(self.keep, self.remove)
+        detail = await self.store.get_node(self.keep)
+        edge = next(r for r in detail["relationships"] if r["rel_type"] == "WORKS_AT")
+        records = [json.loads(value) for value in edge["rel_props"]["support_records"]]
+        record = next(r for r in records if r["source_doc"] == 11)
+        self.assertEqual(record.get("evidence_spans"), [first, second])
+        self.assertEqual(edge["rel_props"]["source_doc_ids"], [11, 22])
+        self.assertEqual(edge["rel_props"]["weight"], 2)
+
     async def test_invalid_support_rolls_back_all_graph_changes(self):
         async with self.driver.session() as session:
             await session.run("""MATCH (b {uuid:$remove}), (o {uuid:$org})

@@ -20,7 +20,7 @@ RELS = copy.deepcopy(RELS)
 RELATIONSHIP_QUOTE = 'Alex is a customer. <img src=x onerror="window.__relationship_xss=1">'
 RELS[0]['props'].update(source_doc_ids=[101], inferred=True, support_records=[json.dumps({
     'source_doc': 101, 'inferred': True,
-    'evidence_spans': json.dumps([{'start': 0, 'end': len(RELATIONSHIP_QUOTE), 'quote': RELATIONSHIP_QUOTE}]),
+    'evidence_json': json.dumps([{'start': 0, 'end': len(RELATIONSHIP_QUOTE), 'quote': RELATIONSHIP_QUOTE}]),
     'rationale': ['The source names Alex as the customer of Example Utility.'],
 })])
 

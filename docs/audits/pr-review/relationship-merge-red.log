@@ -1,0 +1,33 @@
+test_merge_preserves_ingestion_quotes_across_both_evidence_fields (tests.test_entity_decisions.GraphEntityMergeTests.test_merge_preserves_ingestion_quotes_across_both_evidence_fields) ... 2026-09-05 07:47:26,555 neo4j.notifications WARNING Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `paperless_id` does not exist. Verify that the spelling is correct.', position=<SummaryInputPosition line=2, column=53, offset=53>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 53, 'line': 2, 'column': 53}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: "\n                MATCH (n) WHERE n.uuid = $uuid OR n.paperless_id = $pid\n                OPTIONAL MATCH (n)-[r]-(m)\n                RETURN labels(n) AS labels, properties(n) AS props,\n                       collect({rel_type: type(r), direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,\n                               rel_props: properties(r), neighbor_labels: labels(m),\n                               neighbor_props: properties(m)}) AS relationships\n                "
+FAIL
+
+======================================================================
+FAIL: test_merge_preserves_ingestion_quotes_across_both_evidence_fields (tests.test_entity_decisions.GraphEntityMergeTests.test_merge_preserves_ingestion_quotes_across_both_evidence_fields)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/blake/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/private/tmp/paperless-pr-old-check/tests/test_entity_decisions.py", line 483, in test_merge_preserves_ingestion_quotes_across_both_evidence_fields
+    self.assertEqual(record.get("evidence_spans"), [first, second])
+AssertionError: Lists differ: [{'end': 28, 'quote': 'John Smith works at E[17 chars]: 0}] != [{'quote': 'John Smith works at Example.', '[90 chars] 73}]
+
+Second list contains 1 additional elements.
+First extra element 1:
+{'quote': 'John Smyth is employed by Example.', 'start': 40, 'end': 73}
+
+- [{'end': 28, 'quote': 'John Smith works at Example.', 'start': 0}]
+?                                                                  ^
+
++ [{'end': 28, 'quote': 'John Smith works at Example.', 'start': 0},
+?                                                                  ^
+
++  {'end': 73, 'quote': 'John Smyth is employed by Example.', 'start': 40}]
+
+----------------------------------------------------------------------
+Ran 1 test in 0.094s
+
+FAILED (failures=1)

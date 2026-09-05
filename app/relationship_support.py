@@ -16,6 +16,22 @@ def support_records(props: dict) -> dict[int, dict]:
             records[source] = {"source_doc": source}
     for record in records.values():
         record["inferred"] = bool(record.get("inferred") or record.get("implied"))
+        # Ingestion and older indexes used evidence_json. Normalize before
+        # merging so every quote follows the same per-document union policy.
+        if "evidence_json" in record or "evidence_spans" in record:
+            spans = []
+            for key in ("evidence_spans", "evidence_json"):
+                value = record.get(key)
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                    except ValueError:
+                        value = [value]
+                for span in value if isinstance(value, list) else [value] if value else []:
+                    if span not in spans:
+                        spans.append(span)
+            record["evidence_spans"] = spans
+            record.pop("evidence_json", None)
     return records
 
 
@@ -49,6 +65,10 @@ def merge_support_properties(*properties: dict) -> dict:
             else:
                 records[doc_id] = dict(incoming)
     if records:
+        # Aggregate quote fields cannot identify their source when several
+        # documents support one edge. The per-document records are authoritative.
+        result.pop("evidence_json", None)
+        result.pop("evidence_spans", None)
         result["source_doc_ids"] = sorted(records)
         result["support_records"] = [json.dumps(records[k], sort_keys=True, ensure_ascii=False) for k in sorted(records)]
         result["weight"] = len(records)
@@ -62,6 +82,9 @@ def merge_support_properties(*properties: dict) -> dict:
         # Preserve scalar compatibility only for an unambiguous single source.
         if len(records) == 1:
             result["source_doc"] = next(iter(records))
+            single = next(iter(records.values()))
+            if "evidence_spans" in single:
+                result["evidence_spans"] = single["evidence_spans"]
     # Neo4j properties cannot contain nested maps or heterogeneous object lists.
     return {k: json.dumps(v, ensure_ascii=False) if isinstance(v, dict) or
             (isinstance(v, list) and any(isinstance(x, (dict, list)) for x in v)) else v

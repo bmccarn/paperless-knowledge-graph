@@ -1,5 +1,7 @@
 # Completion closure — September 4, 2026
 
+**Subsequent validation:** the [pre-publication review](2026-09-05-pr-review.md) fixed an additional relationship-evidence compatibility defect and records the latest test results. The results below describe the C01–C08 closure snapshot.
+
 **C01–C08 are closed in the local implementation, with behavioral regressions and final validation.** Branch `codex/accuracy-completion-fixes` preserves all earlier work in checkpoint `ecde3d0ca0eded79caa2b724ff3a5ca7c3122534`. The subsequent changes implement the [closure specification](../specs/completion-defects.md). The [original completion review](2026-09-04-completion-review.md) and its failing probes remain historical evidence.
 
 ## Defect closure

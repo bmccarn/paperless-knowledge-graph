@@ -1,0 +1,42 @@
+
+> frontend@0.1.0 test:browser
+> node tests/run-browser-checks.mjs
+
+Synthetic accuracy fixture listening on http://127.0.0.1:55460
+▲ Next.js 16.3.4
+- Local:         http://127.0.0.1:55464
+- Network:       http://127.0.0.1:55464
+✓ Ready in 0ms
+✓ Running next.config took 1.3ms
+✔ metadata-only freshness drift is explained and offers targeted repair (685.663375ms)
+✔ failed recovery from an old conversation cannot overwrite a new pending question (376.168042ms)
+✔ conversation switching isolates delayed completion and subsequent questions (412.618167ms)
+✔ single reindex refreshes the current document view (722.991458ms)
+✔ batch reindex refreshes the current document view (719.943958ms)
+✔ initial graph arrival preserves a selected search node and expansion (580.263541ms)
+✔ reset graph arrival preserves a selected search node and expansion (633.855875ms)
+✔ seed graph arrival preserves a selected search node and expansion (712.239375ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5055.938959
+PASS documents_pagination
+PASS documents_type_filter
+PASS documents_global_search
+PASS documents_failure
+PASS graph_search_pagination
+PASS graph_expansion_and_safe_text
+PASS document_feedback_lifecycle
+PASS query_supported_citation
+PASS query_interrupt
+PASS query_stream-error
+PASS query_safe_markup
+PASS documents_mobile_pagination
+PASS graph_relationship_support
+PASS hubs_complete_pagination_and_domain_page
+PASS hubs_error_and_retry
+PASS hubs_stale_success_error_and_loading

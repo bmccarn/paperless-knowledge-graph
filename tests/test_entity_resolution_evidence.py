@@ -212,6 +212,14 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, "Malformed"):
                     await self.resolver.merge_entities("legacy", resolved)
 
+    async def test_legacy_resolver_descriptive_metadata_remains_compatible(self):
+        individual = await self.resolver.resolve_person("Alice Example", 11, role="signer", description="Source signer")
+        organization = await self.resolver.resolve_organization("Example Widgets", 11, org_type="manufacturer", description="Source supplier")
+        self.assertEqual(self.graph.nodes[individual]["role"], "signer")
+        self.assertEqual(self.graph.nodes[individual]["description"], "Source signer")
+        self.assertEqual(self.graph.nodes[organization]["type"], "manufacturer")
+        self.assertEqual(self.graph.nodes[organization]["entity_type"], "Organization")
+
     async def test_invalid_type_and_decision_failure_cannot_create_partial_identity(self):
         for kind in ("", "Unknown", "Person) DETACH DELETE n"):
             with self.assertRaises(ValueError):

@@ -7,7 +7,7 @@ from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited)
-from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, display_name, name_key,
+from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, EXPLICIT_REVIEW_METHOD, display_name, name_key,
     context_bound_name, coreference_span, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions, has_local_alias_definition)
 
 logger = logging.getLogger(__name__)
@@ -17,8 +17,11 @@ class EntityResolver:
     def __init__(self):
         self._mutation_lock = asyncio.Lock()
 
-    async def record_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "") -> dict:
-        """Record a human decision with identities that survive derived reindex."""
+    async def record_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "",
+                              *, review_method: str | None = None) -> dict:
+        """Record an explicitly admitted review; no caller origin is inferred."""
+        if review_method != EXPLICIT_REVIEW_METHOD:
+            raise ValueError("Explicit review origin is required")
         if decision not in {"split", "never_merge", "ignore"}:
             raise ValueError("Unsupported human entity decision")
         if left_uuid == right_uuid:
@@ -32,6 +35,7 @@ class EntityResolver:
                 left_uuid, right_uuid, decision, note,
                 left_identity=entity_identity(left), right_identity=entity_identity(right),
                 provenance="human_review", identity_status="active",
+                review_method=review_method, review_id=str(uuid.uuid4()),
             )
 
     async def _review_decisions(self) -> list[dict]:
@@ -85,8 +89,11 @@ class EntityResolver:
         node = await graph_store.get_node(candidate["uuid"])
         return bool(node) and not merge_is_prohibited(incoming, entity_identity(node), decisions)
 
-    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str) -> dict:
-        """Merge only after checking and durably carrying human no-merge decisions."""
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str,
+                             *, review_method: str | None = None) -> dict:
+        """Merge only with explicit review origin, after durably carrying vetoes."""
+        if review_method != EXPLICIT_REVIEW_METHOD:
+            raise ValueError("Explicit review origin is required for entity merge")
         if primary_uuid == duplicate_uuid:
             raise ValueError("An entity merge requires two different entities")
         async with self._mutation_lock:
@@ -112,14 +119,15 @@ class EntityResolver:
                     left_identity=row.get("left_identity"), right_identity=row.get("right_identity"),
                     provenance=row.get("provenance", "legacy_unknown"),
                     identity_status=row.get("identity_status", "active"),
+                    review_method=row.get("review_method", "legacy_unknown"), review_id=row.get("review_id"),
                 )
             review_id = str(uuid.uuid4())
             merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid,
-                                                       review_id=review_id)
+                                                       review_id=review_id, review_method=review_method)
             await embeddings_store.add_entity_review_decision(
                 primary_uuid, duplicate_uuid, "merged", "",
                 left_identity=keep, right_identity=remove,
-                provenance="human_review", identity_status="active", review_id=review_id,
+                provenance="human_review", identity_status="active", review_id=review_id, review_method=review_method,
             )
             return merged
 
@@ -235,7 +243,8 @@ class EntityResolver:
         # reviewed canonical names are authoritative, NOT their legacy aliases.
         for row in decisions:
             if (row.get("decision") != "merged" or row.get("provenance") != "human_review"
-                    or row.get("identity_status") != "active"):
+                    or row.get("identity_status") != "active" or not row.get("review_id")
+                    or row.get("review_method") != EXPLICIT_REVIEW_METHOD):
                 continue
             a, b = row.get("left_identity") or {}, row.get("right_identity") or {}
             if a.get("type") != kind or b.get("type") != kind:

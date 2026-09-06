@@ -553,12 +553,16 @@ class GraphStore:
         candidates.sort(key=lambda c: c["score"], reverse=True)
         return candidates[:limit]
 
-    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str, *, review_id: str | None = None) -> dict:
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str, *, review_id: str | None = None,
+                             review_method: str | None = None) -> dict:
         """Atomically preserve canonical identity, aliases and relationship support.
 
         Human review policy is enforced by EntityResolver before calling this
         storage operation. Exact UUID lookup also rejects ambiguous legacy IDs.
         """
+        from app.entity_policy import EXPLICIT_REVIEW_METHOD
+        if review_id and review_method != EXPLICIT_REVIEW_METHOD:
+            raise ValueError("Trusted alias writes require explicit review origin")
         if not primary_uuid or not duplicate_uuid or primary_uuid == duplicate_uuid:
             raise ValueError("Two different entity UUIDs are required")
 
@@ -609,11 +613,11 @@ class GraphStore:
             if review_id:
                 from app.entity_policy import human_alias_record, trusted_aliases
                 kind = primary["props"].get("entity_type") or primary["labels"][0]
-                record = human_alias_record(primary["props"]["name"], duplicate["props"]["name"], kind, review_id)
+                record = human_alias_record(primary["props"]["name"], duplicate["props"]["name"], kind, review_id, review_method=review_method)
                 records.append(json.dumps(record, sort_keys=True))
                 for source_node in nodes:
                     for alias in trusted_aliases(source_node["props"], kind, -1, ""):
-                        records.append(json.dumps(human_alias_record(primary["props"]["name"], alias, kind, review_id), sort_keys=True))
+                        records.append(json.dumps(human_alias_record(primary["props"]["name"], alias, kind, review_id, review_method=review_method), sort_keys=True))
             props["alias_records"] = list(dict.fromkeys(records))
             props["identity_hints"] = sorted({value for node in nodes for value in node["props"].get("identity_hints", [])})
 

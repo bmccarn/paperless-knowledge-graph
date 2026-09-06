@@ -43,6 +43,11 @@ class MemoryDecisions:
         self.rows.append(copy.deepcopy(row))
         return copy.deepcopy(row)
 
+    async def set_entity_decision_identity_status(self, left_uuid, right_uuid, decision, status):
+        for row in self.rows:
+            if set((row["left_uuid"], row["right_uuid"])) == set((left_uuid, right_uuid)) and row["decision"] == decision:
+                row["identity_status"] = status
+
     async def generate_embedding(self, text):
         return []
 
@@ -52,6 +57,20 @@ class MemoryGraph:
         self.nodes = {n["uuid"]: copy.deepcopy(n) for n in nodes}
         self.sequence = 0
         self.driver = SimpleNamespace(session=lambda: MemorySession(self))
+
+    async def get_entities_by_type(self, kind):
+        return [copy.deepcopy(n) for n in self.nodes.values() if n["entity_type"] == kind]
+
+    async def record_entity_source(self, node_uuid, doc_id, *, identity_hint=""):
+        node = self.nodes[node_uuid]
+        node["source_doc_ids"] = sorted(set(node.get("source_doc_ids", [])) | {doc_id})
+        if identity_hint:
+            node["identity_hints"] = sorted(set(node.get("identity_hints", [])) | {identity_hint})
+
+    async def add_entity_alias_record(self, node_uuid, record):
+        node = self.nodes[node_uuid]
+        node.setdefault("alias_records", []).append(copy.deepcopy(record))
+        node.setdefault("aliases", []).append(record["alias"])
 
     async def get_all_persons(self):
         return [copy.deepcopy(n) for n in self.nodes.values() if n["entity_type"] == "Person"]
@@ -92,7 +111,7 @@ class MemoryGraph:
 
     add_org_alias = add_person_alias
 
-    async def merge_entities(self, primary_uuid, duplicate_uuid):
+    async def merge_entities(self, primary_uuid, duplicate_uuid, *, review_id=None):
         primary = self.nodes[primary_uuid]
         duplicate = self.nodes.pop(duplicate_uuid)
         primary["aliases"] = list(dict.fromkeys([*primary.get("aliases", []), duplicate["name"], *duplicate.get("aliases", [])]))
@@ -160,12 +179,12 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
     async def test_split_acceptance_waits_for_inflight_identity_resolution(self):
         self.graph.nodes = {"left": person("left", documents=[11]), "right": person("right", documents=[22])}
         entered, release, accepted = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        original = self.graph.find_person
+        original = self.graph.get_entities_by_type
         async def paused_find(name):
             entered.set()
             await release.wait()
             return await original(name)
-        self.graph.find_person = paused_find
+        self.graph.get_entities_by_type = paused_find
         lookup = asyncio.create_task(self.resolver.resolve_person("John Smith", 22))
         await entered.wait()
         async def record():
@@ -209,9 +228,9 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
                         await decision
                     self.assertEqual(await resolve(), "right")
 
-    async def test_person_redirect_to_organization_does_not_deadlock(self):
+    async def test_source_less_person_type_is_not_rewritten_from_name(self):
         result = await asyncio.wait_for(self.resolver.resolve_person("Example Insurance", 11), timeout=1)
-        self.assertEqual((await self.graph.get_node(result))["labels"], ["Organization"])
+        self.assertEqual((await self.graph.get_node(result))["labels"], ["Person"])
 
     async def test_generic_resolution_after_deletion_returns_a_live_identity(self):
         original = await self.resolver.resolve_generic("Example Condition", "Condition", 11)
@@ -274,7 +293,7 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "decision"):
             await self.resolver.merge_entities("rebuilt-canonical", "rebuilt-right")
 
-    async def test_bulk_merge_carries_a_related_veto_to_the_surviving_name(self):
+    async def test_human_merge_carries_a_related_veto_to_the_surviving_name(self):
         self.graph.nodes = {
             "canonical": person("canonical", "John Alexander Smith", [11]),
             "left": person("left", "John Smith", [11]),
@@ -282,7 +301,8 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
         }
         await self.resolver.record_decision("left", "right", "split")
         report = await self.resolver.resolve_all_entities()
-        self.assertEqual(report["total_merged"], 1)
+        self.assertEqual(report["total_merged"], 0)
+        await self.resolver.merge_entities("canonical", "left")
         self.graph.nodes = {
             "rebuilt-canonical": person("rebuilt-canonical", "John Alexander Smith", [11]),
             "rebuilt-right": person("rebuilt-right", "John Smyth", [22]),
@@ -324,7 +344,8 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ignored_pair_can_merge_without_overriding_an_existing_veto(self):
         await self.resolver.record_decision("left", "right", "ignore")
-        self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 1)
+        self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 0)
+        await self.resolver.merge_entities("left", "right")
         self.graph.nodes = {"left": person("left"), "right": person("right")}
         await self.resolver.record_decision("left", "right", "split")
         await self.resolver.record_decision("left", "right", "ignore")
@@ -342,24 +363,13 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(replacement, "left")
             self.assertEqual(await resolve("Shared Name", 22), replacement)
 
-    async def test_gray_zone_model_answer_requires_a_real_boolean(self):
-        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())), close=AsyncMock())
-        for answer, matches in (({"same_entity": True}, True), ({"same_entity": "false"}, False), ({"same_entity": False}, False)):
-            self.graph.nodes = {"left": person("left")}
-            response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(answer)))])
-            client.chat.completions.create.return_value = response
-            with patch("openai.AsyncOpenAI", return_value=client), patch.object(resolver_module, "_merge_llm_cache", {}):
-                resolved = await self.resolver.resolve_person("John Smythee", 22)
-            self.assertEqual(resolved == "left", matches)
-        self.assertEqual(client.chat.completions.create.await_count, 3)
-
-    async def test_model_cannot_override_person_name_safeguards(self):
+    async def test_name_only_model_has_no_identity_authority(self):
         self.graph.nodes = {"left": person("left")}
-        model = AsyncMock(return_value=True)
-        with patch.object(resolver_module, "_llm_should_merge", model):
-            resolved = await self.resolver.resolve_person("Jonathan Smith", 22)
-        self.assertNotEqual(resolved, "left")
-        model.assert_not_awaited()
+        model = AsyncMock(side_effect=AssertionError("No name-only model may be called"))
+        with patch("openai.AsyncOpenAI", model):
+            for name in ("John Smythee", "Jonathan Smith", "John A Smith"):
+                self.assertNotEqual(await self.resolver.resolve_person(name, 22), "left")
+        model.assert_not_called()
 
     async def test_steward_records_review_for_unsafe_agent_merge(self):
         candidate = {"score": 100, "label": "Person", "left": {"uuid": "left", "name": "John Smith"},
@@ -429,7 +439,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix DETACH DELETE n", prefix=self.prefix)
         await self.driver.close()
 
-    async def test_bulk_resolution_merges_same_source_duplicates_without_crossing_split(self):
+    async def test_bulk_resolution_leaves_same_source_homonyms_for_human_review(self):
         for kind, name in (("Person", "John Smith"), ("Organization", "Example Company")):
             with self.subTest(kind=kind):
                 async with self.driver.session() as session:
@@ -449,7 +459,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(report["errors"], [])
                     survivors = [node for node in (
                         await self.store.get_node(left), await self.store.get_node(duplicate)) if node]
-                    self.assertEqual(len(survivors), 1, report)
+                    self.assertEqual(len(survivors), 2, report)
                     self.assertEqual(survivors[0]["properties"]["source_doc_ids"], [11])
                     other = await self.store.get_node(right)
                     assert other is not None

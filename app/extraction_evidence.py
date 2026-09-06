@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -70,7 +71,13 @@ def validate_entities(raw: list[dict], source: str, offset: int, issues: list[st
         elif confidence(candidate.get("confidence")) < 0.8:
             issues.append(f"Entity rejected: low confidence for {name}")
         else:
+            hint = candidate.get("identity_hint") or ""
+            if not isinstance(hint, str) or (hint and not literal_value_present(hint, span["quote"])):
+                issues.append("Entity rejected: identity discriminator is not source-grounded")
+                continue
+            identity_id = entity_key(name.strip(), kind, hint)
             accepted.append({
+                "entity_id": identity_id, "identity_hint": hint,
                 "name": name.strip(), "type": kind,
                 "confidence": confidence(candidate.get("confidence")),
                 "description": str(candidate.get("description") or ""),
@@ -79,14 +86,50 @@ def validate_entities(raw: list[dict], source: str, offset: int, issues: list[st
     return accepted
 
 
+def adjudicate_types(candidates, reviewed, raw_reviews, source, offset, issues):
+    """Name-only alternate meanings cannot overwrite the proposed source type.
+
+    A changed type needs a separate exact contextual quote plus rationale from
+    the source-aware verifier. On insufficient evidence, keep the proposal's
+    type AND description, not the reviewer's guessed alternate meaning.
+    """
+    accepted = []
+    for entity in reviewed:
+        originals = [item for item in candidates if item["name"] == entity["name"]
+                     and item.get("identity_hint", "") == entity.get("identity_hint", "")]
+        if any(item["type"] == entity["type"] for item in originals):
+            accepted.append(entity)
+            continue
+        if len(originals) != 1:
+            issues.append("Type correction omitted: ambiguous original identity")
+            continue
+        reviews = [item for item in raw_reviews if item.get("name") == entity["name"]
+                   and item.get("type") == entity["type"]
+                   and (item.get("identity_hint") or "") == entity.get("identity_hint", "")]
+        raw = reviews[0] if len(reviews) == 1 else {}
+        span = source_span(raw.get("type_evidence_quote"), source, offset)
+        rationale = raw.get("type_rationale")
+        context_words = re.findall(r"\w+", re.sub(re.escape(entity["name"]), "", span["quote"], flags=re.I)) if span else []
+        if (span and named_mention(entity["name"], span["quote"]) and len(context_words) >= 2
+                and isinstance(rationale, str) and rationale.strip()):
+            entity["type_assessment"] = {"provenance": "source_review", "original_type": originals[0]["type"],
+                                         "evidence": span, "rationale": rationale}
+            accepted.append(entity)
+        else:
+            issues.append("Unsupported type correction ignored; proposed source type preserved")
+            accepted.append(dict(originals[0]))
+    return accepted
+
+
 def validate_relationships(raw: list[dict], entities: list[dict], source: str, offset: int, issues: list[str]) -> list[dict]:
-    names = {entity["name"] for entity in entities}
     accepted = []
     for rel in raw:
         start, end, kind = rel.get("from_entity"), rel.get("to_entity"), rel.get("relationship_type")
         span = source_span(rel.get("evidence_quote"), source, offset)
         rationale = rel.get("rationale") or rel.get("description")
-        if not isinstance(start, str) or not isinstance(end, str) or start not in names or end not in names:
+        left = select_endpoint(entities, start, rel.get("from_entity_id"), rel.get("from_type"))
+        right = select_endpoint(entities, end, rel.get("to_entity_id"), rel.get("to_type"))
+        if not left or not right:
             issues.append("Relationship rejected: endpoint is not an accepted entity")
         elif not isinstance(kind, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", kind):
             issues.append("Relationship rejected: invalid type")
@@ -97,10 +140,53 @@ def validate_relationships(raw: list[dict], entities: list[dict], source: str, o
         else:
             accepted.append({
                 "from_entity": start, "to_entity": end, "relationship_type": kind,
+                "from_entity_id": left["entity_id"], "to_entity_id": right["entity_id"],
+                "from_type": left["type"], "to_type": right["type"],
                 "confidence": confidence(rel.get("confidence")), "rationale": rationale,
                 "inferred": True, "evidence": [span],
             })
     return accepted
+
+
+def entity_key(name: str, kind: str, hint: str = "") -> str:
+    payload = json.dumps([name.casefold(), kind, hint], ensure_ascii=False)
+    return "entity-" + hashlib.sha256(payload.encode()).hexdigest()[:24]
+
+
+def select_endpoint(entities, name, entity_id=None, kind=None):
+    if not isinstance(name, str):
+        return None
+    matches = [entity for entity in entities if entity["name"].casefold() == name.casefold()
+               and (not entity_id or entity.get("entity_id") == entity_id)
+               and (not kind or entity["type"] == kind)]
+    # Repeated extraction rows of one identity do not make the endpoint ambiguous.
+    unique = {entity["entity_id"]: entity for entity in matches}
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def relationship_key(rel):
+    return (rel.get("from_entity_id"), rel.get("to_entity_id"), rel.get("relationship_type"))
+
+
+def reconcile_entities(entities, issues):
+    """Preserve qualified homonyms; contradictory readings of one span abstain."""
+    entities = merge_unique(entities, ("entity_id",))
+    rejected = set()
+    for index, left in enumerate(entities):
+        for right in entities[index+1:]:
+            if left["name"].casefold() != right["name"].casefold():
+                continue
+            if left["type"] != right["type"] and any(
+                    a["start"] < b["end"] and b["start"] < a["end"]
+                    for a in left["evidence"] for b in right["evidence"]):
+                rejected.update([left["entity_id"], right["entity_id"]])
+            elif left["type"] == right["type"] and bool(left.get("identity_hint")) != bool(right.get("identity_hint")):
+                # A bare repeated name cannot be assigned to one of its qualified
+                # identities merely by aggregation order.
+                rejected.add(left["entity_id"] if not left.get("identity_hint") else right["entity_id"])
+    if rejected:
+        issues.append(f"Ambiguous entity readings omitted: {len(rejected)}")
+    return [entity for entity in entities if entity["entity_id"] not in rejected]
 
 
 def merge_unique(items: list[dict], key_fields: tuple[str, ...]) -> list[dict]:

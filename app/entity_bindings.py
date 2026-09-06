@@ -1,7 +1,7 @@
 """Document-lifetime identity bindings, never a process-wide name cache."""
 from __future__ import annotations
 
-from app.entity_policy import ENTITY_TYPES, display_name, name_key, verified_spans
+from app.entity_policy import ENTITY_TYPES, name_key, verified_spans
 
 
 class ResolvedEntity(str):
@@ -59,7 +59,7 @@ class DocumentBindings:
                 return None
             return self.resolved.get(entity_id)
         exact = [key for key, entity in self.entities.items()
-                 if display_name(name).casefold() == display_name(entity["name"]).casefold()]
+                 if name_key(name, entity["type"]) == name_key(entity["name"], entity["type"])]
         typed = [key for key in exact if self.entities[key]["type"] == kind]
         choices = typed or exact
         # A corrected type wins over an old metadata field's type guess, but

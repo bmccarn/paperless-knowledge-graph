@@ -43,6 +43,16 @@ class MemoryDecisions:
         self.rows.append(copy.deepcopy(row))
         return copy.deepcopy(row)
 
+    async def hydrate_entity_review_identities(self, incoming, status):
+        for row in self.rows:
+            if (row["left_uuid"], row["right_uuid"], row["decision"]) == (incoming["left_uuid"], incoming["right_uuid"], incoming["decision"]):
+                for side in ("left", "right"):
+                    if not row.get(f"{side}_identity") and incoming.get(f"{side}_identity"):
+                        row[f"{side}_identity"] = copy.deepcopy(incoming[f"{side}_identity"])
+                row["identity_status"] = status
+                return
+        raise ValueError("Legacy decision disappeared")
+
     async def set_entity_decision_identity_status(self, left_uuid, right_uuid, decision, status):
         for row in self.rows:
             if set((row["left_uuid"], row["right_uuid"])) == set((left_uuid, right_uuid)) and row["decision"] == decision:
@@ -116,6 +126,11 @@ class MemoryGraph:
         duplicate = self.nodes.pop(duplicate_uuid)
         primary["aliases"] = list(dict.fromkeys([*primary.get("aliases", []), duplicate["name"], *duplicate.get("aliases", [])]))
         primary["source_doc_ids"] = sorted(set(primary.get("source_doc_ids", [])) | set(duplicate.get("source_doc_ids", [])))
+        if review_id:
+            from app.entity_policy import human_alias_record, trusted_aliases
+            aliases = trusted_aliases(duplicate, primary["entity_type"], -1, "")
+            for alias in [duplicate["name"], *aliases]:
+                primary.setdefault("alias_records", []).append(human_alias_record(primary["name"], alias, primary["entity_type"], review_id))
         return await self.get_node(primary_uuid)
 
 
@@ -466,6 +481,34 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(other["properties"]["source_doc_ids"], [22])
                     with self.assertRaises(resolver_module.EntityMergeProhibited):
                         await resolver.merge_entities(survivors[0]["properties"]["uuid"], right)
+
+    async def test_actual_graph_resolver_roundtrips_source_alias_provenance_and_membership(self):
+        from app.entity_policy import trusted_aliases
+        resolver = resolver_module.EntityResolver()
+        decisions = MemoryDecisions()
+        source = "John Smith also known as John Jones signed."
+        with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", decisions):
+            self.assertEqual(await resolver.resolve_person("John Smith", 33), self.keep)
+            self.assertEqual(await resolver.resolve_person("John Jones", 33, source=source), self.keep)
+        props = (await self.store.get_node(self.keep))["properties"]
+        self.assertEqual(props["source_doc_ids"], [11, 33])
+        self.assertEqual(trusted_aliases(props, "Person", 33, source), ["John Jones"])
+        self.assertEqual(trusted_aliases(props, "Person", 44, source), [])
+        await self.store.delete_document_graph(33)
+        self.assertEqual((await self.store.get_node(self.keep))["properties"]["source_doc_ids"], [11])
+
+    async def test_actual_human_merge_blesses_only_reviewed_names_not_all_legacy_aliases(self):
+        from app.entity_policy import trusted_aliases
+        await self.store.merge_entities(self.keep, self.remove, review_id="synthetic-review-1")
+        props = (await self.store.get_node(self.keep))["properties"]
+        self.assertEqual(trusted_aliases(props, "Person", -1, ""), ["John Smyth"])
+        self.assertEqual(set(props["aliases"]), {"First", "Second", "John Smyth"})
+
+    async def test_relationship_type_mismatch_fails_in_storage_not_silently_rebinds(self):
+        before = await self.store.get_node(self.keep)
+        with self.assertRaisesRegex(ValueError, "endpoints"):
+            await self.store.create_relationship(self.keep, "Condition", self.org, "Organization", "KNOWS", {"source_doc": 11})
+        self.assertEqual(await self.store.get_node(self.keep), before)
 
     async def test_merge_preserves_aliases_and_each_documents_relationship_support(self):
         merged = await self.store.merge_entities(self.keep, self.remove)

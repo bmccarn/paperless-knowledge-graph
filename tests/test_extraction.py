@@ -21,6 +21,7 @@ class CompletionClient:
         self.calls = []
         self.source = ""
         self.finish_reason = "stop"
+        self.truncate_above = None
 
     async def create(self, **request):
         prompt = request["messages"][-1]["content"]
@@ -42,7 +43,10 @@ class CompletionClient:
         if stage in self.overrides:
             override = self.overrides[stage]
             response = override(response, self) if callable(override) else override
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)), finish_reason=self.finish_reason)])
+        finish_reason = self.finish_reason
+        if stage == "metadata" and self.truncate_above is not None and len(self.source) > self.truncate_above:
+            finish_reason = "length"
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)), finish_reason=finish_reason)])
 
     def response(self, stage):
         entities = []
@@ -231,12 +235,31 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         span = result["all_entities"][0]["evidence"][0]
         self.assertEqual(source[span["start"]:span["end"]], span["quote"])
 
+    async def test_output_truncation_adaptively_splits_only_the_oversized_window(self):
+        source = "Blank filler. " * 30 + "\nAlice Example works at Tail Widgets."
+        client = CompletionClient()
+        client.truncate_above = 300
+        result = await self.extract(
+            source,
+            client,
+            window_characters=len(source),
+            overlap_characters=40,
+            minimum_split_characters=180,
+        )
+        coverage = result["extraction_coverage"]
+        self.assertEqual(coverage["status"], "complete")
+        self.assertEqual(coverage["covered_characters"], len(source))
+        self.assertEqual(coverage["adaptive_splits"], 1)
+        self.assertEqual(len(coverage["windows"]), 2)
+        self.assertTrue(all(window["end"] - window["start"] <= 300 for window in coverage["windows"]))
+        self.assertEqual({entity["name"] for entity in result["all_entities"]}, {"Alice Example", "Tail Widgets"})
+
     async def test_truncated_completion_is_not_accepted_as_a_complete_window(self):
         client = CompletionClient()
         client.finish_reason = "length"
         result = await self.extract("Alice Example", client)
         self.assertEqual(result["extraction_coverage"]["status"], "failed")
-        self.assertEqual(len(client.calls), 3)
+        self.assertEqual(len(client.calls), 1)
 
     async def test_empty_document_is_failed_not_successful_empty_extraction(self):
         result = await self.extract("")

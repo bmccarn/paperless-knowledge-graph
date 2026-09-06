@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     paperless_skip_tag_names: str = "needs-review"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     fallback_model: str = "gpt-5.4-mini"
 
     litellm_url: str = "http://localhost:4000"

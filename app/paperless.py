@@ -166,6 +166,9 @@ class PaperlessClient:
         fields["tags"] = sorted(doc.get("tags") or [], key=lambda value: json.dumps(value, sort_keys=True))
         fields["content_hash"] = PaperlessClient.content_hash(doc.get("content") or "")
         fields["index_policy"] = "source-origin-v2"
+        # A successful old-model extraction must not satisfy a new-model sync.
+        # Keep the OCR hash independent for feedback/source revision identity.
+        fields["extraction_model"] = settings.gemini_model
         return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

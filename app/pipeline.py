@@ -606,7 +606,7 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
     if bindings is not None:
         if bindings.doc_id != doc_id:
             raise ValueError("Cross-document identity binding attempted")
-        found = bindings.lookup(name, entity_type)
+        found = bindings.lookup(name) if bindings.authoritative else bindings.lookup(name, entity_type)
         if found:
             return found
         if bindings.authoritative:
@@ -634,7 +634,8 @@ async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: d
         resolved = bindings.resolved[entity_id]
         await _create_relationship(doc_node_id, "Document", resolved, resolved.entity_type,
             "MENTIONS", {"source_doc": doc_id, "confidence": entity.get("confidence", 0),
-                         "evidence_json": _json.dumps(entity.get("evidence") or [])})
+                         "evidence_json": _json.dumps(entity.get("evidence") or []),
+                         "type_assessment_json": _json.dumps(entity.get("type_assessment") or {})})
     return bindings
 
 

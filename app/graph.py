@@ -300,11 +300,14 @@ class GraphStore:
                                    rel_type: str, properties: dict = None):
         """Upsert one source's support without overwriting other documents."""
         props = properties or {}
+        for label in (from_label, to_label):
+            if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", label):
+                raise ValueError("Invalid relationship endpoint label")
         rel_type = _sanitize_rel_type(rel_type)
         async def write(tx):
             result = await tx.run(f"""
-                MATCH (a) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
-                MATCH (b) WHERE b.uuid = $to_uuid OR b.paperless_id = $to_pid
+                MATCH (a:{from_label}) WHERE a.uuid = $from_uuid OR a.paperless_id = $from_pid
+                MATCH (b:{to_label}) WHERE b.uuid = $to_uuid OR b.paperless_id = $to_pid
                 MERGE (a)-[r:{rel_type}]->(b)
                 SET r._support_lock = true
                 RETURN elementId(r) AS id, properties(r) AS props
@@ -603,10 +606,13 @@ class GraphStore:
             # Preserve unknown legacy strings and records, without blessing them.
             records = [value for node in nodes for value in (node["props"].get("alias_records") or [])]
             if review_id:
-                from app.entity_policy import human_alias_record
+                from app.entity_policy import human_alias_record, trusted_aliases
                 kind = primary["props"].get("entity_type") or primary["labels"][0]
                 record = human_alias_record(primary["props"]["name"], duplicate["props"]["name"], kind, review_id)
                 records.append(json.dumps(record, sort_keys=True))
+                for source_node in nodes:
+                    for alias in trusted_aliases(source_node["props"], kind, -1, ""):
+                        records.append(json.dumps(human_alias_record(primary["props"]["name"], alias, kind, review_id), sort_keys=True))
             props["alias_records"] = list(dict.fromkeys(records))
             props["identity_hints"] = sorted({value for node in nodes for value in node["props"].get("identity_hints", [])})
 

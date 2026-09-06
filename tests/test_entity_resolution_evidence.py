@@ -152,6 +152,40 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Example", "Person", [11])}
         self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 44), "rebuilt")
 
+    async def test_human_reviewed_alias_chain_survives_uuid_replacement_without_legacy_poison(self):
+        self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),
+                            "b": node("b", "Alice Smyth", "Person", [22], aliases=["Unreviewed Poison"]),
+                            "c": node("c", "Alice Jones", "Person", [33])}
+        await self.resolver.merge_entities("b", "a")
+        await self.resolver.merge_entities("c", "b")
+        self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Jones", "Person", [33])}
+        self.assertEqual(await self.resolver.resolve_person("Alice Example", 44), "rebuilt")
+        self.assertNotEqual(await self.resolver.resolve_person("Unreviewed Poison", 55), "rebuilt")
+
+    async def test_alias_quarantine_overrides_other_alias_records_and_reviewed_pair_replay(self):
+        self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]), "b": node("b", "Alice Smyth", "Person", [22])}
+        await self.resolver.merge_entities("a", "b")
+        self.graph.nodes["a"].setdefault("alias_records", []).append({"alias": "Alice Smyth", "type": "Person", "status": "quarantined"})
+        source = "Alice Example also known as Alice Smyth signed."
+        self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 33, source=source), "a")
+        self.graph.nodes["a"]["resolution_status"] = "quarantined"
+        self.assertNotEqual(await self.resolver.resolve_person("Alice Example", 44), "a")
+
+    async def test_partial_legacy_veto_protects_identifiable_side_and_keeps_history(self):
+        self.graph.nodes = {"z-left": node("z-left", "Alice Example", "Person", [11])}
+        original = {"left_uuid": "z-left", "right_uuid": "a-missing", "decision": "never_merge",
+                    "note": "original note", "created_at": "original timestamp"}
+        self.decisions.rows = [copy.deepcopy(original)]
+        report = await self.resolver.hydrate_review_identities()
+        self.assertEqual(report["hydrated"], 1)
+        row = self.decisions.rows[0]
+        for key, value in original.items():
+            self.assertEqual(row[key], value)
+        self.assertEqual(row["identity_status"], "unresolved_legacy")
+        self.assertTrue(row["left_identity"])
+        self.assertFalse(row.get("right_identity"))
+        self.assertNotEqual(await self.resolver.resolve_person("Alice Example", 22), "z-left")
+
     async def test_existing_same_name_ambiguity_is_never_bulk_merged(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]), "b": node("b", "Alice Example", "Person", [22])}
         self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 0)

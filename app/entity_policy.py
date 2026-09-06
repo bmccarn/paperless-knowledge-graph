@@ -10,6 +10,7 @@ import re
 import unicodedata
 
 RESOLUTION_POLICY = "evidence-identity-v1"
+EXPLICIT_REVIEW_METHOD = "entity_review_api"
 ENTITY_TYPES = frozenset({
     "Person", "Organization", "Location", "System", "Product", "Document",
     "DocumentRef", "Event", "Condition", "FinancialItem", "InsurancePolicy",
@@ -185,7 +186,8 @@ def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str
             continue
         if name_key(record.get("canonical_name", ""), kind) != name_key(node.get("name", ""), kind):
             continue
-        if record.get("provenance") == "human_review" and record.get("review_id"):
+        if (record.get("provenance") == "human_review" and record.get("review_id")
+                and record.get("review_method") == EXPLICIT_REVIEW_METHOD):
             result.append(alias)
         elif (source and record.get("provenance") == "source_coreference"
               and record.get("policy") == RESOLUTION_POLICY and record.get("source_doc_id") == doc_id
@@ -208,6 +210,9 @@ def source_alias_record(canonical: str, alias: str, kind: str, doc_id: int, sour
             "start": span["start"], "end": span["end"], "quote_hash": digest(span["quote"])}
 
 
-def human_alias_record(canonical: str, alias: str, kind: str, review_id: str) -> dict:
+def human_alias_record(canonical: str, alias: str, kind: str, review_id: str, *, review_method: str) -> dict:
+    if not review_id or review_method != EXPLICIT_REVIEW_METHOD:
+        raise ValueError("Human alias provenance requires an explicit review origin")
     return {"alias": alias, "canonical_name": canonical, "type": kind,
-            "provenance": "human_review", "policy": RESOLUTION_POLICY, "review_id": review_id}
+            "provenance": "human_review", "policy": RESOLUTION_POLICY, "review_id": review_id,
+            "review_method": review_method}

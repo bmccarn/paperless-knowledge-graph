@@ -29,6 +29,62 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
             item.start()
         self.addCleanup(lambda: [item.stop() for item in reversed(self.patches)])
 
+    async def test_unattributed_or_automated_merge_cannot_mutate_or_claim_human_review(self):
+        self.graph.nodes = {"a": node("a", "Alice Example", "Person"), "b": node("b", "Alice Smyth", "Person")}
+        original = copy.deepcopy(self.graph.nodes)
+        for method in (None, "legacy_unknown", "auto_dedup", "scheduled_sync", "entity_steward"):
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(ValueError, "Explicit review origin"):
+                    await self.resolver.merge_entities("a", "b", review_method=method)
+                with self.assertRaisesRegex(ValueError, "Explicit review origin"):
+                    await self.resolver.record_decision("a", "b", "split", review_method=method)
+                self.assertEqual(self.graph.nodes, original)
+                self.assertEqual(self.decisions.rows, [])
+        await self.resolver.merge_entities("a", "b", review_method="entity_review_api")
+        row = self.decisions.rows[-1]
+        self.assertEqual(row["provenance"], "human_review")
+        self.assertEqual(row["review_method"], "entity_review_api")
+        self.assertTrue(row["review_id"])
+        self.assertEqual(self.graph.nodes["a"]["alias_records"][-1]["review_method"], "entity_review_api")
+
+    async def test_merged_label_and_snapshots_do_not_prove_human_review_method(self):
+        from app.entity_decisions import entity_identity
+        canonical = node("a", "Alice Example", "Person")
+        duplicate = node("b", "Alice Smyth", "Person")
+        for method in (None, "legacy_unknown", "auto_dedup", "entity_steward"):
+            with self.subTest(method=method):
+                self.graph.nodes = {"a": copy.deepcopy(canonical)}
+                self.decisions.rows = [{"left_uuid": "a", "right_uuid": "b", "decision": "merged", "note": "",
+                    "left_identity": entity_identity(canonical), "right_identity": entity_identity(duplicate),
+                    "provenance": "human_review", "identity_status": "active", "review_id": "historic-reference",
+                    "review_method": method}]
+                self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 11), "a")
+
+    async def test_mixed_nineteen_legacy_vetoes_hydrate_only_seventeen_known_sides(self):
+        self.graph.nodes = {}
+        self.decisions.rows = []
+        for index in range(19):
+            left, right = f"legacy-left-{index}", f"legacy-right-{index}"
+            self.decisions.rows.append({"left_uuid": left, "right_uuid": right, "decision": "split",
+                                       "note": "original", "created_at": "original-time"})
+            if index < 17:
+                known = left if index % 2 else right
+                self.graph.nodes[known] = node(known, f"Synthetic Person {index}", "Person", [100+index])
+        original = copy.deepcopy(self.decisions.rows)
+        first = await self.resolver.hydrate_review_identities()
+        self.assertEqual(first["hydrated"], 17)
+        self.assertEqual(len(first["unresolved"]), 19)
+        second = await self.resolver.hydrate_review_identities()
+        self.assertEqual(second["hydrated"], 0)
+        self.assertEqual(len(second["unresolved"]), 19)
+        for index, (before, after) in enumerate(zip(original, self.decisions.rows)):
+            for key, value in before.items():
+                self.assertEqual(after[key], value)
+            self.assertEqual(after["identity_status"], "unresolved_legacy")
+            self.assertEqual(sum(bool(after.get(f"{side}_identity")) for side in ("left", "right")), 1 if index < 17 else 0)
+            self.assertNotEqual(after.get("provenance"), "human_review")
+            self.assertNotEqual(after.get("review_method"), "entity_review_api")
+
     async def test_similarity_never_auto_links_or_adds_an_alias_matrix(self):
         for kind, canonical, incoming in [
             ("Person", "Alice Jane Example", "Alice J Example"),
@@ -78,7 +134,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reviewed_alias_matches_but_ambiguous_reviewed_alias_does_not_pick_first(self):
         for uuid, canonical in [("a", "Alice Example"), ("b", "Alice Smyth")]:
-            self.graph.nodes[uuid] = node(uuid, canonical, "Person", alias_records=[human_alias_record(canonical, "Alice Jones", "Person", f"review-{uuid}")])
+            self.graph.nodes[uuid] = node(uuid, canonical, "Person", alias_records=[human_alias_record(canonical, "Alice Jones", "Person", f"review-{uuid}", review_method="entity_review_api")])
         first = await self.resolver.resolve_person("Alice Jones", 11)
         self.assertNotIn(first, {"a", "b"})
         # The unknown source-local identity must not explode into one UUID per edge.
@@ -98,7 +154,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_source_expansion_overrides_global_reviewed_acronym_even_without_alternate_graph_node(self):
         canonical = "Network Entity Systems"
-        self.graph.nodes = {"a": node("a", canonical, alias_records=[human_alias_record(canonical, "NES", "Organization", "review-1")])}
+        self.graph.nodes = {"a": node("a", canonical, alias_records=[human_alias_record(canonical, "NES", "Organization", "review-1", review_method="entity_review_api")])}
         alternate = "New Era Services (NES) signed."
         self.assertNotEqual(await self.resolver.resolve_organization("NES", 22, source=alternate), "a")
         ambiguous = "Network Entity Systems (NES) signed. New Era Services (NES) signed."
@@ -126,9 +182,9 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_coreference_and_reviewed_alias_cannot_override_no_merge(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),
                             "b": node("b", "Alice Smyth", "Person", [22])}
-        await self.resolver.record_decision("a", "b", "never_merge")
+        await self.resolver.record_decision("a", "b", "never_merge", review_method="entity_review_api")
         self.graph.nodes.pop("b")
-        self.graph.nodes["a"]["alias_records"] = [human_alias_record("Alice Example", "Alice Smyth", "Person", "review-1")]
+        self.graph.nodes["a"]["alias_records"] = [human_alias_record("Alice Example", "Alice Smyth", "Person", "review-1", review_method="entity_review_api")]
         source = "Alice Example also known as Alice Smyth signed."
         self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 22, source=source), "a")
         self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 0)
@@ -151,7 +207,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_reviewed_pair_survives_reindex_but_legacy_merged_does_not(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),
                             "b": node("b", "Alice Smyth", "Person", [22])}
-        await self.resolver.merge_entities("a", "b")
+        await self.resolver.merge_entities("a", "b", review_method="entity_review_api")
         row = self.decisions.rows[-1]
         self.assertEqual(row["provenance"], "human_review")
         self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Example", "Person", [11])}
@@ -164,15 +220,15 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),
                             "b": node("b", "Alice Smyth", "Person", [22], aliases=["Unreviewed Poison"]),
                             "c": node("c", "Alice Jones", "Person", [33])}
-        await self.resolver.merge_entities("b", "a")
-        await self.resolver.merge_entities("c", "b")
+        await self.resolver.merge_entities("b", "a", review_method="entity_review_api")
+        await self.resolver.merge_entities("c", "b", review_method="entity_review_api")
         self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Jones", "Person", [33])}
         self.assertEqual(await self.resolver.resolve_person("Alice Example", 44), "rebuilt")
         self.assertNotEqual(await self.resolver.resolve_person("Unreviewed Poison", 55), "rebuilt")
 
     async def test_alias_quarantine_overrides_other_alias_records_and_reviewed_pair_replay(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]), "b": node("b", "Alice Smyth", "Person", [22])}
-        await self.resolver.merge_entities("a", "b")
+        await self.resolver.merge_entities("a", "b", review_method="entity_review_api")
         self.graph.nodes["a"].setdefault("alias_records", []).append({"alias": "Alice Smyth", "type": "Person", "status": "quarantined"})
         source = "Alice Example also known as Alice Smyth signed."
         self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 33, source=source), "a")
@@ -210,7 +266,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.graph.nodes["legacy"], original)
                 self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 0)
                 with self.assertRaisesRegex(ValueError, "Malformed"):
-                    await self.resolver.merge_entities("legacy", resolved)
+                    await self.resolver.merge_entities("legacy", resolved, review_method="entity_review_api")
 
     async def test_legacy_resolver_descriptive_metadata_remains_compatible(self):
         individual = await self.resolver.resolve_person("Alice Example", 11, role="signer", description="Source signer")

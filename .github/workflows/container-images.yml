@@ -29,8 +29,8 @@ jobs:
           NEO4J_server_memory_heap_max__size: 512m
           NEO4J_server_memory_pagecache_size: 128m
         ports:
-          - 7474:7474
-          - 7687:7687
+          - 127.0.0.1:7474:7474
+          - 127.0.0.1:7687:7687
         options: >-
           --health-cmd "wget -q --spider http://localhost:7474 || exit 1"
           --health-interval 10s --health-timeout 5s --health-retries 30
@@ -40,14 +40,14 @@ jobs:
           POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: kg_test
         ports:
-          - 5432:5432
+          - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d kg_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
       redis:
         image: redis:7-alpine
         ports:
-          - 6379:6379
+          - 127.0.0.1:6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20

@@ -8,7 +8,7 @@ from app.graph import graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, display_name, name_key,
-    context_bound_name, coreference_span, trusted_aliases, source_alias_record, alias_is_quarantined)
+    context_bound_name, coreference_span, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions, has_local_alias_definition)
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,11 @@ class EntityResolver:
             decisions = await self._review_decisions()  # unavailable => no mutation
             incoming = entity_identity({"name": name, "entity_type": label,
                                         "source_doc_ids": [source_doc_id]})
+            expansions = initialism_expansions(name, source)
+            local_definition = has_local_alias_definition(name, source)
+            source_folded = display_name(source).casefold()
+            for expansion in expansions:
+                incoming["names"] = sorted(set(incoming["names"]) | set(entity_identity({"name": expansion})["names"]))
             candidates = await graph_store.get_entities_by_type(label)
             eligible = []
             for candidate in candidates:
@@ -165,7 +170,8 @@ class EntityResolver:
                 # An unqualified mention cannot choose between qualified homonyms.
                 if bool(hints) != bool(identity_hint) and not own_source:
                     continue
-                reason, span = self._match(name, label, source_doc_id, source, candidate, decisions)
+                reason, span = self._match(name, label, source_doc_id, source, candidate, decisions,
+                                           expansions, local_definition, source_folded)
                 if reason:
                     eligible.append((candidate, reason, span))
             # Prefer an already-bound source only among otherwise proven matches.
@@ -191,10 +197,28 @@ class EntityResolver:
             return await graph_store.create_node(label, props)
 
     @staticmethod
-    def _match(name, kind, doc_id, source, candidate, decisions):
+    def _match(name, kind, doc_id, source, candidate, decisions, expansions, local_definition, source_folded):
         canonical = candidate.get("name") or ""
         key = name_key(name, kind)
         if alias_is_quarantined(candidate, name, kind):
+            return "", None
+        # Source definitions outrank a globally reviewed abbreviation meaning.
+        # Multiple local expansions remain ambiguous even if only one exists in
+        # the current graph; otherwise first-seen graph state would choose sense.
+        if len(expansions) > 1:
+            return "", None
+        if expansions:
+            expansion = expansions[0]
+            if name_key(expansion, kind) != name_key(canonical, kind):
+                return "", None
+            return "source_coreference", coreference_span(expansion, name, source)
+        # Necessary literal-name prefilter avoids scanning a large source with
+        # multiple regexes for every unrelated corpus candidate. This is local
+        # to this call/revision, never a cross-document decision cache.
+        direct_span = None
+        if display_name(canonical).casefold() in source_folded:
+            direct_span = coreference_span(canonical, name, source)
+        if local_definition and not direct_span:
             return "", None
         # Newly human-reviewed merge decisions survive orphan cleanup. Only the
         # reviewed canonical names are authoritative, NOT their legacy aliases.
@@ -211,9 +235,8 @@ class EntityResolver:
                 return "human_review", None
         if any(key == name_key(alias, kind) for alias in trusted_aliases(candidate, kind, doc_id, source)):
             return "verified_alias", None
-        span = coreference_span(canonical, name, source)
-        if span:
-            return "source_coreference", span
+        if direct_span:
+            return "source_coreference", direct_span
         if key == name_key(canonical, kind):
             if (not context_bound_name(name, kind) and not context_bound_name(canonical, kind)) or doc_id in (candidate.get("source_doc_ids") or []):
                 return "orthographic", None

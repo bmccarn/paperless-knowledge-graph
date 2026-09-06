@@ -115,6 +115,41 @@ def coreference_span(left: str, right: str, source: str) -> dict | None:
     return None
 
 
+def initialism_expansions(alias: str, source: str) -> list[str]:
+    """Find mechanically proved local expansions, including ones not in the graph.
+
+    These constrain a context-specific abbreviation; they do not create typed
+    entities or invent a meaning from a model's general knowledge.
+    """
+    compact = re.sub(r"[.\s]", "", alias)
+    if not compact.isalpha() or not 2 <= len(compact) <= 10:
+        return []
+    escaped = r"\s+".join(re.escape(word) for word in alias.split())
+    matches = re.finditer(r'([^()\n!?;]{1,240})\(\s*["“]?' + escaped + r'["”]?\s*\)', source, re.I)
+    expansions = {}
+    for match in matches:
+        words = match[1].strip().split()
+        for index in range(len(words)):
+            full = " ".join(words[index:]).strip(' ,.:"“”')
+            # Ignore a grammatical leading article when comparing definitions,
+            # while preserving the actual source form as evidence.
+            key = re.sub(r"^the\s+", "", name_key(full, "Organization"))
+            if coreference_span(full, alias, source):
+                expansions[key] = full
+    # Reverse glossary notation: ABBR (Expanded Name).
+    for match in re.finditer(r'(?<!\w)' + escaped + r'\s*\(([^()\n]{1,240})\)', source, re.I):
+        full = match[1].strip()
+        if coreference_span(full, alias, source):
+            expansions[re.sub(r"^the\s+", "", name_key(full, "Organization"))] = full
+    return list(expansions.values())
+
+
+def has_local_alias_definition(alias: str, source: str) -> bool:
+    escaped = r"\s+".join(re.escape(word) for word in alias.split())
+    return bool(re.search(r'(?:also known as|doing business as|d/b/a|aka|hereinafter referred to as)\s+["“]?'
+                          + escaped + r'(?!\w)', source, re.I))
+
+
 def alias_records(node: dict) -> list[dict]:
     records = []
     for value in node.get("alias_records") or []:
@@ -150,6 +185,10 @@ def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str
               and record.get("policy") == RESOLUTION_POLICY and record.get("source_doc_id") == doc_id
               and record.get("source_hash") == digest(source)):
             span = coreference_span(node["name"], alias, source)
+            if not span:
+                expansions = initialism_expansions(alias, source)
+                if len(expansions) == 1 and name_key(expansions[0], kind) == name_key(node["name"], kind):
+                    span = coreference_span(expansions[0], alias, source)
             if (span and digest(span["quote"]) == record.get("quote_hash")
                     and span["start"] == record.get("start") and span["end"] == record.get("end")):
                 result.append(alias)

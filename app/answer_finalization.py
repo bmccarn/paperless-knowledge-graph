@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v2"
+POLICY_VERSION = "source-audit-v3"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -162,22 +162,34 @@ def values_match(text: str, references: list[dict]) -> bool:
     # Supplement (never replace) semantic audit. Exact source values are needed
     # for generated precise numbers and named units. Computations need their own
     # explicit calculation evidence; the auditor cannot simply bless a new value.
-    text = re.sub(r"\[[^\]]*\]\([^)]*\)", "", text)
-    text = re.sub(r"\[\d+\]|^\s*\d+\.\s", "", text)
-    source = " ".join(r["quote"] for r in references)
-    text, source = text.replace("−", "-"), source.replace("−", "-")
+    # Compare rendered prose without changing the audited revision or offsets.
+    text = canonical_prose(text)
+    text = re.sub(r"^\s*\d+\.(?:\s|$)", "", text, flags=re.MULTILINE)
+    # Peel nested delimiters; every successful pass strictly shortens the copy.
+    while True:
+        previous_length = len(text)
+        for markup in (r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)",
+                       r"(?<!\*)(\*+)(?!\*)(.+?)(?<!\*)\1(?!\*)",
+                       r"(?<!\w)(_+)(?!_)(.+?)(?<!_)\1(?!\w)",
+                       r"(\[)([^\[\]]+)\]"):
+            text = re.sub(markup, r"\2", text, flags=re.DOTALL)
+        if len(text) == previous_length:
+            break
+    text = text.replace("−", "-")
+    # A quote boundary is not source adjacency, even within the same document.
+    sources = [r["quote"].replace("−", "-") for r in references]
     # A valid date prefix must not disguise an impossible or more precise date.
     for value in re.findall(r"(?<!\w)\d{4}-\d{1,2}(?:-\d{1,2})?(?!\d)", text):
-        if not parse_date(value) or not date_occurs(value, source):
+        if not parse_date(value) or not any(date_occurs(value, source) for source in sources):
             return False
     number = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
     def numbers(value):
         return {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,])(" + number + r")(?!\w|[.,]\d)", value)}
-    if not numbers(text) <= numbers(source):
+    if not numbers(text) <= {value for source in sources for value in numbers(source)}:
         return False
     units = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
     unit_pattern = r"(?<![A-Za-z'’])" + units + r"(?![A-Za-z])"
-    if not set(re.findall(unit_pattern, text)) <= set(re.findall(unit_pattern, source)):
+    if not set(re.findall(unit_pattern, text)) <= {unit for source in sources for unit in re.findall(unit_pattern, source)}:
         return False
     def quantities(value):
         pairs = {(Decimal(amount.replace(",", "")), unit) for amount, unit in re.findall(
@@ -185,7 +197,7 @@ def values_match(text: str, references: list[dict]) -> bool:
         for unit, amount in re.findall(r"(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*(" + number + r")(?!\w|[.,]\d)", value):
             pairs.add((Decimal(amount.replace(",", "")), unit))
         return pairs
-    return quantities(text) <= quantities(source)
+    return quantities(text) <= {pair for source in sources for pair in quantities(source)}
 
 
 def date_occurs(value: str, source: str) -> bool:
@@ -246,6 +258,13 @@ class AnswerFinalizer:
                                    "source_title": refs[0]["source_title"] if valid else ""})
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "current", "none", "unknown"} else "unknown"
+        # Formatting and quantities can cross audit-unit boundaries. Recheck the
+        # complete revision before certifying it; references remain separate quotes.
+        if claims and all(claim["status"] == "supported" for claim in claims):
+            references = [reference for claim in claims for reference in claim["references"]]
+            if not values_match(answer, references):
+                for claim in claims:
+                    claim["status"] = "unsupported"
         complete = complete and checked == len(units)
         summary = {status: sum(c["status"] == status for c in claims)
                    for status in ("supported", "unsupported", "conflicting", "missing", "unchecked")}

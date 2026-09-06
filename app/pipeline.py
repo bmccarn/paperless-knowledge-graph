@@ -4,6 +4,9 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
+from contextvars import ContextVar
+import json as _json
+from app.entity_bindings import DocumentBindings, ResolvedEntity
 
 from app.config import settings
 from app.paperless import paperless_client, PaperlessClient
@@ -19,67 +22,27 @@ logger = logging.getLogger(__name__)
 # Confidence threshold - entities below this are logged but not committed
 CONFIDENCE_THRESHOLD = 0.5
 
-# --- LLM Entity Validation ---
-import json as _json
-from openai import AsyncOpenAI as _AsyncOpenAI
-
-_validation_cache: dict[str, bool] = {}
-_validation_client = None
-
-def _get_validation_client():
-    global _validation_client
-    if _validation_client is None:
-        from app.config import settings
-        _validation_client = _AsyncOpenAI(
-            base_url=settings.litellm_url,
-            api_key=settings.litellm_api_key,
-        )
-    return _validation_client
+# Type adjudication belongs to the extractor's source-aware verification pass.
+# Never run a name/title-only alternate-meaning classifier after acceptance.
+_document_bindings: ContextVar[DocumentBindings | None] = ContextVar("document_entity_bindings", default=None)
 
 
 async def close_clients():
-    """Close module-level HTTP clients created by the extraction pipeline."""
-    global _validation_client
-    if _validation_client is not None:
-        await _validation_client.close()
-        _validation_client = None
+    """Kept for application shutdown compatibility; no name-only client exists."""
+    return None
 
-ENTITY_VALIDATION_PROMPT = """You are an entity validation and type-correction system for a knowledge graph.
 
-Entity name: "{name}"
-Assigned type: {entity_type}
-From document titled: "{doc_title}"
-
-TASK: Determine if this is a real, specific named entity AND whether the assigned type is correct.
-
-Valid entity types: Person, Organization, Location, System, Product, Document, Event, Condition, FinancialItem, InsurancePolicy, Contract, DateEvent, Address
-
-A VALID entity is a specific, identifiable thing: a real person, company, place, product, system, law, or event.
-An INVALID entity is: a generic term, action/process description, role title without a name, sentence fragment, line item label, or date.
-
-Use your general knowledge to verify:
-- Is "Trane" a person or a company? (It's an HVAC company → Organization)
-- Is "USAA" a person or a company? (It's a financial services company → Organization)
-- Is "Rating Decision" a person? (No, it's a generic term → INVALID)
-- Is "Gabapentin" a person? (No, it's a medication → Product)
-- Is "Fort Bragg" a person? (No, it's a military base → Location)
-- Is "PTSD" an event? (No, it's a medical condition → Condition)
-
-Examples:
-- "John Doe" as Person → {{"valid": true, "correct_type": "Person"}}
-- "Trane" as Person → {{"valid": true, "correct_type": "Organization"}}
-- "USAA Federal Savings Bank" as Person → {{"valid": true, "correct_type": "Organization"}}
-- "Rating Decision" as Person → {{"valid": false}}
-- "background investigations" as Event → {{"valid": false}}
-- "e-QIP" as Product → {{"valid": true, "correct_type": "System"}}
-- "PTSD" as Event → {{"valid": true, "correct_type": "Condition"}}
-- "Gabapentin 300mg" as Person → {{"valid": true, "correct_type": "Product"}}
-- "Fort Bragg" as Person → {{"valid": true, "correct_type": "Location"}}
-
-Respond with ONLY a JSON object:
-- If valid with correct type: {{"valid": true, "correct_type": "<type>"}}
-- If valid but WRONG type: {{"valid": true, "correct_type": "<correct_type>"}}
-- If not a real entity: {{"valid": false}}"""
+async def _create_relationship(from_uuid, from_label, to_uuid, to_label, rel_type, properties=None):
+    """Carry exact resolved labels through legacy metadata processors too."""
+    bindings = _document_bindings.get()
+    if bindings is not None:
+        from app.relationship_support import merge_support_properties
+        key = (str(from_uuid), str(to_uuid), rel_type)
+        properties = merge_support_properties(bindings.relationship_support.get(key, {}), properties or {})
+        bindings.relationship_support[key] = properties
+    await graph_store.create_relationship(
+        str(from_uuid), getattr(from_uuid, "entity_type", from_label),
+        str(to_uuid), getattr(to_uuid, "entity_type", to_label), rel_type, properties)
 
 
 def _coerce_text(value: Any) -> str:
@@ -94,145 +57,6 @@ def _coerce_text(value: Any) -> str:
     if isinstance(value, dict):
         return " ".join(_coerce_text(item) for item in value.values()).strip()
     return str(value).strip()
-
-
-def _is_suspicious_entity(name: str, entity_type: str) -> bool:
-    """Determine if an entity name is borderline and needs LLM validation.
-    
-    The LLM's general knowledge can catch type mismatches (e.g., "Trane" as Person
-    when it's actually a company) and junk entities that slip past the blocklist.
-    """
-    name_clean = _coerce_text(name)
-    words = name_clean.split()
-    
-    # Protected entities are NEVER suspicious - skip LLM validation entirely
-    if name_clean.lower() in PROTECTED_ENTITY_NAMES:
-        return False
-    
-    # Always validate Event entities (most error-prone type)
-    if entity_type == "Event":
-        return True
-    
-    # Single-word entities of ANY type are suspicious — validate with LLM
-    # Catches: "Trane" as Person (it's a company), "Builders" as Person, etc.
-    if len(words) == 1:
-        return True
-    
-    # Person names that don't follow typical patterns
-    if entity_type == "Person":
-        # All caps multi-word (might be a label, not a name)
-        if name_clean.isupper() and len(words) >= 3:
-            return True
-        # Contains numbers (usually not a person)
-        if any(c.isdigit() for c in name_clean):
-            return True
-        # Two words but doesn't look like a name (e.g., "Rating Decision")
-        if len(words) == 2:
-            # If neither word is capitalized like a proper noun, suspicious
-            lower_words = [w for w in words if w[0].islower()]
-            if lower_words:
-                return True
-            # If it contains common non-name words
-            non_name_words = {"decision", "request", "statement", "record", "form",
-                             "notice", "summary", "report", "letter", "order",
-                             "agreement", "certificate", "rating", "review",
-                             "service", "services", "system", "total", "amount"}
-            if any(w.lower() in non_name_words for w in words):
-                return True
-    
-    # Product entities are often junk from invoices
-    if entity_type == "Product":
-        return True
-    
-    # Condition entities are generally trustworthy if they came from medical docs
-    # Only validate if suspiciously short or generic
-    if entity_type == "Condition":
-        if len(words) == 1 and len(name_clean) <= 5:
-            return True
-        return False
-    
-    # Very long names (>60 chars) are usually descriptions, not entities
-    if len(name_clean) > 60:
-        return True
-    
-    # All lowercase multi-word strings
-    if len(words) >= 2 and name_clean == name_clean.lower():
-        return True
-    
-    return False
-
-
-async def _validate_entity_with_llm(name: str, entity_type: str, doc_title: str) -> dict:
-    """Use LLM to validate entity and optionally correct its type.
-    
-    Returns dict with:
-      {"valid": True/False, "correct_type": "Person"/"Organization"/etc.}
-    """
-    name = _coerce_text(name)
-    entity_type = _coerce_text(entity_type)
-    # Protected entities always pass - never send to LLM
-    if name.strip().lower() in PROTECTED_ENTITY_NAMES:
-        return {"valid": True, "correct_type": entity_type}
-    
-    cache_key = f"{entity_type}:{name.lower()}"
-    if cache_key in _validation_cache:
-        cached = _validation_cache[cache_key]
-        # Backward compat: old cache entries are bool
-        if isinstance(cached, bool):
-            return {"valid": cached, "correct_type": entity_type}
-        return cached
-    
-    try:
-        from app.config import settings
-        from app.retry import retry_with_backoff
-        
-        client = _get_validation_client()
-        prompt = ENTITY_VALIDATION_PROMPT.format(
-            name=name, entity_type=entity_type, doc_title=doc_title
-        )
-        
-        async def _call():
-            response = await client.chat.completions.create(
-                model=settings.gemini_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            raw = response.choices[0].message.content or ""
-            try:
-                parsed = _json.loads(raw)
-                return parsed if isinstance(parsed, dict) else {"valid": True}
-            except _json.JSONDecodeError:
-                # Try basic repair: strip markdown fences
-                import re as _re
-                cleaned = _re.sub(r'^```(?:json)?\s*\n?', '', raw.strip(), flags=_re.MULTILINE)
-                cleaned = _re.sub(r'\n?```\s*$', '', cleaned, flags=_re.MULTILINE).strip()
-                try:
-                    parsed = _json.loads(cleaned)
-                    return parsed if isinstance(parsed, dict) else {"valid": True}
-                except _json.JSONDecodeError:
-                    logger.warning(f"Entity validation JSON parse failed for '{name}', allowing entity")
-                    return {"valid": True}
-        
-        result = await retry_with_backoff(_call, operation="validate_entity")
-        is_valid = result.get("valid", True)
-        correct_type = result.get("correct_type", entity_type)
-        
-        validation_result = {"valid": is_valid, "correct_type": correct_type}
-        _validation_cache[cache_key] = validation_result
-        
-        if not is_valid:
-            logger.info(f"LLM rejected entity: '{name}' ({entity_type})")
-        elif correct_type != entity_type:
-            logger.info(f"LLM reclassified entity: '{name}' from {entity_type} -> {correct_type}")
-        
-        return validation_result
-        
-    except Exception as e:
-        logger.warning(f"Entity validation LLM call failed for '{name}': {e}")
-        # On failure, allow the entity through with original type
-        return {"valid": True, "correct_type": entity_type}
-
-
 
 
 async def _purge_document_index(doc_id: int) -> None:
@@ -346,6 +170,8 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         if coverage.get("status") != "complete":
             raise ValueError("Extraction coverage is incomplete; previous index retained")
 
+        bindings = DocumentBindings(doc_id, extracted, content, entity_resolver)
+
         # Log extraction confidence
         extraction_confidence = extracted.get("confidence", 1.0)
         entity_count = _count_entities(extracted)
@@ -391,10 +217,10 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         )
 
         # Step 5: Process extracted entities based on doc type
-        await _process_extraction(doc_id, doc_node_id, doc_type, extracted, title=title)
+        await _process_extraction(doc_id, doc_node_id, doc_type, extracted, title=title, bindings=bindings)
 
         # Step 5b: Process implied relationships
-        await _process_implied_relationships(doc_id, extracted)
+        await _process_implied_relationships(doc_id, extracted, bindings=bindings)
 
         for index, text, embedding, source_content, source_kind in prepared_vectors:
             await embeddings_store.store_document_embedding(
@@ -404,7 +230,7 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         logger.info(f"Doc {doc_id}: stored {len(chunks)} embedding chunks")
 
         # Step 6b: Store entity embeddings for resolved entities (ALL entity types)
-        await _store_entity_embeddings(doc_id, extracted)
+        await _store_entity_embeddings(doc_id, extracted, bindings=bindings)
 
         # Step 7: Update hash
         await embeddings_store.set_doc_hash(doc_id, content_hash, ingestion_fingerprint=fingerprint)
@@ -699,124 +525,38 @@ Summary:"""
             await client.close()
 
 
-async def _store_entity_embeddings(doc_id: int, extracted: dict):
-    """Store embeddings for ALL entity types from the 3-pass extraction."""
-    try:
-        all_entities = extracted.get("all_entities", [])
-        if not all_entities:
-            # Backward compatibility: build from people/organizations
-            for person in (extracted.get("people") or []):
-                name = person.get("name") if isinstance(person, dict) else person
-                if name:
-                    all_entities.append({
-                        "name": name, 
-                        "type": "Person", 
-                        "description": person.get("role", "") if isinstance(person, dict) else ""
-                    })
-            for org in (extracted.get("organizations") or []):
-                name = org.get("name") if isinstance(org, dict) else org
-                if name:
-                    all_entities.append({
-                        "name": name, 
-                        "type": "Organization", 
-                        "description": org.get("type", "") if isinstance(org, dict) else ""
-                    })
-        
-        # Process all entities (type-agnostic)
-        for entity in all_entities:
-            name = _coerce_text(entity.get("name", ""))
-            etype = _normalize_entity_type(entity.get("type", "Person"))
-            desc = _coerce_text(entity.get("description", ""))
-            
-            if not name or not _is_valid_entity_name(name):
-                continue
-            if etype == "Event" and _is_date_string(name):
-                continue
-            
-            # Find the entity in the graph (try specific type first, then any type)
-            results = await graph_store.search_nodes(name, node_type=etype, limit=1)
-            if not results:
-                results = await graph_store.search_nodes(name, limit=1)
-            
-            if results:
-                uuid = results[0].get("properties", {}).get("uuid", "")
-                if uuid:
-                    emb_content = f"{name} | {etype.lower()}"
-                    if desc:
-                        emb_content += f" | {desc}"
-                    emb_content += f" | from doc {doc_id}"
-                    
-                    await embeddings_store.store_entity_embedding(
-                        uuid, name, entity_type=etype, content=emb_content
-                    )
-                    logger.debug(f"Stored embedding for {etype} entity: {name}")
-
-        # Store embeddings for named entities from specific doc types
-        for key, etype in [("patient_name", "Person"), ("provider", "Organization"),
-                           ("vendor", "Organization"), ("policyholder", "Person"),
-                           ("filer_name", "Person"), ("ordering_physician", "Person"),
-                           ("preparer", "Person")]:
-            name = _coerce_text(extracted.get(key))
-            if name and _is_valid_entity_name(name):
-                results = await graph_store.search_nodes(name, node_type=etype, limit=1)
-                if results:
-                    uuid = results[0].get("properties", {}).get("uuid", "")
-                    if uuid:
-                        content = f"{name} | {etype.lower()} | {key} from doc {doc_id}"
-                        await embeddings_store.store_entity_embedding(
-                            uuid, name, entity_type=etype, content=content
-                        )
-
-    except Exception as e:
-        logger.warning(f"Entity embedding storage failed for doc {doc_id}: {e}")
-        raise
-
-
-async def _process_implied_relationships(doc_id: int, extracted: dict):
-    """Process implied relationships extracted from the document."""
-    implied = extracted.get("implied_relationships", [])
-    if not implied or not isinstance(implied, list):
+async def _store_entity_embeddings(doc_id: int, extracted: dict, *, bindings: DocumentBindings | None = None):
+    """Use UUID/type bindings; fuzzy search can attach vectors to the wrong node."""
+    if bindings is None:
+        if extracted.get("all_entities"):
+            raise ValueError("Entity embeddings require document identity bindings")
         return
+    seen = set()
+    for resolved in bindings.resolved.values():
+        if str(resolved) in seen:
+            continue
+        seen.add(str(resolved))
+        content = f"{resolved.name} | {resolved.entity_type.lower()} | {resolved.description} | from doc {doc_id}"
+        await embeddings_store.store_entity_embedding(str(resolved), resolved.name,
+            entity_type=resolved.entity_type, content=content)
 
-    source_props = {"source_doc": doc_id, "implied": True}
 
-    for rel in implied:
-        try:
-            confidence = float(rel.get("confidence", 0.5))
-            if confidence < CONFIDENCE_THRESHOLD:
-                logger.debug(f"Skipping low-confidence implied relationship: {rel} (conf={confidence})")
-                continue
-
-            from_name = _coerce_text(rel.get("from_entity", ""))
-            to_name = _coerce_text(rel.get("to_entity", ""))
-            from_type = _coerce_text(rel.get("from_type", "Person"))
-            to_type = _coerce_text(rel.get("to_type", "Person"))
-            rel_type = _coerce_text(rel.get("relationship", "RELATED_TO"))
-
-            if not from_name or not to_name:
-                continue
-
-            from_uuid = await _resolve_entity(from_name, from_type, doc_id)
-            to_uuid = await _resolve_entity(to_name, to_type, doc_id)
-
-            if from_uuid and to_uuid:
-                props = {
-                    **source_props,
-                    "confidence": confidence,
-                    "implied": bool(rel.get("inferred", True)),
-                    "rationale": _coerce_text(rel.get("rationale") or rel.get("explanation")),
-                    "evidence_json": _json.dumps(rel.get("evidence") or []),
-                }
-                await graph_store.create_relationship(
-                    from_uuid, from_type, to_uuid, to_type,
-                    rel_type, props
-                )
-                logger.debug(f"Created implied relationship: {from_name} -[{rel_type}]-> {to_name}")
-
-        except Exception as e:
-            logger.warning(f"Failed to create implied relationship: {e}")
-            raise
-
+async def _process_implied_relationships(doc_id: int, extracted: dict, *, bindings: DocumentBindings | None = None):
+    """Relationships may reference accepted identities, never create new ones."""
+    for rel in extracted.get("implied_relationships") or []:
+        if bindings is None or bindings.doc_id != doc_id:
+            raise ValueError("Relationships require this document's identity bindings")
+        left = bindings.lookup(rel.get("from_entity", ""), rel.get("from_type", ""), rel.get("from_entity_id"))
+        right = bindings.lookup(rel.get("to_entity", ""), rel.get("to_type", ""), rel.get("to_entity_id"))
+        if not left or not right:
+            raise ValueError("Relationship endpoint is missing or ambiguous in accepted identities")
+        await _create_relationship(left, left.entity_type, right, right.entity_type,
+            rel.get("relationship", "RELATED_TO"), {
+                "source_doc": doc_id, "confidence": rel.get("confidence", 0),
+                "implied": bool(rel.get("inferred", True)),
+                "rationale": _coerce_text(rel.get("rationale") or rel.get("explanation")),
+                "evidence_json": _json.dumps(rel.get("evidence") or []),
+            })
 
 
 # Canonical PascalCase map — .title() breaks multi-capital types like FinancialItem
@@ -860,114 +600,60 @@ def _neo4j_label(entity_type: str) -> str:
 
 
 async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "", description: str = "") -> str:
-    """Route entity resolution based on type.
-    
-    ALL entity creation goes through this function, which applies:
-    1. Name validation (blocklist, dates, etc.)
-    2. LLM validation for suspicious entities (type correction + rejection)
-    3. Type-appropriate resolution (person, org, generic)
-    """
-    name = _coerce_text(name)
-    entity_type = _coerce_text(entity_type)
-    description = _coerce_text(description)
-    if not _is_valid_entity_name(name):
-        logger.debug(f"Skipping invalid entity name: '{name}'")
+    """Legacy metadata may reuse accepted identity, but cannot retype/recreate it."""
+    name, entity_type = _coerce_text(name), _normalize_entity_type(entity_type)
+    bindings = _document_bindings.get()
+    if bindings is not None:
+        if bindings.doc_id != doc_id:
+            raise ValueError("Cross-document identity binding attempted")
+        found = bindings.lookup(name, entity_type)
+        if found:
+            return found
+        if bindings.authoritative:
+            return ""  # metadata cannot bypass an omitted/ambiguous entity
+    if not _is_valid_entity_name(name) or _is_date_string(name):
         return ""
-    
-    # Block date strings from ALL entity types (not just Event)
-    if _is_date_string(name):
-        logger.debug(f"Skipping date string entity: '{name}' ({entity_type})")
-        return ""
-    
-    entity_type = _normalize_entity_type(entity_type)
-    
-    # LLM validation for ALL entities — validates existence and corrects types
-    # Cheap (Gemini Flash) + cached (same name+type = one call ever)
-    validation = await _validate_entity_with_llm(name, entity_type, doc_title)
-    if not validation.get("valid", True):
-        logger.info(f"LLM rejected entity: '{name}' ({entity_type}) from doc {doc_id}")
-        return ""
-    correct_type = validation.get("correct_type", entity_type)
-    if correct_type != entity_type and correct_type in VALID_ENTITY_TYPES:
-        logger.info(f"LLM corrected entity type: '{name}' {entity_type} -> {correct_type} (doc {doc_id})")
-        entity_type = correct_type
-    
-    if entity_type == "Organization":
-        return await entity_resolver.resolve_organization(name, doc_id, description=description)
-    elif entity_type == "Person":
-        return await entity_resolver.resolve_person(name, doc_id, description=description)
-    elif entity_type in VALID_ENTITY_TYPES:
-        return await entity_resolver.resolve_generic(name, entity_type, doc_id, description=description)
-    else:
-        if any(w in name.lower() for w in ["inc", "llc", "corp", "dept", "department", "agency", "company", "bank", "university"]):
-            return await entity_resolver.resolve_organization(name, doc_id)
-        return await entity_resolver.resolve_person(name, doc_id)
+    if entity_type not in VALID_ENTITY_TYPES:
+        raise ValueError("Unsupported entity type; name-only inference is prohibited")
+    # Source-less compatibility callers retain their explicit type and get only
+    # conservative canonical/reviewed matching, with no type model or cache.
+    uuid = await entity_resolver.resolve(name, entity_type, doc_id, description=description)
+    resolved = ResolvedEntity(uuid, entity_type, name, description)
+    if bindings is not None:
+        key = f"legacy:{entity_type}:{name.casefold()}"
+        bindings.entities[key] = {"name": name, "type": entity_type}
+        bindings.resolved[key] = resolved
+    return resolved
 
 
-async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: dict, title: str = ""):
-    """Process enhanced entities from 3-pass extraction (all entity types)."""
-    all_entities = extracted.get("all_entities", [])
-    if not all_entities:
-        return
-        
-    source_props = {"source_doc": doc_id}
-    
-    for entity in all_entities:
-        try:
-            name = _coerce_text(entity.get("name", ""))
-            entity_type = _coerce_text(entity.get("type", "Person"))
-            confidence = float(entity.get("confidence", 0.8))
-            description = _coerce_text(entity.get("description", ""))
-            
-            if not name or confidence < CONFIDENCE_THRESHOLD:
-                continue
-            
-            # Skip date strings masquerading as Event entities
-            if entity_type == "Event" and _is_date_string(name):
-                logger.debug(f"Skipping date-as-event entity: '{name}'")
-                continue
-            
-            # Resolve the entity and create document relationships
-            # (LLM validation happens inside _resolve_entity for ALL code paths)
-            entity_uuid = await _resolve_entity(name, entity_type, doc_id, doc_title=title, description=description)
-            if entity_uuid:
-                # Create relationship from document to entity
-                label = _neo4j_label(entity_type)
-                await graph_store.create_relationship(
-                    doc_node_id, "Document", entity_uuid, label, 
-                    "MENTIONS", {**source_props, "confidence": confidence,
-                                 "evidence_json": _json.dumps(entity.get("evidence") or [])}
-                )
-                logger.debug(f"Created entity relationship: Document {doc_id} -[MENTIONS]-> {label} {name}")
-                
-        except Exception as e:
-            logger.warning(f"Failed to process enhanced entity {entity}: {e}")
-            raise
+async def _process_enhanced_entities(doc_id: int, doc_node_id: str, extracted: dict, title: str = "", *, bindings=None):
+    if bindings is None:
+        bindings = DocumentBindings(doc_id, extracted, "", entity_resolver)
+        await bindings.resolve_all()
+    for entity_id, entity in bindings.entities.items():
+        resolved = bindings.resolved[entity_id]
+        await _create_relationship(doc_node_id, "Document", resolved, resolved.entity_type,
+            "MENTIONS", {"source_doc": doc_id, "confidence": entity.get("confidence", 0),
+                         "evidence_json": _json.dumps(entity.get("evidence") or [])})
+    return bindings
 
 
-async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict, title: str = ""):
-    """Create graph nodes and relationships from extracted data."""
-    source_props = {"source_doc": doc_id}
-
-    # Process enhanced entities from 3-pass extraction if available
-    await _process_enhanced_entities(doc_id, doc_node_id, extracted, title=title)
-
-    if doc_type == "medical_lab":
-        await _process_medical(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "financial_invoice":
-        await _process_financial(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "legal_contract":
-        await _process_contract(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "insurance":
-        await _process_insurance(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "government_tax":
-        await _process_tax(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "military":
-        await _process_military(doc_id, doc_node_id, extracted, source_props)
-    elif doc_type == "property_home":
-        await _process_property(doc_id, doc_node_id, extracted, source_props)
-    else:
-        await _process_generic(doc_id, doc_node_id, extracted, source_props)
+async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extracted: dict,
+                              title: str = "", *, bindings=None):
+    """One document-local map across enhanced and typed metadata processors."""
+    bindings = bindings or DocumentBindings(doc_id, extracted, "", entity_resolver)
+    await bindings.resolve_all()
+    token = _document_bindings.set(bindings)
+    try:
+        await _process_enhanced_entities(doc_id, doc_node_id, extracted, title, bindings=bindings)
+        processors = {"medical_lab": _process_medical, "financial_invoice": _process_financial,
+                      "legal_contract": _process_contract, "insurance": _process_insurance,
+                      "government_tax": _process_tax, "military": _process_military,
+                      "property_home": _process_property}
+        await processors.get(doc_type, _process_generic)(doc_id, doc_node_id, extracted, {"source_doc": doc_id})
+    finally:
+        _document_bindings.reset(token)
+    return bindings
 
 
 async def _process_medical(doc_id, doc_node_id, data, source_props):
@@ -975,21 +661,21 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     if patient and _is_valid_entity_name(patient):
         person_uuid = await _resolve_entity(patient, "Person", doc_id, doc_title="")
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
     provider = data.get("provider")
     if provider and _is_valid_entity_name(provider):
         org_uuid = await _resolve_entity(provider, "Organization", doc_id, doc_title="")
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     physician = data.get("ordering_physician")
     if physician and _is_valid_entity_name(physician):
         phys_uuid = await _resolve_entity(physician, "Person", doc_id, doc_title="")
         if phys_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
 
     for test in (data.get("tests") or []):
@@ -1007,7 +693,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             "flag": test.get("flag", "") or "",
             "confidence": test_confidence,
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
 
     # Process diagnoses as Condition entities
@@ -1016,13 +702,13 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
             continue
         condition_uuid = await _resolve_entity(diagnosis, "Condition", doc_id, doc_title="")
         if condition_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
             # Link patient to condition if we have one
             if patient and _is_valid_entity_name(patient):
                 patient_uuid = await _resolve_entity(patient, "Person", doc_id)
                 if patient_uuid:
-                    await graph_store.create_relationship(
+                    await _create_relationship(
                         patient_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION", source_props)
 
 
@@ -1031,7 +717,7 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
     if vendor and _is_valid_entity_name(vendor):
         org_uuid = await _resolve_entity(vendor, "Organization", doc_id, doc_title="")
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
 
     amount = data.get("total_amount")
@@ -1044,7 +730,7 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
             "currency": data.get("currency", "USD") or "USD",
             "payment_status": data.get("payment_status", "") or "",
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
 
 
@@ -1071,7 +757,7 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
             else:
                 rel_type = "PARTY_TO"
             
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", entity_uuid, _neo4j_label(entity_type), rel_type, source_props)
 
     # Create contract node with metadata
@@ -1082,7 +768,7 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         "terms_summary": data.get("terms_summary", "") or "",
         "renewal_info": data.get("renewal_info", "") or "",
     })
-    await graph_store.create_relationship(
+    await _create_relationship(
         doc_node_id, "Document", contract_uuid, "Contract", "CONTAINS_RESULT", source_props)
 
 
@@ -1091,14 +777,14 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
     if provider and _is_valid_entity_name(provider):
         org_uuid = await _resolve_entity(provider, "Organization", doc_id)
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     policyholder = data.get("policyholder")
     if policyholder and _is_valid_entity_name(policyholder):
         person_uuid = await _resolve_entity(policyholder, "Person", doc_id)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "COVERS", source_props)
 
     policy_uuid = await graph_store.create_node("InsurancePolicy", {
@@ -1109,7 +795,7 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
         "effective_date": data.get("effective_date", "") or "",
         "expiration_date": data.get("expiration_date", "") or "",
     })
-    await graph_store.create_relationship(
+    await _create_relationship(
         doc_node_id, "Document", policy_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
 
 
@@ -1118,14 +804,14 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
     if filer and _is_valid_entity_name(filer):
         person_uuid = await _resolve_entity(filer, "Person", doc_id)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
 
     preparer = data.get("preparer")
     if preparer and _is_valid_entity_name(preparer):
         prep_uuid = await _resolve_entity(preparer, "Person", doc_id)
         if prep_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", prep_uuid, "Person", "PREPARED_BY", source_props)
 
     fi_uuid = await graph_store.create_node("FinancialItem", {
@@ -1137,7 +823,7 @@ async def _process_tax(doc_id, doc_node_id, data, source_props):
         "tax_owed": str(data.get("tax_owed", "")) if data.get("tax_owed") else "",
         "tax_paid": str(data.get("tax_paid", "")) if data.get("tax_paid") else "",
     })
-    await graph_store.create_relationship(
+    await _create_relationship(
         doc_node_id, "Document", fi_uuid, "FinancialItem", "CONTAINS_RESULT", source_props)
 
 
@@ -1147,7 +833,7 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
         addr_uuid = await graph_store.create_node("Address", {
             "full_address": address,
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", addr_uuid, "Address", "LOCATED_AT", source_props)
 
     for party in (data.get("parties") or []):
@@ -1156,7 +842,7 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
             continue
         person_uuid = await _resolve_entity(name, "Person", doc_id)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
 
@@ -1168,28 +854,28 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
     if service_member and _is_valid_entity_name(service_member):
         person_uuid = await _resolve_entity(service_member, "Person", doc_id)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "SERVICE_RECORD_OF", source_props)
 
     branch = data.get("branch")
     if branch and _is_valid_entity_name(branch):
         org_uuid = await _resolve_entity(branch, "Organization", doc_id)
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "BRANCH_OF_SERVICE", source_props)
 
     unit = data.get("unit")
     if unit and _is_valid_entity_name(unit):
         org_uuid = await _resolve_entity(unit, "Organization", doc_id)
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "ASSIGNED_TO", source_props)
 
     base = data.get("base")
     if base and _is_valid_entity_name(base):
-        base_uuid = await entity_resolver.resolve_generic(base, "Location", doc_id)
+        base_uuid = await _resolve_entity(base, "Location", doc_id)
         if base_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", base_uuid, "Location", "STATIONED_AT", source_props)
 
     # B: Process disability ratings as MedicalResult nodes
@@ -1207,13 +893,13 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             "effective_date": rating.get("effective_date", ""),
             "confidence": 1.0,
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
         # Link person to condition
         if person_uuid and condition and _is_valid_entity_name(condition):
             condition_uuid = await _resolve_entity(condition, "Condition", doc_id)
             if condition_uuid:
-                await graph_store.create_relationship(
+                await _create_relationship(
                     person_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION",
                     {**source_props, "rating": str(percentage), "effective_date": rating.get("effective_date", "")})
 
@@ -1228,10 +914,10 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             "flag": "permanent_and_total" if data.get("permanent_and_total") else "",
             "confidence": 1.0,
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", combined_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 person_uuid, "Person", combined_uuid, "MedicalResult", "RATED_AT",
                 {**source_props, "combined_rating": str(combined),
                  "effective_date": data.get("combined_rating_effective_date", "")})
@@ -1243,11 +929,11 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             continue
         condition_uuid = await _resolve_entity(name, "Condition", doc_id)
         if condition_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
             if person_uuid:
                 status = cond.get("status", "") if isinstance(cond, dict) else ""
-                await graph_store.create_relationship(
+                await _create_relationship(
                     person_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION",
                     {**source_props, "status": status})
 
@@ -1263,7 +949,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             "effective_date": benefit.get("effective_date", ""),
             "eligibility": benefit.get("eligibility", ""),
         })
-        await graph_store.create_relationship(
+        await _create_relationship(
             doc_node_id, "Document", benefit_uuid, "InsurancePolicy", "CONTAINS_RESULT", source_props)
 
     for org in (data.get("organizations") or []):
@@ -1272,7 +958,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             continue
         org_uuid = await _resolve_entity(name, "Organization", doc_id)
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
     for loc in (data.get("locations") or []):
@@ -1281,11 +967,11 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             continue
         if _is_full_address(name):
             continue
-        loc_uuid = await entity_resolver.resolve_generic(name, "Location", doc_id)
+        loc_uuid = await _resolve_entity(name, "Location", doc_id)
         if loc_uuid:
             context = _coerce_text(loc.get("context", "mentioned")) if isinstance(loc, dict) else "mentioned"
             rel_type = "DEPLOYED_TO" if "deploy" in context.lower() else "STATIONED_AT" if "station" in context.lower() else "LOCATED_AT"
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", loc_uuid, "Location", rel_type, source_props)
 
 
@@ -1308,7 +994,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
         role = person.get("role", "") if isinstance(person, dict) else ""
         person_uuid = await _resolve_entity(name, "Person", doc_id)
         if person_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "MENTIONS", source_props)
 
     for org in (data.get("organizations") or []):
@@ -1323,7 +1009,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
         org_type = org.get("type", "") if isinstance(org, dict) else ""
         org_uuid = await _resolve_entity(name, "Organization", doc_id)
         if org_uuid:
-            await graph_store.create_relationship(
+            await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "MENTIONS", source_props)
 
     # Dates are stored as properties on the document node, not as separate DateEvent nodes

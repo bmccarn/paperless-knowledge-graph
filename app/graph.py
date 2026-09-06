@@ -158,50 +158,58 @@ class GraphStore:
         await retry_db(_op, operation='create_document_node')
         return str(paperless_id)
 
-    async def find_person(self, name: str) -> Optional[dict]:
-        """Find a person by name or alias."""
+    async def get_entities_by_type(self, label: str) -> list[dict]:
+        from app.entity_policy import ENTITY_TYPES
+        if label not in ENTITY_TYPES or label == "Document":
+            raise ValueError("Unsupported entity label")
         async with self.driver.session() as session:
-            result = await session.run(
-                """
-                MATCH (p:Person)
-                WHERE toLower(toString(p.name)) = toLower($name)
-                   OR any(a IN coalesce(p.aliases, []) WHERE toLower(toString(a)) = toLower($name))
-                RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases
-                LIMIT 1
-                """,
-                name=self._coerce_text(name),
-            )
-            record = await result.single()
-            return dict(record) if record else None
+            result = await session.run(f"MATCH (n:{label}) RETURN properties(n) AS props")
+            return [{**dict(row["props"]), "entity_type": label} async for row in result]
+
+    async def _find_canonical(self, name: str, label: str) -> Optional[dict]:
+        from app.entity_policy import name_key
+        matches = [node for node in await self.get_entities_by_type(label)
+                   if name_key(node.get("name", ""), label) == name_key(name, label)]
+        return matches[0] if len(matches) == 1 else None
+
+    async def find_person(self, name: str) -> Optional[dict]:
+        """Unique canonical lookup only; alias authorization belongs to resolver."""
+        return await self._find_canonical(name, "Person")
 
     async def get_all_persons(self) -> list[dict]:
-        async with self.driver.session() as session:
-            result = await session.run(
-                "MATCH (p:Person) RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases, p.source_doc_ids AS source_doc_ids"
-            )
-            return [dict(r) async for r in result]
+        return await self.get_entities_by_type("Person")
 
     async def get_all_organizations(self) -> list[dict]:
-        async with self.driver.session() as session:
-            result = await session.run(
-                "MATCH (o:Organization) RETURN o.uuid AS uuid, o.name AS name, o.aliases AS aliases, o.type AS type, o.source_doc_ids AS source_doc_ids"
-            )
-            return [dict(r) async for r in result]
+        return await self.get_entities_by_type("Organization")
 
     async def find_organization(self, name: str) -> Optional[dict]:
+        return await self._find_canonical(name, "Organization")
+
+    async def record_entity_source(self, node_uuid: str, doc_id: int, *, identity_hint: str = ""):
         async with self.driver.session() as session:
-            result = await session.run(
-                """
-                MATCH (o:Organization)
-                WHERE toLower(toString(o.name)) = toLower($name)
-                   OR any(a IN coalesce(o.aliases, []) WHERE toLower(toString(a)) = toLower($name))
-                RETURN o.uuid AS uuid, o.name AS name, o.aliases AS aliases, o.type AS type
-                LIMIT 1
-                """,
-                name=self._coerce_text(name),
-            )
-            record = await result.single()
-            return dict(record) if record else None
+            result = await session.run("""
+                MATCH (n {uuid: $uuid}) WHERE NOT n:Document
+                SET n.source_doc_ids = CASE WHEN $doc IN coalesce(n.source_doc_ids, [])
+                    THEN n.source_doc_ids ELSE coalesce(n.source_doc_ids, []) + $doc END,
+                    n.identity_hints = CASE WHEN $hint = '' OR $hint IN coalesce(n.identity_hints, [])
+                    THEN coalesce(n.identity_hints, []) ELSE coalesce(n.identity_hints, []) + $hint END
+                RETURN n.uuid AS uuid""", uuid=node_uuid, doc=doc_id, hint=identity_hint)
+            if await result.single() is None:
+                raise ValueError("Resolved identity disappeared before source binding")
+
+    async def add_entity_alias_record(self, node_uuid: str, record: dict):
+        """Append provenance separately; raw aliases remain searchable, not trusted."""
+        serialized = json.dumps(record, sort_keys=True)
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (n {uuid: $uuid}) WHERE NOT n:Document
+                SET n.alias_records = CASE WHEN $record IN coalesce(n.alias_records, [])
+                    THEN n.alias_records ELSE coalesce(n.alias_records, []) + $record END,
+                    n.aliases = CASE WHEN $alias IN coalesce(n.aliases, [])
+                    THEN n.aliases ELSE coalesce(n.aliases, []) + $alias END
+                RETURN n.uuid AS uuid""", uuid=node_uuid, record=serialized, alias=record["alias"])
+            if await result.single() is None:
+                raise ValueError("Alias target disappeared")
 
     async def create_person(self, name: str, aliases: list[str] = None, role: str = None,
                             description: str = None, source_doc_ids: list[int] = None) -> str:
@@ -458,6 +466,8 @@ class GraphStore:
                     await tx.run("MATCH ()-[r]->() WHERE elementId(r) = $id SET r = $props", id=row["id"], props=props)
                 else:
                     await tx.run("MATCH ()-[r]->() WHERE elementId(r) = $id DELETE r", id=row["id"])
+            await tx.run("""MATCH (n) WHERE $pid IN coalesce(n.source_doc_ids, []) AND NOT n:Document
+                             SET n.source_doc_ids = [id IN n.source_doc_ids WHERE id <> $pid]""", pid=paperless_id)
             await tx.run("MATCH (d:Document {paperless_id: $pid}) DETACH DELETE d", pid=paperless_id)
             await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
                              AND NOT EXISTS { (n)--() } DELETE n""", affected=list(affected))
@@ -539,7 +549,7 @@ class GraphStore:
         candidates.sort(key=lambda c: c["score"], reverse=True)
         return candidates[:limit]
 
-    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str) -> dict:
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str, *, review_id: str | None = None) -> dict:
         """Atomically preserve canonical identity, aliases and relationship support.
 
         Human review policy is enforced by EntityResolver before calling this
@@ -590,6 +600,15 @@ class GraphStore:
             aliases.add(duplicate["props"].get("name"))
             aliases.discard(primary["props"].get("name"))
             props["aliases"] = sorted(alias for alias in aliases if isinstance(alias, str) and alias)
+            # Preserve unknown legacy strings and records, without blessing them.
+            records = [value for node in nodes for value in (node["props"].get("alias_records") or [])]
+            if review_id:
+                from app.entity_policy import human_alias_record
+                kind = primary["props"].get("entity_type") or primary["labels"][0]
+                record = human_alias_record(primary["props"]["name"], duplicate["props"]["name"], kind, review_id)
+                records.append(json.dumps(record, sort_keys=True))
+            props["alias_records"] = list(dict.fromkeys(records))
+            props["identity_hints"] = sorted({value for node in nodes for value in node["props"].get("identity_hints", [])})
 
             for (start, end, rel_type), edges in grouped.items():
                 combined = merge_support_properties(*(edge["props"] for edge in edges))

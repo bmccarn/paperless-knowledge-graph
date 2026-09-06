@@ -18,7 +18,7 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Entity**: An extracted person, organization, or other typed concept with a graph UUID; the same entity may be mentioned by several documents.
 
-**Entity resolution**: Matching or merging extracted entities through normalization, fuzzy matching, embeddings, and review decisions.
+**Entity resolution**: Binding an accepted source identity to a unique compatible canonical identity, provenance-verified alias or explicit source co-reference. Similarity suggests candidates but cannot authorize matching, trusted aliases or merges. Human-reviewed UUID merges are separate from ingestion. See `docs/specs/evidence-aware-entity-resolution.md`.
 
 **Entity steward**: A conservative reviewer that records merge, split, or ignore suggestions. Suggestions are distinct from the mutations performed by entity resolution or an explicit merge.
 

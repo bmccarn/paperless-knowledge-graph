@@ -53,6 +53,31 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["left_uuid"], "a")
         self.assertEqual(row["left_identity"]["source_doc_ids"], [12])
 
+    async def test_legacy_veto_migration_preserves_nineteen_rows_without_trusting_aliases(self):
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("ALTER TABLE entity_review_decisions DROP COLUMN provenance, DROP COLUMN identity_status")
+            await conn.executemany("INSERT INTO entity_review_decisions (left_uuid,right_uuid,decision,note) VALUES($1,$2,'never_merge','preserve')",
+                                  [(f"left-{i}", f"right-{i}") for i in range(19)])
+            original = await conn.fetch("SELECT id,created_at FROM entity_review_decisions ORDER BY id")
+            await conn.execute(INIT_SQL)
+            await conn.execute(INIT_SQL)
+        for row in await self.store.get_entity_review_decisions():
+            self.assertEqual(row["provenance"], "legacy_unknown")
+            self.assertEqual(row["identity_status"], "unassessed")
+            self.assertIsNone(row["left_identity"])
+            await self.store.set_entity_decision_identity_status(row["left_uuid"], row["right_uuid"], row["decision"], "unresolved_legacy")
+        rows = await self.store.get_entity_review_decisions()
+        self.assertEqual(len(rows), 19)
+        self.assertTrue(all(row["identity_status"] == "unresolved_legacy" for row in rows))
+        async with self.store.pool.acquire() as conn:
+            self.assertEqual(await conn.fetch("SELECT id,created_at FROM entity_review_decisions ORDER BY id"), original)
+        reviewed = await self.store.add_entity_review_decision("human-a", "human-b", "merged",
+            left_identity={"canonical_name": "Example One", "type": "Organization"},
+            right_identity={"canonical_name": "Example Two", "type": "Organization"},
+            provenance="human_review", identity_status="active")
+        self.assertEqual(reviewed["provenance"], "human_review")
+        self.assertEqual(reviewed["identity_status"], "active")
+
     async def test_ocr_origin_and_ingestion_fingerprint_survive_storage_reads(self):
         from app.evidence import build_evidence_pack
         vector = [1.0] + [0.0] * 3071

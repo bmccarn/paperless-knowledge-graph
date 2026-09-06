@@ -203,7 +203,7 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.extract("Alice Example works at Tail Widgets.", CompletionClient({"relationship_review": conflicting}))
         self.assertEqual(result["implied_relationships"], [])
 
-    async def test_conflicting_entity_types_are_omitted_instead_of_arbitrarily_merged(self):
+    async def test_same_name_types_at_distinct_source_occurrences_are_not_conflated(self):
         def different_type(response, client):
             if "Company" in client.source:
                 for entity in response["entities"]:
@@ -212,8 +212,8 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         client = CompletionClient({"entities": different_type, "entity_review": different_type})
         source = "Alice Example is a person. " + "x " * 100 + "Company Alice Example is a business."
         result = await self.extract(source, client, window_characters=140, overlap_characters=20)
-        self.assertEqual(result["all_entities"], [])
-        self.assertTrue(any("Conflicting entity types" in issue for issue in result["extraction_issues"]))
+        self.assertEqual({e["type"] for e in result["all_entities"]}, {"Person", "Organization"})
+        self.assertEqual(len({e["entity_id"] for e in result["all_entities"]}), 2)
 
     async def test_repeated_metadata_rows_are_unioned_with_window_provenance(self):
         def metadata(_, client):

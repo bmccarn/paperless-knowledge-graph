@@ -19,6 +19,38 @@ jobs:
     name: Backend validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: none
+          NEO4J_PLUGINS: '["apoc"]'
+          NEO4J_server_memory_heap_initial__size: 256m
+          NEO4J_server_memory_heap_max__size: 512m
+          NEO4J_server_memory_pagecache_size: 128m
+        ports:
+          - 7474:7474
+          - 7687:7687
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:7474 || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: kg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kg_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       KG_ENV_FILE: ""
       REDIS_URL: memory://
@@ -39,6 +71,16 @@ jobs:
         run: python -m pip install --require-hashes -r requirements.lock
 
       - name: Run offline behavior regressions
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Run disposable datastore behavior regressions
+        env:
+          NEO4J_TEST_URL: http://127.0.0.1:7474/db/neo4j/tx/commit
+          NEO4J_TEST_BOLT: bolt://127.0.0.1:7687
+          STORAGE_TEST_NEO4J: bolt://127.0.0.1:7687
+          STORAGE_TEST_DSN: postgresql://postgres@127.0.0.1:5432/kg_test
+          FEEDBACK_TEST_DSN: postgresql://postgres@127.0.0.1:5432/kg_test
+          REDIS_TEST_URL: redis://127.0.0.1:6379/15
         run: python -m unittest discover -s tests -t . -v
 
   frontend:

@@ -307,3 +307,7 @@ source inspection, type filters, neighborhood focus, and optional 3D.
 ## License
 
 MIT
+
+### Evidence-aware entity identity
+
+Entity resolution uses versioned evidence rules and document-local UUID/type bindings. Legacy aliases remain searchable but untrusted; similarity alone cannot link identities or add trusted aliases. The bulk resolution endpoint is review-only; explicit reviewed merges remain supported. See [policy, migration and parent-owned repair/release gates](docs/specs/evidence-aware-entity-resolution.md).

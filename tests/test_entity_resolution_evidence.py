@@ -200,6 +200,18 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.resolver.resolve_person("Alice Example", 22), "b")
         self.assertNotIn(await self.resolver.resolve_person("Alice Example", 33), {"a", "b"})
 
+    async def test_malformed_legacy_canonicals_are_preserved_but_not_resolution_candidates(self):
+        for malformed in (None, "", ["Alice Example"], {"name": "Alice Example"}):
+            with self.subTest(malformed=malformed):
+                self.graph.nodes = {"legacy": node("legacy", malformed, "Person")}
+                original = copy.deepcopy(self.graph.nodes["legacy"])
+                resolved = await self.resolver.resolve_person("Alice Example", 11)
+                self.assertNotEqual(resolved, "legacy")
+                self.assertEqual(self.graph.nodes["legacy"], original)
+                self.assertEqual((await self.resolver.resolve_all_entities())["total_merged"], 0)
+                with self.assertRaisesRegex(ValueError, "Malformed"):
+                    await self.resolver.merge_entities("legacy", resolved)
+
     async def test_invalid_type_and_decision_failure_cannot_create_partial_identity(self):
         for kind in ("", "Unknown", "Person) DETACH DELETE n"):
             with self.assertRaises(ValueError):

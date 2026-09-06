@@ -169,7 +169,8 @@ class GraphStore:
     async def _find_canonical(self, name: str, label: str) -> Optional[dict]:
         from app.entity_policy import name_key
         matches = [node for node in await self.get_entities_by_type(label)
-                   if name_key(node.get("name", ""), label) == name_key(name, label)]
+                   if isinstance(node.get("name"), str) and node["name"].strip()
+                   and name_key(node["name"], label) == name_key(name, label)]
         return matches[0] if len(matches) == 1 else None
 
     async def find_person(self, name: str) -> Optional[dict]:

@@ -96,6 +96,14 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.graph.nodes["a"]["alias_records"][0]["provenance"], "source_coreference")
         self.assertEqual(self.graph.nodes["a"]["alias_records"][0]["source_hash"], digest(first_source))
 
+    async def test_source_expansion_overrides_global_reviewed_acronym_even_without_alternate_graph_node(self):
+        canonical = "Network Entity Systems"
+        self.graph.nodes = {"a": node("a", canonical, alias_records=[human_alias_record(canonical, "NES", "Organization", "review-1")])}
+        alternate = "New Era Services (NES) signed."
+        self.assertNotEqual(await self.resolver.resolve_organization("NES", 22, source=alternate), "a")
+        ambiguous = "Network Entity Systems (NES) signed. New Era Services (NES) signed."
+        self.assertNotEqual(await self.resolver.resolve_organization("NES", 33, source=ambiguous), "a")
+
     async def test_same_name_different_type_and_context_are_independent(self):
         self.graph.nodes = {"org": node("org", "MERS", "Organization", [11]),
                             "condition": node("condition", "MERS", "Condition", [22])}

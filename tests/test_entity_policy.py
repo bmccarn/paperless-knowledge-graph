@@ -2,7 +2,7 @@
 import unittest
 
 from app.entity_policy import (name_key, display_name, coreference_span,
-    trusted_aliases, source_alias_record, human_alias_record, context_bound_name)
+    trusted_aliases, source_alias_record, human_alias_record, context_bound_name, initialism_expansions)
 from app.extraction_evidence import (validate_entities, validate_relationships,
     reconcile_entities, adjudicate_types)
 from app.entity_bindings import DocumentBindings
@@ -86,6 +86,12 @@ class CoreferenceTests(unittest.TestCase):
         ]:
             with self.subTest(source=source):
                 self.assertIsNone(coreference_span(left, right, source))
+
+    def test_local_acronym_expansions_are_distinct_not_model_guesses(self):
+        source = "Network Entity Systems (NES). New Era Services (NES)."
+        self.assertEqual(set(initialism_expansions("NES", source)), {"Network Entity Systems", "New Era Services"})
+        self.assertEqual(initialism_expansions("NES", "Network Entity Systems and NES are listed."), [])
+        self.assertEqual(initialism_expansions("NES", "Network Entity Systems (NES). Network Entity Systems (NES)."), ["Network Entity Systems"])
 
     def test_legacy_aliases_never_gain_authority_by_existence_or_score(self):
         node = {"name": "Department of Defense", "aliases": ["US Department of Energy"],

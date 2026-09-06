@@ -153,7 +153,10 @@ and effective Strands helper model, including when a query pins a different mode
 no query-cache version bump is needed. Existing saved conversations
 remain historical. This release does not itself run or complete the legacy backfill.
 
-Output-budget truncation splits only the affected extraction window into smaller
+Extraction requests omit application output-token caps and use the provider's
+model-specific default allowance. They do not impose the former 6,000-token
+limit or replace it with a larger arbitrary limit. Genuine provider output-budget
+truncation splits only the affected extraction window into smaller
 overlapping source ranges. Every replacement window must complete all applicable
 passes before completion is recorded; persistent truncation at the split floor
 still fails closed. Validate small and large real-provider canaries before the

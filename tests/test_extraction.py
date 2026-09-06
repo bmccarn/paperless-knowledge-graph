@@ -5,6 +5,9 @@ import re
 from types import SimpleNamespace
 import unittest
 
+import httpx
+from openai import AsyncOpenAI
+
 from tests.runtime import configure_test_environment
 
 configure_test_environment()
@@ -80,6 +83,39 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
     async def extract(self, source, client=None, **options):
         client = client or CompletionClient()
         return await EntityExtractor(client, **options).extract("Synthetic source", source, "insurance")
+
+    async def test_all_extraction_passes_omit_output_caps_on_the_actual_sdk_wire(self):
+        requests = []
+        adapter = CompletionClient()
+
+        async def handle(request):
+            self.assertEqual(request.url.host, "127.0.0.1")
+            payload = json.loads(request.content)
+            requests.append(payload)
+            response = await adapter.create(**payload)
+            choice = response.choices[0]
+            return httpx.Response(200, json={
+                "id": "synthetic-completion", "object": "chat.completion", "created": 0,
+                "model": payload["model"],
+                "choices": [{"index": 0, "finish_reason": choice.finish_reason,
+                             "message": {"role": "assistant", "content": choice.message.content}}],
+                # Provider-reported usage above the former cap is not rejected.
+                "usage": {"prompt_tokens": 100, "completion_tokens": 6501, "total_tokens": 6601},
+            })
+
+        async with AsyncOpenAI(
+                base_url="http://127.0.0.1:1/v1", api_key="synthetic-test-key", max_retries=0,
+                http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))) as client:
+            result = await self.extract("Alice Example works at Tail Widgets.", client)
+        self.assertEqual(result["extraction_coverage"]["status"], "complete")
+        self.assertEqual(result["extraction_coverage"]["adaptive_splits"], 0)
+        self.assertEqual(len(result["implied_relationships"]), 1)
+        self.assertEqual([stage for stage, _, _ in adapter.calls],
+                         ["metadata", "entities", "entity_review", "relationships", "relationship_review"])
+        self.assertEqual(len(requests), 5)
+        for request in requests:
+            self.assertTrue({"max_tokens", "max_completion_tokens", "max_output_tokens"}.isdisjoint(request))
+            self.assertEqual(request["response_format"], {"type": "json_object"})
 
     async def test_long_document_tail_is_processed_with_original_source_offsets(self):
         source = "Blank filler. " * 2500 + "\nAlice Example works at Tail Widgets. Premium: 125.00 USD."

@@ -86,6 +86,7 @@ ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS left_identity JSONB
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS right_identity JSONB;
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'legacy_unknown';
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS identity_status TEXT NOT NULL DEFAULT 'unassessed';
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS review_id TEXT;
 
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
@@ -737,36 +738,48 @@ class EmbeddingsStore:
                                          *, left_identity: dict | None = None,
                                          right_identity: dict | None = None,
                                          provenance: str = "legacy_unknown",
-                                         identity_status: str = "unassessed") -> dict:
+                                         identity_status: str = "unassessed", review_id: str | None = None) -> dict:
         ordered = sorted([left_uuid, right_uuid])
         if ordered[0] != left_uuid:
             left_identity, right_identity = right_identity, left_identity
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity, provenance, identity_status)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity, provenance, identity_status, review_id)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)
                 ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
                 SET note = EXCLUDED.note, created_at = NOW(),
                     left_identity = COALESCE(EXCLUDED.left_identity, entity_review_decisions.left_identity),
                     right_identity = COALESCE(EXCLUDED.right_identity, entity_review_decisions.right_identity),
-                    provenance = EXCLUDED.provenance, identity_status = EXCLUDED.identity_status
+                    provenance = EXCLUDED.provenance, identity_status = EXCLUDED.identity_status,
+                    review_id = COALESCE(EXCLUDED.review_id, entity_review_decisions.review_id)
                 RETURNING *
                 """,
                 ordered[0], ordered[1], decision, note,
                 json.dumps(left_identity) if left_identity else None,
-                json.dumps(right_identity) if right_identity else None, provenance, identity_status,
+                json.dumps(right_identity) if right_identity else None, provenance, identity_status, review_id,
             )
             return self._decode_review_decision(row)
 
-    async def set_entity_decision_identity_status(self, left_uuid: str, right_uuid: str,
-                                                  decision: str, status: str):
+    async def hydrate_entity_review_identities(self, row: dict, status: str):
+        """Update exact historic row in place; do not reorder UUIDs or rewrite history."""
         if status not in {"active", "unresolved_legacy"}:
             raise ValueError("Unsupported identity assessment status")
-        left, right = sorted([left_uuid, right_uuid])
         async with self.pool.acquire() as conn:
-            await conn.execute("""UPDATE entity_review_decisions SET identity_status=$4
-                WHERE left_uuid=$1 AND right_uuid=$2 AND decision=$3""", left, right, decision, status)
+            result = await conn.execute("""UPDATE entity_review_decisions
+                SET left_identity=COALESCE(left_identity,$4::jsonb),
+                    right_identity=COALESCE(right_identity,$5::jsonb), identity_status=$6
+                WHERE left_uuid=$1 AND right_uuid=$2 AND decision=$3""",
+                row["left_uuid"], row["right_uuid"], row["decision"],
+                json.dumps(row.get("left_identity")) if row.get("left_identity") else None,
+                json.dumps(row.get("right_identity")) if row.get("right_identity") else None, status)
+            if result == "UPDATE 0":
+                raise ValueError("Legacy decision disappeared during identity assessment")
+
+    async def set_entity_decision_identity_status(self, left_uuid: str, right_uuid: str,
+                                                  decision: str, status: str):
+        await self.hydrate_entity_review_identities(
+            {"left_uuid": left_uuid, "right_uuid": right_uuid, "decision": decision}, status)
 
     @staticmethod
     def _decode_review_decision(row) -> dict:

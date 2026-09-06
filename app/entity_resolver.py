@@ -8,7 +8,7 @@ from app.graph import graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, display_name, name_key,
-    context_bound_name, coreference_span, trusted_aliases, source_alias_record)
+    context_bound_name, coreference_span, trusted_aliases, source_alias_record, alias_is_quarantined)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,8 @@ class EntityResolver:
                     node = await graph_store.get_node(row[f"{side}_uuid"])
                     if node:
                         row[f"{side}_identity"] = entity_identity(node)
+            if not row.get("left_identity") or not row.get("right_identity"):
+                row["identity_status"] = "unresolved_legacy"
         return decisions
 
     async def hydrate_review_identities(self) -> dict:
@@ -64,17 +66,12 @@ class EntityResolver:
                         changed = True
                     else:
                         missing.append(row[f"{side}_uuid"])
+                status = "unresolved_legacy" if missing else "active"
+                if changed or row.get("identity_status") != status:
+                    await embeddings_store.hydrate_entity_review_identities(row, status)
                 if changed:
-                    await embeddings_store.add_entity_review_decision(
-                        row["left_uuid"], row["right_uuid"], row["decision"], row.get("note") or "",
-                        left_identity=row.get("left_identity"), right_identity=row.get("right_identity"),
-                        provenance=row.get("provenance", "legacy_unknown"),
-                        identity_status="unresolved_legacy" if missing else "active",
-                    )
                     report["hydrated"] += 1
                 if missing:
-                    await embeddings_store.set_entity_decision_identity_status(
-                        row["left_uuid"], row["right_uuid"], row["decision"], "unresolved_legacy")
                     report["unresolved"].append({"left_uuid": row["left_uuid"], "right_uuid": row["right_uuid"], "missing_uuid": missing})
         if report["unresolved"]:
             logger.warning("%s legacy no-merge decisions have missing identities; reindex persistence cannot be fully recovered", len(report["unresolved"]))
@@ -119,7 +116,7 @@ class EntityResolver:
             await embeddings_store.add_entity_review_decision(
                 primary_uuid, duplicate_uuid, "merged", "",
                 left_identity=keep, right_identity=remove,
-                provenance="human_review", identity_status="active",
+                provenance="human_review", identity_status="active", review_id=review_id,
             )
             return merged
 
@@ -161,6 +158,8 @@ class EntityResolver:
                     continue
                 hints = candidate.get("identity_hints") or []
                 own_source = source_doc_id in (candidate.get("source_doc_ids") or [])
+                if candidate.get("resolution_status") == "ambiguous" and not own_source:
+                    continue
                 if identity_hint and hints and identity_hint not in hints:
                     continue
                 # An unqualified mention cannot choose between qualified homonyms.
@@ -195,15 +194,19 @@ class EntityResolver:
     def _match(name, kind, doc_id, source, candidate, decisions):
         canonical = candidate.get("name") or ""
         key = name_key(name, kind)
+        if alias_is_quarantined(candidate, name, kind):
+            return "", None
         # Newly human-reviewed merge decisions survive orphan cleanup. Only the
         # reviewed canonical names are authoritative, NOT their legacy aliases.
         for row in decisions:
-            if row.get("decision") != "merged" or row.get("provenance") != "human_review":
+            if (row.get("decision") != "merged" or row.get("provenance") != "human_review"
+                    or row.get("identity_status") != "active"):
                 continue
             a, b = row.get("left_identity") or {}, row.get("right_identity") or {}
             if a.get("type") != kind or b.get("type") != kind:
                 continue
-            pair = {name_key(a.get("canonical_name", ""), kind), name_key(b.get("canonical_name", ""), kind)}
+            pair = {name_key(value, kind) for snapshot in (a, b)
+                    for value in [snapshot.get("canonical_name", ""), *(snapshot.get("reviewed_names") or [])]}
             if "" not in pair and key in pair and name_key(canonical, kind) in pair:
                 return "human_review", None
         if any(key == name_key(alias, kind) for alias in trusted_aliases(candidate, kind, doc_id, source)):
@@ -212,7 +215,7 @@ class EntityResolver:
         if span:
             return "source_coreference", span
         if key == name_key(canonical, kind):
-            if not context_bound_name(name, kind) or doc_id in (candidate.get("source_doc_ids") or []):
+            if (not context_bound_name(name, kind) and not context_bound_name(canonical, kind)) or doc_id in (candidate.get("source_doc_ids") or []):
                 return "orthographic", None
         return "", None
 

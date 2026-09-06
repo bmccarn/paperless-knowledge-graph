@@ -34,11 +34,18 @@ def name_key(name: str, kind: str = "") -> str:
         # Suffixes are identifying tokens, not inverted first names.
         if first.strip().rstrip(".") not in {"jr", "sr", "ii", "iii", "iv"}:
             value = first.strip() + " " + last.strip()
+    if kind == "Person":
+        value = re.sub(r"^(?:dr|mr|mrs|ms|prof)\.?\s+", "", value)
     # Periods on initialisms or legal suffixes are orthographic. Do not erase
     # arbitrary dots (domains), hyphens, slash/composite names or apostrophes.
     value = re.sub(r"\b(?:[a-z]\.){2,}", lambda m: m[0].replace(".", ""), value)
     value = re.sub(r"\b([a-z])\.(?=\s|$)", r"\1", value)
     if kind == "Organization":
+        value = re.sub(r"^(?:[a-z]\s+){2,}(?=\w{2,})", lambda m: m[0].replace(" ", "") + " ", value)
+        legal_forms = {"incorporated": "inc", "corporation": "corp", "limited": "ltd",
+                       "limited liability company": "llc", "limited liability partnership": "llp"}
+        for full, short in legal_forms.items():
+            value = re.sub(r",?\s+" + full + r"\.?$", " " + short, value)
         value = re.sub(r",?\s+(inc|llc|ltd|corp|llp|plc)\.?$", r" \1", value)
     return " ".join(value.split())
 
@@ -83,9 +90,9 @@ def coreference_span(left: str, right: str, source: str) -> dict | None:
     patterns = []
     for full, alias in ((left, right), (right, left)):
         a, b = literal(full), literal(alias)
-        patterns.append(a + r'\s*,?\s+(?:also known as|doing business as|d/b/a|aka)\s+[\"“]?'+ b + r'[\"”]?')
+        patterns.append(a + r'\s*,?\s+(?:also known as|doing business as|d/b/a|aka|hereinafter referred to as)\s+[\"“]?'+ b + r'[\"”]?')
         words = re.findall(r"[^\W\d_]+", full, re.UNICODE)
-        initials = "".join(w[0] for w in words if w.casefold() not in {"of", "the", "and"}).casefold()
+        initials = "".join(w[0] for w in words if w.casefold() not in {"of", "the", "and", "inc", "incorporated", "llc", "ltd", "corp", "corporation"}).casefold()
         all_initials = "".join(w[0] for w in words).casefold()
         compact = re.sub(r"[.\s]", "", alias).casefold()
         if len(words) >= 2 and 2 <= len(compact) <= 10 and compact in {initials, all_initials}:
@@ -96,7 +103,13 @@ def coreference_span(left: str, right: str, source: str) -> dict | None:
         if match:
             # Negated statements cannot authorize an alias.
             prefix = source[max(0, match.start()-30):match.start()]
-            if re.search(r"\b(?:not|never|incorrectly|mistakenly)\b[^.!?\n]*$", prefix, re.I):
+            if re.search(r"\b(?:not|never|incorrectly|mistakenly|false|incorrect|rejected|denied|alleged|hypothetical)\b[^.!?\n]*$", prefix, re.I):
+                continue
+            suffix = source[match.end():].split("\n", 1)[0]
+            suffix = re.split(r"[.!?]", suffix, maxsplit=1)[0]
+            if re.search(r"\b(?:false|incorrect|not|never|denied|rejected)\b", suffix, re.I):
+                continue
+            if source[match.end():match.end()+1] in {"'", "’"}:
                 continue
             return {"start": match.start(), "end": match.end(), "quote": match[0]}
     return None
@@ -114,13 +127,20 @@ def alias_records(node: dict) -> list[dict]:
     return records
 
 
+def alias_is_quarantined(node: dict, alias: str, kind: str) -> bool:
+    return any(record.get("status") in {"quarantined", "revoked", "untrusted"}
+               and record.get("type") == kind
+               and name_key(record.get("alias", ""), kind) == name_key(alias, kind)
+               for record in alias_records(node))
+
+
 def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str]:
     result = []
     for record in alias_records(node):
         if record.get("status") in {"quarantined", "revoked", "untrusted"}:
             continue
         alias = record.get("alias")
-        if not isinstance(alias, str) or record.get("type") != kind:
+        if not isinstance(alias, str) or record.get("type") != kind or alias_is_quarantined(node, alias, kind):
             continue
         if name_key(record.get("canonical_name", ""), kind) != name_key(node.get("name", ""), kind):
             continue
@@ -130,7 +150,8 @@ def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str
               and record.get("policy") == RESOLUTION_POLICY and record.get("source_doc_id") == doc_id
               and record.get("source_hash") == digest(source)):
             span = coreference_span(node["name"], alias, source)
-            if span and digest(span["quote"]) == record.get("quote_hash"):
+            if (span and digest(span["quote"]) == record.get("quote_hash")
+                    and span["start"] == record.get("start") and span["end"] == record.get("end")):
                 result.append(alias)
     return result
 

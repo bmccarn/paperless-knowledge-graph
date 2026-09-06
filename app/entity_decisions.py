@@ -45,7 +45,10 @@ def entity_identity(node: dict) -> dict:
         rel_props = relationship.get("rel_props") or {}
         docs |= _document_ids(rel_props.get("source_doc"))
         docs |= _document_ids(rel_props.get("source_doc_ids") or [])
+    from app.entity_policy import trusted_aliases
+    reviewed_names = trusted_aliases(props, kind, -1, "")
     return {"uuid": props.get("uuid"), "type": kind, "canonical_name": props.get("name") or "",
+            "reviewed_names": reviewed_names,
             "names": sorted(names), "source_doc_ids": sorted(docs)}
 
 
@@ -85,6 +88,12 @@ def merge_is_prohibited(left: dict, right: dict, decisions: list[dict]) -> bool:
             continue
         a = _snapshot(row.get("left_identity"))
         b = _snapshot(row.get("right_identity"))
+        # Partial legacy vetoes quarantine their identifiable side until repaired;
+        # missing both sides remains auditable, not a fabricated global identity.
+        if row.get("identity_status") == "unresolved_legacy" and (not a or not b):
+            for snapshot, side, other in ((a, "left", b), (b, "right", a)):
+                if snapshot and any(_matches(item, row.get(f"{side}_uuid"), snapshot, other) for item in (left, right)):
+                    return True
         for first, second in ((left, right), (right, left)):
             if _matches(first, row.get("left_uuid"), a, b) and _matches(second, row.get("right_uuid"), b, a):
                 return True

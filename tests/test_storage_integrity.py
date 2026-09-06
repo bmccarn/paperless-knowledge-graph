@@ -55,9 +55,9 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_veto_migration_preserves_nineteen_rows_without_trusting_aliases(self):
         async with self.store.pool.acquire() as conn:
-            await conn.execute("ALTER TABLE entity_review_decisions DROP COLUMN provenance, DROP COLUMN identity_status")
+            await conn.execute("ALTER TABLE entity_review_decisions DROP COLUMN provenance, DROP COLUMN identity_status, DROP COLUMN review_id")
             await conn.executemany("INSERT INTO entity_review_decisions (left_uuid,right_uuid,decision,note) VALUES($1,$2,'never_merge','preserve')",
-                                  [(f"left-{i}", f"right-{i}") for i in range(19)])
+                                  [(f"z-left-{i}", f"a-right-{i}") for i in range(19)])
             original = await conn.fetch("SELECT id,created_at FROM entity_review_decisions ORDER BY id")
             await conn.execute(INIT_SQL)
             await conn.execute(INIT_SQL)
@@ -65,6 +65,7 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row["provenance"], "legacy_unknown")
             self.assertEqual(row["identity_status"], "unassessed")
             self.assertIsNone(row["left_identity"])
+            self.assertIsNone(row["review_id"])
             await self.store.set_entity_decision_identity_status(row["left_uuid"], row["right_uuid"], row["decision"], "unresolved_legacy")
         rows = await self.store.get_entity_review_decisions()
         self.assertEqual(len(rows), 19)
@@ -74,7 +75,8 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         reviewed = await self.store.add_entity_review_decision("human-a", "human-b", "merged",
             left_identity={"canonical_name": "Example One", "type": "Organization"},
             right_identity={"canonical_name": "Example Two", "type": "Organization"},
-            provenance="human_review", identity_status="active")
+            provenance="human_review", identity_status="active", review_id="synthetic-review-1")
+        self.assertEqual(reviewed["review_id"], "synthetic-review-1")
         self.assertEqual(reviewed["provenance"], "human_review")
         self.assertEqual(reviewed["identity_status"], "active")
 

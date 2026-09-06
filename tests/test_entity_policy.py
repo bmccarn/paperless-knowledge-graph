@@ -4,7 +4,7 @@ import unittest
 from app.entity_policy import (name_key, display_name, coreference_span,
     trusted_aliases, source_alias_record, human_alias_record, context_bound_name)
 from app.extraction_evidence import (validate_entities, validate_relationships,
-    reconcile_entities, entity_key)
+    reconcile_entities, adjudicate_types)
 from app.entity_bindings import DocumentBindings
 
 
@@ -14,11 +14,15 @@ class OrthographyTests(unittest.TestCase):
             ("Person", "José García", "Jose\u0301 Garci\u0301a"),
             ("Person", "  Alice   Example ", "alice example"),
             ("Person", "Example, Alice", "Alice Example"),
+            ("Person", "Dr. Alice Example", "Alice Example"),
             ("Person", "Alice J. Example", "Alice J Example"),
             ("Person", "D’Arcy Jones", "D'Arcy Jones"),
             ("Organization", "Example Widgets, Inc.", "Example Widgets Inc"),
             ("Organization", "A.B.C. Research LLC", "ABC Research LLC"),
             ("Organization", "Example L.L.C.", "Example LLC"),
+            ("Organization", "U S Department of Energy", "U.S. Department of Energy"),
+            ("Organization", "Example Widgets Incorporated", "Example Widgets Inc"),
+            ("Organization", "Example Widgets Limited Liability Company", "Example Widgets LLC"),
         ]:
             with self.subTest(kind=kind, left=left, right=right):
                 self.assertEqual(name_key(left, kind), name_key(right, kind))
@@ -57,6 +61,7 @@ class CoreferenceTests(unittest.TestCase):
         for left, right, source in [
             ("Network Entity Systems", "NES", "Network Entity Systems (NES) signed."),
             ("Network Entity Systems", "NES", "NES (Network Entity Systems) signed."),
+            ("Network Entity Systems Inc.", "NES", "Network Entity Systems Inc. (NES) signed."),
             ("Department of Example Affairs", "DEA", "Department of Example Affairs (DEA) signed."),
             ("Example Widgets LLC", "Bright Tools", "Example Widgets LLC doing business as Bright Tools filed."),
             ("Alice Jane Example", "A J Example", "Alice Jane Example, also known as A J Example signed."),
@@ -75,6 +80,8 @@ class CoreferenceTests(unittest.TestCase):
             ("Network Entity Systems", "NES", "Network Entity Systems and NES are listed."),
             ("Network Entity Systems", "NES", "Not Network Entity Systems also known as NES."),
             ("Network Entity Systems", "NES", "Network Entity Systems is not also known as NES."),
+            ("Network Entity Systems", "NES", "The claim Network Entity Systems also known as NES was false."),
+            ("Alice Example", "Alice Smyth", "Alice Example also known as Alice Smyth's agent."),
             ("Network Entity Systems", "NEX", "Network Entity Systems (NEX)"),
         ]:
             with self.subTest(source=source):
@@ -103,7 +110,7 @@ class CoreferenceTests(unittest.TestCase):
         self.assertEqual(trusted_aliases(node, "Organization", 11, source), ["NES"])
         for doc_id, text in [(22, source), (11, source + " Revised."), (11, "")]:
             self.assertEqual(trusted_aliases(node, "Organization", doc_id, text), [])
-        for field in ("quote_hash", "policy", "source_hash"):
+        for field in ("quote_hash", "policy", "source_hash", "start", "end"):
             with self.subTest(field=field):
                 changed = {**record, field: "stale"}
                 self.assertEqual(trusted_aliases({**node, "alias_records": [changed]}, "Organization", 11, source), [])
@@ -158,6 +165,31 @@ class AggregationTests(unittest.TestCase):
         issues = []
         items = validate_entities([entity("Jordan", "Person", source, hint) for hint in ("E-101", "E-202", "")], source, 0, issues)
         self.assertEqual(len(reconcile_entities(items, issues)), 2)
+
+
+class TypeEvidenceTests(unittest.TestCase):
+    def test_name_only_or_invented_alternate_meaning_cannot_change_source_type(self):
+        source = "MERS is a mortgage registration company."
+        candidates = validate_entities([entity("MERS", "Organization", source)], source, 0, [])
+        for quote in (None, "MERS", "MERS is a respiratory syndrome."):
+            with self.subTest(quote=quote):
+                review = {**entity("MERS", "Condition", source), "type_evidence_quote": quote,
+                          "type_rationale": "An alternate meaning from world knowledge"}
+                accepted = validate_entities([review], source, 0, [])
+                adjudicated = adjudicate_types(candidates, accepted, [review], source, 0, [])
+                self.assertEqual(adjudicated[0]["type"], "Organization")
+                self.assertEqual(adjudicated[0]["description"], candidates[0]["description"])
+
+    def test_actual_contextual_type_evidence_can_correct_and_is_retained(self):
+        source = "NES is a registered company."
+        candidates = validate_entities([entity("NES", "Person", source)], source, 0, [])
+        review = {**entity("NES", "Organization", source), "type_evidence_quote": source,
+                  "type_rationale": "The source calls NES a registered company."}
+        accepted = validate_entities([review], source, 0, [])
+        adjudicated = adjudicate_types(candidates, accepted, [review], source, 0, [])
+        self.assertEqual(adjudicated[0]["type"], "Organization")
+        self.assertEqual(adjudicated[0]["type_assessment"]["evidence"]["quote"], source)
+        self.assertEqual(adjudicated[0]["type_assessment"]["original_type"], "Person")
 
 
 class BindingTests(unittest.IsolatedAsyncioTestCase):

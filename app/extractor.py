@@ -6,7 +6,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.config import settings
-from app.extraction_evidence import (source_windows, validate_entities, validate_relationships,
+from app.extraction_evidence import (adjudicate_types, reconcile_entities, relationship_key,source_windows, validate_entities, validate_relationships,
     validate_metadata, reconcile_metadata, merge_unique, covered_characters)
 
 logger = logging.getLogger(__name__)
@@ -615,6 +615,7 @@ class EntityExtractor:
                 if additions:
                     window["issues"].append("Entity verifier additions rejected")
                 accepted = [entity for entity in accepted if entity["name"] in candidate_names]
+                accepted = adjudicate_types(candidates, accepted, reviewed["entities"], source, start, window["issues"])
                 omitted_names = candidate_names - {entity["name"] for entity in accepted}
                 if omitted_names:
                     window["issues"].append("Entities rejected by source-aware review: " + ", ".join(sorted(omitted_names)))
@@ -625,11 +626,19 @@ class EntityExtractor:
                 phase = "relationship verification"
                 checked = await self._pass5_relationship_verification(title, source, proposed_relationships)
                 self._require_list(checked, "relationships")
-                proposed_keys = {(rel["from_entity"], rel["to_entity"], rel["relationship_type"]) for rel in proposed_relationships}
+                proposed_keys = {relationship_key(rel) for rel in proposed_relationships}
                 accepted_relationships = []
-                for rel in validate_relationships(checked["relationships"], accepted, source, start, window["issues"]):
-                    key = (rel["from_entity"], rel["to_entity"], rel["relationship_type"])
-                    matching_reviews = [item for item in checked["relationships"] if (item.get("from_entity"), item.get("to_entity"), item.get("relationship_type")) == key]
+                for raw_review in checked["relationships"]:
+                    validated = validate_relationships([raw_review], accepted, source, start, window["issues"])
+                    if not validated:
+                        continue
+                    rel = validated[0]
+                    key = relationship_key(rel)
+                    matching_reviews = [item for item in checked["relationships"]
+                        if (item.get("from_entity"), item.get("to_entity"), item.get("relationship_type"),
+                            item.get("from_entity_id"), item.get("to_entity_id")) ==
+                           (raw_review.get("from_entity"), raw_review.get("to_entity"), raw_review.get("relationship_type"),
+                            raw_review.get("from_entity_id"), raw_review.get("to_entity_id"))]
                     if len(matching_reviews) != 1:
                         window["issues"].append("Relationship rejected: duplicate or contradictory review records")
                         continue
@@ -679,22 +688,11 @@ class EntityExtractor:
             windows.append(window)
             issues.extend(f"Window {start}:{end}: {issue}" for issue in window["issues"])
         metadata, metadata_evidence, metadata_conflicts = reconcile_metadata(metadata_results)
-        entities = merge_unique(entities, ("name", "type"))
-        types_by_name = {}
-        for entity in entities:
-            types_by_name.setdefault(entity["name"].casefold(), set()).add(entity["type"])
-        ambiguous = {name for name, kinds in types_by_name.items() if len(kinds) > 1}
-        if ambiguous:
-            issues.append("Conflicting entity types omitted: " + ", ".join(sorted(ambiguous)))
-        entities = [entity for entity in entities if entity["name"].casefold() not in ambiguous]
-        canonical_names = {entity["name"].casefold(): entity["name"] for entity in entities}
-        accepted_relationships = []
-        for rel in relationships:
-            left, right = rel["from_entity"].casefold(), rel["to_entity"].casefold()
-            if left not in canonical_names or right not in canonical_names:
-                continue
-            accepted_relationships.append(dict(rel, from_entity=canonical_names[left], to_entity=canonical_names[right]))
-        relationships = merge_unique(accepted_relationships, ("from_entity", "to_entity", "relationship_type"))
+        entities = reconcile_entities(entities, issues)
+        accepted_ids = {entity["entity_id"] for entity in entities}
+        relationships = merge_unique([rel for rel in relationships
+            if rel["from_entity_id"] in accepted_ids and rel["to_entity_id"] in accepted_ids],
+            ("from_entity_id", "to_entity_id", "relationship_type"))
         result = self._combine_results(metadata, {"entities": entities}, {"relationships": relationships})
         covered = covered_characters(windows)
         status = "complete" if covered == len(content) and all(window["status"] == "complete" for window in windows) else ("partial" if covered else "failed")
@@ -762,13 +760,14 @@ class EntityExtractor:
 
     async def _pass2_entity_extraction(self, title: str, content: str, metadata: dict) -> dict:
         prompt = ENTITY_EXTRACTION_PROMPT.format(title=title, metadata=json.dumps(metadata), content=content)
-        prompt += '\nEach entity MUST include evidence_quote: an exact source quote containing its complete name. Only names literally present in this source window are eligible.'
+        prompt += '\nEach entity MUST include evidence_quote: an exact source quote containing its complete name. Only names literally present in this source window are eligible. Preserve distinguishing tokens, legal suffixes and generations. For homonyms include identity_hint ONLY when a literal source identifier (email, registration number, account identifier) distinguishes them; it must occur in the same evidence_quote. Never use a guessed expansion, description or role as identity_hint.'
         return await self._complete(prompt, "pass2_entities", response_key="entities")
 
     async def _pass3_relationship_extraction(self, title: str, content: str, entities: dict) -> dict:
         if not entities["entities"]:
             return {"relationships": []}
         prompt = RELATIONSHIP_EXTRACTION_PROMPT.format(title=title, entities=json.dumps(entities["entities"]), content=content)
+        prompt += '\nCopy from_entity_id and to_entity_id from the accepted entities, especially for same-name homonyms. Do not infer an endpoint from name similarity.'
         prompt += '\nEach relationship MUST include evidence_quote containing BOTH endpoint names and rationale explaining support. Mere co-occurrence is insufficient. Do not infer a connection across omitted text.'
         return await self._complete(prompt, "pass3_relationships", response_key="relationships")
 
@@ -777,7 +776,7 @@ class EntityExtractor:
             return {"entities": []}
         prompt = VERIFICATION_PROMPT.format(title=title, entities=json.dumps(entities))
         prompt += '\n\nOriginal source text (review all candidates against this text, including single entities):\n' + content
-        prompt += '\nOnly retain original candidate names explicitly supported by the source. Include evidence_quote containing the name for EVERY retained entity. Verify descriptions and types against the source. Never add entities.'
+        prompt += '\nOnly retain original candidate names explicitly supported by the source. Include evidence_quote containing the name for EVERY retained entity. Verify descriptions and types against the source. Preserve identity_hint when present and include it in evidence_quote. Never infer an alternate meaning from the name alone. If the source does not support changing the type, preserve the proposed type or omit the entity. For any changed type, also return type_evidence_quote with an exact quote containing the entity name and substantive source context that supports the new type, plus type_rationale. A bare name, world knowledge or unrelated acronym expansion is not evidence. Without this evidence the original type is retained. Never add entities.'
         return await self._complete(prompt, "pass4_verification", response_key="entities")
 
     async def _pass5_relationship_verification(self, title: str, content: str, relationships: list[dict]) -> dict:
@@ -787,6 +786,7 @@ class EntityExtractor:
 Document title: {title}
 Proposed relationships: {json.dumps(relationships)}
 Original source:\n{content}
+Copy from_entity_id and to_entity_id from each original relationship; do not change identity IDs.
 Return {{"relationships": [{{"from_entity":"exact original endpoint", "to_entity":"exact original endpoint", "relationship_type":"ORIGINAL_TYPE", "support_status":"supported|unsupported|unknown", "explicit":true, "confidence":0.9, "rationale":"why this exact connection follows", "evidence_quote":"exact quote containing both names"}}]}}.
 Do not add relationships. Reject mere co-occurrence, wrong subjects, negated connections, and assumptions about roles. Explicit is true only if the source states this connection. Inferred connections must have a defensible explanation and remain explicit:false. If uncertain, return unknown. Review every proposal; omission means rejection.'''
         return await self._complete(prompt, "pass5_relationship_verification", response_key="relationships")
@@ -798,14 +798,15 @@ Do not add relationships. Reject mere co-occurrence, wrong subjects, negated con
         # unverified metadata arrays cannot bypass entity acceptance.
         result["people"] = [{"name": entity["name"], "role": entity["description"], "confidence": entity["confidence"], "evidence": entity["evidence"]} for entity in all_entities if entity["type"] == "Person"]
         result["organizations"] = [{"name": entity["name"], "type": entity["description"], "confidence": entity["confidence"], "evidence": entity["evidence"]} for entity in all_entities if entity["type"] == "Organization"]
-        by_name = {entity["name"]: entity for entity in all_entities}
+        by_id = {entity["entity_id"]: entity for entity in all_entities}
         result["implied_relationships"] = []
         for rel in relationships["relationships"]:
-            if rel["from_entity"] not in by_name or rel["to_entity"] not in by_name:
+            if rel["from_entity_id"] not in by_id or rel["to_entity_id"] not in by_id:
                 continue
             result["implied_relationships"].append({
-                "from_entity": rel["from_entity"], "from_type": by_name[rel["from_entity"]]["type"],
-                "to_entity": rel["to_entity"], "to_type": by_name[rel["to_entity"]]["type"],
+                "from_entity": rel["from_entity"], "from_type": by_id[rel["from_entity_id"]]["type"],
+                "to_entity": rel["to_entity"], "to_type": by_id[rel["to_entity_id"]]["type"],
+                "from_entity_id": rel["from_entity_id"], "to_entity_id": rel["to_entity_id"],
                 "relationship": rel["relationship_type"], "confidence": rel["confidence"],
                 "evidence": rel["evidence"], "rationale": rel["rationale"], "inferred": rel["inferred"],
             })

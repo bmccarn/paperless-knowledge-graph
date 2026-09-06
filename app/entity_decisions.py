@@ -45,7 +45,8 @@ def entity_identity(node: dict) -> dict:
         rel_props = relationship.get("rel_props") or {}
         docs |= _document_ids(rel_props.get("source_doc"))
         docs |= _document_ids(rel_props.get("source_doc_ids") or [])
-    return {"uuid": props.get("uuid"), "type": kind, "names": sorted(names), "source_doc_ids": sorted(docs)}
+    return {"uuid": props.get("uuid"), "type": kind, "canonical_name": props.get("name") or "",
+            "names": sorted(names), "source_doc_ids": sorted(docs)}
 
 
 def _snapshot(value):

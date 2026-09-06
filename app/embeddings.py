@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS entity_review_decisions (
 
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS left_identity JSONB;
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS right_identity JSONB;
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'legacy_unknown';
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS identity_status TEXT NOT NULL DEFAULT 'unassessed';
 
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
@@ -733,26 +735,38 @@ class EmbeddingsStore:
 
     async def add_entity_review_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "",
                                          *, left_identity: dict | None = None,
-                                         right_identity: dict | None = None) -> dict:
+                                         right_identity: dict | None = None,
+                                         provenance: str = "legacy_unknown",
+                                         identity_status: str = "unassessed") -> dict:
         ordered = sorted([left_uuid, right_uuid])
         if ordered[0] != left_uuid:
             left_identity, right_identity = right_identity, left_identity
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity, provenance, identity_status)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
                 ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
                 SET note = EXCLUDED.note, created_at = NOW(),
                     left_identity = COALESCE(EXCLUDED.left_identity, entity_review_decisions.left_identity),
-                    right_identity = COALESCE(EXCLUDED.right_identity, entity_review_decisions.right_identity)
+                    right_identity = COALESCE(EXCLUDED.right_identity, entity_review_decisions.right_identity),
+                    provenance = EXCLUDED.provenance, identity_status = EXCLUDED.identity_status
                 RETURNING *
                 """,
                 ordered[0], ordered[1], decision, note,
                 json.dumps(left_identity) if left_identity else None,
-                json.dumps(right_identity) if right_identity else None,
+                json.dumps(right_identity) if right_identity else None, provenance, identity_status,
             )
             return self._decode_review_decision(row)
+
+    async def set_entity_decision_identity_status(self, left_uuid: str, right_uuid: str,
+                                                  decision: str, status: str):
+        if status not in {"active", "unresolved_legacy"}:
+            raise ValueError("Unsupported identity assessment status")
+        left, right = sorted([left_uuid, right_uuid])
+        async with self.pool.acquire() as conn:
+            await conn.execute("""UPDATE entity_review_decisions SET identity_status=$4
+                WHERE left_uuid=$1 AND right_uuid=$2 AND decision=$3""", left, right, decision, status)
 
     @staticmethod
     def _decode_review_decision(row) -> dict:

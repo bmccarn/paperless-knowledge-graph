@@ -12,6 +12,7 @@ configure_test_environment()
 
 from app import pipeline
 from app.paperless import PaperlessClient
+from tests.test_extraction_recovery import SDKWire, SOURCE, STAGES
 
 
 class PaperlessFixture:
@@ -387,6 +388,35 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.graph.deleted, [])
         self.assertEqual(self.embeddings.last_sync, previous_checkpoint)
         self.assertLessEqual(len(client.calls), 15)
+
+    async def test_bad_pass_envelope_never_replaces_old_index_or_commits_hash(self):
+        from app.extractor import EntityExtractor
+        from tests.test_extraction import CompletionClient
+
+        for stage in STAGES:
+            for bad in ({}, [], {"metadata": {}, "evidence": ["bad-row"]}):
+                with self.subTest(stage=stage, bad=bad):
+                    self.paperless.documents[1] = document(content=SOURCE)
+                    self.existing()
+                    self.embeddings.fingerprints[1] = "previous-completion"
+                    previous_checkpoint = self.embeddings.last_sync
+                    self.embeddings.writes.clear()
+                    wire = SDKWire(CompletionClient({stage: bad}), cached=True)
+                    async with wire.client() as client:
+                        with patch.object(pipeline, "extractor", EntityExtractor(client)):
+                            result = await pipeline.reindex_document(1)
+                    self.assertEqual(result["status"], "error")
+                    self.assertEqual(self.graph.documents[1]["title"], "Existing usable document")
+                    self.assertEqual(self.embeddings.chunks[1, 0], "Existing usable chunk")
+                    # Forced reindex deliberately removes the old completion marker;
+                    # failed preparation must never commit a replacement marker.
+                    self.assertNotIn(1, self.embeddings.hashes)
+                    self.assertNotIn(1, self.embeddings.fingerprints)
+                    self.assertEqual(self.graph.deleted, [])
+                    self.assertEqual(self.embeddings.last_sync, previous_checkpoint)
+                    self.assertEqual(self.embeddings.writes, [("delete_hash", 1)])
+                    self.assertEqual(wire.counts()[stage], 3)
+                    self.assertEqual(len(wire.requests), STAGES.index(stage) + 3)
 
     async def test_partial_storage_write_is_uncommitted_and_retry_converges(self):
         for store in ('graph', 'chunks'):

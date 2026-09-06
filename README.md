@@ -159,8 +159,14 @@ limit or replace it with a larger arbitrary limit. Genuine provider output-budge
 truncation splits only the affected extraction window into smaller
 overlapping source ranges. Every replacement window must complete all applicable
 passes before completion is recorded; persistent truncation at the split floor
-still fails closed. Validate small and large real-provider canaries before the
-normal sync/backfill and restore paused schedules only after production acceptance.
+still fails closed. Required pass envelopes are validated within one three-attempt
+budget, with deterministic contract corrections on retry; only the failed pass
+is repeated. SDK retries remain disabled, and the default extractor uses the
+SDK's finite native 600-second read/write/pool and 5-second connect timeouts.
+Accepted-window logs expose only offsets and completed/pending counts, not source
+content; they do not imply document persistence. Validate small and large
+real-provider canaries before the normal sync/backfill and restore paused
+schedules only after production acceptance.
 
 ## API Endpoints
 

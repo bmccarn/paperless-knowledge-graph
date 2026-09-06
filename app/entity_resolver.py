@@ -96,6 +96,9 @@ class EntityResolver:
                 raise ValueError("Entity pair not found")
             keep = entity_identity(primary)
             remove = entity_identity(duplicate)
+            if any(not isinstance(identity.get("canonical_name"), str) or not identity["canonical_name"].strip()
+                   for identity in (keep, remove)):
+                raise ValueError("Malformed canonical identity requires explicit repair before merge")
             if not keep["type"] or keep["type"] != remove["type"]:
                 raise ValueError("Only entities of the same type may merge")
             if "Document" in primary.get("labels", []) or "Document" in duplicate.get("labels", []):
@@ -157,6 +160,9 @@ class EntityResolver:
             candidates = await graph_store.get_entities_by_type(label)
             eligible = []
             for candidate in candidates:
+                if (not isinstance(candidate.get("name"), str) or not candidate["name"].strip()
+                        or not isinstance(candidate.get("uuid"), str) or not candidate["uuid"]):
+                    continue  # preserve malformed legacy rows, but never use them as identity proof
                 if candidate.get("resolution_status") == "quarantined":
                     continue
                 if not await self._candidate_allowed(incoming, candidate, decisions):
@@ -252,7 +258,8 @@ class EntityResolver:
         report = {"merged_persons": [], "merged_orgs": [], "skipped": [], "errors": [],
                   "total_merged": 0, "policy": RESOLUTION_POLICY}
         for kind in ("Person", "Organization"):
-            nodes = await graph_store.get_entities_by_type(kind)
+            nodes = [node for node in await graph_store.get_entities_by_type(kind)
+                     if isinstance(node.get("name"), str) and node["name"].strip() and node.get("uuid")]
             for index, left in enumerate(nodes):
                 for right in nodes[index+1:]:
                     prohibited = merge_is_prohibited(entity_identity(left), entity_identity(right), decisions)

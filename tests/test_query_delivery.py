@@ -83,6 +83,17 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(second["cached"])
         self.assertEqual(len(self.engine.calls), 2)
 
+    async def test_helper_model_change_misses_cache_even_with_fixed_query_override(self):
+        from app.config import settings
+        with patch.object(settings, "strands_model", ""):
+            for model in ("gemini-3.5-flash", "gemini-3.8-flash"):
+                with patch.object(settings, "gemini_model", model):
+                    result = await self.engine.query("Recorded premium?", model_override="fixed-query-model")
+                    self.assertFalse(result["cached"])
+                    cached = await self.engine.query("Recorded premium?", model_override="fixed-query-model")
+                    self.assertTrue(cached["cached"])
+        self.assertEqual(len(self.engine.calls), 2)
+
     async def test_auditor_receives_full_followup_context_without_echoing_history_publicly(self):
         history = [{"role": "user", "content": "context " * 200 + "important subject at the end"}]
         contexts = []

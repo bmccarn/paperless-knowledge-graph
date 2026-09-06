@@ -286,6 +286,20 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.embeddings.last_sync = datetime(2026, 8, 1, tzinfo=timezone.utc)
         self.assertEqual((await pipeline.sync_documents())["processed"], 1)
 
+    async def test_primary_model_change_reconciles_once_without_changing_ocr_identity(self):
+        from app.config import settings
+        with patch.object(settings, "gemini_model", "gemini-3.5-flash"):
+            await pipeline.sync_documents()
+        previous_hash = self.embeddings.hashes[1]
+        previous_fingerprint = self.embeddings.fingerprints[1]
+        with patch.object(settings, "gemini_model", "gemini-3.8-flash"):
+            result = await pipeline.sync_documents()
+            self.assertEqual(result["errors"], 0)
+            self.assertEqual(result["processed"], 1)
+            self.assertEqual(self.embeddings.hashes[1], previous_hash)
+            self.assertNotEqual(self.embeddings.fingerprints[1], previous_fingerprint)
+            self.assertEqual((await pipeline.sync_documents())["processed"], 0)
+
     async def test_freshness_exposes_metadata_drift_behind_checkpoint(self):
         import httpx
         import app.main as main
@@ -353,6 +367,26 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await pipeline.reindex_document(1))['status'], 'error')
         self.extractor.fail = False
         self.assertEqual((await pipeline.sync_documents())['processed'], 1)
+
+    async def test_persistent_adaptive_truncation_never_commits_or_replaces_old_index(self):
+        from app.extractor import EntityExtractor
+        from tests.test_extraction import CompletionClient
+        self.existing()
+        self.paperless.documents[1] = document(content="Alice Example " * 40)
+        previous_checkpoint = self.embeddings.last_sync
+        client = CompletionClient()
+        client.finish_reason = "length"
+        with patch.object(pipeline, "extractor", EntityExtractor(
+                client, window_characters=600, overlap_characters=40, minimum_split_characters=180)):
+            result = await pipeline.reindex_document(1)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(self.graph.documents[1]["title"], "Existing usable document")
+        self.assertEqual(self.embeddings.chunks[1, 0], "Existing usable chunk")
+        self.assertNotIn(1, self.embeddings.hashes)
+        self.assertNotIn(1, self.embeddings.fingerprints)
+        self.assertEqual(self.graph.deleted, [])
+        self.assertEqual(self.embeddings.last_sync, previous_checkpoint)
+        self.assertLessEqual(len(client.calls), 15)
 
     async def test_partial_storage_write_is_uncommitted_and_retry_converges(self):
         for store in ('graph', 'chunks'):

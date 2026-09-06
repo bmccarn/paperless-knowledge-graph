@@ -22,6 +22,7 @@ class CompletionClient:
         self.source = ""
         self.finish_reason = "stop"
         self.truncate_above = None
+        self.truncate_stage = "metadata"
 
     async def create(self, **request):
         prompt = request["messages"][-1]["content"]
@@ -44,7 +45,7 @@ class CompletionClient:
             override = self.overrides[stage]
             response = override(response, self) if callable(override) else override
         finish_reason = self.finish_reason
-        if stage == "metadata" and self.truncate_above is not None and len(self.source) > self.truncate_above:
+        if stage == self.truncate_stage and self.truncate_above is not None and len(self.source) > self.truncate_above:
             finish_reason = "length"
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)), finish_reason=finish_reason)])
 
@@ -260,6 +261,77 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.extract("Alice Example", client)
         self.assertEqual(result["extraction_coverage"]["status"], "failed")
         self.assertEqual(len(client.calls), 1)
+
+    async def test_recursive_splits_preserve_boundary_evidence_and_original_offsets(self):
+        quote = "Alice Example works at Tail Widgets."
+        source = "x" * 480 + quote + "y" * (1000 - 480 - len(quote))
+        client = CompletionClient()
+        client.truncate_above = 400
+        result = await self.extract(source, client, window_characters=1000,
+                                    overlap_characters=80, minimum_split_characters=250)
+        coverage = result["extraction_coverage"]
+        self.assertEqual(coverage["status"], "complete")
+        self.assertEqual(coverage["covered_characters"], 1000)
+        self.assertEqual(coverage["adaptive_splits"], 3)
+        self.assertEqual(len(coverage["windows"]), 4)
+        self.assertEqual(len(result["implied_relationships"]), 1)
+        self.assertEqual(result["implied_relationships"][0]["evidence"],
+                         [{"start": 480, "end": 480 + len(quote), "quote": quote}])
+
+    async def test_every_late_pass_truncation_restarts_only_the_affected_range(self):
+        source = "Alice Example works at Tail Widgets. Premium: 125 USD. " + "x" * 500
+        for stage in ("entities", "entity_review", "relationships", "relationship_review"):
+            with self.subTest(stage=stage):
+                client = CompletionClient()
+                client.truncate_above = 350
+                client.truncate_stage = stage
+                result = await self.extract(source, client, window_characters=len(source),
+                                            overlap_characters=50, minimum_split_characters=200)
+                coverage = result["extraction_coverage"]
+                self.assertEqual(coverage["status"], "complete")
+                self.assertEqual(coverage["adaptive_splits"], 1)
+                self.assertEqual(result["premium"], "125")
+                self.assertEqual(len(result["all_entities"]), 2)
+                self.assertEqual(len(result["implied_relationships"]), 1)
+                self.assertEqual(len(result["metadata_evidence"]), len(coverage["windows"]),
+                                 "Discarded parent metadata must not leak into final provenance")
+                self.assertEqual(sum(bool(refs.get("premium")) for refs in result["metadata_evidence"].values()), 1)
+                parent_calls = [s for s, text, _ in client.calls if text == source]
+                self.assertEqual(parent_calls.count(stage), 1)
+                self.assertEqual(parent_calls[-1], stage)
+
+    async def test_adaptive_split_does_not_weaken_independent_relationship_support(self):
+        def unsupported(response, _):
+            for rel in response["relationships"]:
+                rel["support_status"] = "unsupported"
+            return response
+        source = "Alice Example works at Tail Widgets. " + "x" * 500
+        client = CompletionClient({"relationship_review": unsupported})
+        client.truncate_above = 350
+        result = await self.extract(source, client, window_characters=len(source),
+                                    overlap_characters=50, minimum_split_characters=200)
+        self.assertEqual(result["extraction_coverage"]["status"], "complete")
+        self.assertEqual(result["extraction_coverage"]["adaptive_splits"], 1)
+        self.assertEqual(result["implied_relationships"], [])
+        self.assertTrue(any("support was not established" in issue for issue in result["extraction_issues"]))
+
+    async def test_persistent_recursive_truncation_is_bounded_and_preserves_good_windows(self):
+        source = "!" * 400 + "Alice Example" + "x" * 387
+        client = CompletionClient()
+        def truncate_bad_range(response, adapter):
+            adapter.finish_reason = "length" if "!" in adapter.source else "stop"
+            return response
+        client.overrides["metadata"] = truncate_bad_range
+        result = await self.extract(source, client, window_characters=400,
+                                    overlap_characters=0, minimum_split_characters=100)
+        coverage = result["extraction_coverage"]
+        self.assertEqual(coverage["status"], "partial")
+        self.assertEqual(coverage["covered_characters"], 400)
+        self.assertEqual(coverage["adaptive_splits"], 3)
+        self.assertEqual([w["status"] for w in coverage["windows"]], ["failed"] * 4 + ["complete"])
+        self.assertEqual(sum(stage == "metadata" for stage, _, _ in client.calls), 8)
+        self.assertEqual([e["name"] for e in result["all_entities"]], ["Alice Example"])
+        self.assertTrue(all("CompletionTruncatedError" in w["issues"][0] for w in coverage["windows"][:4]))
 
     async def test_empty_document_is_failed_not_successful_empty_extraction(self):
         result = await self.extract("")

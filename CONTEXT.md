@@ -8,7 +8,7 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Eligible document**: A Paperless document whose tags do not match the configured skip tags, which default to `needs-review`.
 
-**Sync**: Incremental ingestion of eligible documents, reconciling the full eligible snapshot with completion records and a versioned ingestion fingerprint. The fingerprint covers OCR and source metadata; the separate OCR content hash remains the feedback-review identity.
+**Sync**: Incremental ingestion of eligible documents, reconciling the full eligible snapshot with completion records and a versioned ingestion fingerprint. The fingerprint covers OCR, source metadata and the primary extraction model; the separate OCR content hash remains the feedback-review identity.
 
 **Reindex**: Rebuilding derived state for one document or the entire corpus. Full reindex prepares and replaces each document individually. Missing completion hashes mark partial writes for retry; cross-store replacement is recoverable, not atomic.
 

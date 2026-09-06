@@ -113,7 +113,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `LITELLM_URL` | LiteLLM proxy URL | `http://localhost:4000` |
 | `LITELLM_API_KEY` | LiteLLM API key | — |
 | `EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |
-| `GEMINI_MODEL` | LLM model for extraction/query synthesis | `gemini-3.5-flash` |
+| `GEMINI_MODEL` | Primary model for classification, extraction, query synthesis and entity helpers | `gemini-3.8-flash` |
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
 | `ANSWER_AUDIT_TIMEOUT_SECONDS` | Total finalization audit/repair budget; timeout returns an evidence-limited response | `60` |
@@ -128,6 +128,36 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `AUTO_SYNC_INTERVAL_MINUTES` | Optional in-process incremental sync interval. `0` disables scheduling. | `0` |
 | `ENTITY_STEWARD_INTERVAL_MINUTES` | Periodic entity steward review interval. `0` disables scheduling. | `360` |
 | `ENTITY_STEWARD_CANDIDATE_LIMIT` | Candidate limit per scheduled steward run | `40` |
+
+### Gemini 3.8 Flash release configuration
+
+The primary route is `gemini-3.8-flash`, the stable September 2026 Flash-tier
+model ([Google model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)).
+The app sends its OpenAI-compatible requests through LiteLLM; publish and prove
+that exact proxy route before deploying this release. Keep `FALLBACK_MODEL=gpt-5.4-mini`
+and `EMBEDDING_MODEL=text-embedding-3-large` unchanged. No embedding migration is required.
+Existing deployment environment variables override these source defaults: set
+`GEMINI_MODEL=gemini-3.8-flash` and leave `STRANDS_MODEL` empty (or set it to the
+same route). Classifier, extractor, query engine, entity helpers, conversation
+titles and the `/models` default use `GEMINI_MODEL`; `/models` lists the actual
+LiteLLM routes rather than a hard-coded catalog. Strands otherwise uses its explicit override.
+The app does not send a thinking-level override; do not configure the unsupported
+`minimal` level for Gemini 3.8 Flash in the proxy.
+
+Ingestion fingerprints now include the primary extraction model in addition to
+the existing `source-origin-v2` source policy. Both legacy null fingerprints and
+earlier fingerprints without this model identity are stale; normal sync rebuilds
+them without a wipe, Reindex All, or Paperless re-OCR. Changing models does not
+change the OCR hash used by feedback. Query cache keys cover the active query model
+and effective Strands helper model, including when a query pins a different model;
+no query-cache version bump is needed. Existing saved conversations
+remain historical. This release does not itself run or complete the legacy backfill.
+
+Output-budget truncation splits only the affected extraction window into smaller
+overlapping source ranges. Every replacement window must complete all applicable
+passes before completion is recorded; persistent truncation at the split floor
+still fails closed. Validate small and large real-provider canaries before the
+normal sync/backfill and restore paused schedules only after production acceptance.
 
 ## API Endpoints
 

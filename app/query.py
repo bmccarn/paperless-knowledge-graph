@@ -468,6 +468,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         evaluated_at = datetime.now(timezone.utc).date().isoformat()
         identity = {"policy": QUERY_CACHE_VERSION, "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
+                    "strands_model": settings.strands_model or settings.gemini_model,
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)

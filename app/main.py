@@ -1428,7 +1428,7 @@ async def graph_initial(limit: int = 300):
 @app.post("/resolve-entities")
 async def resolve_entities():
     async with _graph_mutation("resolve-entities"):
-        """Scan all entities and merge duplicates."""
+        """Report identity review candidates; existing UUID merges require review."""
         try:
             report = await entity_resolver.resolve_all_entities()
             return report

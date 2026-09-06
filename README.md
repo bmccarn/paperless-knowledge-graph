@@ -5,7 +5,7 @@ A knowledge graph system that extracts structured entities and relationships fro
 ## Features
 
 - **Document-type-aware extraction** — Classifies documents first (invoice, medical, tax, etc.), then uses specialized extraction prompts per type
-- **Entity resolution** — Fuzzy matching + embedding similarity to merge duplicate entities automatically; bulk resolution preserves source-document identities so human split decisions block different entities without blocking duplicates of the same entity
+- **Entity resolution** — Evidence-aware canonical/verified-alias matching with exact document-local UUID/type bindings; similarity only suggests candidates, existing UUID merges require human review, and no-merge decisions remain durable
 - **Hybrid search** — Vector similarity (pgvector) + trigram keyword search + graph traversal combined
 - **Graph-aware retrieval** — Multi-hop subgraph expansion from discovered entities (2-3 hops)
 - **Strands-planned query pipeline** — Query planning → retrieval → synthesis → complete source audit → bounded repair or evidence-limited response
@@ -26,7 +26,7 @@ Document extraction has no document-size or window-count cap: it processes overl
 
 ```
 Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-Specific Extraction
-  → Entity Resolution (fuzzy + embeddings) → Neo4j (graph) + pgvector (embeddings)
+  → Entity Resolution (source evidence + reviewed identity) → Neo4j (graph) + pgvector (embeddings)
   → Hybrid Query Pipeline (Strands plan + vector + keyword + graph + evidence verifier)
 ```
 
@@ -39,7 +39,8 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 | `app/extractor.py` | Type-specific entity/relationship extraction with fallback prompts |
 | `app/graph.py` | Neo4j operations — create/query nodes, relationships, subgraph traversal |
 | `app/embeddings.py` | pgvector storage, chunking, vector/keyword search, dimension migration |
-| `app/entity_resolver.py` | Fuzzy match + embedding similarity entity deduplication |
+| `app/entity_resolver.py` | Evidence-aware identity matching and veto-guarded human merges |
+| `app/entity_policy.py`, `app/entity_bindings.py` | Provenance/orthography policy and document-local UUID/type bindings |
 | `app/entity_steward.py` | Conservative entity merge/split/review suggestions; never auto-merges |
 | `app/evidence.py` | Evidence pack, source quality, date signal, claim ledger, and verifier repair helpers |
 | `app/query.py` | Iterative hybrid query pipeline with modes, evidence packs, verification, and LLM synthesis |

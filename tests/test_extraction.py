@@ -221,13 +221,15 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["all_entities"], [])
                 self.assertEqual(result["implied_relationships"], [])
 
-    async def test_window_budget_reports_unprocessed_tail(self):
-        result = await self.extract("x " * 300 + "Alice Example", window_characters=100, overlap_characters=20, max_windows=2)
+    async def test_windows_continue_past_the_former_count_limit(self):
+        source = "Blank filler. " * 300 + "Alice Example"
+        result = await self.extract(source, window_characters=100, overlap_characters=20)
         coverage = result["extraction_coverage"]
-        self.assertEqual(coverage["status"], "partial")
-        self.assertEqual(coverage["covered_characters"], 180)
-        self.assertLess(coverage["covered_characters"], coverage["total_characters"])
-        self.assertTrue(coverage["issues"])
+        self.assertEqual(coverage["status"], "complete")
+        self.assertEqual(coverage["covered_characters"], len(source))
+        self.assertEqual(result["all_entities"][0]["name"], "Alice Example")
+        span = result["all_entities"][0]["evidence"][0]
+        self.assertEqual(source[span["start"]:span["end"]], span["quote"])
 
     async def test_truncated_completion_is_not_accepted_as_a_complete_window(self):
         client = CompletionClient()

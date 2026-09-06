@@ -14,9 +14,9 @@ ENTITY_TYPES = {
 }
 
 
-def source_windows(content: str, size: int, overlap: int, limit: int):
+def source_windows(content: str, size: int, overlap: int):
     start = 0
-    for _ in range(limit):
+    while start < len(content):
         end = min(len(content), start + size)
         yield start, end, content[start:end]
         if end == len(content):

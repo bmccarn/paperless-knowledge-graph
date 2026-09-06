@@ -682,20 +682,19 @@ async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 3
     return {}
 
 class EntityExtractor:
-    def __init__(self, client=None, *, window_characters=12000, overlap_characters=800, max_windows=32):
-        if window_characters < 1 or not 0 <= overlap_characters < window_characters or max_windows < 1:
-            raise ValueError("Invalid extraction window budget")
+    def __init__(self, client=None, *, window_characters=12000, overlap_characters=800):
+        if window_characters < 1 or not 0 <= overlap_characters < window_characters:
+            raise ValueError("Invalid extraction window size or overlap")
         self.client = client or AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key, max_retries=0, timeout=60)
         self.model = settings.gemini_model
         self.window_characters = window_characters
         self.overlap_characters = overlap_characters
-        self.max_windows = max_windows
 
     async def close(self):
         await self.client.close()
 
     async def extract(self, title: str, content: str, doc_type: str) -> dict:
-        """Extract over bounded windows; never silently certify an omitted tail."""
+        """Process the entire document in windows; only complete coverage can pass."""
         windows, issues, metadata_results, entities, relationships = [], [], [], [], []
         if not isinstance(content, str) or not content.strip():
             return {"all_entities": [], "implied_relationships": [], "confidence": 0.0,
@@ -703,7 +702,7 @@ class EntityExtractor:
                     "extraction_coverage": {"status": "failed", "total_characters": len(content or ""),
                                             "covered_characters": 0, "windows": [], "issues": ["No OCR content"]},
                     "extraction_issues": ["No OCR content"], "metadata_evidence": {}, "metadata_conflicts": []}
-        for start, end, source in source_windows(content, self.window_characters, self.overlap_characters, self.max_windows):
+        for start, end, source in source_windows(content, self.window_characters, self.overlap_characters):
             window = {"start": start, "end": end, "status": "failed", "issues": []}
             phase = "metadata"
             try:
@@ -779,12 +778,10 @@ class EntityExtractor:
         relationships = merge_unique(accepted_relationships, ("from_entity", "to_entity", "relationship_type"))
         result = self._combine_results(metadata, {"entities": entities}, {"relationships": relationships})
         covered = covered_characters(windows)
-        budget_issues = [] if windows and windows[-1]["end"] == len(content) else ["Window budget exceeded; document tail was not processed"]
-        issues.extend(budget_issues)
         status = "complete" if covered == len(content) and all(window["status"] == "complete" for window in windows) else ("partial" if covered else "failed")
         result.update({
             "extraction_method": "source-windowed-5-pass",
-            "extraction_coverage": {"status": status, "total_characters": len(content), "covered_characters": covered, "windows": windows, "issues": budget_issues},
+            "extraction_coverage": {"status": status, "total_characters": len(content), "covered_characters": covered, "windows": windows, "issues": []},
             "extraction_issues": issues, "metadata_evidence": metadata_evidence,
             "metadata_conflicts": metadata_conflicts,
         })

@@ -24,7 +24,7 @@ from app.paperless import paperless_client
 from app.graph import graph_store
 from app.cache import (query_cache, vector_cache, graph_cache,
     cache_get, cache_set, get_corpus_generation_async)
-from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, select_spans
+from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, select_spans, empty_ledger
 from app.timeline import validate_timeline
 from app.query_quality import (
     current_state_summary,
@@ -580,11 +580,30 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             result["answer"] = "The document index changed or is awaiting repair. Please retry after indexing finishes so the answer can be checked against a consistent set of sources."
             result["confidence"] = 0.0
             result["timeline_events"] = []
+            result["sources"] = []
+            result["claim_ledger"] = empty_ledger("")
+            claim_summary = result["claim_ledger"]["summary"]
+            missing = ["Stable completed source index required."]
+            current = {**result.get("current_state", {}), "status": "needs_review",
+                       "active_documented_interval_ids": [], "note": missing[0]}
+            result["current_state"] = current
+            for item in result.get("evidence_pack", {}).get("items", []):
+                item["support_spans"] = []
             result["finalization"].update(disposition="corpus_changed", complete=False, cited_document_ids=[],
                 answer_digest=hashlib.sha256(result["answer"].encode()).hexdigest())
-            result["verification"].update(status="corpus_changed", missing_evidence=["Stable completed source index required."])
-            result["evidence"].update(score=0.0, level="low", audit_status="corpus_changed")
-            result["source_summary"].update(trust_score=0.0, trust_level="low", verification_status="corpus_changed", audit_status="corpus_changed")
+            result["verification"].update(status="corpus_changed", missing_evidence=missing,
+                supported_claims=[], unsupported_claims=[], stale_or_conflicting_claims=[],
+                current_state=current, finalization=result["finalization"])
+            result["evidence"].update(score=0.0, level="low", audit_status="corpus_changed",
+                claim_summary=claim_summary, source_count=0, reasons=[], penalties=missing,
+                dimensions={"claim_support": 0, "audit_coverage": 0},
+                coverage={"answer_complete": False, "selected_span_count": 0, "available_span_count": 0})
+            result["source_summary"].update(trust_score=0.0, trust_level="low",
+                verification_status="corpus_changed", audit_status="corpus_changed",
+                claim_summary=claim_summary, trust_reasons=[], trust_penalties=missing,
+                trust_dimensions=result["evidence"]["dimensions"], current_state=current,
+                source_count=0, timeline_event_count=0, unsupported_claim_count=0,
+                stale_or_conflicting_claim_count=0)
             return False
         return True
 

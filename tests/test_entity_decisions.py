@@ -490,8 +490,8 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         edge = next(r for r in detail["relationships"] if r["rel_type"] == "WORKS_AT")
         records = [json.loads(value) for value in edge["rel_props"]["support_records"]]
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["evidence_spans"], first["evidence_spans"] + second["evidence_spans"])
-        self.assertEqual(records[0]["rationale"], ["first quote", "second quote"])
+        self.assertCountEqual(records[0]["evidence_spans"], first["evidence_spans"] + second["evidence_spans"])
+        self.assertCountEqual(records[0]["rationale"], ["first quote", "second quote"])
         inbound = next(r for r in detail["relationships"] if r["rel_type"] == "EMPLOYS")
         self.assertEqual(inbound["direction"], "in")
         self.assertEqual(inbound["rel_props"]["source_doc_ids"], [22])

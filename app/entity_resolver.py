@@ -125,18 +125,19 @@ class EntityResolver:
 
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None,
                              description: str = None, **evidence) -> str:
-        return await self.resolve(name, "Person", source_doc_id, description=description, **evidence)
+        return await self.resolve(name, "Person", source_doc_id, description=description, role=role, **evidence)
 
     async def resolve_organization(self, name: str, source_doc_id: int,
                                    org_type: str = None, description: str = None, **evidence) -> str:
-        return await self.resolve(name, "Organization", source_doc_id, description=description, **evidence)
+        return await self.resolve(name, "Organization", source_doc_id, description=description, org_type=org_type, **evidence)
 
     async def resolve_generic(self, name: str, entity_type: str, source_doc_id: int,
                               description: str = None, **evidence) -> str:
         return await self.resolve(name, entity_type, source_doc_id, description=description, **evidence)
 
     async def resolve(self, name: str, entity_type: str, source_doc_id: int, *,
-                      description: str = None, source: str = "", identity_hint: str = "") -> str:
+                      description: str = None, source: str = "", identity_hint: str = "",
+                      role: str = None, org_type: str = None) -> str:
         """Resolve once under the review lock; callers must bind the returned UUID.
 
         Source-less paths preserve the supplied type. Hints must already have
@@ -200,6 +201,10 @@ class EntityResolver:
                      "identity_hints": [identity_hint] if identity_hint else []}
             if description:
                 props["description"] = description
+            if label == "Person" and role:
+                props["role"] = role
+            if label == "Organization" and org_type:
+                props["type"] = org_type
             return await graph_store.create_node(label, props)
 
     @staticmethod

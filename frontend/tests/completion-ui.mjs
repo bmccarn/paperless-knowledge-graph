@@ -204,3 +204,29 @@ for (const trigger of ["initial", "reset", "seed"]) test(`${trigger} graph arriv
   await page.getByText("5 nodes", { exact: false }).waitFor();
   await record(page, `graph-${trigger}-selection`);
 });
+
+test("snapshot-rejected SSE answers do not display obsolete supported claims", async t => {
+  const { page } = await fixturePage(t);
+  const warning = "The document index changed. Retry after indexing finishes.";
+  await page.route("**/api/query/stream", route => route.fulfill({
+    status: 200,
+    contentType: "text/event-stream",
+    body: "data: " + JSON.stringify({
+      type: "complete", answer: warning, confidence: 0, sources: [],
+      verification: { status: "corpus_changed", supported_claims: [], missing_evidence: ["Stable source index required."] },
+      finalization: { disposition: "corpus_changed", complete: false, cited_document_ids: [] },
+      // Older persisted payloads can still contain a superseded diagnostic ledger.
+      claim_ledger: { claims: [{ claim: "Obsolete premium is $321.", status: "supported" }] },
+      source_summary: { verification_status: "corpus_changed", claim_summary: { supported: 1 } },
+    }) + "\n\n",
+  }));
+  await page.goto(`${base}/query`);
+  const input = page.getByPlaceholder("Ask a question...");
+  await input.fill("Recorded premium during reindex?");
+  await input.press("Enter");
+  await page.getByText(warning, { exact: true }).waitFor();
+  assert.equal(await page.getByText("Obsolete premium is $321.", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("supported", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("supported: 1", { exact: true }).count(), 0);
+  await record(page, "snapshot-invalidated-claims");
+});

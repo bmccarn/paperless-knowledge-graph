@@ -929,7 +929,7 @@ function QueryContent() {
                           ))}
                         </div>
                       )}
-                      {msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
+                      {msg.verification?.status !== "corpus_changed" && msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
                         <div className="flex flex-wrap gap-1 pt-1">
                           {Object.entries(msg.source_summary.claim_summary).map(([status, count]) => count ? (
                             <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-[9px]">
@@ -973,7 +973,7 @@ function QueryContent() {
                     )
                   )}
 
-                  {msg.role === "assistant" && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
+                  {msg.role === "assistant" && msg.verification?.status !== "corpus_changed" && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
                       <p className="font-medium flex items-center gap-1">
                         <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})

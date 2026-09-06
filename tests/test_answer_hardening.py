@@ -39,10 +39,83 @@ class AnswerHardeningTests(unittest.IsolatedAsyncioTestCase):
     async def test_value_and_unit_must_cooccur_in_support_not_separately(self):
         source = "Dose: 5 mg. Body weight: 90 kg."
         finalizer = AnswerFinalizer(QuoteAuditor(source))
-        incorrect = await finalizer.finalize("Dose?", "The dose is 90 mg.", pack(source))
-        self.assertNotEqual(incorrect["finalization"]["disposition"], "supported")
-        correct = await finalizer.finalize("Dose?", "The dose is 5 mg.", pack(source))
-        self.assertEqual(correct["finalization"]["disposition"], "supported")
+        for amount, unit in (("{}", "mg"), ("**{}**", "mg"), ("{}", "**mg**"),
+                             ("*{}*", "mg"), ("{}", "*mg*"), ("`{}`", "mg"),
+                             ("{}", "`mg`"), ("``{}``", "mg"), ("{}", "``mg``"),
+                             ("```{}```", "mg"), ("{}", "```mg```"),
+                             ("__{}__", "mg"), ("{}", "_mg_"),
+                             ("****{}****", "mg"), ("{}", "****mg****"),
+                             ("____{}____", "mg"), ("{}", "____mg____"),
+                             ("[{}]", "mg"), ("{}", "[mg]"),
+                             ("**{}* *", "mg**")):
+            with self.subTest(amount=amount, unit=unit):
+                incorrect = await finalizer.finalize("Dose?", f"The dose is {amount.format(90)} {unit}.", pack(source))
+                self.assertFalse(incorrect["finalization"]["complete"])
+                correct = await finalizer.finalize("Dose?", f"The dose is {amount.format(5)} {unit}.", pack(source))
+                self.assertEqual(correct["finalization"]["disposition"], "supported")
+                claim = correct["claim_ledger"]["claims"][0]
+                self.assertEqual(claim["references"][0]["quote"], source)
+                self.assertEqual(correct["answer"][claim["start"]:claim["end"]], claim["claim"])
+
+    async def test_quantity_checks_span_markdown_and_audit_unit_boundaries(self):
+        source = "Dose: 5 mg. Body weight: 90 kg."
+        finalizer = AnswerFinalizer(QuoteAuditor(source))
+        for template in ("**The dose is\n{}** mg.", "The dose is {}\nmg.",
+                         "**The dose is\n*{}*\nmg.**",
+                         "1. Dose:\n{} mg.\n2. Weight: 90 kg."):
+            with self.subTest(template=template):
+                incorrect = await finalizer.finalize("Dose?", template.format(90), pack(source))
+                self.assertFalse(incorrect["finalization"]["complete"])
+                correct = await finalizer.finalize("Dose?", template.format(5), pack(source))
+                self.assertEqual(correct["finalization"]["disposition"], "supported")
+                for claim in correct["claim_ledger"]["claims"]:
+                    self.assertEqual(claim["references"][0]["quote"], source)
+                    self.assertEqual(template.format(5)[claim["start"]:claim["end"]], claim["claim"])
+
+    async def test_link_labels_remain_factual_numeric_prose(self):
+        source = "Dose: 5 mg. Body weight: 90 kg."
+        finalizer = AnswerFinalizer(QuoteAuditor(source))
+        for amount in (90, 5):
+            with self.subTest(amount=amount):
+                result = await finalizer.finalize(
+                    "Dose?", f"Dose: [{amount}](https://example.invalid) mg.", pack(source))
+                self.assertEqual(result["finalization"]["complete"], amount == 5)
+
+    async def test_formatted_signed_decimal_cannot_lose_sign_or_precision(self):
+        source = "Change: -5.25 mg."
+        finalizer = AnswerFinalizer(QuoteAuditor(source))
+        for value in ("**5.25**", "**-5.2**", "-**5.25**"):
+            with self.subTest(value=value):
+                result = await finalizer.finalize("Change?", f"Change: {value} mg.", pack(source))
+                self.assertEqual(result["finalization"]["complete"], value == "-**5.25**")
+
+    async def test_separate_references_cannot_manufacture_a_quantity(self):
+        class FragmentAuditor:
+            def __init__(self, quotes):
+                self.quotes = quotes
+
+            async def audit_answer_units(self, question, units, spans, plan):
+                references = []
+                for quote in self.quotes:
+                    span = next(span for span in spans if quote in span["content"])
+                    references.append({"span_id": span["span_id"], "evidence_id": span["evidence_id"],
+                                       "document_id": span["document_id"], "quote": quote})
+                return {"assessments": [{"unit_id": unit["id"], "status": "supported",
+                                         "references": references} for unit in units]}
+
+        same_document = pack("Dose: 5 mg. Body weight: 90 kg.")
+        different_documents = pack("Body weight: 90 kg.")
+        different_documents["items"].append({"id": "e2", "document_id": 102,
+                                             "title": "Dose record", "content": "Dose: 5 mg."})
+        for evidence in (same_document, different_documents):
+            with self.subTest(documents=len(evidence["items"])):
+                result = await AnswerFinalizer(FragmentAuditor(["90", "mg"])).finalize(
+                    "Dose?", "The dose is 90 mg.", evidence)
+                self.assertFalse(result["finalization"]["complete"])
+                self.assertEqual(len(result["claim_ledger"]["claims"][0]["references"]), 2)
+                correct = await AnswerFinalizer(FragmentAuditor(["5 mg", "90 kg"])).finalize(
+                    "Dose and weight?", "Dose: 5 mg; weight: 90 kg.", evidence)
+                self.assertTrue(correct["finalization"]["complete"])
 
     async def test_unit_outside_original_small_registry_is_checked(self):
         result = await AnswerFinalizer(QuoteAuditor("Volume: 5 mL.")).finalize("Volume?", "The volume is 5 L.", pack("Volume: 5 mL."))

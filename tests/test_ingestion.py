@@ -230,6 +230,32 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.embeddings.last_sync.isoformat(), result['scan_started_at'])
         self.assertIn(1, self.embeddings.hashes)
 
+    async def test_large_legacy_document_finishes_backfill_and_is_not_reprocessed(self):
+        from app.extractor import EntityExtractor
+        from tests.test_extraction import CompletionClient
+        tail = "Premium: 125.00 USD."
+        source = ("Blank filler. " * 100000)[:1_211_567 - len(tail)] + tail
+        self.paperless.documents[1] = document(content=source)
+        self.existing()
+        self.embeddings.last_sync = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        client = CompletionClient()
+        with patch.object(pipeline, "extractor", EntityExtractor(client)):
+            result = await pipeline.sync_documents()
+            self.assertEqual(result["errors"], 0)
+            self.assertTrue(result["checkpoint_advanced"])
+            self.assertEqual(result["processed"], 1)
+            coverage = self.graph.documents[1]["extraction_metadata"]["extraction_coverage"]
+            self.assertEqual(coverage["status"], "complete")
+            self.assertEqual(coverage["covered_characters"], len(source))
+            self.assertEqual(coverage["windows"][-1]["end"], len(source))
+            self.assertTrue(any(tail in chunk for chunk in self.embeddings.chunks.values()))
+            provenance = self.graph.documents[1]["extraction_metadata"]["metadata_evidence"]
+            self.assertTrue(any(span["start"] > 359_200 and source[span["start"]:span["end"]] == span["quote"]
+                                for window in provenance.values() for span in window.get("premium", [])))
+            self.assertEqual(self.embeddings.fingerprints[1],
+                             PaperlessClient.ingestion_fingerprint(self.paperless.documents[1]))
+            self.assertEqual((await pipeline.sync_documents())["processed"], 0)
+
     async def test_returned_resolution_errors_fail_reindex_without_advancing_checkpoint(self):
         previous = self.embeddings.last_sync
         async def failed_resolution():

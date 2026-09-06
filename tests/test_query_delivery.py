@@ -132,10 +132,17 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         result = await task
         self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
         self.assertNotIn("321", result["answer"])
+        self.assertEqual(result["claim_ledger"]["claims"], [])
+        self.assertEqual(result["verification"]["supported_claims"], [])
+        self.assertEqual(result["source_summary"]["claim_summary"]["supported"], 0)
+        self.assertFalse(result["evidence"]["coverage"]["answer_complete"])
         with patch("app.query.embeddings_store.get_incomplete_document_ids", AsyncMock(return_value={101})):
             result = await self.engine.query("Recorded premium?")
         self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
         self.assertEqual(result["confidence"], 0)
+        self.assertEqual(result["claim_ledger"]["claims"], [])
+        self.assertEqual(result["verification"]["supported_claims"], [])
+        self.assertEqual(result["evidence"]["claim_summary"]["supported"], 0)
 
     async def test_unavailable_auditor_sends_same_abstention_through_both_paths(self):
         class Unavailable:
@@ -178,6 +185,9 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
                 self.assertFalse(result["finalization"]["complete"])
                 self.assertNotIn("321", result["answer"])
+                self.assertEqual(result["claim_ledger"]["claims"], [])
+                self.assertEqual(result["verification"]["supported_claims"], [])
+                self.assertEqual(result["source_summary"]["claim_summary"]["supported"], 0)
 
     async def test_cached_answers_recheck_incomplete_source_markers(self):
         await self.engine.query("Recorded premium?")

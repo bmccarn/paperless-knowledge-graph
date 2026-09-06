@@ -12,6 +12,10 @@ from app.extraction_evidence import (source_windows, validate_entities, validate
 logger = logging.getLogger(__name__)
 
 
+class CompletionTruncatedError(ValueError):
+    """The provider exhausted its output budget for a source window."""
+
+
 def _coerce_text(value: Any) -> str:
     if value is None:
         return ""
@@ -629,7 +633,9 @@ async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 3
     
     Handles: dict (pass through), list (wrap in {"items": [...]}),
     string (parse as JSON), None (retry), other types (retry).
-    Returns {} on complete failure — never raises.
+    Returns {} on ordinary complete failure. Output-budget truncation is raised
+    immediately so the caller can retry a smaller source window instead of
+    repeating the same oversized request.
     """
     last_error = None
     for attempt in range(max_retries):
@@ -668,6 +674,8 @@ async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 3
                 last_error = ValueError(f"Expected dict, got {type(result).__name__}")
                 continue
                 
+        except CompletionTruncatedError:
+            raise
         except json.JSONDecodeError as e:
             logger.warning(f"{operation}: JSON parse failed (attempt {attempt+1}/{max_retries}): {e}")
             last_error = e
@@ -682,13 +690,16 @@ async def _extract_json_with_retry(call_fn, operation: str, max_retries: int = 3
     return {}
 
 class EntityExtractor:
-    def __init__(self, client=None, *, window_characters=12000, overlap_characters=800):
-        if window_characters < 1 or not 0 <= overlap_characters < window_characters:
+    def __init__(self, client=None, *, window_characters=12000, overlap_characters=800,
+                 minimum_split_characters=4000):
+        if (window_characters < 1 or not 0 <= overlap_characters < window_characters
+                or minimum_split_characters < 1):
             raise ValueError("Invalid extraction window size or overlap")
         self.client = client or AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key, max_retries=0, timeout=60)
         self.model = settings.gemini_model
         self.window_characters = window_characters
         self.overlap_characters = overlap_characters
+        self.minimum_split_characters = minimum_split_characters
 
     async def close(self):
         await self.client.close()
@@ -702,7 +713,12 @@ class EntityExtractor:
                     "extraction_coverage": {"status": "failed", "total_characters": len(content or ""),
                                             "covered_characters": 0, "windows": [], "issues": ["No OCR content"]},
                     "extraction_issues": ["No OCR content"], "metadata_evidence": {}, "metadata_conflicts": []}
-        for start, end, source in source_windows(content, self.window_characters, self.overlap_characters):
+        pending = [(start, end) for start, end, _ in source_windows(
+            content, self.window_characters, self.overlap_characters)]
+        adaptive_splits = 0
+        while pending:
+            start, end = pending.pop(0)
+            source = content[start:end]
             window = {"start": start, "end": end, "status": "failed", "issues": []}
             phase = "metadata"
             try:
@@ -753,6 +769,30 @@ class EntityExtractor:
                 entities.extend(accepted)
                 relationships.extend(accepted_relationships)
                 window["status"] = "complete"
+            except CompletionTruncatedError as exc:
+                # Retrying an identical request can replay the same cached,
+                # truncated completion. Split only this source range and keep
+                # enough overlap to preserve evidence near the new boundary.
+                if len(source) > self.minimum_split_characters:
+                    midpoint = start + len(source) // 2
+                    split_overlap = min(self.overlap_characters, max(1, len(source) // 10))
+                    children = [
+                        (start, min(end, midpoint + split_overlap)),
+                        (max(start, midpoint - split_overlap), end),
+                    ]
+                    if max(child_end - child_start for child_start, child_end in children) < len(source):
+                        pending[0:0] = children
+                        adaptive_splits += 1
+                        logger.warning(
+                            "Extraction window %s:%s exceeded the output budget during %s; "
+                            "retrying as %s:%s and %s:%s",
+                            start, end, phase,
+                            children[0][0], children[0][1], children[1][0], children[1][1],
+                        )
+                        continue
+                logger.warning("Extraction window %s:%s failed during %s: %s", start, end, phase, exc)
+                window["issues"].append(f"{phase} failed: {type(exc).__name__}: {exc}")
+                metadata_results.append(({}, {}))
             except Exception as exc:
                 logger.warning("Extraction window %s:%s failed during %s: %s", start, end, phase, exc)
                 window["issues"].append(f"{phase} failed: {type(exc).__name__}: {exc}")
@@ -781,7 +821,8 @@ class EntityExtractor:
         status = "complete" if covered == len(content) and all(window["status"] == "complete" for window in windows) else ("partial" if covered else "failed")
         result.update({
             "extraction_method": "source-windowed-5-pass",
-            "extraction_coverage": {"status": status, "total_characters": len(content), "covered_characters": covered, "windows": windows, "issues": []},
+            "extraction_coverage": {"status": status, "total_characters": len(content), "covered_characters": covered,
+                                    "windows": windows, "issues": [], "adaptive_splits": adaptive_splits},
             "extraction_issues": issues, "metadata_evidence": metadata_evidence,
             "metadata_conflicts": metadata_conflicts,
         })
@@ -807,7 +848,7 @@ class EntityExtractor:
             )
             choice = response.choices[0]
             if getattr(choice, "finish_reason", None) == "length":
-                raise ValueError("Model output truncated by completion budget")
+                raise CompletionTruncatedError("Model output truncated by completion budget")
             return _repair_json(choice.message.content)
         return await _extract_json_with_retry(call, operation=operation)
 

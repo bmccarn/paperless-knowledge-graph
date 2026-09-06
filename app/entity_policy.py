@@ -102,7 +102,12 @@ def coreference_span(left: str, right: str, source: str) -> dict | None:
         match = re.search(pattern, source, re.I)
         if match:
             # Negated statements cannot authorize an alias.
-            prefix = source[max(0, match.start()-30):match.start()]
+            prefix = source[max(0, match.start()-120):match.start()]
+            preceding = re.search(r"([\w'-]+)\s+$", prefix)
+            if preceding and preceding[1].casefold() not in {"is", "named", "called", "by", "from", "with", "to", "for", "and", "or", "as", "at"}:
+                # A matching suffix of a longer proper name is not the named
+                # subject of the source's alias assertion (e.g. country/parent).
+                continue
             if re.search(r"\b(?:not|never|incorrectly|mistakenly|false|incorrect|rejected|denied|alleged|hypothetical)\b[^.!?\n]*$", prefix, re.I):
                 continue
             suffix = source[match.end():].split("\n", 1)[0]
@@ -131,22 +136,23 @@ def initialism_expansions(alias: str, source: str) -> list[str]:
         words = match[1].strip().split()
         for index in range(len(words)):
             full = " ".join(words[index:]).strip(' ,.:"“”')
-            # Ignore a grammatical leading article when comparing definitions,
-            # while preserving the actual source form as evidence.
-            key = re.sub(r"^the\s+", "", name_key(full, "Organization"))
             if coreference_span(full, alias, source):
-                expansions[key] = full
+                expansions[name_key(full, "Organization")] = full
+                break  # preserve the longest proved name; never drop prefixes
     # Reverse glossary notation: ABBR (Expanded Name).
     for match in re.finditer(r'(?<!\w)' + escaped + r'\s*\(([^()\n]{1,240})\)', source, re.I):
         full = match[1].strip()
         if coreference_span(full, alias, source):
-            expansions[re.sub(r"^the\s+", "", name_key(full, "Organization"))] = full
+            expansions[name_key(full, "Organization")] = full
     return list(expansions.values())
 
 
 def has_local_alias_definition(alias: str, source: str) -> bool:
     escaped = r"\s+".join(re.escape(word) for word in alias.split())
-    return bool(re.search(r'(?:also known as|doing business as|d/b/a|aka|hereinafter referred to as)\s+["“]?'
+    parenthetical = re.search(r'\(\s*["“]?' + escaped + r'["”]?\s*\)', source, re.I)
+    compact = re.sub(r"[^\w]", "", alias)
+    abbreviation_like = compact.isupper() or (compact.islower() and len(compact) <= 5)
+    return bool((parenthetical and abbreviation_like) or re.search(r'(?:also known as|doing business as|d/b/a|aka|hereinafter referred to as)\s+["“]?'
                           + escaped + r'(?!\w)', source, re.I))
 
 

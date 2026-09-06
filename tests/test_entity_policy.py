@@ -2,7 +2,7 @@
 import unittest
 
 from app.entity_policy import (name_key, display_name, coreference_span,
-    trusted_aliases, source_alias_record, human_alias_record, context_bound_name, initialism_expansions)
+    trusted_aliases, source_alias_record, human_alias_record, context_bound_name, initialism_expansions, has_local_alias_definition)
 from app.extraction_evidence import (validate_entities, validate_relationships,
     reconcile_entities, adjudicate_types)
 from app.entity_bindings import DocumentBindings
@@ -83,6 +83,9 @@ class CoreferenceTests(unittest.TestCase):
             ("Network Entity Systems", "NES", "The claim Network Entity Systems also known as NES was false."),
             ("Alice Example", "Alice Smyth", "Alice Example also known as Alice Smyth's agent."),
             ("Network Entity Systems", "NEX", "Network Entity Systems (NEX)"),
+            ("Department of Energy", "DOE", "US Department of Energy (DOE) signed."),
+            ("National Bank", "NB", "The National Bank (NB) signed."),
+            ("Example Bank", "Bright Tools", "Parent Example Bank doing business as Bright Tools."),
         ]:
             with self.subTest(source=source):
                 self.assertIsNone(coreference_span(left, right, source))
@@ -91,6 +94,11 @@ class CoreferenceTests(unittest.TestCase):
         source = "Network Entity Systems (NES). New Era Services (NES)."
         self.assertEqual(set(initialism_expansions("NES", source)), {"Network Entity Systems", "New Era Services"})
         self.assertEqual(initialism_expansions("NES", "Network Entity Systems and NES are listed."), [])
+        self.assertFalse(has_local_alias_definition("Alice Example", "Person (Alice Example) signed."))
+        self.assertFalse(has_local_alias_definition("Acme", "Supplier (Acme) signed."))
+        self.assertTrue(has_local_alias_definition("DOE", "US Department of Energy (DOE) signed."))
+        self.assertEqual(initialism_expansions("NB", "The National Bank (NB) signed."), ["The National Bank"])
+        self.assertEqual(initialism_expansions("DOE", "US Department of Energy (DOE) signed."), [])
         self.assertEqual(initialism_expansions("NES", "Network Entity Systems (NES). Network Entity Systems (NES)."), ["Network Entity Systems"])
 
     def test_legacy_aliases_never_gain_authority_by_existence_or_score(self):

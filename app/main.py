@@ -1501,7 +1501,7 @@ async def entity_review_steward_task(limit: int = 75):
 async def entity_review_ignore(req: EntityDecisionRequest):
     async with _graph_mutation("ignore-entity-pair"):
         try:
-            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "ignore", req.note)
+            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "ignore", req.note, review_method="entity_review_api")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "ignored", "decision": decision}
@@ -1511,7 +1511,7 @@ async def entity_review_ignore(req: EntityDecisionRequest):
 async def entity_review_split(req: EntityDecisionRequest):
     async with _graph_mutation("split-entity-pair"):
         try:
-            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "split", req.note)
+            decision = await entity_resolver.record_decision(req.left_uuid, req.right_uuid, "split", req.note, review_method="entity_review_api")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     return {"status": "split_requested", "decision": decision}
@@ -1521,7 +1521,7 @@ async def entity_review_split(req: EntityDecisionRequest):
 async def entity_review_merge(req: EntityMergeRequest):
     async with _graph_mutation("merge-entities"):
         try:
-            merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid)
+            merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid, review_method="entity_review_api")
             asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
             return {"status": "merged", "entity": merged}
         except EntityMergeProhibited as e:

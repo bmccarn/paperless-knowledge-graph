@@ -91,6 +91,7 @@ class EntitySteward:
                     candidate["right"]["uuid"],
                     decision,
                     note[:6000],
+                    provenance="automated_suggestion", review_method="entity_steward",
                 )
                 reviewed.append({
                     "pair": [candidate["left"]["uuid"], candidate["right"]["uuid"]],

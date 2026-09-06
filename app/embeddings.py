@@ -87,6 +87,7 @@ ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS right_identity JSON
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'legacy_unknown';
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS identity_status TEXT NOT NULL DEFAULT 'unassessed';
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS review_id TEXT;
+ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS review_method TEXT NOT NULL DEFAULT 'legacy_unknown';
 
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
@@ -738,26 +739,31 @@ class EmbeddingsStore:
                                          *, left_identity: dict | None = None,
                                          right_identity: dict | None = None,
                                          provenance: str = "legacy_unknown",
-                                         identity_status: str = "unassessed", review_id: str | None = None) -> dict:
+                                         identity_status: str = "unassessed", review_id: str | None = None,
+                                         review_method: str = "legacy_unknown") -> dict:
+        from app.entity_policy import EXPLICIT_REVIEW_METHOD
+        if provenance == "human_review" and (review_method != EXPLICIT_REVIEW_METHOD or not review_id):
+            raise ValueError("Human decision provenance requires explicit review origin and correlation ID")
         ordered = sorted([left_uuid, right_uuid])
         if ordered[0] != left_uuid:
             left_identity, right_identity = right_identity, left_identity
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity, provenance, identity_status, review_id)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)
+                INSERT INTO entity_review_decisions (left_uuid, right_uuid, decision, note, left_identity, right_identity, provenance, identity_status, review_id, review_method)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10)
                 ON CONFLICT (left_uuid, right_uuid, decision) DO UPDATE
                 SET note = EXCLUDED.note, created_at = NOW(),
                     left_identity = COALESCE(EXCLUDED.left_identity, entity_review_decisions.left_identity),
                     right_identity = COALESCE(EXCLUDED.right_identity, entity_review_decisions.right_identity),
                     provenance = EXCLUDED.provenance, identity_status = EXCLUDED.identity_status,
-                    review_id = COALESCE(EXCLUDED.review_id, entity_review_decisions.review_id)
+                    review_id = COALESCE(EXCLUDED.review_id, entity_review_decisions.review_id),
+                    review_method = EXCLUDED.review_method
                 RETURNING *
                 """,
                 ordered[0], ordered[1], decision, note,
                 json.dumps(left_identity) if left_identity else None,
-                json.dumps(right_identity) if right_identity else None, provenance, identity_status, review_id,
+                json.dumps(right_identity) if right_identity else None, provenance, identity_status, review_id, review_method,
             )
             return self._decode_review_decision(row)
 

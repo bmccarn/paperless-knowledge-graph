@@ -108,13 +108,22 @@ class CoreferenceTests(unittest.TestCase):
         self.assertEqual(trusted_aliases(node, "Organization", 42, ""), [])
 
     def test_human_alias_provenance_requires_exact_canonical_binding_and_type(self):
-        record = human_alias_record("Alice Example", "Alice Smyth", "Person", "review-1")
+        record = human_alias_record("Alice Example", "Alice Smyth", "Person", "review-1", review_method="entity_review_api")
         node = {"name": "Alice Example", "alias_records": [record], "aliases": ["Poison"]}
         self.assertEqual(trusted_aliases(node, "Person", 42, ""), ["Alice Smyth"])
         self.assertEqual(trusted_aliases(node, "Organization", 42, ""), [])
         self.assertEqual(trusted_aliases({**node, "name": "Other Person"}, "Person", 42, ""), [])
         record["review_id"] = ""
         self.assertEqual(trusted_aliases(node, "Person", 42, ""), [])
+
+    def test_human_alias_record_requires_explicit_method_not_just_a_review_label(self):
+        for method in (None, "legacy_unknown", "auto_dedup", "entity_steward"):
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(ValueError, "explicit review origin"):
+                    human_alias_record("Alice Example", "Alice Smyth", "Person", "review-1", review_method=method)
+                record = {"alias": "Alice Smyth", "canonical_name": "Alice Example", "type": "Person",
+                          "provenance": "human_review", "review_id": "review-1", "review_method": method}
+                self.assertEqual(trusted_aliases({"name": "Alice Example", "alias_records": [record]}, "Person", 11, ""), [])
 
     def test_source_alias_is_scoped_by_document_revision_policy_and_quote(self):
         source = "Network Entity Systems (NES) signed."
@@ -234,3 +243,27 @@ class BindingTests(unittest.IsolatedAsyncioTestCase):
         accepted[0]["evidence"][0]["start"] = 1
         with self.assertRaisesRegex(ValueError, "exact source"):
             DocumentBindings(11, {"all_entities": accepted}, source, None)
+
+
+class MergeEntrypointTests(unittest.TestCase):
+    def test_production_merge_callers_require_explicit_api_origin(self):
+        import ast
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        found = set()
+        for path in (root / "app").glob("*.py"):
+            tree = ast.parse(path.read_text())
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for call in ast.walk(function):
+                    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute) or call.func.attr != "merge_entities":
+                        continue
+                    found.add((path.name, function.name, ast.unparse(call.func.value)))
+                    self.assertIn("review_method", {keyword.arg for keyword in call.keywords})
+                    if path.name == "main.py":
+                        method = next(keyword.value for keyword in call.keywords if keyword.arg == "review_method")
+                        self.assertIsInstance(method, ast.Constant)
+                        self.assertEqual(method.value, "entity_review_api")
+        self.assertEqual(found, {("main.py", "entity_review_merge", "entity_resolver"),
+                                 ("entity_resolver.py", "merge_entities", "graph_store")})

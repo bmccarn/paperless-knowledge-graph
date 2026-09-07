@@ -164,6 +164,19 @@ class AnswerHardeningTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["finalization"]["disposition"], "current_unresolved")
                 self.assertTrue(result["current_state"]["required"])
 
+    async def test_dated_observation_gets_application_owned_current_status_limit(self):
+        source = "Statement dated 2026-09-01 records premium: 321 USD."
+        finalizer = AnswerFinalizer(QuoteAuditor(source, temporal_scope="historical"))
+        result = await finalizer.finalize("What is my current premium?",
+            "### Recorded premium\n" + source, pack(source), evaluated_at="2026-09-07")
+        self.assertEqual(result["finalization"]["disposition"], "qualified")
+        self.assertIn(source, result["answer"])
+        self.assertIn("Current status as of 2026-09-07 is not established", result["answer"])
+        self.assertTrue(result["claim_ledger"]["complete"])
+        positive = await finalizer.finalize("What is my current premium?",
+            "### Active premium\n" + source, pack(source), evaluated_at="2026-09-07")
+        self.assertEqual(positive["finalization"]["disposition"], "current_unresolved")
+
     async def test_malformed_temporal_scope_returns_terminal_result(self):
         result = await AnswerFinalizer(QuoteAuditor("Premium: 321 USD.", temporal_scope=[])).finalize("Current premium?", "Premium: 321 USD.", pack("Premium: 321 USD."), plan={"requires_current": True})
         self.assertFalse(result["finalization"]["complete"])

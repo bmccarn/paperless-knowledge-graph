@@ -178,16 +178,28 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     # their short OCR has fewer shared words than a long unrelated notice.
     # This affects relevance only; reference validation still requires OCR.
     requested_ids = {int(value) for value in re.findall(
-        r"\b(?:paperless\s+(?:document\s+)?(?:id\s*[:#]?\s*)?|document\s+(?:id\s*[:#]?\s*)?)"
+        r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*"
         r"([1-9]\d{0,18})\b", question, re.I)}
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
     def rank(pair):
         index, span = pair
         title = normalize_quote(str(span.get("title") or "")).casefold()
-        requested = span.get("document_id") in requested_ids or bool(title and title in quoted_titles)
+        requested = (2 if span.get("document_id") in requested_ids else
+                     1 if title and title in quoted_titles else 0)
         overlap = len(tokens & set(re.findall(r"[\w$%]+", span["content"].lower())))
         return (-requested, -overlap, index)
     ranked = sorted(enumerate(spans), key=rank)
+    # A long requested document must not crowd out another explicitly named
+    # source before either synthesis or auditing gets a chance to compare them.
+    first_per_document, remaining, represented = [], [], set()
+    for pair in ranked:
+        doc_id = pair[1].get("document_id")
+        if doc_id in requested_ids and doc_id not in represented and len(pair[1]["content"]) <= budget:
+            first_per_document.append(pair)
+            represented.add(doc_id)
+        else:
+            remaining.append(pair)
+    ranked = first_per_document + remaining
     result, used = [], 0
     for _, span in ranked:
         if used + len(span["content"]) > budget:

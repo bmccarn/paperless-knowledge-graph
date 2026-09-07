@@ -65,11 +65,10 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(DocumentClassifier().model, "gemini-3.8-flash")
             self.assertEqual(EntityExtractor(client=object()).model, "gemini-3.8-flash")
             self.assertEqual(QueryEngine()._active_model(), "gemini-3.8-flash")
-            strands_module.strands_orchestrator._model(max_tokens=6000)
+            strands_module.strands_orchestrator._model()
             self.assertEqual(model.call_args.kwargs["model_id"], "gemini-3.8-flash")
-            self.assertEqual(model.call_args.kwargs["params"], {"max_tokens": 6000})
             with patch.object(settings, "strands_model", "explicit-synthetic-override"):
-                strands_module.strands_orchestrator._model(max_tokens=6000)
+                strands_module.strands_orchestrator._model()
                 self.assertEqual(model.call_args.kwargs["model_id"], "explicit-synthetic-override")
 
     async def test_model_selection_metadata_keeps_exact_route_and_filters_embeddings(self):

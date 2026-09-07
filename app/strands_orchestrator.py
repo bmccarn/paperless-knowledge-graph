@@ -202,7 +202,7 @@ Return only JSON:
 }}
 
 Rules:
-- Preserve supported details that answer the user's question.
+- Rebuild the smallest complete answer to the user's direct question. Retain only the identifying facts needed to answer it. Omit ancillary fields even when the prior audit supported them; source support alone is not a reason to keep an unrequested detail.
 - Resolve each unsupported claim using its rejection_reasons: invalid_reference requires an exact source passage with matching source identifiers; value_mismatch requires the exact asserted values and units in that passage; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
 - Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
@@ -220,8 +220,9 @@ Rules:
         return await self._json_agent(
             name="answer_editor",
             system_prompt=(
-                "You are a source-faithful answer editor. You remove or qualify unsupported claims "
-                "without making the answer vague."
+                "You are a source-faithful answer editor. Rebuild a concise, complete answer to the user\'s "
+                "direct question. Remove unrequested details as well as unsupported claims; preserve the "
+                "specific source-backed facts needed to answer the question."
             ),
             prompt=prompt,
         )

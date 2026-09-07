@@ -29,7 +29,7 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verification"]["status"], "verified")
 
     async def test_markdown_structure_keeps_claim_context_without_formatting_claims(self):
-        answer = "### 1. Recorded premium\n---\n**Monthly premium:**\nThe premium is $321.00 USD."
+        answer = "### Recorded premium\n---\n**Monthly premium:**\nThe premium is $321.00 USD."
         class ContextAuditor(SupportedAuditor):
             async def audit_answer_units(self, question, units, spans, plan):
                 raw = await super().audit_answer_units(question, units, spans, plan)
@@ -37,6 +37,12 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                     if "The premium is" not in unit["text"]:
                         assessment.update(status="unsupported", references=[])
                 return raw
+        for label in ("**Monthly premium:**", "**Monthly premium**:", "Monthly premium:"):
+            variant = answer.replace("**Monthly premium:**", label)
+            result = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", variant, PACK)
+            self.assertEqual(result["finalization"]["disposition"], "supported", label)
+            claim = result["claim_ledger"]["claims"][0]
+            self.assertEqual(variant[claim["start"]:claim["end"]], claim["claim"])
         result = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", answer, PACK)
         self.assertEqual(result["finalization"]["disposition"], "supported")
         claims = result["claim_ledger"]["claims"]
@@ -44,7 +50,8 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Recorded premium", claims[0]["claim"])
         self.assertEqual(answer[claims[0]["start"]:claims[0]["end"]], claims[0]["claim"])
         for unsafe in (answer.replace("Recorded premium", "Deductible $999"),
-                       answer + "\n### Annual premium $999", answer + "\n--- $999"):
+                       answer + "\n### Annual premium $999", answer + "\n--- $999",
+                       "### 999.", "### 2025. Renewal premium\nThe premium is $321.00 USD."):
             rejected = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", unsafe, PACK)
             self.assertNotEqual(rejected["finalization"]["disposition"], "supported")
 

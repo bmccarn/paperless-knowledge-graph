@@ -1031,12 +1031,13 @@ TEMPORAL AWARENESS — CRITICAL:
 - Overlapping dates do not prove that one policy replaced another. Only label a policy cancelled or superseded when the source explicitly supports that relationship.
 - Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
 - Evaluation date (UTC): {plan.get("evaluated_at")}. A recent document date does not establish current status.
+- For a current-status question without explicit resolution evidence, answer with dated document observations only. Do not add a generic current-status disclaimer to the candidate; the final acceptance layer appends its own limitation to accepted documented facts.
 - Write facts without inline citations or links; the source audit attaches authoritative citations after validation.
 - Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
 - If relevant records conflict, describe the dated observations and the unresolved conflict. Do not choose an active record or invent supersession from chronology alone.
 - Reference knowledge graph relationships when they add context
-- Structure complex answers with clear headers and bullet points
+- Structure complex answers with unnumbered headings and bullet points. Do not add numeric section labels; reserve numbers for source-backed facts.
 - Describe a material limitation as a limitation of the retrieved evidence; do not claim that an item is absent from the entire archive.
 - When multiple documents corroborate the same fact, cite all of them for completeness
 

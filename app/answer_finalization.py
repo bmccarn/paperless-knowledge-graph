@@ -146,7 +146,7 @@ def answer_units(answer: str) -> list[dict]:
         first = line_match.start() + len(line) - len(line.lstrip())
         last = line_match.end() - len(line) + len(line.rstrip())
         heading = re.match(r" {0,3}#{1,6}[ \t]+\S", line)
-        label = re.fullmatch(r"\s*(?:[-+*]\s+)?\*\*[^*\n]+:\*\*\s*", line)
+        label = re.fullmatch(r"\s*(?:[-+*]\s+)?(?:\*\*[^*\n]+:\*\*|[^\n]+:)\s*", line)
         if heading or label:
             pending_heading = first if pending_heading is None else pending_heading
             pending_end = last
@@ -297,7 +297,6 @@ def values_match(text: str, references: list[dict]) -> bool:
     # explicit calculation evidence; the auditor cannot simply bless a new value.
     # Compare rendered prose without changing the audited revision or offsets.
     text = canonical_prose(text)
-    text = re.sub(r"^ {0,3}#{1,6}[ \t]+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*\d+\.(?:\s|$)", "", text, flags=re.MULTILINE)
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:

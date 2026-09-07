@@ -1,6 +1,6 @@
 # Issue 16: survive a transient extraction-provider outage
 
-Status: planned; current migration remains active on the accepted v10 release.
+Status: implemented and locally validated; independent review and release pending. Current migration remains active on the accepted v10 release.
 
 ## Reproduced failure
 
@@ -31,4 +31,6 @@ After runtime/history checks, recover only the individually identified failed or
 ## Evidence
 
 - Private original task and proxy shutdown/recovery receipts are retained in the operator workspace; public artifacts contain only aggregate findings.
-- Implementation, final tests/reviews, release, failed-document recovery, and final corpus acceptance are pending.
+- The synthetic 55-second outage and typed transient-status regressions failed before implementation. The actual SDK-boundary recovery now succeeds at virtual request times 0, 20, and 60 seconds; exhaustion and cancellation stay within the existing three-attempt budget.
+- All 53 focused extraction/recovery/output-limit tests pass. The full offline suite passes 365 tests with 46 expected datastore skips; all 365 tests pass against disposable Neo4j, pgvector PostgreSQL, and Redis with zero skips. These are controlled validation results, not a production-recovery claim.
+- Independent reviews, exact-head CI, release, failed-document recovery, and final corpus acceptance remain pending. No second corpus sync or retry task has been admitted.

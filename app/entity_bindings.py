@@ -40,8 +40,13 @@ class DocumentBindings:
                 if not isinstance(proof, dict):
                     continue
                 left, right = self.entities.get(proof.get("left_id")), self.entities.get(proof.get("right_id"))
+                # Extraction IDs preserve qualified identity across windows;
+                # reconciliation keeps only the first display capitalization.
+                # Do not drop a later denial merely because its case differs.
                 if (left and right and left["type"] == right["type"] == proof.get("type")
-                        and left["name"] == proof.get("left_name") and right["name"] == proof.get("right_name")
+                        and isinstance(proof.get("left_name"), str) and isinstance(proof.get("right_name"), str)
+                        and left["name"].casefold() == proof["left_name"].casefold()
+                        and right["name"].casefold() == proof["right_name"].casefold()
                         and valid_identity_receipt(proof, source)
                         and proof not in self.identity_proofs):
                     self.identity_proofs.append(proof)

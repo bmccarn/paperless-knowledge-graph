@@ -6,7 +6,7 @@ import uuid
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
-                                  carried_vetoes, entity_identity, merge_is_prohibited,
+                                  carried_vetoes, entity_identity, merge_is_prohibited, identity_has_unresolved_veto,
                                   alias_revocations, alias_replay_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, EXPLICIT_REVIEW_METHOD, display_name, name_key,
     context_bound_name, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions,
@@ -196,7 +196,10 @@ class EntityResolver:
             if len(isolated) == 1:
                 return isolated[0]["uuid"]
             eligible = []
-            vetoed = False
+            # A quarantined candidate elsewhere in this type must not isolate
+            # unrelated incoming identities. Preserve the incoming veto even
+            # when its original graph anchor is no longer present.
+            vetoed = identity_has_unresolved_veto(incoming, decisions)
             for candidate in candidates:
                 if (not isinstance(candidate.get("name"), str) or not candidate["name"].strip()
                         or not isinstance(candidate.get("uuid"), str) or not candidate["uuid"]):
@@ -206,7 +209,11 @@ class EntityResolver:
                 if candidate.get("resolution_status") == "isolated":
                     continue
                 if not await self._candidate_allowed(incoming, candidate, decisions):
-                    vetoed = True
+                    # Isolate only if this is an otherwise evidenced match that
+                    # a pair veto forbids, not merely an unrelated rejected row.
+                    reason, _ = self._match(name, label, source_doc_id, source, candidate, decisions,
+                                            expansions, local_definition, source_folded, identity_proofs, name_usage)
+                    vetoed = vetoed or bool(reason)
                     continue
                 hints = candidate.get("identity_hints") or []
                 own_source = source_doc_id in (candidate.get("source_doc_ids") or [])

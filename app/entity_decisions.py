@@ -81,19 +81,31 @@ def _matches(candidate, node_uuid, snapshot, other_snapshot):
     return True
 
 
+def identity_has_unresolved_veto(identity: dict, decisions: list[dict]) -> bool:
+    """Whether this identity itself matches an identifiable partial-veto side."""
+    for row in decisions:
+        if row.get("decision") not in NO_MERGE_DECISIONS or row.get("identity_status") != "unresolved_legacy":
+            continue
+        left, right = _snapshot(row.get("left_identity")), _snapshot(row.get("right_identity"))
+        if left and right:
+            continue
+        for snapshot, side, other in ((left, "left", right), (right, "right", left)):
+            if snapshot and _matches(identity, row.get(f"{side}_uuid"), snapshot, other):
+                return True
+    return False
+
+
 def merge_is_prohibited(left: dict, right: dict, decisions: list[dict]) -> bool:
     """Evaluate both orientations of each durable human veto."""
+    # Candidate rejection can protect either endpoint. Source isolation must
+    # separately ask whether the incoming identity itself is implicated.
+    if identity_has_unresolved_veto(left, decisions) or identity_has_unresolved_veto(right, decisions):
+        return True
     for row in decisions:
         if row.get("decision") not in NO_MERGE_DECISIONS:
             continue
         a = _snapshot(row.get("left_identity"))
         b = _snapshot(row.get("right_identity"))
-        # Partial legacy vetoes quarantine their identifiable side until repaired;
-        # missing both sides remains auditable, not a fabricated global identity.
-        if row.get("identity_status") == "unresolved_legacy" and (not a or not b):
-            for snapshot, side, other in ((a, "left", b), (b, "right", a)):
-                if snapshot and any(_matches(item, row.get(f"{side}_uuid"), snapshot, other) for item in (left, right)):
-                    return True
         for first, second in ((left, right), (right, left)):
             if _matches(first, row.get("left_uuid"), a, b) and _matches(second, row.get("right_uuid"), b, a):
                 return True

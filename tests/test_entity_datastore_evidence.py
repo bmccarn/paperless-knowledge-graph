@@ -63,6 +63,47 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 props={"uuid": node_uuid, "name": name, "entity_type": kind, "source_doc_ids": docs or [], **properties})
         return node_uuid
 
+    async def test_public_ingestion_preserves_review_alias_and_vector_contract_across_sources(self):
+        from app import pipeline
+        from app.extractor import EntityExtractor
+        from app.paperless import PaperlessClient
+        from app.entity_vector_consistency import classify_entity_vector
+        from tests.test_review_identity_admission import alias_client, SOURCE, NAMES
+        from tests.test_ingestion import PaperlessFixture, ClassifierFixture, document
+        canonical = await self.seed("canonical", NAMES[0], "Organization", [991712])
+        await self.graph.create_document_node(991712, "Synthetic retained source", "general", "2026-09-07", "synthetic")
+        await self.graph.create_relationship("991712", "Document", canonical, "Organization", "MENTIONS", {"source_doc": 991712})
+        original = await self.graph.get_node(canonical)
+        doc = document(991711, SOURCE)
+        def uppercase(rows):
+            return [{**row, "name": row["name"].upper()} for row in rows]
+        extractor = EntityExtractor(alias_client(uppercase))
+        with patch.object(pipeline, "paperless_client", PaperlessFixture([doc])), \
+                patch.object(pipeline, "classifier", ClassifierFixture()), \
+                patch.object(pipeline, "extractor", extractor), \
+                patch.object(pipeline, "graph_store", self.graph), \
+                patch.object(pipeline, "embeddings_store", self.store), \
+                patch.object(pipeline, "entity_resolver", self.resolver), \
+                patch.object(pipeline, "_generate_document_summary", AsyncMock(return_value="")), \
+                patch.object(self.store, "generate_embedding", AsyncMock(return_value=[.01] + [0.] * 3071)):
+            for _ in range(2):
+                result = await pipeline.process_document(doc, force=True)
+                self.assertEqual(result["status"], "processed", result)
+                persisted = await self.graph.get_node(canonical)
+                props = persisted["properties"]
+                self.assertEqual(len(trusted_aliases(props, "Organization", 991711, SOURCE)), 1)
+                self.assertEqual(set(props["source_doc_ids"]), {991711, 991712})
+                old_edges = [e for e in original["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
+                retained = [e for e in persisted["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
+                self.assertEqual(retained, old_edges)
+                async with self.store.pool.acquire() as conn:
+                    vector = dict(await conn.fetchrow("SELECT entity_uuid,entity_name,entity_type,vector_dims(embedding) AS dimension FROM entity_embeddings WHERE entity_uuid=$1", canonical))
+                consistency = classify_entity_vector(vector, {"uuid": canonical, "name": props["name"], "labels": ["Organization"]},
+                    verified_aliases=trusted_aliases(props, "Organization", 991711, SOURCE))
+                self.assertTrue(consistency["accepted"], consistency)
+                self.assertEqual((await self.store.get_ingestion_fingerprints([991711]))[991711], PaperlessClient.ingestion_fingerprint(doc))
+            self.assertEqual((await pipeline.process_document(doc))["status"], "skipped")
+
     async def test_post_sync_steward_preserves_legacy_suggestion_history(self):
         from app import entity_steward as steward_module
         left = await self.seed("steward-left", "Cobalt Tools", "Organization", [991711])

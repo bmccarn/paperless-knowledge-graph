@@ -613,10 +613,6 @@ class EntityExtractor:
                 self._require_list(reviewed, "entities")
                 accepted = validate_entities(reviewed["entities"], source, start, window["issues"])
                 candidate_names = {entity["name"] for entity in candidates}
-                additions = [entity for entity in accepted if entity["name"] not in candidate_names]
-                if additions:
-                    window["issues"].append("Entity verifier additions rejected")
-                accepted = [entity for entity in accepted if entity["name"] in candidate_names]
                 accepted = adjudicate_types(candidates, accepted, reviewed["entities"], source, start, window["issues"])
                 adjudicate_coreferences(identity_candidates, reviewed.get("identity_reviews"), accepted,
                                         source, start, window["issues"])

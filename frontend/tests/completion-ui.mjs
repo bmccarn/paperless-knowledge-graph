@@ -230,3 +230,39 @@ test("snapshot-rejected SSE answers do not display obsolete supported claims", a
   assert.equal(await page.getByText("supported: 1", { exact: true }).count(), 0);
   await record(page, "snapshot-invalidated-claims");
 });
+
+
+test("failed catalog searches do not claim an empty result or reuse old totals", async t => {
+  const { page } = await fixturePage(t);
+  await page.goto(`${base}/documents`);
+  await page.getByText("303 indexed documents", { exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "Search indexed documents" }).fill("fixture-error");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Synthetic document search failure" }).waitFor();
+  assert.equal(await page.getByText(/303 matching indexed documents/).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "invoice 151", exact: true }).count(), 0);
+  assert.equal(await page.getByText("No documents found", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Next page", exact: true }).count(), 0);
+  await page.getByRole("textbox", { name: "Search indexed documents" }).fill("January");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByText("1 matching indexed documents", { exact: true }).waitFor();
+  await page.getByRole("link", { name: "January premium statement", exact: true }).waitFor();
+  await record(page, "catalog-search-error-recovery");
+});
+
+
+test("all navigation and theme controls remain visible on narrow phones", async t => {
+  const { page } = await fixturePage(t);
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto(`${base}/query`);
+  for (const name of ["Home", "Query", "Graph", "Docs", "Review", "Hubs", "Debug", "Toggle theme"]) {
+    const control = page.getByRole(name === "Toggle theme" ? "button" : "link", { name, exact: true });
+    const box = await control.boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= 320, `${name} must fit inside the viewport`);
+  }
+  const before = await page.locator("html").getAttribute("class");
+  await page.getByRole("button", { name: "Toggle theme", exact: true }).click();
+  await rendered(page);
+  assert.notEqual(await page.locator("html").getAttribute("class"), before);
+  await record(page, "narrow-phone-navigation");
+});

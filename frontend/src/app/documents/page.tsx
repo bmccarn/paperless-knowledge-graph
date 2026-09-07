@@ -70,7 +70,7 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [reindexError, setReindexError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [total, setTotal] = useState(0);
   const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
@@ -133,26 +133,26 @@ export default function DocumentsPage() {
       setExpanded((prev) => ({ ...prev, [key]: { node, loading: false } }));
     } catch (e) {
       if (version !== requestVersion.current) return;
-      setError(e instanceof Error ? e.message : "Failed to load document details");
+      setActionError(e instanceof Error ? e.message : "Failed to load document details");
       setExpanded((prev) => { const next = { ...prev }; delete next[key]; return next; });
     }
   };
 
   const handleReindex = async (docId: number) => {
-    setReindexError(null);
+    setActionError(null);
     setReindexing((prev) => new Set([...prev, docId]));
     try {
       await postReindexDoc(docId);
       setRefreshVersion(version => version + 1);
     } catch (e) {
-      setReindexError(e instanceof Error ? e.message : "Reindex failed");
+      setActionError(e instanceof Error ? e.message : "Reindex failed");
     } finally {
       setReindexing((prev) => { const next = new Set(prev); next.delete(docId); return next; });
     }
   };
 
   const handleBatchReindex = async () => {
-    setReindexError(null);
+    setActionError(null);
     setBatchReindexing(true);
     const failures: number[] = [];
     for (const docId of selected) {
@@ -165,7 +165,7 @@ export default function DocumentsPage() {
     setBatchReindexing(false);
     setSelected(new Set());
     setRefreshVersion(version => version + 1);
-    if (failures.length) setReindexError(`Reindex failed for documents: ${failures.join(", ")}`);
+    if (failures.length) setActionError(`Reindex failed for documents: ${failures.join(", ")}`);
   };
 
   const toggleSelect = (docId: number) => {
@@ -206,7 +206,7 @@ export default function DocumentsPage() {
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight">Documents</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {total} {query || typeFilter ? "matching indexed documents" : "indexed documents"}
+              {loading ? "Loading documents…" : error ? "Document results unavailable" : `${total} ${query || typeFilter ? "matching indexed documents" : "indexed documents"}`}
             </p>
           </div>
           {selected.size > 0 && (
@@ -227,7 +227,7 @@ export default function DocumentsPage() {
         </div>
 
         {/* Stats bar */}
-        {!loading && Object.keys(typeCounts).length > 0 && (
+        {!loading && !error && Object.keys(typeCounts).length > 0 && (
           <div className="flex flex-wrap gap-1.5 md:gap-2 overflow-x-auto">
             {Object.entries(typeCounts)
               .sort((a, b) => b[1] - a[1])
@@ -279,7 +279,7 @@ export default function DocumentsPage() {
             <span>{error}</span><Button variant="outline" size="sm" onClick={() => void fetchDocs()}>Retry loading</Button>
           </div>
         )}
-        {reindexError && <div role="alert" className="rounded border border-destructive/40 p-3 text-sm">{reindexError}</div>}
+        {actionError && <div role="alert" className="rounded border border-destructive/40 p-3 text-sm">{actionError}</div>}
       </div>
 
       {/* Content */}
@@ -290,7 +290,7 @@ export default function DocumentsPage() {
               <Skeleton key={i} className="h-12 rounded-lg" />
             ))}
           </div>
-        ) : (
+        ) : error ? null : (
           <>
             {/* Mobile card layout */}
             <div className="md:hidden min-h-0 flex-1 space-y-2 overflow-y-auto">
@@ -303,6 +303,7 @@ export default function DocumentsPage() {
                     <CardContent className="p-3">
                       <div className="flex items-start gap-3">
                         <Checkbox
+                          aria-label={`Select document ${docId}`}
                           checked={selected.has(docId)}
                           onCheckedChange={() => toggleSelect(docId)}
                           className="mt-1"
@@ -338,6 +339,7 @@ export default function DocumentsPage() {
                           size="icon"
                           className="h-9 w-9 shrink-0"
                           onClick={() => handleReindex(docId)}
+                          aria-label={`Reindex document ${docId}`}
                           disabled={reindexing.has(docId)}
                         >
                           {reindexing.has(docId) ? (
@@ -422,7 +424,8 @@ export default function DocumentsPage() {
                           >
                             <TableCell onClick={(e) => e.stopPropagation()}>
                               <Checkbox
-                                checked={selected.has(docId)}
+                                aria-label={`Select document ${docId}`}
+                          checked={selected.has(docId)}
                                 onCheckedChange={() => toggleSelect(docId)}
                                 className="h-3.5 w-3.5"
                               />
@@ -476,7 +479,8 @@ export default function DocumentsPage() {
                                     size="icon"
                                     className="h-7 w-7"
                                     onClick={(e) => { e.stopPropagation(); handleReindex(docId); }}
-                                    disabled={reindexing.has(docId)}
+                                    aria-label={`Reindex document ${docId}`}
+                          disabled={reindexing.has(docId)}
                                   >
                                     {reindexing.has(docId) ? (
                                       <Loader2 className="h-3 w-3 animate-spin" />

@@ -13,6 +13,12 @@ ENTITY_TYPES = {
     "Event", "Condition", "FinancialItem", "InsurancePolicy", "Contract",
     "DateEvent", "Address",
 }
+RECONCILIATION_VERSION = "review-admission-v2"
+
+
+def source_name_key(name: str) -> str:
+    """Only casing and whitespace at the proposal/review boundary."""
+    return " ".join(name.split()).casefold()
 
 
 def source_windows(content: str, size: int, overlap: int):
@@ -75,10 +81,11 @@ def validate_entities(raw: list[dict], source: str, offset: int, issues: list[st
             if not isinstance(hint, str) or (hint and not literal_value_present(hint, span["quote"])):
                 issues.append("Entity rejected: identity discriminator is not source-grounded")
                 continue
-            identity_id = entity_key(name.strip(), kind, hint)
+            name = " ".join(name.split())
+            identity_id = entity_key(name, kind, hint)
             accepted.append({
                 "entity_id": identity_id, "identity_hint": hint,
-                "name": name.strip(), "type": kind,
+                "name": name, "type": kind,
                 "confidence": confidence(candidate.get("confidence")),
                 "description": str(candidate.get("description") or ""),
                 "evidence": [span],
@@ -95,21 +102,30 @@ def adjudicate_types(candidates, reviewed, raw_reviews, source, offset, issues):
     """
     accepted = []
     for entity in reviewed:
-        originals = [item for item in candidates if item["name"] == entity["name"]
+        originals = [item for item in candidates if source_name_key(item["name"]) == source_name_key(entity["name"])
                      and item.get("identity_hint", "") == entity.get("identity_hint", "")]
-        if any(item["type"] == entity["type"] for item in originals):
+        originals = list({item["entity_id"]: item for item in originals}.values())
+        same_type = [item for item in originals if item["type"] == entity["type"]]
+        if len(same_type) == 1:
+            # Keep the proposal's spelling/ID so all later receipt consumers see
+            # the same identity, while retaining the independently reviewed span.
+            entity = {**entity, "name": same_type[0]["name"], "entity_id": same_type[0]["entity_id"]}
             accepted.append(entity)
             continue
         if len(originals) != 1:
-            issues.append("Type correction omitted: ambiguous original identity")
+            issues.append("Entity verifier additions rejected: missing or ambiguous proposed identity")
             continue
-        reviews = [item for item in raw_reviews if item.get("name") == entity["name"]
+        entity = {**entity, "name": originals[0]["name"]}
+        entity["entity_id"] = entity_key(entity["name"], entity["type"], entity.get("identity_hint", ""))
+        reviews = [item for item in raw_reviews if isinstance(item.get("name"), str)
+                   and source_name_key(item["name"]) == source_name_key(entity["name"])
                    and item.get("type") == entity["type"]
                    and (item.get("identity_hint") or "") == entity.get("identity_hint", "")]
         raw = reviews[0] if len(reviews) == 1 else {}
         span = source_span(raw.get("type_evidence_quote"), source, offset)
         rationale = raw.get("type_rationale")
-        context_words = re.findall(r"\w+", re.sub(re.escape(entity["name"]), "", span["quote"], flags=re.I)) if span else []
+        name_pattern = r"\s+".join(re.escape(word) for word in entity["name"].split())
+        context_words = re.findall(r"\w+", re.sub(name_pattern, "", span["quote"], flags=re.I)) if span else []
         if (span and named_mention(entity["name"], span["quote"]) and len(context_words) >= 2
                 and isinstance(rationale, str) and rationale.strip()):
             entity["type_assessment"] = {"provenance": "source_review", "original_type": originals[0]["type"],
@@ -173,7 +189,8 @@ def adjudicate_coreferences(proposals, reviews, accepted, source, offset, issues
 def adjudicate_name_usage(accepted, reviews, source, offset):
     """Review abbreviation ambiguity independently of original capitalization."""
     for entity in accepted:
-        matches = [row for row in reviews if row.get("name") == entity["name"] and row.get("type") == entity["type"]
+        matches = [row for row in reviews if isinstance(row.get("name"), str)
+                   and source_name_key(row["name"]) == source_name_key(entity["name"]) and row.get("type") == entity["type"]
                    and (row.get("identity_hint") or "") == entity.get("identity_hint", "")]
         if len(matches) != 1:
             continue
@@ -215,14 +232,14 @@ def validate_relationships(raw: list[dict], entities: list[dict], source: str, o
 
 
 def entity_key(name: str, kind: str, hint: str = "") -> str:
-    payload = json.dumps([name.casefold(), kind, hint], ensure_ascii=False)
+    payload = json.dumps([source_name_key(name), kind, hint], ensure_ascii=False)
     return "entity-" + hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
 def select_endpoint(entities, name, entity_id=None, kind=None):
     if not isinstance(name, str):
         return None
-    matches = [entity for entity in entities if entity["name"].casefold() == name.casefold()
+    matches = [entity for entity in entities if source_name_key(entity["name"]) == source_name_key(name)
                and (not entity_id or entity.get("entity_id") == entity_id)
                and (not kind or entity["type"] == kind)]
     # Repeated extraction rows of one identity do not make the endpoint ambiguous.

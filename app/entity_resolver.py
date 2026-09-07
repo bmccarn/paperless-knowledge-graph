@@ -208,12 +208,15 @@ class EntityResolver:
                     continue
                 if candidate.get("resolution_status") == "isolated":
                     continue
+                # The typed snapshot already contains the evidence needed to
+                # reject unrelated identities. Load a full neighborhood only for
+                # a possible match, retaining every source-context veto check.
+                reason, span = self._match(name, label, source_doc_id, source, candidate, decisions,
+                                          expansions, local_definition, source_folded, identity_proofs, name_usage)
+                if not reason:
+                    continue
                 if not await self._candidate_allowed(incoming, candidate, decisions):
-                    # Isolate only if this is an otherwise evidenced match that
-                    # a pair veto forbids, not merely an unrelated rejected row.
-                    reason, _ = self._match(name, label, source_doc_id, source, candidate, decisions,
-                                            expansions, local_definition, source_folded, identity_proofs, name_usage)
-                    vetoed = vetoed or bool(reason)
+                    vetoed = True
                     continue
                 hints = candidate.get("identity_hints") or []
                 own_source = source_doc_id in (candidate.get("source_doc_ids") or [])
@@ -224,10 +227,7 @@ class EntityResolver:
                 # An unqualified mention cannot choose between qualified homonyms.
                 if bool(hints) != bool(identity_hint) and not own_source:
                     continue
-                reason, span = self._match(name, label, source_doc_id, source, candidate, decisions,
-                                           expansions, local_definition, source_folded, identity_proofs, name_usage)
-                if reason:
-                    eligible.append((candidate, reason, span))
+                eligible.append((candidate, reason, span))
             # Prefer an already-bound source only among otherwise proven matches.
             scoped = [item for item in eligible if source_doc_id in (item[0].get("source_doc_ids") or [])]
             if len(scoped) == 1:

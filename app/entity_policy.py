@@ -138,6 +138,11 @@ def initialism_expansions(alias: str, source: str) -> list[str]:
         words = match[1].strip().split()
         for index in range(len(words)):
             full = " ".join(words[index:]).strip(' ,.:"“”')
+            # OCR may retain Markdown bold around the whole definition. Strip
+            # only the paired wrapper; keep source text and receipt offsets exact.
+            if (full.startswith("**") and source.startswith("**", match.end())
+                    and coreference_span(full, alias, source)):
+                full = full[2:]
             if coreference_span(full, alias, source):
                 expansions[name_key(full, "Organization")] = full
                 break  # preserve the longest proved name; never drop prefixes

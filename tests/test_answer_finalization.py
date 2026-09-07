@@ -2,7 +2,7 @@ import unittest
 import asyncio
 import copy
 
-from app.answer_finalization import AnswerFinalizer
+from app.answer_finalization import AnswerFinalizer, answer_units, values_match
 
 
 PACK = {"items": [{"id": "policy-jan-v1", "document_id": 101, "chunk_index": 0,
@@ -27,6 +27,43 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["claim_ledger"]["summary"]["supported"], 1)
         self.assertEqual(result["claim_ledger"]["claims"][0]["document_id"], 101)
         self.assertEqual(result["verification"]["status"], "verified")
+
+    async def test_markdown_structure_keeps_claim_context_without_formatting_claims(self):
+        answer = "### Recorded premium\n---\n**Monthly premium:**\nThe premium is $321.00 USD."
+        class ContextAuditor(SupportedAuditor):
+            async def audit_answer_units(self, question, units, spans, plan):
+                raw = await super().audit_answer_units(question, units, spans, plan)
+                for unit, assessment in zip(units, raw["assessments"]):
+                    if "The premium is" not in unit["text"]:
+                        assessment.update(status="unsupported", references=[])
+                return raw
+        for label in ("**Monthly premium:**", "**Monthly premium**:", "Monthly premium:"):
+            variant = answer.replace("**Monthly premium:**", label)
+            result = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", variant, PACK)
+            self.assertEqual(result["finalization"]["disposition"], "supported", label)
+            claim = result["claim_ledger"]["claims"][0]
+            self.assertEqual(variant[claim["start"]:claim["end"]], claim["claim"])
+        result = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", answer, PACK)
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        claims = result["claim_ledger"]["claims"]
+        self.assertEqual(len(claims), 1)
+        self.assertIn("Recorded premium", claims[0]["claim"])
+        self.assertEqual(answer[claims[0]["start"]:claims[0]["end"]], claims[0]["claim"])
+        for unsafe in (answer.replace("Recorded premium", "Deductible $999"),
+                       answer + "\n### Annual premium $999", answer + "\n--- $999",
+                       "### 999.", "### 2025. Renewal premium\nThe premium is $321.00 USD."):
+            rejected = await AnswerFinalizer(ContextAuditor()).finalize("Recorded premium?", unsafe, PACK)
+            self.assertNotEqual(rejected["finalization"]["disposition"], "supported")
+
+    def test_number_labels_and_abbreviations_stay_with_their_values(self):
+        answer = "1. Policy No. `12345` (Membership No. `67890`). A second fact."
+        units = answer_units(answer)
+        self.assertEqual([u["text"] for u in units],
+                         ["1. Policy No. `12345` (Membership No. `67890`).", "A second fact."])
+        for unit in units:
+            self.assertEqual(answer[unit["start"]:unit["end"]], unit["text"])
+        self.assertFalse(values_match("### Premium $999", [{"quote": "$321.00"}]))
+        self.assertEqual(answer_units("---\n***\n___"), [])
 
     async def test_requested_short_source_reaches_auditor_among_long_distractors(self):
         from app.evidence import build_evidence_pack

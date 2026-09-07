@@ -1015,29 +1015,30 @@ CONTEXT ABOUT THE USER:
 INSTRUCTIONS:
 - Query mode: {mode}. {mode_instruction}
 - Build the answer from the canonical evidence pack first. Use the document context only as backup.
-- Be complete within the user's requested scope. Use every relevant answer detail from the context, but do not expand into adjacent facts, administrative metadata, account/client identifiers, providers, or source logistics unless the user asked for them or they are needed to disambiguate the answer.
+- Answer the direct question first and stay within its scope. For a request to identify or list records, give the identifying names and documented terms needed to distinguish them; do not expand into every coverage, amount, administrative field, or historical record unless asked.
 - Every precise fact should be traceable to a specific source document/excerpt. If exact evidence is missing, say that instead of guessing.
 - Distinguish document dates, generation dates, statement periods, service/specimen dates, effective dates, and expiration dates.
 - For questions about identity ("who am I"), cover ALL life domains: personal info, military service, education, medical/health, disability status, financial overview, property, family, employment, vehicles, pets — whatever the documents reveal.
-- For ratings/statuses that change over time (VA disability, credit scores, balances, etc.), always identify and clearly state the MOST RECENT / FINAL / CURRENT value. If multiple values exist across documents, show the progression chronologically and highlight the latest.
+- For changing ratings, statuses and balances, report the value documented by each relevant dated source. A more recent source can provide a newer observation without proving an exhaustive or currently active state.
 - For "latest/current/last" answers, state the newest source-backed value found in the evidence. Do not claim that a newer document does not contain the requested fact unless the evidence explicitly shows that absence; use retrieval-limited phrasing when needed.
 
 TEMPORAL AWARENESS — CRITICAL:
-- Every document has a date or effective period. USE THESE to determine what is CURRENT vs. EXPIRED.
-- If an insurance policy has an effective period that ended before today, mark it as EXPIRED/PREVIOUS and clearly indicate the replacement policy if one exists.
-- If a contract, lease, or subscription has expired, say so explicitly — do not present it as active.
-- When payment amounts change over time (e.g., mortgage escrow adjustments), always report the CURRENT amount and note the progression.
+- A document date or effective period establishes what that record states, not whether the real-world policy or obligation remains active. Report documented terms with their dates.
+- If a documented policy term ended before the evaluation date, say that the recorded term ended. Do not infer cancellation, renewal or replacement from dates alone.
+- Distinguish an ended recorded contract term from evidence of cancellation, renewal or continuing service.
+- When payment amounts change, give the amount and effective date explicitly documented by the relevant notice.
 - For addresses: distinguish between current residence and previous addresses. Do not list bills from a previous address as current obligations unless there's evidence of ongoing service.
-- When two policies/services of the same type overlap, determine which is the ACTIVE one based on effective dates and mark the other as superseded.
+- Overlapping dates do not prove that one policy replaced another. Only label a policy cancelled or superseded when the source explicitly supports that relationship.
 - Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
 - Evaluation date (UTC): {plan.get("evaluated_at")}. A recent document date does not establish current status.
+- For a current-status question without explicit resolution evidence, answer with dated document observations only. Do not add a generic current-status disclaimer to the candidate; the final acceptance layer appends its own limitation to accepted documented facts.
 - Write facts without inline citations or links; the source audit attaches authoritative citations after validation.
 - Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
-- If information conflicts between documents, note BOTH, explain which is more current based on dates, and clearly label the outdated one as PREVIOUS/EXPIRED/SUPERSEDED
+- If relevant records conflict, describe the dated observations and the unresolved conflict. Do not choose an active record or invent supersession from chronology alone.
 - Reference knowledge graph relationships when they add context
-- Structure complex answers with clear headers and bullet points
-- State what you could NOT find or what's missing from the archive
+- Structure complex answers with unnumbered headings and bullet points. Do not add numeric section labels; reserve numbers for source-backed facts.
+- Describe a material limitation as a limitation of the retrieved evidence; do not claim that an item is absent from the entire archive.
 - When multiple documents corroborate the same fact, cite all of them for completeness
 
 	Question: {question}

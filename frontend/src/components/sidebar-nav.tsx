@@ -89,6 +89,8 @@ export function SidebarNav() {
                 <TooltipTrigger asChild>
                   <Link
                     href={item.href}
+                    aria-label={item.label}
+                    aria-current={active ? "page" : undefined}
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200",
                       active
@@ -113,6 +115,7 @@ export function SidebarNav() {
                 variant="ghost"
                 size="icon"
                 className="h-10 w-10 rounded-lg"
+                aria-label="Toggle theme"
                 onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               >
                 <Sun className="h-[18px] w-[18px] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
@@ -136,6 +139,8 @@ export function SidebarNav() {
               <Link
                 key={item.href}
                 href={item.href}
+                    aria-label={item.label}
+                    aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 rounded-lg transition-colors",
                   active
@@ -149,7 +154,8 @@ export function SidebarNav() {
             );
           })}
           <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label="Toggle theme"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             className="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 rounded-lg text-muted-foreground"
           >
             <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />

@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
   postQueryStream,
   listConversations,
@@ -259,7 +259,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button onClick={handleCopy} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-accent">
+        <button aria-label={copied ? "Answer copied" : "Copy answer"} onClick={handleCopy} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-accent">
           {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
         </button>
       </TooltipTrigger>
@@ -740,6 +740,7 @@ function QueryContent() {
             <SheetTitle className="text-sm flex items-center gap-1.5">
               <History className="h-4 w-4" /> Conversations
             </SheetTitle>
+            <SheetDescription className="sr-only">Open, rename, or delete a saved conversation.</SheetDescription>
           </SheetHeader>
           <ConversationList />
         </SheetContent>
@@ -751,6 +752,7 @@ function QueryContent() {
             <SheetTitle className="text-sm flex items-center gap-1.5">
               <FileText className="h-4 w-4" /> Source detail
             </SheetTitle>
+            <SheetDescription className="sr-only">Inspect the source excerpt and open its document in Paperless.</SheetDescription>
           </SheetHeader>
           {selectedSource && (
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -792,7 +794,7 @@ function QueryContent() {
         <div className="flex-none border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             {/* Mobile: show history button */}
-            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" onClick={() => setShowHistory(true)}>
+            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4" />
             </Button>
             <h1 className="text-sm md:text-base font-semibold">Knowledge Query</h1>
@@ -803,7 +805,7 @@ function QueryContent() {
           {/* Desktop: toggle history */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 hidden md:inline-flex" onClick={() => setShowHistoryDesktop(!showHistoryDesktop)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 hidden md:inline-flex" aria-label={showHistoryDesktop ? "Hide conversations" : "Show conversations"} onClick={() => setShowHistoryDesktop(!showHistoryDesktop)}>
                 <History className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -1244,7 +1246,7 @@ function QueryContent() {
                 className="flex-1 min-h-[44px] max-h-[160px] text-sm resize-none"
                 rows={1}
               />
-              <Button type="submit" disabled={loading || !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
+              <Button type="submit" aria-label="Send question" disabled={loading || !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </form>

@@ -230,3 +230,21 @@ test("snapshot-rejected SSE answers do not display obsolete supported claims", a
   assert.equal(await page.getByText("supported: 1", { exact: true }).count(), 0);
   await record(page, "snapshot-invalidated-claims");
 });
+
+
+test("failed catalog searches do not claim an empty result or reuse old totals", async t => {
+  const { page } = await fixturePage(t);
+  await page.goto(`${base}/documents`);
+  await page.getByText("303 indexed documents", { exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "Search indexed documents" }).fill("fixture-error");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Synthetic document search failure" }).waitFor();
+  assert.equal(await page.getByText(/303 matching indexed documents/).count(), 0);
+  assert.equal(await page.getByText("No documents found", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Next page", exact: true }).count(), 0);
+  await page.getByRole("textbox", { name: "Search indexed documents" }).fill("January");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByText("1 matching indexed documents", { exact: true }).waitFor();
+  await page.getByRole("link", { name: "January premium statement", exact: true }).waitFor();
+  await record(page, "catalog-search-error-recovery");
+});

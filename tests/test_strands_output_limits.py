@@ -2,7 +2,8 @@
 import json
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from contextlib import contextmanager
 
 import httpx
 from tests.runtime import configure_test_environment
@@ -13,6 +14,8 @@ from strands.models.openai import OpenAIModel
 from openai import AsyncOpenAI
 from app import strands_orchestrator as module
 from app.answer_finalization import AnswerFinalizer
+from app.cache import invalidate_on_sync
+from tests.test_query_delivery import RetrievedEngine
 
 
 QUOTE = "The listed policy provides liability coverage."
@@ -87,6 +90,55 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.assertTrue(all(client.is_closed for client in self.clients))
+
+    @contextmanager
+    def public_queries(self):
+        invalidate_on_sync()
+        engine = RetrievedEngine()
+        with patch("app.query.strands_orchestrator", self.orchestrator), \
+                patch.object(engine, "_build_evidence_pack", AsyncMock(return_value=PACK)), \
+                patch.object(engine, "_final_synthesis", AsyncMock(return_value={"answer": "\n".join([QUOTE] * 56)})), \
+                patch("app.query.embeddings_store.get_incomplete_document_ids", AsyncMock(return_value=set())), \
+                patch("app.query.embeddings_store.get_open_feedback_document_ids", AsyncMock(return_value=set())):
+            yield engine
+
+    async def test_overlapping_public_queries_audit_all_units_through_real_sdk(self):
+        with self.public_queries() as engine:
+            async def streamed():
+                return [event async for event in engine.query_stream("Recorded coverage in stream?", mode="strict")][-1]
+            ordinary, stream, helper = await asyncio.gather(
+                engine.query("Recorded coverage?", mode="strict"), streamed(),
+                self.orchestrator.plan_query("Unrelated helper?", "strict"))
+        for result in (ordinary, stream):
+            self.assertEqual(result["finalization"]["disposition"], "supported")
+            self.assertEqual(result["claim_ledger"]["summary"]["supported"], 56)
+            self.assertEqual(result["claim_ledger"]["candidate_digest"], result["finalization"]["candidate_digest"])
+        self.assertEqual(ordinary["answer"], stream["answer"])
+        self.assertEqual(helper, {"ok": True})
+        self.assertEqual(len(self.requests), 29)  # two 14-batch audits and one planner
+        self.assertEqual(self.peak, 4)
+        self.assertEqual(self.active, 0)
+        self.assertTrue(all(LIMIT_FIELDS.isdisjoint(request) for request in self.requests))
+
+    async def test_cancelled_public_query_does_not_close_another_queries_clients(self):
+        self.delay = .02
+        with self.public_queries() as engine:
+            cancelled = asyncio.create_task(engine.query("Cancel this coverage query?", mode="strict"))
+            survivor = asyncio.create_task(engine.query("Finish this coverage query?", mode="strict"))
+            try:
+                await asyncio.wait_for(self.started.wait(), 1)
+                cancelled.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await cancelled
+                result = await asyncio.wait_for(survivor, 3)
+            finally:
+                for task in (cancelled, survivor):
+                    task.cancel()
+                await asyncio.gather(cancelled, survivor, return_exceptions=True)
+        self.assertEqual(result["claim_ledger"]["summary"]["supported"], 56)
+        self.assertTrue(result["finalization"]["complete"])
+        self.assertEqual(self.active, 0)
+        self.assertLessEqual(self.peak, 4)
 
     async def test_supported_audit_can_finish_above_former_output_cap(self):
         result = await AnswerFinalizer(self.orchestrator).finalize("What coverage is listed?", QUOTE, PACK)

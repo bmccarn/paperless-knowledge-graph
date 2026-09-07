@@ -39,6 +39,17 @@ FEEDBACK = []
 CONVERSATIONS = {}
 TASKS = {}
 PROCESSED = {doc['paperless_id']: NOW for doc in DOCS}
+REVIEWED = set()
+REVIEW_CANDIDATES = [
+    {'score': 90, 'label': 'Organization',
+     'left': {'uuid': f'synthetic-review-{i}-left', 'name': f'Cedar Lab {i}', 'properties': {'description': 'Synthetic review candidate.'}},
+     'right': {'uuid': f'synthetic-review-{i}-right', 'name': f'Cedar Laboratory {i}', 'properties': {'description': 'Synthetic alternate name.'}},
+     'steward': {'decision': 'suggest_review', 'deterministic': {'risk': 'medium', 'score': .9,
+                  'reasons': ['Compare the synthetic source evidence before deciding.']}}}
+    for i in range(1, 4)]
+LOGS = [{'timestamp': NOW, 'level': level, 'logger': 'synthetic.fixture',
+         'message': f'Synthetic {level.lower()} log for visual acceptance.'}
+        for level in ('DEBUG', 'INFO', 'WARNING', 'ERROR')]
 SOURCE_TEXT = 'January statement: the premium is $25. This is synthetic document evidence.'
 
 
@@ -123,15 +134,32 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         route, params = parsed.path, parse_qs(parsed.query)
         get = lambda key, default='': params.get(key, [default])[0]
+        if route == '/logs/stream':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            try:
+                for _ in range(30):
+                    self.wfile.write(b': heartbeat\n\n')
+                    self.wfile.flush()
+                    time.sleep(1)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         with LOCK:
             if route == '/_fixture':
                 return self.reply({'fixture': 'paperless-accuracy-ui-v1'})
             if route == '/status':
                 return self.reply({'status': 'healthy', 'graph': {'documents': len(DOCS), 'entities': 122, 'relationships': 3},
-                                   'embeddings': {'document_chunks': len(DOCS), 'entity_embeddings': 122},
+                                   'embeddings': {'document_chunks': len(DOCS), 'entity_embeddings': 122, 'docs_with_embeddings': len(DOCS)},
                                    'active_tasks': {}, 'cache': {}, 'last_sync': NOW})
             if route == '/config':
                 return self.reply({'paperless_url': 'http://127.0.0.1:8000', 'owner_name': 'Synthetic fixture'})
+            if route == '/entity-review/candidates':
+                return self.reply({'candidates': [row for row in REVIEW_CANDIDATES if row['left']['uuid'] not in REVIEWED]})
+            if route == '/logs':
+                return self.reply({'lines': LOGS})
             if route == '/models':
                 return self.reply({'models': [{'id': 'synthetic-model', 'name': 'Synthetic model'}], 'default': 'synthetic-model'})
             if route == '/conversations':
@@ -195,8 +223,9 @@ class Handler(BaseHTTPRequestHandler):
                 task = TASKS.get(route.rsplit('/', 1)[1])
                 if not task:
                     return self.reply({'detail': 'Unknown task'}, 404)
-                PROCESSED[task['doc_id']] = timestamp()
-                return self.reply({'status': 'completed', 'result': {'processed': 1, 'errors': 0}})
+                if 'doc_id' in task:
+                    PROCESSED[task['doc_id']] = timestamp()
+                return self.reply({'status': 'completed', 'started': NOW, 'total_docs': 1, 'processed': 1, 'skipped': 0, 'errors': 0, 'elapsed_seconds': 1, 'current_doc': '', 'recent_results': [], 'result': task.get('result', {'processed': 1, 'skipped': 0, 'errors': 0})})
             return self.reply({'detail': 'Synthetic endpoint not implemented'}, 404)
 
     def do_POST(self):
@@ -209,8 +238,16 @@ class Handler(BaseHTTPRequestHandler):
                 FEEDBACK.clear()
                 CONVERSATIONS.clear()
                 TASKS.clear()
+                REVIEWED.clear()
                 PROCESSED.update({doc['paperless_id']: NOW for doc in DOCS})
                 return self.reply({'fixture': 'paperless-accuracy-ui-v1', 'status': 'reset'})
+            if route in ('/entity-review/merge', '/entity-review/split', '/entity-review/ignore'):
+                REVIEWED.add(body.get('left_uuid') or body.get('primary_uuid'))
+                return self.reply({'status': 'completed'})
+            if route in ('/sync', '/entity-review/steward/task'):
+                task_id = f'synthetic-task-{len(TASKS) + 1}'
+                TASKS[task_id] = {'result': {'processed': 1, 'errors': 0, 'reviewed_count': 3, 'suggest_review': 3}}
+                return self.reply({'task_id': task_id, 'status': 'started', 'message': 'Synthetic task started'})
             if route == '/conversations':
                 key = f'synthetic-conversation-{len(CONVERSATIONS) + 1}'
                 CONVERSATIONS[key] = {'id': key, 'title': body.get('title', 'New conversation'), 'messages': [],
@@ -287,6 +324,9 @@ class Handler(BaseHTTPRequestHandler):
                     emit({'type': 'error', 'message': 'Synthetic verifier outage'})
                 return
             result = final_answer(question)
+            result['mode'] = body.get('mode', 'strict')
+            if result['mode'] == 'timeline':
+                result['timeline_events'] = [{'date': '2026-01-31', 'title': 'January premium statement', 'document_id': 101}]
             if 'markup' in question.lower():
                 result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
             with LOCK:

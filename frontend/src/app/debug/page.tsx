@@ -124,6 +124,7 @@ export default function DebugPage() {
         </div>
 
         <select
+          aria-label="Minimum log level"
           value={level}
           onChange={(e) => setLevel(e.target.value)}
           className="h-8 rounded-md border bg-background px-2 text-xs"

@@ -187,7 +187,7 @@ export default function DashboardPage() {
     setConfirmDialog({
       open: true,
       title: "Sync New Documents",
-      description: "This will check for new or modified documents in Paperless and process them. Existing documents won't be re-processed.",
+      description: "This will check for new or modified documents in Paperless and process them. Documents are reprocessed when their source or extraction configuration has changed.",
       variant: "default",
       action: async () => {
         try {

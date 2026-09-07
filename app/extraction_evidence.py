@@ -315,6 +315,8 @@ def validate_metadata(raw: dict, source: str, offset: int, issues: list[str]) ->
         if isinstance(path, str) and span:
             evidence.setdefault(path, []).append(span)
 
+    accepted_evidence = {}
+
     def visit(value, path):
         if isinstance(value, dict):
             return {key: visit(item, f"{path}.{key}" if path else key) for key, item in value.items()}
@@ -327,13 +329,15 @@ def validate_metadata(raw: dict, source: str, offset: int, issues: list[str]) ->
             return None
         # Literal scalar support is deliberately conservative. Paraphrases and
         # converted/derived numbers require a separate assessment mechanism.
-        if not any(literal_value_present(value, span["quote"]) for span in evidence[path]):
+        supported = [span for span in evidence[path] if literal_value_present(value, span["quote"])]
+        if not supported:
             issues.append(f"Metadata omitted: value not present in source quote for {path}")
-            evidence.pop(path, None)
             return None
+        accepted_evidence[path] = supported
         return value
 
-    return visit(raw["metadata"], ""), evidence
+    metadata = visit(raw["metadata"], "")
+    return metadata, accepted_evidence
 
 
 def reconcile_metadata(windows: list[tuple[dict, dict]]) -> tuple[dict, dict, list[dict]]:

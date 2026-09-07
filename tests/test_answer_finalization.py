@@ -116,6 +116,36 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(sum(len(s["content"]) for s in seen[-1]), 28000)
             self.assertEqual(len({s["span_id"] for s in seen[-1]}), len(seen[-1]))
 
+    async def test_plain_field_label_quote_maps_to_original_bold_ocr(self):
+        source = "Preface. **Policy Number:** ZX123.\n**Policy Period:** From 2026 to 2027."
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "source_kind": "ocr", "title": "Declaration", "content": source}]}
+        class Auditor:
+            def __init__(self, quote): self.quote = quote
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "temporal_scope": "historical",
+                    "references": [{"span_id": spans[0]["span_id"], "evidence_id": "record", "document_id": 101,
+                                    "quote": self.quote}]} for u in units]}
+        quote = "Policy Number: ZX123. Policy Period: From 2026 to 2027."
+        result = await AnswerFinalizer(Auditor(quote)).finalize(
+            "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", evidence)
+        self.assertTrue(result["finalization"]["complete"])
+        ref = result["claim_ledger"]["claims"][0]["references"][0]
+        self.assertEqual(ref["quote"], source[len("Preface. "):])
+        self.assertEqual(source[ref["start"]:ref["end"]], ref["quote"])
+        for bad in (quote.replace("2027", "2028"), quote.replace("Period:", "Period"),
+                    quote.replace("ZX123.", "ZX123. Invented text.")):
+            result = await AnswerFinalizer(Auditor(bad)).finalize(
+                "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", evidence)
+            self.assertFalse(result["finalization"]["complete"])
+        for unsupported_source in (source.replace("**Policy Number:**", "**Policy Number:"),
+                                   source.replace("**Policy Number:**", "~~Policy Number:~~"),
+                                   source.replace("**Policy Number:**", "**Policy 9 Number:**")):
+            other = {"items": [{**evidence["items"][0], "content": unsupported_source}]}
+            result = await AnswerFinalizer(Auditor(quote)).finalize(
+                "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", other)
+            self.assertFalse(result["finalization"]["complete"])
+
     async def test_wrong_digit_and_unit_fail_even_when_auditor_says_supported(self):
         for answer in ("Monthly premium is $312.00 USD.", "Monthly premium is €321.00 EUR."):
             with self.subTest(answer=answer):

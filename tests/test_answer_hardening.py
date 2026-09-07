@@ -168,11 +168,11 @@ class AnswerHardeningTests(unittest.IsolatedAsyncioTestCase):
         result = await AnswerFinalizer(QuoteAuditor("Premium: 321 USD.", temporal_scope=[])).finalize("Current premium?", "Premium: 321 USD.", pack("Premium: 321 USD."), plan={"requires_current": True})
         self.assertFalse(result["finalization"]["complete"])
 
-    async def test_model_document_link_is_replaced_by_validated_document_citation(self):
+    async def test_model_document_link_cannot_silently_replace_fabricated_attribution(self):
         result = await AnswerFinalizer(QuoteAuditor("Premium: 321 USD.")).finalize("Premium?", "Premium: 321 USD. [Document 999](/documents/999)", pack("Premium: 321 USD."))
-        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertFalse(result["finalization"]["complete"])
         self.assertNotIn("999", result["answer"])
-        self.assertIn("[Document 101](/documents/101)", result["answer"])
+        self.assertNotIn("[Document", result["answer"])
 
 
 class TimelineHardeningTests(unittest.IsolatedAsyncioTestCase):

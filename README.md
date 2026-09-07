@@ -20,7 +20,9 @@ A knowledge graph system that extracts structured entities and relationships fro
 
 Saved conversations retain their complete messages for display. Model prompts use only the latest 10 messages within a shared 12,000-character conversation budget across planning, synthesis, and source auditing. When that budget is exceeded, older context is omitted first; an oversized retained message keeps its ending with an explicit truncation marker. Query-cache versioning prevents reuse of answers generated under the previous unbounded-context policy.
 
-Strands planning, source auditing, answer repair, timeline extraction and entity review omit application-imposed output-token limits and use the provider's normal output allowance. Per-call and overall source-audit timeouts still apply. Incomplete or truncated audits cannot certify an answer.
+Strands planning, source auditing, answer repair, timeline extraction and entity review omit application-imposed output-token limits and use the provider's normal output allowance. Helpers use request-owned HTTP clients to the same LiteLLM proxy. Source audits process four-unit batches with bounded concurrency and a deadline proportional to the required waves; each model call and repair attempt still has a finite deadline. Incomplete or truncated audits cannot certify an answer.
+
+Source attributions are checked against supplied OCR evidence and each claim's validated references before final document links are rendered. Entity review preserves the proposed identity through case and whitespace changes; unsupported type changes still require separate source evidence. The processing fingerprint includes this reconciliation version, so ordinary sync refreshes older results.
 
 Document extraction has no document-size or window-count cap: it processes overlapping source windows through the end of every document. The first normal sync after the ingestion-fingerprint migration rebuilds legacy derived records; a wipe or manual Reindex All is not required. Only complete extraction can commit a completion fingerprint, and transient processing failures remain retryable.
 
@@ -119,7 +121,9 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `GEMINI_MODEL` | Primary model for classification, extraction, query synthesis and entity helpers | `gemini-3.8-flash` |
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
-| `ANSWER_AUDIT_TIMEOUT_SECONDS` | Total finalization audit/repair budget; timeout returns an evidence-limited response | `60` |
+| `ANSWER_AUDIT_TIMEOUT_SECONDS` | Allowance per concurrent audit wave and per repair; the audit deadline scales with required waves | `60` |
+| `STRANDS_MAX_CONCURRENT_CALLS` | Maximum active helper calls and audit workers per answer | `4` |
+| `STRANDS_CALL_TIMEOUT_SECONDS` | Deadline for one active helper invocation | `45` |
 | `BACKEND_URL` | Frontend server runtime destination for both ordinary API calls and streaming | `http://app:8000` |
 | `STRANDS_MODEL` | Optional model override for Strands helper calls | Same as `GEMINI_MODEL` |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials | `neo4j` / — |

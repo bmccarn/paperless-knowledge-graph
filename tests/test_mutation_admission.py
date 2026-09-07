@@ -9,6 +9,41 @@ import app.main as main
 
 
 class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_post_sync_steward_is_visible_and_holds_mutation_admission_until_drained(self):
+        started, release, drained = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        async def steward(**kwargs):
+            started.set()
+            try:
+                await release.wait()
+                return {"status": "completed", "reviewed_count": 1}
+            finally:
+                drained.set()
+        with patch.object(main, "_tasks", {}), patch.object(main, "_schedule_task_cleanup"), \
+                patch.object(main, "sync_documents", AsyncMock(return_value={"processed": 1, "errors": 0})), \
+                patch.object(main, "invalidate_on_sync", lambda: None), \
+                patch.object(main.entity_steward, "run_once", steward):
+            await main._run_sync_task()
+            await asyncio.wait_for(started.wait(), timeout=1)
+            try:
+                active = [t for t in main._tasks.values() if t["status"] == "running"]
+                self.assertEqual([t["type"] for t in active], ["entity_steward"])
+                with self.assertRaises(main.HTTPException):
+                    await main._run_sync_task()
+                with self.assertRaises(main.HTTPException):
+                    async with main._graph_mutation("synthetic-repair"):
+                        self.fail("Mutation admitted before Steward drained")
+            finally:
+                release.set()
+                await asyncio.wait_for(drained.wait(), timeout=1)
+                await asyncio.sleep(0)
+            self.assertTrue(all(t["status"] == "completed" for t in main._tasks.values()))
+
+    async def test_steward_cannot_start_while_ingestion_or_repair_is_running(self):
+        for task_type in ("sync", "reindex", "repair"):
+            with patch.object(main, "_tasks", {"existing": {"type": task_type, "status": "running"}}):
+                with self.assertRaises(main.HTTPException):
+                    await main._run_entity_steward_task(reason="periodic")
+
     async def test_cancel_draining_task_blocks_delete_and_manual_merge(self):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
             with patch.object(main, "_tasks", {"sync": {"status": "cancelling"}}), \

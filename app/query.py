@@ -388,7 +388,8 @@ class QueryEngine:
         if timeline_events is not None:
             timeline_events[:] = [event for event in timeline_events if event.get("document_id") not in flagged]
         final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
-                                      timeout_seconds=settings.answer_audit_timeout_seconds).finalize(
+                                      timeout_seconds=settings.answer_audit_timeout_seconds,
+                                      concurrency=settings.strands_max_concurrent_calls).finalize(
             question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
         verification = final["verification"]
         verification["finalization"] = final["finalization"]

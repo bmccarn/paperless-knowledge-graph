@@ -7,7 +7,7 @@ import json
 import os
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import asyncpg
 from neo4j import AsyncGraphDatabase
@@ -40,6 +40,8 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
             await conn.execute(INIT_SQL)
             await conn.execute("TRUNCATE entity_review_decisions")
         self.graph = GraphStore()
+        self.graph.review_store = self.store
+        self.graph.new_uuid = lambda: self.prefix + str(uuid.uuid4())
         self.graph.driver = AsyncGraphDatabase.driver(local_url("NEO4J_TEST_BOLT"), auth=None)
         self.resolver = module.EntityResolver()
         self.patches = [patch.object(module, "graph_store", self.graph),
@@ -91,6 +93,97 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
             await self.resolver.merge_entities(live_side, other, review_method="entity_review_api")
         self.assertIsNotNone(await self.graph.get_node(live_side))
         self.assertIsNotNone(await self.graph.get_node(other))
+        # All seventeen surviving legacy anchors remain after real orphan
+        # cleanup, not just after snapshot hydration. Both-missing rows stay.
+        await self.graph.create_document_node(991711, "Synthetic legacy support", "test", "2026-09-06", "synthetic")
+        surviving = []
+        for index, pair in enumerate(pairs[:17]):
+            known = pair[0] if index % 2 else pair[1]
+            surviving.append(known)
+            await self.graph.create_relationship("991711", "Document", known, "Person", "MENTIONS", {"source_doc": 991711})
+        await self.graph.delete_document_graph(991711)
+        await self.graph.delete_document_graph(991711)
+        for known in surviving:
+            props = (await self.graph.get_node(known))["properties"]
+            self.assertTrue(props["review_anchor"])
+        after_cleanup = sorted(await self.store.get_entity_review_decisions(), key=lambda row: row["id"])
+        self.assertEqual(after_cleanup, rows)
+
+    async def test_quarantine_cleanup_new_uuid_blocks_durable_positive_replay(self):
+        from app.entity_decisions import entity_identity
+        from app.entity_policy import RESOLUTION_POLICY
+        canonical, alias = "Quartz Laboratories", "Quartz Labs"
+        old = await self.seed("old", canonical, "Organization", [991711])
+        old_identity = entity_identity(await self.graph.get_node(old))
+        alias_identity = {"type": "Organization", "canonical_name": alias, "names": [alias.casefold()]}
+        positive = await self.store.add_entity_review_decision(old, self.prefix + "historic-duplicate", "merged", "historical approval",
+            left_identity=old_identity, right_identity=alias_identity, provenance="human_review",
+            identity_status="active", review_id="historic-review", review_method="entity_review_api")
+        # Simulate the existing repair surface's node-local legacy tombstone:
+        # cleanup itself must promote it before deleting this graph UUID.
+        tombstone = {"alias": alias, "type": "Organization", "status": "quarantined", "policy": "old-policy"}
+        async with self.graph.driver.session() as session:
+            await session.run("MATCH(n {uuid:$uuid}) SET n.alias_records=$records", uuid=old,
+                              records=[json.dumps(tombstone)])
+        await self.graph.create_document_node(991711, "Synthetic source", "test", "2026-09-06", "synthetic")
+        await self.graph.create_relationship("991711", "Document", old, "Organization", "MENTIONS", {"source_doc":991711})
+        with patch.object(self.store, "preserve_alias_revocations", AsyncMock(side_effect=ConnectionError("synthetic ledger unavailable"))):
+            with self.assertRaises(ConnectionError):
+                await self.graph.delete_document_graph(991711)
+        retained = await self.graph.get_node(old)
+        self.assertTrue(any(edge.get("neighbor_props", {}).get("paperless_id") == 991711 for edge in retained["relationships"]))
+        await self.graph.delete_document_graph(991711)
+        self.assertIsNone(await self.graph.get_node(old))
+        rows = await self.store.get_entity_review_decisions()
+        self.assertEqual(next(row for row in rows if row["id"] == positive["id"]), positive)
+        revocation = next(row for row in rows if row["decision"] == "alias_revoked")
+        for generation in range(3):
+            with self.subTest(generation=generation):
+                current = await self.seed(f"recreated-{generation}", canonical, "Organization", [991711],
+                                          resolution_policy=f"{RESOLUTION_POLICY}-future-{generation}")
+                await self.graph.add_entity_alias_record(current, human_alias_record(canonical, "Crystal Research", "Organization",
+                    f"independent-{generation}", review_method="entity_review_api"))
+                source = f"{alias} listed in synthetic revision {generation}."
+                bound = await self.resolver.resolve(alias, "Organization", 991711, source=source)
+                self.assertNotEqual(bound, current)
+                self.assertEqual(await self.resolver.resolve("Crystal Research", "Organization", 991711), current)
+                # A later ordinary positive review cannot silently supersede the
+                # quarantine. There is deliberately no last-write-wins rule.
+                await self.store.add_entity_review_decision(current, self.prefix + f"alias-{generation}", "merged", "ordinary later review",
+                    left_identity=entity_identity(await self.graph.get_node(current)), right_identity=alias_identity,
+                    provenance="human_review", identity_status="active", review_id=f"later-{generation}", review_method="entity_review_api")
+                self.assertNotEqual(await self.resolver.resolve(alias, "Organization", 991712, source=source + " Changed."), current)
+                # Repeated repairs are idempotent even with changed source and
+                # node policy; the original revocation's history does not move.
+                await self.graph.add_entity_alias_record(current, tombstone)
+                await self.graph.add_entity_alias_record(current, tombstone)
+                await self.graph.create_document_node(991711, "Synthetic revised source", "test", "2026-09-06", "synthetic")
+                await self.graph.create_relationship("991711", "Document", current, "Organization", "MENTIONS", {"source_doc":991711})
+                await self.graph.delete_document_graph(991711)
+                await self.graph.delete_document_graph(991711)
+                self.assertIsNone(await self.graph.get_node(current))
+                rows = await self.store.get_entity_review_decisions()
+                negatives = [row for row in rows if row["decision"] == "alias_revoked"]
+                self.assertEqual(negatives, [revocation])
+                self.assertEqual(next(row for row in rows if row["id"] == positive["id"]), positive)
+
+    async def test_partial_legacy_veto_reuses_persisted_isolated_source_binding(self):
+        from app.entity_decisions import entity_identity
+        protected = await self.seed("protected", "Restricted Labs", "Organization", [991712])
+        await self.store.add_entity_review_decision(protected, self.prefix + "missing", "split", "original",
+            left_identity=entity_identity(await self.graph.get_node(protected)), identity_status="unresolved_legacy")
+        results = [await self.resolver.resolve(name, "Organization", 991711, source="Restricted Labs signed.")
+                   for name in ("Restricted Labs", "RESTRICTED LABS", "restricted labs")]
+        self.assertEqual(len(set(results)), 1)
+        self.assertNotEqual(results[0], protected)
+        persisted = (await self.graph.get_node(results[0]))["properties"]
+        self.assertEqual(persisted["resolution_status"], "isolated")
+        self.assertTrue(persisted["isolated_source_key"])
+        restarted = module.EntityResolver()
+        self.assertEqual(await restarted.resolve("Restricted Labs", "Organization", 991711, source="Restricted Labs signed."), results[0])
+        self.assertNotEqual(await restarted.resolve("Restricted Labs", "Organization", 991712, source="Restricted Labs signed."), results[0])
+        with self.assertRaises(module.EntityMergeProhibited):
+            await restarted.merge_entities(protected, results[0], review_method="entity_review_api")
 
     async def test_legacy_and_quarantined_aliases_cannot_become_trusted_during_real_merge(self):
         keep = await self.seed("keep", "Alice Example", aliases=["Legacy Alias"])

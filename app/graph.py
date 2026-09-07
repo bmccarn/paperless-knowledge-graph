@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 class GraphStore:
     def __init__(self):
         self.driver = None
+        self.review_store = None
+
+    async def _preserve_alias_revocations(self, nodes):
+        from app.entity_decisions import alias_revocations
+        rows = [row for node in nodes for row in alias_revocations(node)]
+        if rows:
+            from app.embeddings import embeddings_store
+            await (self.review_store or embeddings_store).preserve_alias_revocations(rows)
+
+    async def protect_review_anchor(self, node_uuid: str):
+        """Partial legacy review anchors survive document orphan cleanup."""
+        async with self.driver.session() as session:
+            await session.run("MATCH (n {uuid:$uuid}) SET n.review_anchor = true", uuid=node_uuid)
 
     async def init(self):
         self.driver = AsyncGraphDatabase.driver(
@@ -200,6 +213,13 @@ class GraphStore:
 
     async def add_entity_alias_record(self, node_uuid: str, record: dict):
         """Append provenance separately; raw aliases remain searchable, not trusted."""
+        if record.get("status") in {"quarantined", "revoked", "untrusted"}:
+            node = await self.get_node(node_uuid)
+            if not node:
+                raise ValueError("Alias target disappeared")
+            # Fail closed before the graph write if the durable ledger is down.
+            props = node["properties"]
+            await self._preserve_alias_revocations([{**node, "properties": {**props, "alias_records": [record]}}])
         serialized = json.dumps(record, sort_keys=True)
         async with self.driver.session() as session:
             result = await session.run("""
@@ -473,7 +493,14 @@ class GraphStore:
             await tx.run("""MATCH (n) WHERE $pid IN coalesce(n.source_doc_ids, []) AND NOT n:Document
                              SET n.source_doc_ids = [id IN n.source_doc_ids WHERE id <> $pid]""", pid=paperless_id)
             await tx.run("MATCH (d:Document {paperless_id: $pid}) DETACH DELETE d", pid=paperless_id)
+            # Promote legacy node-local negatives before UUID deletion. PG is
+            # committed first; a failed graph transaction merely leaves a safe,
+            # idempotent revocation. A failed PG write rolls graph cleanup back.
+            result = await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
+                                  RETURN properties(n) AS props, labels(n) AS labels""", affected=list(affected))
+            await self._preserve_alias_revocations([{"properties": row["props"], "labels": row["labels"]} async for row in result])
             await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
+                             AND NOT coalesce(n.review_anchor, false)
                              AND NOT EXISTS { (n)--() } DELETE n""", affected=list(affected))
         async with self.driver.session() as session:
             await session.execute_write(write)

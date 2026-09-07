@@ -32,6 +32,14 @@ class MemoryDecisions:
             raise ConnectionError("decision store unavailable")
         return copy.deepcopy(self.rows)
 
+    async def preserve_alias_revocations(self, rows):
+        if self.unavailable:
+            raise ConnectionError("decision store unavailable")
+        for row in rows:
+            if not any((old["left_uuid"], old["right_uuid"], old["decision"]) ==
+                       (row["left_uuid"], row["right_uuid"], row["decision"]) for old in self.rows):
+                self.rows.append(copy.deepcopy(row))
+
     async def add_entity_review_decision(self, left_uuid, right_uuid, decision, note="", **identities):
         if self.unavailable:
             raise ConnectionError("decision store unavailable")
@@ -67,6 +75,10 @@ class MemoryGraph:
         self.nodes = {n["uuid"]: copy.deepcopy(n) for n in nodes}
         self.sequence = 0
         self.driver = SimpleNamespace(session=lambda: MemorySession(self))
+
+    async def protect_review_anchor(self, node_uuid):
+        if node_uuid in self.nodes:
+            self.nodes[node_uuid]["review_anchor"] = True
 
     async def get_entities_by_type(self, kind):
         return [copy.deepcopy(n) for n in self.nodes.values() if n["entity_type"] == kind]
@@ -486,12 +498,14 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actual_graph_resolver_roundtrips_source_alias_provenance_and_membership(self):
         from app.entity_policy import trusted_aliases
+        from tests.test_entity_review_closure import reviewed_entities, proofs
         resolver = resolver_module.EntityResolver()
         decisions = MemoryDecisions()
         source = "John Smith also known as John Jones signed."
         with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", decisions):
             self.assertEqual(await resolver.resolve_person("John Smith", 33), self.keep)
-            self.assertEqual(await resolver.resolve_person("John Jones", 33, source=source), self.keep)
+            self.assertEqual(await resolver.resolve_person("John Jones", 33, source=source,
+                identity_proofs=proofs(reviewed_entities("John Smith", "John Jones", source, "Person"))), self.keep)
         props = (await self.store.get_node(self.keep))["properties"]
         self.assertEqual(props["source_doc_ids"], [11, 33])
         self.assertEqual(trusted_aliases(props, "Person", 33, source), ["John Jones"])

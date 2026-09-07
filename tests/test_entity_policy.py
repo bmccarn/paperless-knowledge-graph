@@ -49,10 +49,12 @@ class OrthographyTests(unittest.TestCase):
                 self.assertEqual(display_name(left), left)
 
     def test_context_bound_initials_acronyms_not_every_short_brand(self):
-        for name, kind in [("NES", "Organization"), ("MERS", "Condition"),
-                           ("J Smith", "Person"), ("Alice", "Person")]:
+        self.assertTrue(context_bound_name("NES", "Organization", "abbreviation"))
+        self.assertTrue(context_bound_name("MERS", "Condition", "abbreviation"))
+        for name, kind in [("J Smith", "Person"), ("Alice", "Person")]:
             self.assertTrue(context_bound_name(name, kind))
-        for name, kind in [("Acme", "Organization"), ("Paris", "Location"), ("Alice Example", "Person")]:
+        for name, kind in [("Acme", "Organization"), ("ACME", "Organization"), ("acme", "Organization"),
+                           ("Asthma", "Condition"), ("ASTHMA", "Condition"), ("Paris", "Location"), ("Alice Example", "Person")]:
             self.assertFalse(context_bound_name(name, kind))
 
 
@@ -95,7 +97,9 @@ class CoreferenceTests(unittest.TestCase):
         self.assertEqual(set(initialism_expansions("NES", source)), {"Network Entity Systems", "New Era Services"})
         self.assertEqual(initialism_expansions("NES", "Network Entity Systems and NES are listed."), [])
         self.assertFalse(has_local_alias_definition("Alice Example", "Person (Alice Example) signed."))
-        self.assertFalse(has_local_alias_definition("Acme", "Supplier (Acme) signed."))
+        # Parenthetical ambiguity is conservative and invariant to typography.
+        self.assertEqual(has_local_alias_definition("Acme", "Supplier (Acme) signed."),
+                         has_local_alias_definition("ACME", "Supplier (ACME) signed."))
         self.assertTrue(has_local_alias_definition("DOE", "US Department of Energy (DOE) signed."))
         self.assertEqual(initialism_expansions("NB", "The National Bank (NB) signed."), ["The National Bank"])
         self.assertEqual(initialism_expansions("DOE", "US Department of Energy (DOE) signed."), [])
@@ -126,8 +130,11 @@ class CoreferenceTests(unittest.TestCase):
                 self.assertEqual(trusted_aliases({"name": "Alice Example", "alias_records": [record]}, "Person", 11, ""), [])
 
     def test_source_alias_is_scoped_by_document_revision_policy_and_quote(self):
+        from tests.test_entity_review_closure import reviewed_entities, proofs
+        from app.entity_policy import verified_coreference
         source = "Network Entity Systems (NES) signed."
-        span = coreference_span("Network Entity Systems", "NES", source)
+        receipt = proofs(reviewed_entities("Network Entity Systems", "NES", source))
+        span = verified_coreference("Network Entity Systems", "NES", "Organization", source, receipt)
         record = source_alias_record("Network Entity Systems", "NES", "Organization", 11, source, span)
         node = {"name": "Network Entity Systems", "alias_records": [record]}
         self.assertEqual(trusted_aliases(node, "Organization", 11, source), ["NES"])

@@ -128,3 +128,71 @@ def carried_vetoes(keep: dict, remove: dict, decisions: list[dict]) -> list[dict
                 raise EntityMergeProhibited("Human no-merge decision has ambiguous entity identities")
             carried.append(result)
     return carried
+
+
+def alias_revocations(node: dict) -> list[dict]:
+    """Stable negative authority with the same name lineage as positive replay.
+
+    Independent of graph UUID, source revision and resolution-policy generation.
+    Records are appended to the durable review ledger, never replacing reviews.
+    """
+    from app.entity_policy import alias_records, digest, name_key
+    identity = entity_identity(node)
+    props = node.get("properties", node)
+    records = []
+    for record in alias_records(props):
+        if record.get("status") not in {"quarantined", "revoked", "untrusted"}:
+            continue
+        kind, alias = record.get("type"), record.get("alias")
+        canonical = record.get("canonical_name") or identity["canonical_name"]
+        if not isinstance(alias, str) or not alias.strip() or kind != identity["type"] or not canonical:
+            continue
+        hints = sorted(set(props.get("identity_hints") or []))
+        key = digest(json.dumps([kind, name_key(canonical, kind), name_key(alias, kind), hints]))
+        records.append({"left_uuid": "alias-lineage-" + key, "right_uuid": "alias-revocation-" + key,
+            "decision": "alias_revoked", "identity_status": "active", "provenance": "alias_quarantine",
+            "review_id": key, "review_method": "alias_quarantine",
+            "left_identity": {**identity, "canonical_name": canonical,
+                              "identity_hints": hints},
+            "right_identity": {"type": kind, "canonical_name": alias},
+            "note": "Durable alias revocation; historical positive reviews retained"})
+    return records
+
+
+def alias_replay_prohibited(canonical: dict, alias: str, kind: str, decisions: list[dict]) -> bool:
+    """Negative pair authority follows explicitly reviewed lineage, not UUIDs."""
+    from app.entity_policy import EXPLICIT_REVIEW_METHOD, name_key
+    canonical_key = name_key(canonical.get("name", ""), kind)
+    alias_key = name_key(alias, kind)
+    for row in decisions:
+        if row.get("decision") != "alias_revoked":
+            continue
+        left, right = _snapshot(row.get("left_identity")), _snapshot(row.get("right_identity"))
+        if left.get("type") != kind or right.get("type") != kind:
+            continue
+        hints, current_hints = left.get("identity_hints") or [], canonical.get("identity_hints") or []
+        if hints and current_hints and not set(hints) & set(current_hints):
+            continue
+        revoked = name_key(right.get("canonical_name", ""), kind)
+        lineage = {name_key(left.get("canonical_name", ""), kind)}
+        # Follow positive canonical lineage, but do not traverse the revoked
+        # alias itself: that would turn a pair veto into a global name ban.
+        changed = True
+        while changed:
+            changed = False
+            for review in decisions:
+                if (review.get("decision") != "merged" or review.get("provenance") != "human_review"
+                        or review.get("identity_status") != "active"
+                        or review.get("review_method") != EXPLICIT_REVIEW_METHOD or not review.get("review_id")):
+                    continue
+                snapshots = [_snapshot(review.get(f"{side}_identity")) for side in ("left", "right")]
+                if any(snapshot.get("type") != kind for snapshot in snapshots):
+                    continue
+                names = {name_key(name, kind) for snapshot in snapshots
+                         for name in [snapshot.get("canonical_name", ""), *(snapshot.get("reviewed_names") or [])]} - {"", revoked}
+                if names & lineage and not names <= lineage:
+                    lineage |= names
+                    changed = True
+        if (alias_key == revoked and canonical_key in lineage) or (canonical_key == revoked and alias_key in lineage):
+            return True
+    return False

@@ -558,9 +558,7 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
                 await main._run_reindex_documents_task([1], task_type='test', message='test')
             self.assertEqual(main._tasks[task_id]['status'], 'cancelling')
             self.extractor.release.set()
-            for _ in range(100):
-                if main._tasks[task_id]['status'] not in {'running', 'cancelling'}: break
-                await asyncio.sleep(0)
+            await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
             self.assertEqual(main._tasks[task_id]['status'], 'cancelled')
             with self.assertRaises(main.HTTPException):
                 await main.cancel_task(task_id)
@@ -572,9 +570,7 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         previous = self.embeddings.last_sync
         with patch.object(main, 'invalidate_on_sync', lambda: None), patch.object(main, 'embeddings_store', self.embeddings):
             task_id, _ = await main._run_reindex_documents_task([1], task_type='test', message='test', update_last_sync=True)
-            for _ in range(100):
-                if main._tasks[task_id]['status'] != 'running': break
-                await asyncio.sleep(0)
+            await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
             self.assertEqual(main._tasks[task_id]['status'], 'completed')
             self.assertEqual(self.embeddings.last_sync, previous)
 
@@ -587,9 +583,7 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
                 main._cancel_events.clear()
                 started = await start()
                 task_id = started if isinstance(started, str) else started.task_id
-                for _ in range(100):
-                    if main._tasks[task_id]['status'] != 'running': break
-                    await asyncio.sleep(0)
+                await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
                 self.assertEqual(main._tasks[task_id]['status'], 'failed')
                 self.assertEqual(main._tasks[task_id]['result']['errors'], 1)
 

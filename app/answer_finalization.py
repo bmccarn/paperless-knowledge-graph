@@ -63,15 +63,18 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
         return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
             r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+'
             r'|\bPaperless\s+ID\b', fragment, re.I)]
+    stack, scanned = [], 0
     def enclosed(position):
         # Attributions inside another bracket/parenthesis are outside the
-        # restricted grammar, including nested Markdown link labels.
-        stack = []
-        for char in text[:position]:
+        # restricted grammar, including nested Markdown link labels. Match
+        # positions advance, so scan each prefix character only once.
+        nonlocal scanned
+        for char in text[scanned:position]:
             if char in "[(":
                 stack.append(char)
             elif stack and (stack[-1], char) in {("[", "]"), ("(", ")")}:
                 stack.pop()
+        scanned = position
         return bool(stack)
     for match in pattern.finditer(text):
         prefix = text[end:match.start()]

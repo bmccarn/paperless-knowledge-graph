@@ -10,6 +10,34 @@ import app.main as main
 
 
 class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelling_broad_retrieval_drains_all_owned_children(self):
+        from app.query import QueryEngine
+        engine = object.__new__(QueryEngine)
+        started, block = asyncio.Event(), asyncio.Event()
+        children = []
+        async def child(*args):
+            children.append(asyncio.current_task())
+            if len(children) == 3:
+                started.set()
+            await block.wait()
+        with patch.object(engine, "_decompose_query", child), \
+                patch.object(engine, "_retrieve_graph_documents", child), \
+                patch.object(engine, "_retrieve", child), \
+                patch.object(engine, "_retrieve_light", child):
+            worker = asyncio.create_task(engine._execute_retrieval_plan(
+                "All policies and invoices", {"broad_query": True,
+                 "subqueries": [{"role": "primary", "query": "policies"}]}, "strict"))
+            try:
+                await asyncio.wait_for(started.wait(), 1)
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+                self.assertTrue(all(task.done() for task in children), "Retrieval children outlive their query")
+            finally:
+                worker.cancel()
+                for task in children:
+                    task.cancel()
+                await asyncio.gather(worker, *children, return_exceptions=True)
+
     async def test_lifespan_drains_periodic_steward_before_closing_dependencies(self):
         started, drained = asyncio.Event(), asyncio.Event()
         workers = []

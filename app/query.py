@@ -218,10 +218,13 @@ class QueryEngine:
             trace.append(trace_step("retrieval", "ok", "Single-pass hybrid retrieval completed", {"queries": [item]}))
             return all_context, [], latest_check_used, trace
 
-        broad_decompose_task = asyncio.create_task(self._decompose_query(question)) if is_broad else None
-        graph_docs_task = asyncio.create_task(self._retrieve_graph_documents(question)) if is_broad else None
-
-        retrieved = await asyncio.gather(*[_retrieve_one(item) for item in queries])
+        # All retrieval children belong to this request. Failure/cancellation
+        # drains them before request cleanup or application shutdown closes I/O.
+        async with asyncio.TaskGroup() as group:
+            broad_decompose_task = group.create_task(self._decompose_query(question)) if is_broad else None
+            graph_docs_task = group.create_task(self._retrieve_graph_documents(question)) if is_broad else None
+            retrieval_tasks = [group.create_task(_retrieve_one(item)) for item in queries]
+        retrieved = [task.result() for task in retrieval_tasks]
         all_context: dict | None = None
         for item, ctx in retrieved:
             all_context = ctx if all_context is None else self._merge_context(all_context, ctx)
@@ -244,7 +247,7 @@ class QueryEngine:
 
         broad_queries = []
         if broad_decompose_task:
-            broad_queries = await broad_decompose_task
+            broad_queries = broad_decompose_task.result()
             if broad_queries:
                 logger.info("Broad query: %s sub-queries: %s", len(broad_queries), broad_queries)
                 sub_results = await asyncio.gather(
@@ -264,7 +267,7 @@ class QueryEngine:
                 ))
 
         if graph_docs_task:
-            graph_doc_context = await graph_docs_task
+            graph_doc_context = graph_docs_task.result()
             if graph_doc_context:
                 all_context = self._merge_context(all_context, graph_doc_context)
                 trace.append(trace_step(

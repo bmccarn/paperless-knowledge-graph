@@ -185,9 +185,12 @@ export default function HubsPage() {
                     </div>
                   </div>
                   {docId && (
-                    <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer">
-                      <Button variant="ghost" size="icon" className="h-8 w-8"><ExternalLink className="h-3.5 w-3.5" /></Button>
-                    </a>
+                    <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                      <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer"
+                        aria-label={`Open ${(p.title as string) || `Document #${docId}`} in Paperless`}>
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </Button>
                   )}
                 </div>
               );
@@ -213,11 +216,9 @@ export default function HubsPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {active.questions.map((question) => (
-              <Link key={question} href={`/query?q=${encodeURIComponent(question)}`}>
-                <Button variant="outline" className="w-full justify-start text-left h-auto py-2.5 whitespace-normal">
-                  {question}
-                </Button>
-              </Link>
+              <Button asChild key={question} variant="outline" className="w-full justify-start text-left h-auto py-2.5 whitespace-normal">
+                <Link href={`/query?q=${encodeURIComponent(question)}`}>{question}</Link>
+              </Button>
             ))}
           </CardContent>
         </Card>

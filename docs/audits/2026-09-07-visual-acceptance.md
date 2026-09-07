@@ -13,12 +13,12 @@ Operator: Codex, September 7, 2026. User explicitly requested computer/browser-c
 
 | Surface | Actions and visible outcome | State |
 | --- | --- | --- |
-| Navigation and themes | All seven routes opened; desktop icon controls gained accessible names. Dark/light toggle, phone bottom navigation and return to default desktop size worked. | Passed at 390px and desktop; narrower phone check pending |
+| Navigation and themes | All seven routes opened; desktop icon controls gained accessible names. Dark/light toggle, phone bottom navigation and return to default desktop size worked. | 320px clipped the theme button; fixed and regression passes, final visual check pending |
 | Chat answer | Strict synthetic question streamed activity then final answer, trust/claim ledger, exact source link and source sheet. Correct excerpt, title and Paperless destination visible. | Passed |
 | Conversation history | Renamed conversation persisted across route changes; new chat cleared old answer; switching restored saved answer; mobile history opened and closed; desktop hide/show worked. | Passed; delete and final description-label check pending |
 | Chat controls | Fast/Deep/Strict switching, model menu, copy and automatic insurance-hub question shortcut worked. Failed stream never displayed unsupported draft, showed connection-loss guidance, and left composer usable. | Passed; timeline event display pending |
 | Document detail/review | Citation opened correct raw OCR/chunk. Synthetic report opened, reindex refreshed processing time and preserved open report, resolution required note and recorded reviewed receipt. | Passed |
-| Catalog | Last page displayed 301–303 of 303; search recovered to one correct document; phone cards fit. | Passed; final visual error-fix check and sort/type/selection pending |
+| Catalog | Last page displayed 301–303 of 303; search recovered to one correct document; phone cards fit. | Passed: final error state has no stale counts/facets, sort/type/selection and two-document synthetic batch reindex also passed; genuine empty result distinguished from error |
 | Graph | Canvas rendered in 2D and 3D; fit, entity selection, two repeated expansions kept 4 nodes/3 relationships; Person filter showed 1/0; source inspector preserved literal markup and marked inference. | Passed |
 | Graph search | 120 matches paged in groups of 50; page-two selection opened entity 050. Failed subsequent search preserved the previous search label/results and displayed a clear error. | Passed |
 | Entity review | Three separate synthetic candidates exercised merge, keep split and ignore; each disappeared and displayed its result. Refresh retained decisions. Steward task completed with summary; empty candidate state rendered. | Passed for fixture/API UI contract |
@@ -34,6 +34,8 @@ Operator: Codex, September 7, 2026. User explicitly requested computer/browser-c
 3. Radix warned that source/history sheets lacked descriptions. Added concise accessible descriptions; final rebuilt visual check pending.
 4. Initial fixture omitted required `docs_with_embeddings` and task progress fields, producing NaN coverage and blank task counts. These were fixture defects; supplied the real response fields rather than claiming a production failure.
 5. The browser emitted a Three.js duplicate-import warning while both 2D and 3D worked. No uncaught application error was observed. Synthetic 503/stream failures were deliberately induced and tested.
+
+6. At 320px the bottom navigation clipped the theme button. Fixed equal-width flexible tabs and shortened the visible Dashboard caption to Home while retaining its accessible name. Added a red-to-green viewport-boundary and theme-toggle browser regression.
 
 ## Remaining acceptance
 

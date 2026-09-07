@@ -54,9 +54,11 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
     # cannot be silently erased. Ordinary Markdown links keep their labels.
     # Consume complete Markdown links before considering a bracketed title:
     # otherwise a verified title could hide an unverified attached link target.
+    paired_pattern = (r'\(\*(?P<paired_title>[^*\[\]()\n]+)\*,[ \t]*Paperless ID[ \t]+'
+                      r'(?P<paired_id>[1-9]\d*)\)')
     pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
                          r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)'
-                         r'|\([^()]*\bPaperless\s+ID\b[^()]*\)', re.I)
+                         r'|' + paired_pattern, re.I)
     parts, declarations, end, length = [], [], 0, 0
     text = text.strip()
     def unparsed_declarations(fragment, start):
@@ -86,7 +88,7 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
         title = re.fullmatch(r'(?:\[Source:\s*"([^"\[\]\n]*)"\s*\]|\(Source:\s*"([^"()\n]*)"\s*\))', raw, re.I)
         numeric = re.fullmatch(r'\(Paperless document\s+([1-9]\d*)\)', raw, re.I)
         link = re.fullmatch(r'\[Document\s+([1-9]\d*)\]\(/documents/([1-9]\d*)\)', raw, re.I)
-        paired = re.fullmatch(r'\(\*([^*\[\]()\n]+)\*,\s*Paperless ID\s+([1-9]\d*)\)', raw, re.I)
+        paired = re.fullmatch(paired_pattern, raw, re.I)
         if title:
             ids = titles.get(normalize_quote(title[1] if title[1] is not None else title[2]), set())
             if len(ids) == 1:
@@ -95,8 +97,8 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(numeric[1])
         elif link and link[1] == link[2] and int(link[1]) in document_ids:
             doc_id = int(link[1])
-        elif paired and titles.get(normalize_quote(paired[1]), set()) == {int(paired[2])}:
-            doc_id = int(paired[2])
+        elif paired and titles.get(normalize_quote(paired["paired_title"]), set()) == {int(paired["paired_id"])}:
+            doc_id = int(paired["paired_id"])
         if enclosed(match.start()) or (paired and re.match(r'\s*[\])]', text[match.end():])):
             doc_id = None
         if match.group(1) is not None and not link:

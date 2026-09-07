@@ -1032,6 +1032,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
 - Evaluation date (UTC): {plan.get("evaluated_at")}. A recent document date does not establish current status.
 - For a current-status question without explicit resolution evidence, answer with dated document observations only. Do not add a generic current-status disclaimer to the candidate; the final acceptance layer appends its own limitation to accepted documented facts.
+- For a policy inventory, use a complete source-observation sentence for each policy: "The [policy type] declaration records policy [identifier] with [documented issuer] for the term [start] to [end]." Include only fields supported by that record. Keep the source context in every sentence; detached insurer/number labels can imply current validity even when a separate term is dated.
 - Write facts without inline citations or links; the source audit attaches authoritative citations after validation.
 - Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly

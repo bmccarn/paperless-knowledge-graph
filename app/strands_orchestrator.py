@@ -202,7 +202,7 @@ Rules:
 - Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
 - Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
-- For a policy inventory, begin directly with the documented policy types, identifying names/numbers and dated terms. Avoid a separate introductory claim about which policies are most recent or currently valid; omit agent, address and premium details unless asked.
+- For a policy inventory, write a complete source-observation sentence for each policy: "The [policy type] declaration records policy [identifier] with [documented issuer] for the term [start] to [end]." Include only fields supported by that record. Keep the dated source context in each sentence instead of detached insurer/number labels that imply a current-status answer. Omit agent, address and premium details unless asked, and avoid a separate introductory claim about which policies are most recent or currently valid.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.

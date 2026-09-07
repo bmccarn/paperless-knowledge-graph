@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v9"
+POLICY_VERSION = "source-audit-v10"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -266,6 +266,46 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     return result
 
 
+def _plain_field_labels(text: str, content_start: int = 0, content_end: int | None = None):
+    """Ignore only balanced bold alphabetic field labels, retaining raw ranges."""
+    pattern = r"(?<![\w*\\])\*\*([A-Za-z][A-Za-z \t]*:)\*\*(?=\s|$)"
+    characters, ranges, cursor = [], [], 0
+    for match in re.finditer(pattern, text):
+        if match.start() and unicodedata.category(text[match.start() - 1]).startswith("M"):
+            continue
+        # Boundary context may guard a wrapper, but cannot authorize one whose
+        # own opening/closing syntax lies outside the selected source content.
+        if match.start() < content_start or match.end() > (len(text) if content_end is None else content_end):
+            continue
+        for index in range(cursor, match.start()):
+            characters.append(text[index])
+            ranges.append((index, index + 1))
+        for index in range(match.start(1), match.end(1)):
+            characters.append(text[index])
+            ranges.append((match.start() if index == match.start(1) else index,
+                           match.end() if index == match.end(1) - 1 else index + 1))
+        cursor = match.end()
+    for index in range(cursor, len(text)):
+        characters.append(text[index])
+        ranges.append((index, index + 1))
+    return "".join(characters), ranges
+
+
+def _quote_range(source: str, quote: str):
+    normalized = normalize_quote(quote)
+    if normalized not in normalize_quote(source):
+        return None
+    start = source.find(quote)
+    if start >= 0:
+        return start, start + len(quote)
+    words = list(re.finditer(r"\S+", source))
+    tokens = [unicodedata.normalize("NFC", w.group()) for w in words]
+    wanted = normalized.split(" ")
+    found = next((i for i in range(len(tokens) - len(wanted) + 1)
+                  if tokens[i:i + len(wanted)] == wanted), None)
+    return None if found is None else (words[found].start(), words[found + len(wanted) - 1].end())
+
+
 def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     if not isinstance(reference, dict):
         return None
@@ -279,23 +319,29 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     quote = reference.get("quote")
     if not isinstance(quote, str) or not normalize_quote(quote):
         return None
-    normalized = normalize_quote(quote)
     source = span["content"]
-    if normalized not in normalize_quote(source):
-        return None
-    # Map normalized matching back to an exact source range. Start with the
-    # common literal case, then use whitespace-separated source token offsets.
-    start = source.find(quote)
-    end = start + len(quote)
-    if start < 0:
-        words = list(re.finditer(r"\S+", source))
-        tokens = [unicodedata.normalize("NFC", w.group()) for w in words]
-        wanted = normalized.split(" ")
-        found = next((i for i in range(len(tokens) - len(wanted) + 1)
-                      if tokens[i:i + len(wanted)] == wanted), None)
-        if found is None:
+    bounds = _quote_range(source, quote)
+    if bounds is None:
+        prefix, suffix = span.get("boundary_before", ""), span.get("boundary_after", "")
+        visible, ranges = _plain_field_labels(
+            prefix + source + suffix, len(prefix), len(prefix) + len(source))
+        # Context controls the grammar, but a match must begin and end in
+        # this span. An outside prefix occurrence must not hide a later match.
+        eligible = [i for i, (start, end) in enumerate(ranges)
+                    if len(prefix) <= start < end <= len(prefix) + len(source)]
+        if not eligible:
             return None
-        start, end = words[found].start(), words[found + len(wanted) - 1].end()
+        first, last = eligible[0], eligible[-1] + 1
+        visible, ranges = visible[first:last], ranges[first:last]
+        plain_quote, _ = _plain_field_labels(quote)
+        visible_bounds = _quote_range(visible, plain_quote)
+        if visible_bounds is None:
+            return None
+        first, last = visible_bounds
+        bounds = ranges[first][0] - len(prefix), ranges[last - 1][1] - len(prefix)
+        if not 0 <= bounds[0] < bounds[1] <= len(source):
+            return None
+    start, end = bounds
     before = (span.get("boundary_before", "") + source[:start])[-1:]
     after = (source[end:] + span.get("boundary_after", ""))[:2]
     if (before and source[start].isalnum() and (before.isalnum() or before == "_")) or (

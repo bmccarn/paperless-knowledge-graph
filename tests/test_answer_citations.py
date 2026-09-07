@@ -1,6 +1,8 @@
 """Citation metadata must match both supplied evidence and audited references."""
 import copy
 import hashlib
+import subprocess
+import sys
 import unittest
 from tests.runtime import configure_test_environment
 configure_test_environment()
@@ -138,3 +140,46 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
         rejected = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize(
             "What is documented?", "The annual premium is 2026 USD. " + candidate, PACK)
         self.assertFalse(rejected["finalization"]["complete"])
+
+    async def test_malformed_paired_boundaries_fail_initial_and_repaired_answers(self):
+        quote = "The recorded premium is 999 USD, revision 4 in 2026 for account 101."
+        pack = {"items": [{**PACK["items"][0], "source_content": quote, "content": quote}]}
+        for attribution in ("(*Unknown title*,\nPaperless ID 999)",
+                            "(*Policy 2026 revision 4*,\r\nPaperless ID 999)",
+                            "(*Policy 2026 revision 4*, Paperless ID 101))",
+                            "(*Policy 2026 revision 4*, Paperless ID 101)]",
+                            "[*Unknown title*, Paperless ID 999]",
+                            "*Unknown title*, Paperless ID 999)"):
+            candidate = quote + " " + attribution
+            class Repair:
+                async def repair_answer(self, *args):
+                    return {"answer": candidate}
+            for repair in (None, Repair()):
+                with self.subTest(attribution=attribution, repair=bool(repair)):
+                    result = await AnswerFinalizer(QuoteAuditor(quote), repair).finalize(
+                        "What is documented?", candidate, pack)
+                    self.assertFalse(result["finalization"]["complete"])
+
+    async def test_citation_only_repair_can_remove_wrong_or_orphan_declaration(self):
+        evidence = copy.deepcopy(PACK)
+        evidence["items"].append({**PACK["items"][0], "id": "other", "document_id": 102, "title": "Other source"})
+        for candidate in (QUOTE + ' (*Other source*, Paperless ID 102)',
+                          '(*Policy 2026 revision 4*, Paperless ID 101) ' + QUOTE):
+            class Repair:
+                async def repair_answer(inner, question, answer, spans, verification):
+                    reasons = verification.get("rejection_reasons", []) + [reason
+                        for claim in verification["claims"] for reason in claim.get("rejection_reasons", [])]
+                    self.assertIn("invalid_attribution", reasons)
+                    return {"answer": QUOTE}
+            result = await AnswerFinalizer(QuoteAuditor(QUOTE), Repair()).finalize(
+                "What is documented?", candidate, evidence)
+            self.assertEqual(result["finalization"]["disposition"], "supported")
+            self.assertEqual(result["finalization"]["attempts"], 2)
+
+    def test_malformed_nesting_does_not_stall_before_audit_deadline(self):
+        # Canonicalization runs before the async audit timeout. Bound this probe
+        # in a separate process so the regression cannot stall the test runner.
+        code = ("from app.answer_finalization import canonical_candidate; "
+                "_, declarations = canonical_candidate('(' * 50000 + 'Paperless ID 101', {'items': []}); "
+                "assert declarations and all(d['document_id'] is None for d in declarations)")
+        subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, timeout=2)

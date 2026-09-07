@@ -56,13 +56,13 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
     # otherwise a verified title could hide an unverified attached link target.
     pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
                          r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)'
-                         r'|\([^\n)]*\bPaperless\s+ID\b[^\n)]*\)', re.I)
+                         r'|\([^()]*\bPaperless\s+ID\b[^()]*\)', re.I)
     parts, declarations, end, length = [], [], 0, 0
     text = text.strip()
     def unparsed_declarations(fragment, start):
         return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
             r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+'
-            r'|\([^\n)]*\bPaperless\s+ID\b', fragment, re.I)]
+            r'|\bPaperless\s+ID\b', fragment, re.I)]
     def enclosed(position):
         # Attributions inside another bracket/parenthesis are outside the
         # restricted grammar, including nested Markdown link labels.
@@ -94,7 +94,7 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(link[1])
         elif paired and titles.get(normalize_quote(paired[1]), set()) == {int(paired[2])}:
             doc_id = int(paired[2])
-        if enclosed(match.start()):
+        if enclosed(match.start()) or (paired and re.match(r'\s*[\])]', text[match.end():])):
             doc_id = None
         if match.group(1) is not None and not link:
             replacement = match.group(1)
@@ -349,6 +349,23 @@ def empty_ledger(candidate: str) -> dict:
             "candidate_digest": hashlib.sha256(candidate.encode()).hexdigest()}
 
 
+def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evaluated_at):
+    # Evaluate the same current-state boundary for every audited revision so a
+    # temporal-only failure can receive the bounded repair attempt too.
+    plan = dict(plan)
+    current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
+    asserts_current = re.search(current_words, candidate, re.I)
+    plan["requires_current"] = bool(plan.get("requires_current")) or bool(
+        asserts_current or re.search(current_words, question, re.I)
+        or any(claim["temporal_scope"] == "current" for claim in ledger["claims"]))
+    current = current_state(plan, evidence_pack, evaluated_at)
+    disposition = "supported"
+    if plan["requires_current"] and current["status"] != "resolved":
+        historical_only = all(c["temporal_scope"] == "historical" for c in ledger["claims"])
+        disposition = "qualified" if historical_only and not asserts_current else "current_unresolved"
+    return disposition, current
+
+
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
                  concurrency: int = 4):
@@ -367,7 +384,7 @@ class AnswerFinalizer:
     async def _audit(self, question, answer, pack, plan, declarations=()):
         units = answer_units(answer)
         spans = evidence_spans(pack)
-        manifest, claims = {}, []
+        manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
@@ -402,16 +419,16 @@ class AnswerFinalizer:
                         status = "unchecked"
                     if status != "unchecked":
                         checked += 1
-                    rejection_reasons = []
+                    claim_rejections = []
                     if not valid:
-                        rejection_reasons.append("invalid_reference")
+                        claim_rejections.append("invalid_reference")
                     elif not values_match(unit["text"], refs):
-                        rejection_reasons.append("value_mismatch")
-                    if status == "supported" and rejection_reasons:
+                        claim_rejections.append("value_mismatch")
+                    if status == "supported" and claim_rejections:
                         status = "unsupported"
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
-                                   "rejection_reasons": rejection_reasons,
+                                   "rejection_reasons": claim_rejections,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
@@ -422,6 +439,7 @@ class AnswerFinalizer:
             preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
             if not preceding:
                 complete = False
+                rejection_reasons.append("invalid_attribution")
                 continue
             claim = preceding[-1]
             if declaration["document_id"] not in {r["document_id"] for r in claim["references"]}:
@@ -441,6 +459,7 @@ class AnswerFinalizer:
         summary.update(total=len(units), audited=checked, audit_coverage=checked / len(units) if units else 0,
                        support_ratio=summary["supported"] / len(units) if units else 0)
         return {"claims": claims, "summary": summary, "complete": complete,
+                "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest()}
 
@@ -467,37 +486,35 @@ class AnswerFinalizer:
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations)
                     summary = ledger["summary"]
                     if ledger["complete"] and summary["supported"] == summary["total"]:
-                        disposition = "supported"
-                        break
-                    disposition = "unsupported" if ledger["complete"] else "incomplete"
+                        disposition, _ = temporal_acceptance(
+                            question, candidate, ledger, plan, evidence_pack, evaluated_at)
+                        if disposition in {"supported", "qualified"}:
+                            break
+                    else:
+                        disposition = "unsupported" if ledger["complete"] else "incomplete"
                     if attempt == 0 and self.repairer and len(candidate) <= 96000:
                         async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
-                                {"status": disposition, "claims": ledger["claims"]})
+                                {"status": disposition, "claims": ledger["claims"],
+                                 "rejection_reasons": ledger.get("rejection_reasons", [])})
                         replacement = repaired.get("answer") if isinstance(repaired, dict) else None
-                        if not isinstance(replacement, str) or not replacement.strip() or replacement.strip() == candidate:
+                        if not isinstance(replacement, str) or not replacement.strip():
                             break
-                        candidate, declarations = canonical_candidate(replacement, evidence_pack)
+                        revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
+                        if (revised, revised_declarations) == (candidate, declarations):
+                            break
+                        candidate, declarations = revised, revised_declarations
                     else:
                         break
             except TimeoutError:
                 disposition, error = "timeout", "The source audit exceeded its time budget."
             except Exception:
                 disposition, error = "audit_failed", "The source audit was unavailable or returned invalid data."
-        # Current status is a separate claim. A date on a document is insufficient;
-        # require explicit intervals and a semantic no-conflict assessment in plan.
-        current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
-        asserts_current = re.search(current_words, candidate, re.I)
-        # A fallible planner cannot switch off temporal acceptance for an
-        # explicitly current question or a claim the auditor labels current.
-        plan["requires_current"] = bool(plan.get("requires_current")) or bool(
-            asserts_current or re.search(current_words, question, re.I)
-            or any(claim["temporal_scope"] == "current" for claim in ledger["claims"]))
-        current = current_state(plan, evidence_pack, evaluated_at)
-        if disposition == "supported" and plan.get("requires_current") and current["status"] != "resolved":
-            historical_only = all(c["temporal_scope"] == "historical" for c in ledger["claims"])
-            disposition = "qualified" if historical_only and not asserts_current else "current_unresolved"
+        temporal_disposition, current = temporal_acceptance(
+            question, candidate, ledger, plan, evidence_pack, evaluated_at)
+        if disposition in {"supported", "qualified", "current_unresolved"}:
+            disposition = temporal_disposition
         supported = disposition in {"supported", "qualified"}
         public_answer = candidate if supported else ABSTENTION
         if disposition == "unaudited" and evidence_pack.get("items"):

@@ -116,6 +116,95 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(sum(len(s["content"]) for s in seen[-1]), 28000)
             self.assertEqual(len({s["span_id"] for s in seen[-1]}), len(seen[-1]))
 
+    async def test_plain_field_label_quote_maps_to_original_bold_ocr(self):
+        source = "Preface. **Policy Number:** ZX123.\n**Policy Period:** From 2026 to 2027."
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "source_kind": "ocr", "title": "Declaration", "content": source}]}
+        class Auditor:
+            def __init__(self, quote): self.quote = quote
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "temporal_scope": "historical",
+                    "references": [{"span_id": spans[0]["span_id"], "evidence_id": "record", "document_id": 101,
+                                    "quote": self.quote}]} for u in units]}
+        quote = "Policy Number: ZX123. Policy Period: From 2026 to 2027."
+        result = await AnswerFinalizer(Auditor(quote)).finalize(
+            "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", evidence)
+        self.assertTrue(result["finalization"]["complete"])
+        ref = result["claim_ledger"]["claims"][0]["references"][0]
+        self.assertEqual(ref["quote"], source[len("Preface. "):])
+        self.assertEqual(source[ref["start"]:ref["end"]], ref["quote"])
+        for bad in (quote.replace("2027", "2028"), quote.replace("Period:", "Period"),
+                    quote.replace("ZX123.", "ZX123. Invented text.")):
+            result = await AnswerFinalizer(Auditor(bad)).finalize(
+                "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", evidence)
+            self.assertFalse(result["finalization"]["complete"])
+        for unsupported_source in (source.replace("**Policy Number:**", "**Policy Number:"),
+                                   source.replace("**Policy Number:**", "~~Policy Number:~~"),
+                                   source.replace("**Policy Number:**", "**Policy 9 Number:**")):
+            other = {"items": [{**evidence["items"][0], "content": unsupported_source}]}
+            result = await AnswerFinalizer(Auditor(quote)).finalize(
+                "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", other)
+            self.assertFalse(result["finalization"]["complete"])
+
+    async def test_field_label_fallback_respects_window_context_and_escapes(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                source = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": source["span_id"], "evidence_id": source["evidence_id"],
+                    "document_id": 101, "quote": "Policy: ZX123."}]} for u in units]}
+        for prefix in ("X", "*", "\\", "é", "e\u0301"):
+            for padding in ("", " " * 3799):
+                source = padding + prefix + "**Policy:** ZX123."
+                evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                                      "title": "Record", "source_kind": "ocr", "content": source}]}
+                result = await AnswerFinalizer(Auditor()).finalize(
+                    "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+                self.assertFalse(result["finalization"]["complete"], (prefix, len(padding)))
+
+    async def test_field_label_match_skips_an_outside_prefix_occurrence(self):
+        source = "x" * 3798 + "**Policy:** ZX123.\nAn intervening line.\n**Policy:** ZX123."
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                selected = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": selected["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Policy: ZX123."}]} for u in units]}
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "title": "Record", "source_kind": "ocr", "content": source}]}
+        result = await AnswerFinalizer(Auditor()).finalize(
+            "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+        self.assertTrue(result["finalization"]["complete"])
+        ref = result["claim_ledger"]["claims"][0]["references"][0]
+        self.assertEqual(ref["start"], source.rindex("**Policy:"))
+        self.assertEqual(source[ref["start"]:ref["end"]], "**Policy:** ZX123.")
+
+    async def test_partial_label_cannot_borrow_an_outside_bold_wrapper(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                selected = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": selected["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Number: ZX123."}]} for u in units]}
+        for prefix in ("x", "*", "\\"):
+            source = " " * 3797 + prefix + "**Policy Number:** ZX123."
+            evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                                  "title": "Record", "source_kind": "ocr", "content": source}]}
+            result = await AnswerFinalizer(Auditor()).finalize(
+                "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+            self.assertFalse(result["finalization"]["complete"], prefix)
+
+    async def test_quote_cannot_truncate_a_combining_character(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": spans[0]["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Jose"}]} for u in units]}
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "title": "Record", "source_kind": "ocr", "content": "Jose\u0301"}]}
+        result = await AnswerFinalizer(Auditor()).finalize("Who is recorded?", "Jose", evidence)
+        self.assertFalse(result["finalization"]["complete"])
+
     async def test_wrong_digit_and_unit_fail_even_when_auditor_says_supported(self):
         for answer in ("Monthly premium is $312.00 USD.", "Monthly premium is €321.00 EUR."):
             with self.subTest(answer=answer):

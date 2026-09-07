@@ -271,6 +271,8 @@ def _plain_field_labels(text: str, content_start: int = 0, content_end: int | No
     pattern = r"(?<![\w*\\])\*\*([A-Za-z][A-Za-z \t]*:)\*\*(?=\s|$)"
     characters, ranges, cursor = [], [], 0
     for match in re.finditer(pattern, text):
+        if match.start() and unicodedata.category(text[match.start() - 1]).startswith("M"):
+            continue
         # Boundary context may guard a wrapper, but cannot authorize one whose
         # own opening/closing syntax lies outside the selected source content.
         if match.start() < content_start or match.end() > (len(text) if content_end is None else content_end):

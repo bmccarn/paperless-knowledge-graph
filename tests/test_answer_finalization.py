@@ -153,7 +153,7 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                 return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
                     "span_id": source["span_id"], "evidence_id": source["evidence_id"],
                     "document_id": 101, "quote": "Policy: ZX123."}]} for u in units]}
-        for prefix in ("X", "*", "\\"):
+        for prefix in ("X", "*", "\\", "é", "e\u0301"):
             for padding in ("", " " * 3799):
                 source = padding + prefix + "**Policy:** ZX123."
                 evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,

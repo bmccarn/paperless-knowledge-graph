@@ -350,17 +350,16 @@ WRONG extractions to AVOID:
 11. **Contract**: Only extract if a specific agreement is named. YES: "Deed of Trust #2024-001234". NO: "the agreement"
 12. **DateEvent**: Only named milestones. YES: "Gulf War Era", "2025 Filing Season". NO: "January 15, 2025"
 
-=== CANONICAL NAME GUIDANCE ===
-Use the most complete, properly-cased form found in the document:
-- Prefer full names: "John A. Doe" over "DOE"
-- Prefer "Department of Veterans Affairs" over "VA" (unless VA is the only form used)
-- Prefer "Charlotte, NC" over "charlotte" or "CHARLOTTE NC"
+=== SOURCE NAME GUIDANCE ===
+Keep distinct source-written names as separate untrusted candidates; choosing a shared canonical identity belongs to later identity review and resolution.
+When the source explicitly writes a full named entity and an alternate name or acronym, propose EACH literal name separately with its own evidence_quote containing the definition. For example, a source-written "Example Research Bureau (ERB)" can propose "Example Research Bureau" and "ERB"; do not combine that annotation into one entity name.
+These remain untrusted candidates, not an assertion that they are equivalent. Never guess an expansion or add a name absent from the source. Preserve distinguishing tokens, legal suffixes, and identity hints.
 
 Return a JSON object:
 {{
   "entities": [
     {{
-      "name": "entity name (canonical form)",
+      "name": "literal source-written entity name",
       "type": "Person/Organization/Location/System/Product/Document/Event/Condition/FinancialItem/InsurancePolicy/Contract/DateEvent/Address",
       "confidence": 0.95,
       "description": "brief description of the entity in context"
@@ -485,7 +484,7 @@ REMOVE entities that are:
 5. Process descriptions or procedural terms (e.g., "Direct Review", "Evidence Submission")
 6. Document section headers (e.g., "Section 3", "Part A")
 7. Descriptive phrases that aren't proper nouns (e.g., "How VA Combines Percentages")
-8. Duplicates or near-duplicates (keep the most complete version)
+8. Exact duplicate candidates with the same literal name, type, and identity_hint. Keep distinct source-written names, including full names and abbreviations, for separate review even if they may refer to one identity; decide their equivalence only in identity_reviews. Never discard a valid distinct name merely as a near-duplicate.
 9. Raw dates that aren't named periods (e.g., "2025-01-15", "January 15, 2026")
 10. Standalone zip codes, state abbreviations, or partial addresses
 

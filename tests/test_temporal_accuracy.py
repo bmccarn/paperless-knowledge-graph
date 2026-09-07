@@ -69,6 +69,22 @@ class TemporalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["finalization"]["disposition"], expected)
             self.assertEqual(result["finalization"]["attempts"], 2)
 
+    async def test_dated_answer_context_reaches_every_batch_without_certifying_new_values(self):
+        class ContextAuditor(SupportedAuditor):
+            async def audit_answer_units(self, question, units, spans, plan):
+                raw = await super().audit_answer_units(question, units, spans, plan)
+                recorded = "The dated statements record these premiums" in plan.get("answer_context", "")
+                for assessment in raw["assessments"]:
+                    assessment["temporal_scope"] = "historical" if recorded else "current"
+                return raw
+        candidate = "The dated statements record these premiums:\n" + "\n".join(["Premium: $321.00 USD."] * 8)
+        result = await AnswerFinalizer(ContextAuditor()).finalize("Current premium?", candidate, PACK)
+        self.assertEqual(result["finalization"]["disposition"], "qualified")
+        self.assertEqual(result["claim_ledger"]["summary"]["supported"], 8)
+        for unsafe in (candidate + "\nThis is the current premium.", candidate + "\nPremium: $999.00 USD."):
+            rejected = await AnswerFinalizer(ContextAuditor()).finalize("Current premium?", unsafe, PACK)
+            self.assertFalse(rejected["finalization"]["complete"])
+
     async def test_timeline_accepts_sourced_event_and_rejects_unknown_source_and_invalid_date(self):
         pack = {"items": [{"id": "move", "document_id": 88, "title": "Move record", "content": "Moved to Durham in 2024-02."}]}
         span = evidence_spans(pack)[0]

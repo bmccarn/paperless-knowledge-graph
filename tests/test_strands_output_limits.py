@@ -147,6 +147,20 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["finalization"]["disposition"], "supported")
         self.assertEqual(result["claim_ledger"]["summary"]["supported"], 1)
 
+    async def test_native_sdk_audit_payload_carries_ordered_answer_context(self):
+        expected_context = "\n".join([QUOTE] * 8)
+        answer = expected_context.replace("\n", "\n" * 10000, 1)
+        result = await AnswerFinalizer(self.orchestrator).finalize("Recorded coverage?", answer, PACK)
+        self.assertTrue(result["finalization"]["complete"])
+        self.assertEqual(len(self.requests), 2)
+        for request in self.requests:
+            message = request["messages"][-1]["content"]
+            if isinstance(message, list):
+                message = "".join(block.get("text", "") for block in message)
+            payload = json.loads(message)
+            self.assertEqual(payload["answer_context"], expected_context)
+            self.assertEqual(len(payload["units"]), 4)
+
     async def test_helper_requests_omit_output_caps(self):
         calls = [(lambda: self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True}),
             (lambda: self.orchestrator.extract_timeline("Synthetic question?", "Synthetic evidence"), []),

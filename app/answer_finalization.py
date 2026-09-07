@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v6"
+POLICY_VERSION = "source-audit-v7"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -55,12 +55,14 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
     # Consume complete Markdown links before considering a bracketed title:
     # otherwise a verified title could hide an unverified attached link target.
     pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
-                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)', re.I)
+                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)'
+                         r'|\([^\n)]*\bPaperless\s+ID\b[^\n)]*\)', re.I)
     parts, declarations, end, length = [], [], 0, 0
     text = text.strip()
     def unparsed_declarations(fragment, start):
         return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
-            r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+', fragment, re.I)]
+            r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+'
+            r'|\([^\n)]*\bPaperless\s+ID\b', fragment, re.I)]
     def enclosed(position):
         # Attributions inside another bracket/parenthesis are outside the
         # restricted grammar, including nested Markdown link labels.
@@ -81,6 +83,7 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
         title = re.fullmatch(r'(?:\[Source:\s*"([^"\[\]\n]*)"\s*\]|\(Source:\s*"([^"()\n]*)"\s*\))', raw, re.I)
         numeric = re.fullmatch(r'\(Paperless document\s+([1-9]\d*)\)', raw, re.I)
         link = re.fullmatch(r'\[Document\s+([1-9]\d*)\]\(/documents/([1-9]\d*)\)', raw, re.I)
+        paired = re.fullmatch(r'\(\*([^*\[\]()\n]+)\*,\s*Paperless ID\s+([1-9]\d*)\)', raw, re.I)
         if title:
             ids = titles.get(normalize_quote(title[1] if title[1] is not None else title[2]), set())
             if len(ids) == 1:
@@ -89,6 +92,8 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(numeric[1])
         elif link and link[1] == link[2] and int(link[1]) in document_ids:
             doc_id = int(link[1])
+        elif paired and titles.get(normalize_quote(paired[1]), set()) == {int(paired[2])}:
+            doc_id = int(paired[2])
         if enclosed(match.start()):
             doc_id = None
         if match.group(1) is not None and not link:
@@ -397,10 +402,16 @@ class AnswerFinalizer:
                         status = "unchecked"
                     if status != "unchecked":
                         checked += 1
-                    if status == "supported" and (not valid or not values_match(unit["text"], refs)):
+                    rejection_reasons = []
+                    if not valid:
+                        rejection_reasons.append("invalid_reference")
+                    elif not values_match(unit["text"], refs):
+                        rejection_reasons.append("value_mismatch")
+                    if status == "supported" and rejection_reasons:
                         status = "unsupported"
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
+                                   "rejection_reasons": rejection_reasons,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
@@ -415,6 +426,7 @@ class AnswerFinalizer:
             claim = preceding[-1]
             if declaration["document_id"] not in {r["document_id"] for r in claim["references"]}:
                 claim["status"] = "unsupported"
+                claim["rejection_reasons"].append("invalid_attribution")
         # Formatting and quantities can cross audit-unit boundaries. Recheck the
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
@@ -422,6 +434,7 @@ class AnswerFinalizer:
             if not values_match(answer, references):
                 for claim in claims:
                     claim["status"] = "unsupported"
+                    claim["rejection_reasons"].append("answer_value_mismatch")
         complete = complete and checked == len(units)
         summary = {status: sum(c["status"] == status for c in claims)
                    for status in ("supported", "unsupported", "conflicting", "missing", "unchecked")}

@@ -15,7 +15,8 @@ PACK = {"items": [{"id": "policy", "document_id": 101, "title": "Policy 2026 rev
 class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
     async def test_supported_quote_accepts_verified_attribution_formats(self):
         for attribution in ('[Source: "Policy 2026 revision 4"]', '(Source: "Policy 2026 revision 4")',
-                            '(Paperless document 101)', '[Document 101](/documents/101)'):
+                            '(Paperless document 101)', '[Document 101](/documents/101)',
+                            '(*Policy 2026 revision 4*, Paperless ID 101)'):
             with self.subTest(attribution=attribution):
                 result = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize("What is documented?", f'{QUOTE} {attribution}', PACK)
                 self.assertEqual(result["finalization"]["disposition"], "supported")
@@ -74,9 +75,11 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
                 evidence["items"].append(other)
             else:
                 evidence["items"] = [other]
-            result = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize(
-                "What is documented?", QUOTE + ' [Source: "Policy 2026 revision 4"]', evidence)
-            self.assertFalse(result["finalization"]["complete"])
+            for attribution in ('[Source: "Policy 2026 revision 4"]',
+                                '(*Policy 2026 revision 4*, Paperless ID 101)'):
+                result = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize(
+                    "What is documented?", QUOTE + ' ' + attribution, evidence)
+                self.assertFalse(result["finalization"]["complete"])
 
     async def test_document_in_pack_but_not_claim_references_is_not_valid_attribution(self):
         evidence = copy.deepcopy(PACK)
@@ -102,3 +105,36 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["finalization"]["disposition"], "supported")
         self.assertEqual(result["finalization"]["attempts"], 2)
         self.assertEqual(result["claim_ledger"]["candidate_digest"], hashlib.sha256(QUOTE.encode()).hexdigest())
+
+    async def test_paired_title_id_requires_exact_matching_source_and_own_references(self):
+        quote = "Policy costs 101 USD; revision 4 was recorded in 2026."
+        evidence = {"items": [{**PACK["items"][0], "source_content": quote, "content": quote},
+                              {**PACK["items"][0], "id": "other", "document_id": 102,
+                               "title": "Other source", "source_content": quote, "content": quote}]}
+        for attribution in ("(*Unknown title*, Paperless ID 101)",
+                            "(*Policy 2026 revision 4*, Paperless ID 102)",
+                            "(*Other source*, Paperless ID 102)",
+                            "(*Policy 2026 revision 4; coverage is unlimited*, Paperless ID 101)",
+                            "(*Policy 2026 revision 4*, Paperless ID 101; coverage is unlimited)",
+                            "[(*Policy 2026 revision 4*, Paperless ID 101)](https://example.invalid)",
+                            "((*Policy 2026 revision 4*, Paperless ID 101))",
+                            "(*Policy 2026 revision 4*, Paperless ID 101",
+                            "(*Policy 2026 revision 4*, Paperless ID 101) costs 999 USD"):
+            with self.subTest(attribution=attribution):
+                result = await AnswerFinalizer(QuoteAuditor(quote)).finalize(
+                    "What is documented?", quote + " " + attribution, evidence)
+                self.assertFalse(result["finalization"]["complete"])
+
+    async def test_repair_accepts_paired_source_metadata_without_waiving_factual_numbers(self):
+        candidate = QUOTE + ' (*Policy 2026 revision 4*, Paperless ID 101)'
+        class Repair:
+            async def repair_answer(self, *args):
+                return {"answer": candidate}
+        result = await AnswerFinalizer(QuoteAuditor(QUOTE), Repair()).finalize(
+            "What is documented?", QUOTE + ' (Paperless document 999)', PACK)
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertEqual(result["finalization"]["attempts"], 2)
+        self.assertEqual(result["claim_ledger"]["candidate_digest"], hashlib.sha256(QUOTE.encode()).hexdigest())
+        rejected = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize(
+            "What is documented?", "The annual premium is 2026 USD. " + candidate, PACK)
+        self.assertFalse(rejected["finalization"]["complete"])

@@ -178,3 +178,23 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepairDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_repair_receives_independent_value_and_reference_rejection_reasons(self):
+        for candidate, invalid_reference, expected in (
+                ("The premium is $999.00 USD.", False, "value_mismatch"),
+                ("The premium is $321.00 USD.", True, "invalid_reference")):
+            class Auditor(SupportedAuditor):
+                async def audit_answer_units(self, *args):
+                    result = await super().audit_answer_units(*args)
+                    if invalid_reference:
+                        result["assessments"][0]["references"].append({"span_id": "unknown"})
+                    return result
+            class Repair:
+                async def repair_answer(inner, question, answer, evidence, verification):
+                    self.assertIn(expected, verification["claims"][0]["rejection_reasons"])
+                    return None
+            result = await AnswerFinalizer(Auditor(), Repair()).finalize("Premium?", candidate, PACK)
+            self.assertEqual(result["finalization"]["disposition"], "unsupported")
+            self.assertIn(expected, result["claim_ledger"]["claims"][0]["rejection_reasons"])

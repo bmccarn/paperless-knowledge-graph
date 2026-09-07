@@ -176,6 +176,24 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(pipeline._document_bindings.get())
         self.assertEqual(len(support_records(self.graph.edges[("org-a", "org-b", "PARTNERS_WITH")])[101]["evidence_spans"]), 2)
 
+    async def test_provider_role_retains_only_exact_matching_field_evidence(self):
+        name = "Example Assurance Company"
+        source = f"Insurer: {name}. Previous provider: Other Bank."
+        good = {"start": 0, "end": len(f"Insurer: {name}."), "quote": f"Insurer: {name}."}
+        unrelated = {"start": source.index("Other Bank"), "end": source.index("Other Bank") + 10, "quote": "Other Bank"}
+        for kind in ("insurance", "medical_lab"):
+            for spans, expected in (([good, good, unrelated, {**good, "start": 1}], [good]),
+                                    ([unrelated, {**good, "start": 1}], [])):
+                with self.subTest(kind=kind, valid=bool(expected)):
+                    self.graph.edges.clear()
+                    extracted = {"provider": name, "metadata_evidence": {"0": {"provider": spans}},
+                                 "all_entities": [{"entity_id": "insurer", "name": name, "type": "Organization",
+                                                   "evidence": [good]}]}
+                    bindings = DocumentBindings(101, extracted, source, self.resolver)
+                    await pipeline._process_extraction(101, "101", kind, extracted, bindings=bindings)
+                    props = self.graph.edges[("101", f"accepted-Organization-{name}", "PROVIDER_FOR")]
+                    self.assertEqual(support_records(props)[101].get("evidence_spans", []), expected)
+
     async def test_metadata_roles_reject_incompatible_corrected_types_matrix(self):
         cases = [
             ("medical_lab", {"patient_name": "Morgan Lee", "diagnoses": ["Atlas"]}, "DIAGNOSED_WITH"),
@@ -256,6 +274,33 @@ class PipelineDatastoreContracts(unittest.IsolatedAsyncioTestCase):
             result = await session.run("MATCH (a {uuid:$left})-[r:PARTNERS_WITH]->(b {uuid:$right}) RETURN properties(r) AS props", left=self.left, right=self.right)
             row = await result.single()
             return support_records(row["props"])
+
+    async def test_provider_field_quotes_roundtrip_repeat_and_source_replacement(self):
+        name = "Example Laboratories"
+        async def process(doc_id, source):
+            span = {"start": 0, "end": len(source), "quote": source}
+            extracted = {"provider": name, "metadata_evidence": {"0": {"provider": [span]}},
+                         "all_entities": [{"entity_id": "provider", "name": name, "type": "Organization",
+                                           "evidence": [span]}]}
+            bindings = DocumentBindings(doc_id, extracted, source, self.resolver)
+            await pipeline._process_extraction(doc_id, str(doc_id), "medical_lab", extracted, bindings=bindings)
+        async def records():
+            async with self.graph.driver.session() as session:
+                result = await session.run("MATCH (d:Document)-[r:PROVIDER_FOR]->(n {uuid:$uuid}) "
+                                          "RETURN d.paperless_id AS id, properties(r) AS props", uuid=self.left)
+                return {row["id"]: support_records(row["props"]) async for row in result}
+        with patch.object(pipeline, "graph_store", self.graph):
+            await process(991731, f"Provider: {name}.")
+            await process(991732, f"Other source provider: {name}.")
+            before = await records()
+            self.assertEqual(before[991731][991731]["evidence_spans"][0]["quote"], f"Provider: {name}.")
+            await process(991731, f"Provider: {name}.")
+            self.assertEqual(await records(), before)
+            await process(991731, f"Current clinic: {name}.")
+            after = await records()
+            self.assertEqual(after[991731][991731]["evidence_spans"],
+                             [{"start": 0, "end": len(f"Current clinic: {name}."), "quote": f"Current clinic: {name}."}])
+            self.assertEqual(after[991732], before[991732])
 
     async def test_pipeline_union_idempotence_and_source_replacement_on_real_graph(self):
         extracted = alias_fixture()

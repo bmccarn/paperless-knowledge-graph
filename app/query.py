@@ -476,7 +476,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)
-        if cached is not None:
+        if self._cacheable_answer(cached, mode):
             cached["cached"] = True
             return cached
 
@@ -567,9 +567,19 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "cached": False,
         }
 
-        if await self._check_delivery_snapshot(result):
+        if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode):
             await cache_set(query_cache, cache_key, result)
         return result
+
+    @staticmethod
+    def _cacheable_answer(result, mode):
+        if not isinstance(result, dict):
+            return False
+        final = result.get("finalization")
+        if not isinstance(final, dict):
+            return False
+        return (final.get("complete") is True and final.get("disposition") in {"supported", "qualified"}) or (
+            mode == "quick" and final.get("disposition") == "unaudited")
 
     async def _check_delivery_snapshot(self, result: dict) -> bool:
         """One snapshot check for cached and newly audited public results."""

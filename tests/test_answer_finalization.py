@@ -84,6 +84,38 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["finalization"]["disposition"], "supported")
         self.assertEqual(result["finalization"]["cited_document_ids"], [101])
 
+    async def test_mixed_batch_keeps_source_for_each_assertion(self):
+        from app.evidence import build_evidence_pack
+        question = "Which records are documented?"
+        facts = ["Alpha coverage records a red truck.",
+                 "Alpha coverage records a blue car.",
+                 "Alpha coverage records a green van.",
+                 "Beta declaration records policy 7654321."]
+        crowded = " ".join(facts[:3]) + " ordinary source text" * 185
+        chunks = [{"document_id": 101, "chunk_index": i, "title": "Alpha records", "content": crowded}
+                  for i in range(12)]
+        chunks.append({"document_id": 202, "chunk_index": 0, "title": "Beta declaration", "content": facts[3] + " archived attachment" * 170})
+        evidence = build_evidence_pack(question, {}, chunks, [])
+        seen = []
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                seen.append(spans)
+                assessments = []
+                for unit in units:
+                    source = next((s for s in spans if unit["text"] in s["content"]), None)
+                    assessments.append({"unit_id": unit["id"], "status": "supported" if source else "missing",
+                        "temporal_scope": "historical", "references": [{"span_id": source["span_id"],
+                        "evidence_id": source["evidence_id"], "document_id": source["document_id"],
+                        "quote": unit["text"]}] if source else []})
+                return {"assessments": assessments}
+        for order in (facts, list(reversed(facts))):
+            result = await AnswerFinalizer(Auditor()).finalize(question, "\n".join(order), evidence)
+            self.assertEqual(result["finalization"]["disposition"], "supported")
+            self.assertEqual(result["claim_ledger"]["summary"]["supported"], 4)
+            self.assertEqual(set(result["finalization"]["cited_document_ids"]), {101, 202})
+            self.assertLessEqual(sum(len(s["content"]) for s in seen[-1]), 28000)
+            self.assertEqual(len({s["span_id"] for s in seen[-1]}), len(seen[-1]))
+
     async def test_wrong_digit_and_unit_fail_even_when_auditor_says_supported(self):
         for answer in ("Monthly premium is $312.00 USD.", "Monthly premium is €321.00 EUR."):
             with self.subTest(answer=answer):

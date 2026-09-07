@@ -39,6 +39,22 @@ class RetrievedEngine(QueryEngine):
 
 
 class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_56_unit_answer_completes_through_stream_and_ordinary_delivery(self):
+        from tests.test_audit_execution import ConcurrentAuditor
+        answer = "\n".join(["Monthly premium: $321.00 USD."] * 56)
+        for streaming in (False, True):
+            invalidate_on_sync()
+            auditor = ConcurrentAuditor(delay=.01)
+            with patch("app.query.strands_orchestrator", auditor), \
+                    patch.object(self.engine, "_final_synthesis", AsyncMock(return_value={"answer": answer})), \
+                    patch("app.query.settings.answer_audit_timeout_seconds", .1):
+                result = ([event async for event in self.engine.query_stream("Recorded premium?", mode="strict")][-1]
+                          if streaming else await self.engine.query("Recorded premium?", mode="strict"))
+            self.assertEqual(result["finalization"]["disposition"], "supported")
+            self.assertEqual(result["claim_ledger"]["summary"]["supported"], 56)
+            self.assertEqual(auditor.peak, 4)
+            self.assertEqual(auditor.active, 0)
+
     async def asyncSetUp(self):
         invalidate_on_sync()
         self.engine = RetrievedEngine()

@@ -42,6 +42,10 @@ class EntitySteward:
     def __init__(self):
         self._running = False
 
+    @property
+    def running(self) -> bool:
+        return self._running
+
     async def run_once(
         self,
         reason: str = "manual",

@@ -339,7 +339,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
 @asynccontextmanager
 async def _graph_mutation(task_type: str):
     """Single-process admission shared with ingestion's task registry."""
-    if any(t.get("status") in {"running", "cancelling"} for t in _tasks.values()):
+    if entity_steward.running or any(t.get("status") in {"running", "cancelling"} for t in _tasks.values()):
         raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
     task_id = str(uuid.uuid4())
     _tasks[task_id] = {"status": "running", "type": task_type, "started": datetime.now(timezone.utc).isoformat()}
@@ -354,8 +354,9 @@ async def _graph_mutation(task_type: str):
 
 
 async def _run_sync_task(task_type: str = "sync") -> str:
+    from app.config import settings
     running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running:
+    if running or entity_steward.running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
     task_id = str(uuid.uuid4())
@@ -392,7 +393,8 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
             if _tasks[task_id]["status"] == "completed":
-                asyncio.create_task(entity_steward.run_once(reason="post-sync"))
+                _tasks[task_id]["steward_task_id"] = await _run_entity_steward_task(
+                    limit=settings.entity_steward_candidate_limit, reason="post-sync")
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -407,19 +409,20 @@ async def _run_sync_task(task_type: str = "sync") -> str:
     return task_id
 
 
-async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> str:
+async def _run_entity_steward_task(limit: int = 75, reason: str = "manual", focus_uuid: str | None = None) -> str:
     running = [
         t for t in _tasks.values()
-        if t["status"] == "running" and t.get("type") == "entity_steward"
+        if t["status"] in {"running", "cancelling"}
     ]
-    if running:
-        raise HTTPException(status_code=409, detail="Entity steward is already running.")
+    if running or entity_steward.running:
+        raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
 
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
         "status": "running",
         "type": "entity_steward",
+        "reason": reason,
         "started": now.isoformat(),
         "_start_time": time.time(),
         "limit": limit,
@@ -431,7 +434,7 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
 
     async def _run():
         try:
-            result = await entity_steward.run_once(reason=reason, limit=limit)
+            result = await entity_steward.run_once(reason=reason, limit=limit, focus_uuid=focus_uuid)
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["reviewed_count"] = result.get("reviewed_count", 0)
@@ -439,6 +442,9 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error("Entity steward task %s failed: %s", task_id, e, exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -460,7 +466,7 @@ async def _run_reindex_documents_task(
     update_last_sync: bool = False,
 ) -> tuple[str, str]:
     running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running:
+    if running or entity_steward.running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
     doc_ids = sorted({int(doc_id) for doc_id in doc_ids})
@@ -614,7 +620,11 @@ async def _entity_steward_loop():
     await asyncio.sleep(min(300, interval * 60))
     while True:
         try:
-            await entity_steward.run_once(reason="periodic")
+            await _run_entity_steward_task(limit=settings.entity_steward_candidate_limit, reason="periodic")
+        except HTTPException as e:
+            if e.status_code != 409:
+                raise
+            logger.info("Periodic entity steward skipped while another graph task is active")
         except Exception as e:
             logger.error("Entity steward periodic run failed: %s", e, exc_info=True)
         await asyncio.sleep(interval * 60)
@@ -743,6 +753,7 @@ async def status():
             "last_sync": last_sync.isoformat() if last_sync else None,
             "paperless_url": _get_paperless_url(),
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
+            "entity_steward": {"running": entity_steward.running},
             "cache": cache_stats,
             "freshness": await _freshness_snapshot(),
         }
@@ -1484,11 +1495,12 @@ def _entity_suggestion_map(decisions: list[dict]) -> dict[tuple[str, str], dict]
 
 @app.post("/entity-review/steward")
 async def entity_review_steward(limit: int = 50):
-    try:
-        return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
-    except Exception as e:
-        logger.error("Entity steward run failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    async with _graph_mutation("entity_steward"):
+        try:
+            return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
+        except Exception as e:
+            logger.error("Entity steward run failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/entity-review/steward/task", response_model=TaskResponse)
@@ -1522,8 +1534,6 @@ async def entity_review_merge(req: EntityMergeRequest):
     async with _graph_mutation("merge-entities"):
         try:
             merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid, review_method="entity_review_api")
-            asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
-            return {"status": "merged", "entity": merged}
         except EntityMergeProhibited as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
@@ -1534,6 +1544,8 @@ async def entity_review_merge(req: EntityMergeRequest):
         finally:
             await invalidate_on_sync_async()
             _clear_freshness_cache()
+    steward_task_id = await _run_entity_steward_task(reason="post-merge", focus_uuid=req.primary_uuid, limit=25)
+    return {"status": "merged", "entity": merged, "steward_task_id": steward_task_id}
 
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import httpx
 from typing import Any
 
 from app.config import settings
@@ -20,12 +21,12 @@ try:
     if not settings.strands_enabled:
         raise ImportError("Strands disabled by configuration")
     from strands import Agent
-    from strands.models.litellm import LiteLLMModel
+    from strands.models.openai import OpenAIModel
 
     STRANDS_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - depends on optional runtime package
     Agent = None
-    LiteLLMModel = None
+    OpenAIModel = None
     STRANDS_AVAILABLE = False
     _STRANDS_IMPORT_ERROR = str(exc)
 else:
@@ -37,17 +38,7 @@ class StrandsQueryOrchestrator:
 
     def __init__(self):
         self.enabled = bool(settings.strands_enabled and STRANDS_AVAILABLE)
-        if self.enabled:
-            # LiteLLM's aiohttp proxy transport drops its ephemeral session
-            # before the public cleanup helper can close it. The httpx path is
-            # cached and closed deterministically by _close_litellm_clients().
-            import litellm
-
-            litellm.disable_aiohttp_transport = True
-        # LiteLLM caches aiohttp transports globally. Serialize the bounded
-        # Strands calls so each one can close and evict its HTTP clients without
-        # racing another request.
-        self._client_lock = asyncio.Lock()
+        self._calls = asyncio.Semaphore(settings.strands_max_concurrent_calls)
 
     @property
     def status(self) -> dict[str, Any]:
@@ -78,6 +69,8 @@ class StrandsQueryOrchestrator:
                 "status. Do not infer absence from retrieval or treat a derived summary as original proof. "
                 "Use missing when evidence is absent and conflicting when sources disagree. Headings and "
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
+                "Use the shortest complete exact quote that supports the assertion; do not copy entire "
+                "source spans when a shorter quote suffices. Return JSON only, with no explanations. "
                 "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
                 "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|current|none}]}.") ,
             prompt=json.dumps(payload, ensure_ascii=False))
@@ -253,7 +246,7 @@ Rules:
         )
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str) -> dict[str, Any]:
-        async with self._client_lock:
+        async with self._calls:
             try:
                 agent = Agent(
                     name=name,
@@ -270,31 +263,20 @@ Rules:
             except Exception as exc:
                 logger.warning("Strands %s failed: %s", name, exc)
                 return {}
-            finally:
-                await self._close_litellm_clients()
-
-    async def _close_litellm_clients(self):
-        if not STRANDS_AVAILABLE:
-            return
-        try:
-            import litellm
-
-            await litellm.close_litellm_async_clients()
-            litellm.in_memory_llm_clients_cache.flush_cache()
-        except Exception as exc:
-            logger.warning("Failed to close Strands LiteLLM clients: %s", exc)
 
     async def close(self):
-        async with self._client_lock:
-            await self._close_litellm_clients()
+        # The pinned Strands OpenAI transport owns/closes each invocation's
+        # client, including on cancellation. No process-global cache is mutated.
+        pass
 
     def _model(self):
         model_id = settings.strands_model or settings.gemini_model
-        return LiteLLMModel(
+        return OpenAIModel(
             client_args={
                 "api_key": settings.litellm_api_key or "unused",
-                "api_base": settings.litellm_url,
-                "use_litellm_proxy": True,
+                "base_url": settings.litellm_url,
+                "max_retries": 0,
+                "timeout": httpx.Timeout(float(settings.strands_call_timeout_seconds), connect=5.0),
             },
             model_id=model_id,
         )

@@ -168,6 +168,8 @@ class PaperlessClient:
         fields["index_policy"] = "source-origin-v2"
         from app.entity_policy import RESOLUTION_POLICY
         fields["resolution_policy"] = RESOLUTION_POLICY
+        from app.extraction_evidence import RECONCILIATION_VERSION
+        fields["reconciliation_version"] = RECONCILIATION_VERSION
         # A successful old-model extraction must not satisfy a new-model sync.
         # Keep the OCR hash independent for feedback/source revision identity.
         fields["extraction_model"] = settings.gemini_model

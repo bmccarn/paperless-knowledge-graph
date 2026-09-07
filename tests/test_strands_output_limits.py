@@ -1,5 +1,6 @@
-"""Real Strands/LiteLLM serialization against a synthetic HTTP transport."""
+"""Real Strands serialization to the proxy through a synthetic HTTP transport."""
 import json
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -8,8 +9,8 @@ from tests.runtime import configure_test_environment
 configure_test_environment()
 
 from strands import Agent
-from strands.models.litellm import LiteLLMModel
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+from strands.models.openai import OpenAIModel
+from openai import AsyncOpenAI
 from app import strands_orchestrator as module
 from app.answer_finalization import AnswerFinalizer
 
@@ -25,11 +26,23 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
         self.force_length = False
+        self.active = self.peak = 0
+        self.clients = []
+        self.delay = .01
+        self.started = asyncio.Event()
 
         async def handle(request):
             self.assertEqual(request.url.host, "127.0.0.1")
             body = json.loads(request.content)
             self.requests.append(body)
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            if self.active == 4:
+                self.started.set()
+            try:
+                await asyncio.sleep(self.delay)
+            finally:
+                self.active -= 1
             message = body["messages"][-1]["content"]
             if isinstance(message, list):
                 message = "".join(block.get("text", "") for block in message)
@@ -56,16 +69,24 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             data = "".join("data: " + json.dumps(part) + "\n\n" for part in (chunk, end)) + "data: [DONE]\n\n"
             return httpx.Response(200, content=data.encode(), headers={"content-type": "text/event-stream"})
 
+        def client_factory(**kwargs):
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+            self.clients.append(client)
+            return AsyncOpenAI(http_client=client, **kwargs)
+
         self.patches = [patch.object(module, "Agent", Agent),
-            patch.object(module, "LiteLLMModel", LiteLLMModel),
+            patch.object(module, "OpenAIModel", OpenAIModel),
             patch.object(module, "STRANDS_AVAILABLE", True),
             patch.object(module.settings, "strands_enabled", True),
-            patch.object(AsyncHTTPHandler, "_create_async_transport", return_value=httpx.MockTransport(handle))]
+            patch("strands.models.openai.openai.AsyncOpenAI", side_effect=client_factory)]
         for item in self.patches:
             item.start()
         self.addCleanup(lambda: [item.stop() for item in reversed(self.patches)])
         self.orchestrator = module.StrandsQueryOrchestrator()
         self.addAsyncCleanup(self.orchestrator.close)
+
+    async def asyncTearDown(self):
+        self.assertTrue(all(client.is_closed for client in self.clients))
 
     async def test_supported_audit_can_finish_above_former_output_cap(self):
         result = await AnswerFinalizer(self.orchestrator).finalize("What coverage is listed?", QUOTE, PACK)
@@ -93,3 +114,24 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(result["finalization"]["disposition"], "supported")
         self.assertFalse(result["finalization"]["complete"])
         self.assertNotIn(QUOTE, result["answer"])
+
+    async def test_overlapping_helpers_use_independent_transport_lifetimes(self):
+        results = await asyncio.gather(*(self.orchestrator.plan_query("Synthetic question?", "strict") for _ in range(8)))
+        self.assertEqual(results, [{"ok": True}] * 8)
+        self.assertGreater(self.peak, 1)
+        self.assertLessEqual(self.peak, 4)
+        self.assertEqual(self.active, 0)
+
+    async def test_cancellation_closes_active_clients_and_releases_call_slots(self):
+        self.delay = 10
+        tasks = [asyncio.create_task(self.orchestrator.plan_query("Synthetic question?", "strict")) for _ in range(8)]
+        try:
+            await asyncio.wait_for(self.started.wait(), timeout=1)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.assertEqual(self.active, 0)
+        self.assertTrue(all(client.is_closed for client in self.clients))
+        self.delay = 0
+        self.assertEqual(await self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True})

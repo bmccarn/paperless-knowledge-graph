@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v7"
+POLICY_VERSION = "source-audit-v8"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -393,13 +393,16 @@ class AnswerFinalizer:
         checked = 0
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
+            # Preserve surrounding dated/section context across batches. This
+            # is bounded answer prose, not an additional source of evidence.
+            audit_plan = {**plan, "answer_context": "\n".join(unit["text"] for unit in units)}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
                     selected = select_spans(question, batch, spans)
-                    raw = await self.auditor.audit_answer_units(question, batch, selected, plan)
+                    raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
                     results[index] = (selected, raw)
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):

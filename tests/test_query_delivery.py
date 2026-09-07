@@ -185,6 +185,43 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["confidence"], 0)
         self.assertEqual(result["finalization"]["disposition"], "incomplete")
 
+    async def test_retry_after_unavailable_audit_runs_again_then_caches_success(self):
+        class Unavailable:
+            async def audit_answer_units(self, *args):
+                return None
+            async def repair_answer(self, *args):
+                return None
+        for streaming in (False, True):
+            invalidate_on_sync()
+            self.engine.calls.clear()
+            with patch("app.query.strands_orchestrator", Unavailable()):
+                failed = await self.engine.query("Recorded premium?", mode="strict")
+            self.assertFalse(failed["finalization"]["complete"])
+            result = ([event async for event in self.engine.query_stream("Recorded premium?", mode="strict")][-1]
+                      if streaming else await self.engine.query("Recorded premium?", mode="strict"))
+            self.assertTrue(result["finalization"]["complete"])
+            self.assertFalse(result["cached"])
+            cached = await self.engine.query("Recorded premium?", mode="strict")
+            self.assertTrue(cached["cached"])
+            self.assertEqual(len(self.engine.calls), 2)
+
+    async def test_historical_failed_cache_entries_are_ignored(self):
+        successful = await self.engine.query("Recorded premium?", mode="strict")
+        for disposition in ("incomplete", "unsupported", "timeout", "audit_failed", "current_unresolved", "corpus_changed"):
+            failed = copy.deepcopy(successful)
+            failed["finalization"].update(complete=False, disposition=disposition)
+            with patch("app.query.cache_get", AsyncMock(return_value=failed)):
+                result = await self.engine.query("Recorded premium?", mode="strict")
+            self.assertFalse(result["cached"], disposition)
+            self.assertTrue(result["finalization"]["complete"], disposition)
+
+    async def test_explicitly_unaudited_quick_answer_still_reuses_cache(self):
+        result = await self.engine.query("Recorded premium?", mode="quick")
+        self.assertEqual(result["finalization"]["disposition"], "unaudited")
+        cached = await self.engine.query("Recorded premium?", mode="quick")
+        self.assertTrue(cached["cached"])
+        self.assertEqual(len(self.engine.calls), 1)
+
     async def test_cached_answers_recheck_snapshot_before_ordinary_and_stream_delivery(self):
         import app.query as query_module
         for streaming in (False, True):

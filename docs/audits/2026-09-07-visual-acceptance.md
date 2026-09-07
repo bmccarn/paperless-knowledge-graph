@@ -35,7 +35,7 @@ Operator: Codex, September 7, 2026. User explicitly requested computer/browser-c
 4. Initial fixture omitted required `docs_with_embeddings` and task progress fields, producing NaN coverage and blank task counts. These were fixture defects; supplied the real response fields rather than claiming a production failure.
 5. The browser emitted a Three.js duplicate-import warning while both 2D and 3D worked. No uncaught application error was observed. Synthetic 503/stream failures were deliberately induced and tested.
 
-6. At 320px the bottom navigation clipped the theme button. Fixed equal-width flexible tabs and shortened the visible Dashboard caption to Home while retaining its accessible name. Added a red-to-green viewport-boundary and theme-toggle browser regression.
+6. At 320px the bottom navigation clipped the theme button. Fixed equal-width flexible tabs and shortened the visible Dashboard caption to Home with a matching accessible name. Added a red-to-green viewport-boundary and theme-toggle browser regression.
 
 ## Remaining acceptance
 

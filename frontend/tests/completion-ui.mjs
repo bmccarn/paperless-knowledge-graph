@@ -255,7 +255,7 @@ test("all navigation and theme controls remain visible on narrow phones", async 
   const { page } = await fixturePage(t);
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto(`${base}/query`);
-  for (const name of ["Dashboard", "Query", "Graph", "Docs", "Review", "Hubs", "Debug", "Toggle theme"]) {
+  for (const name of ["Home", "Query", "Graph", "Docs", "Review", "Hubs", "Debug", "Toggle theme"]) {
     const control = page.getByRole(name === "Toggle theme" ? "button" : "link", { name, exact: true });
     const box = await control.boundingBox();
     assert.ok(box && box.x >= 0 && box.x + box.width <= 320, `${name} must fit inside the viewport`);

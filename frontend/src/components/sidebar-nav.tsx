@@ -139,7 +139,7 @@ export function SidebarNav() {
               <Link
                 key={item.href}
                 href={item.href}
-                    aria-label={item.label}
+                    aria-label={item.href === "/" ? "Home" : item.label}
                     aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] py-1 px-0.5 rounded-lg transition-colors",

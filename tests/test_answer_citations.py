@@ -185,5 +185,7 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
                 "_, declarations = canonical_candidate('(' * 50000 + 'Paperless ID 101', {'items': []}); "
                 "assert declarations and all(d['document_id'] is None for d in declarations); "
                 "_, repeated = canonical_candidate('(*Unknown*, Paperless ID 101) ' * 3000, {'items': []}); "
-                "assert len(repeated) == 3000 and all(d['document_id'] is None for d in repeated)")
+                "assert len(repeated) == 3000 and all(d['document_id'] is None for d in repeated); "
+                "_, unclosed = canonical_candidate('(' + 'Paperless ID 101 ' * 6000, {'items': []}); "
+                "assert len(unclosed) == 6000 and all(d['document_id'] is None for d in unclosed)")
         subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, timeout=2)

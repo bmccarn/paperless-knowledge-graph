@@ -112,6 +112,8 @@ class CoreferenceTests(unittest.TestCase):
                 self.assertEqual(initialism_expansions("NES", source), ["Network Entity Systems"])
                 self.assertEqual(initialism_expansions("DOE", f"{marker}US Department of Energy (DOE){marker} signed."), [])
                 self.assertEqual(initialism_expansions("NES", f"Not {marker}Network Entity Systems (NES){marker} signed."), [])
+                self.assertEqual(initialism_expansions("DOE", "US **Department of Energy (DOE)** signed."), [])
+                self.assertEqual(initialism_expansions("NES", "Parent **Network Entity Systems (NES)** signed."), [])
                 ambiguous = source + f"\n{marker}New Era Services (NES){marker} signed."
                 self.assertEqual(set(initialism_expansions("NES", ambiguous)), {"Network Entity Systems", "New Era Services"})
 

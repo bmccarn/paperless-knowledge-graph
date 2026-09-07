@@ -140,7 +140,8 @@ def initialism_expansions(alias: str, source: str) -> list[str]:
             full = " ".join(words[index:]).strip(' ,.:"“”')
             # OCR may retain Markdown bold around the whole definition. Strip
             # only the paired wrapper; keep source text and receipt offsets exact.
-            if full.startswith("**") and source.startswith("**", match.end()):
+            if (full.startswith("**") and source.startswith("**", match.end())
+                    and coreference_span(full, alias, source)):
                 full = full[2:]
             if coreference_span(full, alias, source):
                 expansions[name_key(full, "Organization")] = full

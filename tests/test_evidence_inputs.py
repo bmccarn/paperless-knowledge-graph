@@ -30,6 +30,33 @@ class EvidenceInputTests(unittest.TestCase):
             self.assertEqual(selected[0]["document_id"], 101)
             self.assertEqual(selected[0]["content"], target["content"])
 
+    def test_explicit_id_disambiguates_repeated_titles_and_hash_references(self):
+        from app.answer_finalization import evidence_spans, select_spans
+        target = {"document_id": 101, "title": "Invoice", "content": "Certified postage: $321.00 USD."}
+        chunks = [target] + [{"document_id": i, "title": "Invoice",
+                             "content": "describe the invoice subject using source quotation " * 70}
+                            for i in range(200, 225)]
+        for reference in ("Paperless ID 101", "document #101", "Paperless document #101"):
+            question = f'For {reference}, titled "Invoice", describe the invoice subject using source quotation.'
+            pack = build_evidence_pack(question, {}, chunks, [])
+            rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=5000))
+            self.assertEqual(rendered["spans"][0]["document_id"], 101)
+            self.assertEqual(select_spans(question, [], evidence_spans(pack))[0]["document_id"], 101)
+
+    def test_multiple_requested_documents_get_windows_before_repeated_long_source(self):
+        from app.answer_finalization import evidence_spans, select_spans
+        question = "Compare document 101 and document 102, describe each invoice subject using exact source quotations."
+        chunks = [{"document_id": 101, "title": "Postage", "content": "Certified postage: $321.00 USD."}]
+        chunks += [{"document_id": 102, "chunk_index": i, "title": "Invoice",
+                    "content": "describe each invoice subject using exact source quotations " * 65}
+                   for i in range(8)]
+        pack = build_evidence_pack(question, {}, chunks, [])
+        rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=6000))
+        self.assertEqual({s["document_id"] for s in rendered["spans"]}, {101, 102})
+        selected = select_spans(question, [], evidence_spans(pack), budget=5000)
+        self.assertEqual({s["document_id"] for s in selected}, {101, 102})
+        self.assertLessEqual(sum(len(s["content"]) for s in selected), 5000)
+
     def test_document_reference_priority_does_not_interpret_account_numbers(self):
         from app.answer_finalization import select_spans
         spans = [{"document_id": 101, "title": "Unrelated notice", "content": "unrelated"},

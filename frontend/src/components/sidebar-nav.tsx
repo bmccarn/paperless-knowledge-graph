@@ -89,6 +89,8 @@ export function SidebarNav() {
                 <TooltipTrigger asChild>
                   <Link
                     href={item.href}
+                    aria-label={item.label}
+                    aria-current={active ? "page" : undefined}
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200",
                       active
@@ -113,6 +115,7 @@ export function SidebarNav() {
                 variant="ghost"
                 size="icon"
                 className="h-10 w-10 rounded-lg"
+                aria-label="Toggle theme"
                 onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               >
                 <Sun className="h-[18px] w-[18px] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
@@ -126,7 +129,7 @@ export function SidebarNav() {
 
       {/* Mobile bottom tab bar */}
       <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden border-t bg-card/95 backdrop-blur-md safe-area-bottom">
-        <nav className="flex items-center justify-around px-2 py-1">
+        <nav className="flex items-center px-1 py-1">
           {navItems.map((item) => {
             const active =
               item.href === "/"
@@ -136,21 +139,24 @@ export function SidebarNav() {
               <Link
                 key={item.href}
                 href={item.href}
+                    aria-label={item.href === "/" ? "Home" : item.label}
+                    aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 rounded-lg transition-colors",
+                  "flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] py-1 px-0.5 rounded-lg transition-colors",
                   active
                     ? "text-primary"
                     : "text-muted-foreground"
                 )}
               >
                 <item.icon className="h-5 w-5" />
-                <span className="text-[10px] mt-0.5 font-medium">{item.label}</span>
+                <span className="text-[10px] mt-0.5 font-medium">{item.href === "/" ? "Home" : item.label}</span>
               </Link>
             );
           })}
           <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 rounded-lg text-muted-foreground"
+            aria-label="Toggle theme"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] py-1 px-0.5 rounded-lg text-muted-foreground"
           >
             <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
             <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />

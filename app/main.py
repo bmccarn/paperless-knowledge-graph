@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 # Track background tasks
 _tasks: dict[str, dict] = {}
+_background_workers: set[asyncio.Task] = set()
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 _last_failed_extraction: dict | None = None
 _auto_sync_task: asyncio.Task | None = None
@@ -78,6 +79,14 @@ _freshness_cache: dict | None = None
 _freshness_cache_at: float = 0.0
 FRESHNESS_CACHE_TTL_SECONDS = int(os.getenv("FRESHNESS_CACHE_TTL_SECONDS", "60"))
 FRESHNESS_SAMPLE_LIMIT = int(os.getenv("FRESHNESS_SAMPLE_LIMIT", "50"))
+
+
+def _start_background_worker(coro):
+    """Keep dependency-using workers alive and drain them before shutdown."""
+    task = asyncio.create_task(coro)
+    _background_workers.add(task)
+    task.add_done_callback(_background_workers.discard)
+    return task
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -339,7 +348,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
 @asynccontextmanager
 async def _graph_mutation(task_type: str):
     """Single-process admission shared with ingestion's task registry."""
-    if any(t.get("status") in {"running", "cancelling"} for t in _tasks.values()):
+    if entity_steward.running or any(t.get("status") in {"running", "cancelling"} for t in _tasks.values()):
         raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
     task_id = str(uuid.uuid4())
     _tasks[task_id] = {"status": "running", "type": task_type, "started": datetime.now(timezone.utc).isoformat()}
@@ -354,8 +363,9 @@ async def _graph_mutation(task_type: str):
 
 
 async def _run_sync_task(task_type: str = "sync") -> str:
+    from app.config import settings
     running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running:
+    if running or entity_steward.running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
     task_id = str(uuid.uuid4())
@@ -392,7 +402,11 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
             if _tasks[task_id]["status"] == "completed":
-                asyncio.create_task(entity_steward.run_once(reason="post-sync"))
+                _tasks[task_id]["steward_task_id"] = await _run_entity_steward_task(
+                    limit=settings.entity_steward_candidate_limit, reason="post-sync")
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -403,23 +417,24 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id
 
 
-async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> str:
+async def _run_entity_steward_task(limit: int = 75, reason: str = "manual", focus_uuid: str | None = None) -> str:
     running = [
         t for t in _tasks.values()
-        if t["status"] == "running" and t.get("type") == "entity_steward"
+        if t["status"] in {"running", "cancelling"}
     ]
-    if running:
-        raise HTTPException(status_code=409, detail="Entity steward is already running.")
+    if running or entity_steward.running:
+        raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
 
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _tasks[task_id] = {
         "status": "running",
         "type": "entity_steward",
+        "reason": reason,
         "started": now.isoformat(),
         "_start_time": time.time(),
         "limit": limit,
@@ -431,7 +446,7 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
 
     async def _run():
         try:
-            result = await entity_steward.run_once(reason=reason, limit=limit)
+            result = await entity_steward.run_once(reason=reason, limit=limit, focus_uuid=focus_uuid)
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             _tasks[task_id]["reviewed_count"] = result.get("reviewed_count", 0)
@@ -439,6 +454,9 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error("Entity steward task %s failed: %s", task_id, e, exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -447,7 +465,7 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual") -> s
         finally:
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id
 
 
@@ -460,7 +478,7 @@ async def _run_reindex_documents_task(
     update_last_sync: bool = False,
 ) -> tuple[str, str]:
     running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running:
+    if running or entity_steward.running:
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
     doc_ids = sorted({int(doc_id) for doc_id in doc_ids})
@@ -568,6 +586,9 @@ async def _run_reindex_documents_task(
             _tasks[task_id]["estimated_remaining_seconds"] = 0
             if errors:
                 _tasks[task_id]["error"] = f"{errors} document(s) failed"
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error("%s task %s failed: %s", task_type, task_id, e, exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -579,7 +600,7 @@ async def _run_reindex_documents_task(
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id, message
 
 
@@ -614,7 +635,11 @@ async def _entity_steward_loop():
     await asyncio.sleep(min(300, interval * 60))
     while True:
         try:
-            await entity_steward.run_once(reason="periodic")
+            await _run_entity_steward_task(limit=settings.entity_steward_candidate_limit, reason="periodic")
+        except HTTPException as e:
+            if e.status_code != 409:
+                raise
+            logger.info("Periodic entity steward skipped while another graph task is active")
         except Exception as e:
             logger.error("Entity steward periodic run failed: %s", e, exc_info=True)
         await asyncio.sleep(interval * 60)
@@ -631,24 +656,32 @@ async def lifespan(app: FastAPI):
     _entity_steward_task = asyncio.create_task(_entity_steward_loop())
     _startup_ready = True
     logger.info("Startup complete")
-    yield
-    logger.info("Shutting down...")
-    _startup_ready = False
-    if _auto_sync_task:
-        _auto_sync_task.cancel()
-    if _entity_steward_task:
-        _entity_steward_task.cancel()
-    background_tasks = [task for task in (_auto_sync_task, _entity_steward_task) if task]
-    if background_tasks:
-        await asyncio.gather(*background_tasks, return_exceptions=True)
-    await query_engine.close()
-    await extractor.close()
-    await classifier.close()
-    await close_pipeline_clients()
-    await strands_orchestrator.close()
-    await graph_store.close()
-    await embeddings_store.close()
-    await conversations.close()
+    try:
+        yield
+    finally:
+        logger.info("Shutting down...")
+        _startup_ready = False
+        if _auto_sync_task:
+            _auto_sync_task.cancel()
+        if _entity_steward_task:
+            _entity_steward_task.cancel()
+        background_tasks = [task for task in (_auto_sync_task, _entity_steward_task) if task]
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+        # Schedulers are stopped first, so no new graph workers can be admitted.
+        workers = list(_background_workers)
+        for worker in workers:
+            worker.cancel()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
+        await query_engine.close()
+        await extractor.close()
+        await classifier.close()
+        await close_pipeline_clients()
+        await strands_orchestrator.close()
+        await graph_store.close()
+        await embeddings_store.close()
+        await conversations.close()
 
 
 app = FastAPI(
@@ -743,6 +776,7 @@ async def status():
             "last_sync": last_sync.isoformat() if last_sync else None,
             "paperless_url": _get_paperless_url(),
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
+            "entity_steward": {"running": entity_steward.running},
             "cache": cache_stats,
             "freshness": await _freshness_snapshot(),
         }
@@ -958,6 +992,9 @@ async def reindex():
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error(f"Reindex task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -968,7 +1005,7 @@ async def reindex():
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
 
 
@@ -1352,7 +1389,7 @@ async def query_stream(req: QueryRequest):
             await queue.put(None)  # sentinel
 
     # Start query as background task — runs to completion even if client disconnects
-    asyncio.create_task(_run_query())
+    _start_background_worker(_run_query())
 
     async def event_generator():
         try:
@@ -1484,11 +1521,12 @@ def _entity_suggestion_map(decisions: list[dict]) -> dict[tuple[str, str], dict]
 
 @app.post("/entity-review/steward")
 async def entity_review_steward(limit: int = 50):
-    try:
-        return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
-    except Exception as e:
-        logger.error("Entity steward run failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    async with _graph_mutation("entity_steward"):
+        try:
+            return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
+        except Exception as e:
+            logger.error("Entity steward run failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/entity-review/steward/task", response_model=TaskResponse)
@@ -1522,8 +1560,6 @@ async def entity_review_merge(req: EntityMergeRequest):
     async with _graph_mutation("merge-entities"):
         try:
             merged = await entity_resolver.merge_entities(req.primary_uuid, req.duplicate_uuid, review_method="entity_review_api")
-            asyncio.create_task(entity_steward.run_once(reason="post-merge", focus_uuid=req.primary_uuid, limit=25))
-            return {"status": "merged", "entity": merged}
         except EntityMergeProhibited as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
@@ -1534,6 +1570,8 @@ async def entity_review_merge(req: EntityMergeRequest):
         finally:
             await invalidate_on_sync_async()
             _clear_freshness_cache()
+    steward_task_id = await _run_entity_steward_task(reason="post-merge", focus_uuid=req.primary_uuid, limit=25)
+    return {"status": "merged", "entity": merged, "steward_task_id": steward_task_id}
 
 
 

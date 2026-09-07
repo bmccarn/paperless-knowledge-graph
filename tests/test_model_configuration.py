@@ -16,6 +16,16 @@ from app.paperless import PaperlessClient
 
 
 class ModelIdentityTests(unittest.TestCase):
+    def test_review_reconciliation_upgrade_invalidates_processing_without_revoking_alias_policy(self):
+        from app import extraction_evidence
+        from app.entity_policy import RESOLUTION_POLICY
+        document = {"id": 101, "title": "Synthetic", "content": "Synthetic source", "tags": []}
+        before = PaperlessClient.ingestion_fingerprint(document)
+        with patch.object(extraction_evidence, "RECONCILIATION_VERSION", "future-review-version"):
+            after = PaperlessClient.ingestion_fingerprint(document)
+        self.assertNotEqual(before, after)
+        self.assertEqual(RESOLUTION_POLICY, "evidence-identity-v2")
+
     def test_release_defaults_and_sample_environments_agree(self):
         with patch.dict(os.environ, {}, clear=True):
             defaults = Settings(_env_file=None)
@@ -61,15 +71,14 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings, "gemini_model", "gemini-3.8-flash"), \
              patch.object(settings, "strands_model", ""), \
              patch("app.classifier.AsyncOpenAI"), patch("app.query.AsyncOpenAI"), \
-             patch.object(strands_module, "LiteLLMModel", create=True) as model:
+             patch.object(strands_module, "OpenAIModel", create=True) as model:
             self.assertEqual(DocumentClassifier().model, "gemini-3.8-flash")
             self.assertEqual(EntityExtractor(client=object()).model, "gemini-3.8-flash")
             self.assertEqual(QueryEngine()._active_model(), "gemini-3.8-flash")
-            strands_module.strands_orchestrator._model(max_tokens=6000)
+            strands_module.strands_orchestrator._model()
             self.assertEqual(model.call_args.kwargs["model_id"], "gemini-3.8-flash")
-            self.assertEqual(model.call_args.kwargs["params"], {"max_tokens": 6000})
             with patch.object(settings, "strands_model", "explicit-synthetic-override"):
-                strands_module.strands_orchestrator._model(max_tokens=6000)
+                strands_module.strands_orchestrator._model()
                 self.assertEqual(model.call_args.kwargs["model_id"], "explicit-synthetic-override")
 
     async def test_model_selection_metadata_keeps_exact_route_and_filters_embeddings(self):

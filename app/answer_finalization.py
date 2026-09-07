@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from datetime import date, datetime, timezone
@@ -16,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v3"
+POLICY_VERSION = "source-audit-v4"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -26,11 +27,85 @@ def normalize_quote(text: str) -> str:
 
 
 def canonical_prose(text: str) -> str:
-    # Discard model-created document citations; accepted references are rendered
-    # deterministically after auditing. Other link labels remain factual prose.
-    text = re.sub(r"\[Document\s+\d+\]\([^)]*\)", "", text, flags=re.I)
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text.strip())
-    return re.sub(r'\s*\(Source:\s*"[^"]*"\)', "", text, flags=re.I)
+    # Link labels are factual prose. Attribution removal needs evidence and is
+    # performed separately, before splitting the audited candidate.
+    return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text.strip())
+
+
+def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
+    """Separate restricted citation declarations without trusting their claims.
+
+    Offsets locate the preceding unit in the canonical candidate. Membership in
+    this pack is only a precondition: _audit also checks that unit's references.
+    Invalid declarations remain visible to the auditor and fail independently.
+    """
+    titles, document_ids = {}, set()
+    for item in pack.get("items", []):
+        if not isinstance(item, dict) or certifying_text(item) is None or item.get("feedback_open"):
+            continue
+        doc_id = item.get("document_id")
+        if type(doc_id) is not int or doc_id < 1:
+            continue
+        document_ids.add(doc_id)
+        title = item.get("title")
+        if isinstance(title, str) and title.strip():
+            titles.setdefault(normalize_quote(title), set()).add(doc_id)
+    # Recognize citation-shaped text broadly enough that malformed declarations
+    # cannot be silently erased. Ordinary Markdown links keep their labels.
+    # Consume complete Markdown links before considering a bracketed title:
+    # otherwise a verified title could hide an unverified attached link target.
+    pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
+                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)', re.I)
+    parts, declarations, end, length = [], [], 0, 0
+    text = text.strip()
+    def unparsed_declarations(fragment, start):
+        return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
+            r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+', fragment, re.I)]
+    def enclosed(position):
+        # Attributions inside another bracket/parenthesis are outside the
+        # restricted grammar, including nested Markdown link labels.
+        stack = []
+        for char in text[:position]:
+            if char in "[(":
+                stack.append(char)
+            elif stack and (stack[-1], char) in {("[", "]"), ("(", ")")}:
+                stack.pop()
+        return bool(stack)
+    for match in pattern.finditer(text):
+        prefix = text[end:match.start()]
+        declarations.extend(unparsed_declarations(prefix, length))
+        parts.append(prefix)
+        length += len(prefix)
+        raw = match.group()
+        doc_id = None
+        title = re.fullmatch(r'(?:\[Source:\s*"([^"\[\]\n]*)"\s*\]|\(Source:\s*"([^"()\n]*)"\s*\))', raw, re.I)
+        numeric = re.fullmatch(r'\(Paperless document\s+([1-9]\d*)\)', raw, re.I)
+        link = re.fullmatch(r'\[Document\s+([1-9]\d*)\]\(/documents/([1-9]\d*)\)', raw, re.I)
+        if title:
+            ids = titles.get(normalize_quote(title[1] if title[1] is not None else title[2]), set())
+            if len(ids) == 1:
+                doc_id = next(iter(ids))
+        elif numeric and int(numeric[1]) in document_ids:
+            doc_id = int(numeric[1])
+        elif link and link[1] == link[2] and int(link[1]) in document_ids:
+            doc_id = int(link[1])
+        if enclosed(match.start()):
+            doc_id = None
+        if match.group(1) is not None and not link:
+            replacement = match.group(1)
+            # A generic link must not launder unknown/malformed source syntax
+            # into ordinary prose when its Markdown wrapper is removed.
+            if unparsed_declarations(raw, 0):
+                declarations.append({"offset": length, "document_id": None})
+        else:
+            declarations.append({"offset": length, "document_id": doc_id})
+            replacement = "" if doc_id is not None else canonical_prose(raw)
+        parts.append(replacement)
+        length += len(replacement)
+        end = match.end()
+    declarations.extend(unparsed_declarations(text[end:], length))
+    parts.append(text[end:])
+    return "".join(parts).rstrip(), declarations
 
 
 def parse_date(value: Any) -> tuple[str, str] | None:
@@ -212,24 +287,40 @@ def empty_ledger(candidate: str) -> dict:
 
 
 class AnswerFinalizer:
-    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80):
+    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
+                 concurrency: int = 4):
         self.auditor = auditor
         self.repairer = repairer
         self.timeout_seconds = timeout_seconds
         self.max_units = max_units
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or type(concurrency) is not int or concurrency < 1:
+            raise ValueError("Audit timeout and concurrency must be positive")
+        self.concurrency = concurrency
 
-    async def _audit(self, question, answer, pack, plan):
+    def _audit_timeout(self, candidate):
+        batches = math.ceil(min(len(answer_units(candidate)), self.max_units) / 4)
+        return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
+
+    async def _audit(self, question, answer, pack, plan, declarations=()):
         units = answer_units(answer)
         spans = evidence_spans(pack)
         manifest, claims = {}, []
         checked = 0
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
-            for offset in range(0, len(units), 4):
-                batch = units[offset:offset + 4]
-                selected = select_spans(question, batch, spans)
+            batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            pending = iter(enumerate(batches))
+            results = [None] * len(batches)
+            async def worker():
+                for index, batch in pending:
+                    selected = select_spans(question, batch, spans)
+                    raw = await self.auditor.audit_answer_units(question, batch, selected, plan)
+                    results[index] = (selected, raw)
+            async with asyncio.TaskGroup() as group:
+                for _ in range(min(self.concurrency, len(batches))):
+                    group.create_task(worker())
+            for batch, (selected, raw) in zip(batches, results):
                 manifest.update({s["span_id"]: s for s in selected})
-                raw = await self.auditor.audit_answer_units(question, batch, selected, plan)
                 assessments = raw.get("assessments", []) if isinstance(raw, dict) else []
                 if not isinstance(assessments, list):
                     assessments = []
@@ -258,6 +349,14 @@ class AnswerFinalizer:
                                    "source_title": refs[0]["source_title"] if valid else ""})
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "current", "none", "unknown"} else "unknown"
+        for declaration in declarations:
+            preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
+            if not preceding:
+                complete = False
+                continue
+            claim = preceding[-1]
+            if declaration["document_id"] not in {r["document_id"] for r in claim["references"]}:
+                claim["status"] = "unsupported"
         # Formatting and quantities can cross audit-unit boundaries. Recheck the
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
@@ -282,34 +381,35 @@ class AnswerFinalizer:
             raise ValueError("evaluated_at must be a valid ISO calendar day")
         plan["evaluated_at"] = evaluated_at
         disposition, attempts, error = "incomplete", 0, None
-        candidate = canonical_prose(str(answer or ""))
+        candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
         ledger = empty_ledger(candidate)
         if mode == "quick":
             disposition = "unaudited"
         else:
             try:
-                async with asyncio.timeout(self.timeout_seconds):
-                    for attempt in range(2 if self.repairer else 1):
-                        attempts += 1
-                        # A failed second audit must not attach the prior
-                        # candidate's ledger to the replacement's digest.
-                        ledger = empty_ledger(candidate)
-                        ledger = await self._audit(question, candidate, evidence_pack, plan)
-                        summary = ledger["summary"]
-                        if ledger["complete"] and summary["supported"] == summary["total"]:
-                            disposition = "supported"
-                            break
-                        disposition = "unsupported" if ledger["complete"] else "incomplete"
-                        if attempt == 0 and self.repairer and len(candidate) <= 96000:
+                for attempt in range(2 if self.repairer else 1):
+                    attempts += 1
+                    # A failed second audit must not attach the prior
+                    # candidate's ledger to the replacement's digest.
+                    ledger = empty_ledger(candidate)
+                    async with asyncio.timeout(self._audit_timeout(candidate)):
+                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations)
+                    summary = ledger["summary"]
+                    if ledger["complete"] and summary["supported"] == summary["total"]:
+                        disposition = "supported"
+                        break
+                    disposition = "unsupported" if ledger["complete"] else "incomplete"
+                    if attempt == 0 and self.repairer and len(candidate) <= 96000:
+                        async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
                                 {"status": disposition, "claims": ledger["claims"]})
-                            replacement = repaired.get("answer") if isinstance(repaired, dict) else None
-                            if not isinstance(replacement, str) or not replacement.strip() or replacement.strip() == candidate:
-                                break
-                            candidate = canonical_prose(replacement)
-                        else:
+                        replacement = repaired.get("answer") if isinstance(repaired, dict) else None
+                        if not isinstance(replacement, str) or not replacement.strip() or replacement.strip() == candidate:
                             break
+                        candidate, declarations = canonical_candidate(replacement, evidence_pack)
+                    else:
+                        break
             except TimeoutError:
                 disposition, error = "timeout", "The source audit exceeded its time budget."
             except Exception:

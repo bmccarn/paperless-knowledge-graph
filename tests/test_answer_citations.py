@@ -157,8 +157,10 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
             for repair in (None, Repair()):
                 with self.subTest(attribution=attribution, repair=bool(repair)):
                     result = await AnswerFinalizer(QuoteAuditor(quote), repair).finalize(
-                        "What is documented?", candidate, pack)
+                        "What is documented?", quote + ' (Paperless document 999)' if repair else candidate, pack)
                     self.assertFalse(result["finalization"]["complete"])
+                    if repair:
+                        self.assertEqual(result["finalization"]["attempts"], 2)
 
     async def test_citation_only_repair_can_remove_wrong_or_orphan_declaration(self):
         evidence = copy.deepcopy(PACK)
@@ -181,5 +183,7 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
         # in a separate process so the regression cannot stall the test runner.
         code = ("from app.answer_finalization import canonical_candidate; "
                 "_, declarations = canonical_candidate('(' * 50000 + 'Paperless ID 101', {'items': []}); "
-                "assert declarations and all(d['document_id'] is None for d in declarations)")
+                "assert declarations and all(d['document_id'] is None for d in declarations); "
+                "_, repeated = canonical_candidate('(*Unknown*, Paperless ID 101) ' * 3000, {'items': []}); "
+                "assert len(repeated) == 3000 and all(d['document_id'] is None for d in repeated)")
         subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, timeout=2)

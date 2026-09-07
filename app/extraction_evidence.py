@@ -121,6 +121,72 @@ def adjudicate_types(candidates, reviewed, raw_reviews, source, offset, issues):
     return accepted
 
 
+def coreference_candidates(entities, source, offset=0):
+    """Deterministic proposals for review; literal OCR never grants identity."""
+    from app.entity_policy import coreference_span, digest, identity_proof_id
+    proposals = []
+    for index, left in enumerate(entities):
+        for right in entities[index+1:]:
+            if (left["type"] != right["type"] or left["entity_id"] == right["entity_id"]
+                    or left.get("identity_hint", "") != right.get("identity_hint", "")):
+                continue
+            span = coreference_span(left["name"], right["name"], source)
+            if not span:
+                continue
+            proof = {"left_id": left["entity_id"], "right_id": right["entity_id"],
+                     "left_name": left["name"], "right_name": right["name"], "type": left["type"],
+                     "evidence": {**span, "start": span["start"] + offset, "end": span["end"] + offset},
+                     "scope": {"start": offset, "end": offset + len(source), "source_hash": digest(source)}}
+            proof["proof_id"] = identity_proof_id(proof)
+            proposals.append(proof)
+    return proposals
+
+
+def adjudicate_coreferences(proposals, reviews, accepted, source, offset, issues):
+    """Bind the independent verdict to exact proposed IDs, accepted types/spans."""
+    accepted_ids = {entity["entity_id"]: entity for entity in accepted}
+    reviews = reviews if isinstance(reviews, list) else []
+    for proposal in proposals:
+        matching = [row for row in reviews if isinstance(row, dict) and row.get("proof_id") == proposal["proof_id"]]
+        if (len(matching) != 1 or proposal["left_id"] not in accepted_ids
+                or proposal["right_id"] not in accepted_ids):
+            continue
+        review = matching[0]
+        span = proposal["evidence"]
+        if (review.get("status") not in {"affirmed", "denied", "unknown"}
+                or review.get("assertion_scope") not in {"current_direct", "quoted", "hypothetical", "historical", "disputed", "unknown"}
+                or type(review.get("explicit")) is not bool
+                or review.get("evidence_quote") != span["quote"]
+                or review.get("left_id") != proposal["left_id"] or review.get("right_id") != proposal["right_id"]
+                or not isinstance(review.get("rationale"), str) or not review["rationale"].strip()
+                or source[span["start"]-offset:span["end"]-offset] != span["quote"]):
+            issues.append("Co-reference not affirmed by source-aware identity review")
+            continue
+        # Retain negative/unknown receipts too: an affirmative overlap window
+        # must not silently win over a second window's disputed identity.
+        proof = {**proposal, "status": review["status"], "assertion_scope": review["assertion_scope"], "explicit": review["explicit"],
+                 "provenance": "source_identity_review", "rationale": review["rationale"]}
+        for entity_id in (proposal["left_id"], proposal["right_id"]):
+            accepted_ids[entity_id].setdefault("identity_proofs", []).append(proof)
+
+
+def adjudicate_name_usage(accepted, reviews, source, offset):
+    """Review abbreviation ambiguity independently of original capitalization."""
+    for entity in accepted:
+        matches = [row for row in reviews if row.get("name") == entity["name"] and row.get("type") == entity["type"]
+                   and (row.get("identity_hint") or "") == entity.get("identity_hint", "")]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        span = source_span(row.get("name_usage_evidence_quote"), source, offset)
+        if (row.get("name_usage") in {"abbreviation", "initials", "ambiguous", "brand", "full_name"}
+                and span and named_mention(entity["name"], span["quote"])
+                and len(span["quote"].split()) > len(entity["name"].split())
+                and isinstance(row.get("name_usage_rationale"), str) and row["name_usage_rationale"].strip()):
+            entity["name_usage"] = row["name_usage"]
+            entity["name_usage_evidence"] = span
+
+
 def validate_relationships(raw: list[dict], entities: list[dict], source: str, offset: int, issues: list[str]) -> list[dict]:
     accepted = []
     for rel in raw:
@@ -200,6 +266,12 @@ def merge_unique(items: list[dict], key_fields: tuple[str, ...]) -> list[dict]:
         for span in item.get("evidence") or []:
             if span not in existing["evidence"]:
                 existing["evidence"].append(span)
+        for proof in item.get("identity_proofs") or []:
+            if proof not in existing.setdefault("identity_proofs", []):
+                existing["identity_proofs"].append(proof)
+        if item.get("name_usage") in {"abbreviation", "initials", "ambiguous"}:
+            existing["name_usage"] = item["name_usage"]
+            existing["name_usage_evidence"] = item.get("name_usage_evidence")
         # Preserve uncertainty; repetition is not increased confidence.
         existing["confidence"] = min(existing["confidence"], item["confidence"])
         if "inferred" in existing:

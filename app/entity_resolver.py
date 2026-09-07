@@ -6,9 +6,11 @@ import uuid
 from app.embeddings import embeddings_store
 from app.graph import graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
-                                  carried_vetoes, entity_identity, merge_is_prohibited)
+                                  carried_vetoes, entity_identity, merge_is_prohibited,
+                                  alias_revocations, alias_replay_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, EXPLICIT_REVIEW_METHOD, display_name, name_key,
-    context_bound_name, coreference_span, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions, has_local_alias_definition)
+    context_bound_name, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions,
+    has_local_alias_definition, verified_coreference, valid_identity_receipt, digest)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,12 @@ class EntityResolver:
                     else:
                         missing.append(row[f"{side}_uuid"])
                 status = "unresolved_legacy" if missing else "active"
+                if missing:
+                    # Keep every surviving anchor of a partial legacy veto. A
+                    # snapshot is useful history, not permission to delete it.
+                    for side in ("left", "right"):
+                        if row[f"{side}_uuid"] not in missing:
+                            await graph_store.protect_review_anchor(row[f"{side}_uuid"])
                 if changed or row.get("identity_status") != status:
                     await embeddings_store.hydrate_entity_review_identities(row, status)
                 if changed:
@@ -111,6 +119,11 @@ class EntityResolver:
             if "Document" in primary.get("labels", []) or "Document" in duplicate.get("labels", []):
                 raise ValueError("Paperless documents cannot be merged as entities")
             decisions = await self._review_decisions()
+            revocations = alias_revocations(primary) + alias_revocations(duplicate)
+            await embeddings_store.preserve_alias_revocations(revocations)
+            decisions += revocations
+            if alias_replay_prohibited(primary["properties"], remove["canonical_name"], keep["type"], decisions):
+                raise EntityMergeProhibited("Alias quarantine requires explicit fresh reauthorization")
             if merge_is_prohibited(keep, remove, decisions):
                 raise EntityMergeProhibited("Human no-merge decision prohibits this entity pair")
             for row in carried_vetoes(keep, remove, decisions):
@@ -145,7 +158,8 @@ class EntityResolver:
 
     async def resolve(self, name: str, entity_type: str, source_doc_id: int, *,
                       description: str = None, source: str = "", identity_hint: str = "",
-                      role: str = None, org_type: str = None) -> str:
+                      role: str = None, org_type: str = None, identity_proofs: list | None = None,
+                      name_usage: str = "") -> str:
         """Resolve once under the review lock; callers must bind the returned UUID.
 
         Source-less paths preserve the supplied type. Hints must already have
@@ -167,14 +181,32 @@ class EntityResolver:
             for expansion in expansions:
                 incoming["names"] = sorted(set(incoming["names"]) | set(entity_identity({"name": expansion})["names"]))
             candidates = await graph_store.get_entities_by_type(label)
+            revocations = [row for candidate in candidates for row in alias_revocations(candidate)]
+            await embeddings_store.preserve_alias_revocations(revocations)
+            decisions += revocations
+            isolated_key = digest(str(source_doc_id) + ":" + digest(source) + ":" + label + ":"
+                                  + name_key(name, label) + ":" + identity_hint + ":" + RESOLUTION_POLICY)
+            # This is idempotent source identity, NOT attachment to a canonical
+            # real-world identity. It may bypass candidate veto filtering only
+            # for an explicitly isolated node with this exact generation key.
+            isolated = [candidate for candidate in candidates
+                        if candidate.get("isolated_source_key") == isolated_key
+                        and candidate.get("resolution_status") == "isolated"
+                        and candidate.get("source_doc_ids") == [source_doc_id]]
+            if len(isolated) == 1:
+                return isolated[0]["uuid"]
             eligible = []
+            vetoed = False
             for candidate in candidates:
                 if (not isinstance(candidate.get("name"), str) or not candidate["name"].strip()
                         or not isinstance(candidate.get("uuid"), str) or not candidate["uuid"]):
                     continue  # preserve malformed legacy rows, but never use them as identity proof
                 if candidate.get("resolution_status") == "quarantined":
                     continue
+                if candidate.get("resolution_status") == "isolated":
+                    continue
                 if not await self._candidate_allowed(incoming, candidate, decisions):
+                    vetoed = True
                     continue
                 hints = candidate.get("identity_hints") or []
                 own_source = source_doc_id in (candidate.get("source_doc_ids") or [])
@@ -186,7 +218,7 @@ class EntityResolver:
                 if bool(hints) != bool(identity_hint) and not own_source:
                     continue
                 reason, span = self._match(name, label, source_doc_id, source, candidate, decisions,
-                                           expansions, local_definition, source_folded)
+                                           expansions, local_definition, source_folded, identity_proofs, name_usage)
                 if reason:
                     eligible.append((candidate, reason, span))
             # Prefer an already-bound source only among otherwise proven matches.
@@ -206,7 +238,9 @@ class EntityResolver:
             props = {"name": name, "entity_type": label, "aliases": [], "alias_records": [],
                      "source_doc_ids": [source_doc_id], "resolution_policy": RESOLUTION_POLICY,
                      "resolution_status": "ambiguous" if eligible else "new",
-                     "identity_hints": [identity_hint] if identity_hint else []}
+                     "identity_hints": [identity_hint] if identity_hint else [], "name_usage": name_usage}
+            if vetoed:
+                props.update(resolution_status="isolated", isolated_source_key=isolated_key)
             if description:
                 props["description"] = description
             if label == "Person" and role:
@@ -216,11 +250,18 @@ class EntityResolver:
             return await graph_store.create_node(label, props)
 
     @staticmethod
-    def _match(name, kind, doc_id, source, candidate, decisions, expansions, local_definition, source_folded):
+    def _match(name, kind, doc_id, source, candidate, decisions, expansions, local_definition, source_folded,
+               identity_proofs=None, name_usage=""):
         canonical = candidate.get("name") or ""
         key = name_key(name, kind)
-        if alias_is_quarantined(candidate, name, kind):
+        if alias_is_quarantined(candidate, name, kind) or alias_replay_prohibited(candidate, name, kind, decisions):
             return "", None
+        for proof in identity_proofs or []:
+            if (valid_identity_receipt(proof, source)
+                    and ("DocumentRef" if proof["type"] == "Document" else proof["type"]) == kind
+                    and {name_key(proof["left_name"], kind), name_key(proof["right_name"], kind)} == {key, name_key(canonical, kind)}
+                    and (proof["status"] != "affirmed" or proof["assertion_scope"] != "current_direct" or not proof["explicit"])):
+                return "", None
         # Source definitions outrank a globally reviewed abbreviation meaning.
         # Multiple local expansions remain ambiguous even if only one exists in
         # the current graph; otherwise first-seen graph state would choose sense.
@@ -230,13 +271,14 @@ class EntityResolver:
             expansion = expansions[0]
             if name_key(expansion, kind) != name_key(canonical, kind):
                 return "", None
-            return "source_coreference", coreference_span(expansion, name, source)
+            proof = verified_coreference(expansion, name, kind, source, identity_proofs)
+            return ("source_coreference", proof) if proof else ("", None)
         # Necessary literal-name prefilter avoids scanning a large source with
         # multiple regexes for every unrelated corpus candidate. This is local
         # to this call/revision, never a cross-document decision cache.
         direct_span = None
         if display_name(canonical).casefold() in source_folded:
-            direct_span = coreference_span(canonical, name, source)
+            direct_span = verified_coreference(canonical, name, kind, source, identity_proofs)
         if local_definition and not direct_span:
             return "", None
         # Newly human-reviewed merge decisions survive orphan cleanup. Only the
@@ -258,7 +300,7 @@ class EntityResolver:
         if direct_span:
             return "source_coreference", direct_span
         if key == name_key(canonical, kind):
-            if (not context_bound_name(name, kind) and not context_bound_name(canonical, kind)) or doc_id in (candidate.get("source_doc_ids") or []):
+            if (not context_bound_name(name, kind, name_usage) and not context_bound_name(canonical, kind, candidate.get("name_usage", ""))) or doc_id in (candidate.get("source_doc_ids") or []):
                 return "orthographic", None
         return "", None
 

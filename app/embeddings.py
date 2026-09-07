@@ -800,6 +800,28 @@ class EmbeddingsStore:
             rows = await conn.fetch("SELECT * FROM entity_review_decisions")
             return [self._decode_review_decision(r) for r in rows]
 
+    async def preserve_alias_revocations(self, rows: list[dict]):
+        """Append idempotent revocations without rewriting historical decisions.
+
+        Ordinary positive review, reprocessing and policy changes cannot revoke
+        these records. Any future reauthorization API must explicitly target the
+        revocation and preserve its history; no implicit last-write-wins exists.
+        """
+        if not rows:
+            return
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                for row in rows:
+                    if row.get("decision") != "alias_revoked":
+                        raise ValueError("Expected alias revocation")
+                    await conn.execute("""INSERT INTO entity_review_decisions
+                        (left_uuid,right_uuid,decision,note,left_identity,right_identity,
+                         provenance,identity_status,review_id,review_method)
+                        VALUES($1,$2,'alias_revoked',$3,$4::jsonb,$5::jsonb,'alias_quarantine','active',$6,'alias_quarantine')
+                        ON CONFLICT (left_uuid,right_uuid,decision) DO NOTHING""",
+                        row["left_uuid"], row["right_uuid"], row["note"], json.dumps(row["left_identity"]),
+                        json.dumps(row["right_identity"]), row["review_id"])
+
     async def get_incomplete_document_ids(self, doc_ids: list[int]) -> set[int]:
         """Missing completion markers mean a replacement is pending or failed."""
         if not doc_ids:

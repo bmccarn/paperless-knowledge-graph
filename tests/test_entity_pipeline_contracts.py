@@ -194,6 +194,40 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
                     props = self.graph.edges[("101", f"accepted-Organization-{name}", "PROVIDER_FOR")]
                     self.assertEqual(support_records(props)[101].get("evidence_spans", []), expected)
 
+    async def test_provider_support_does_not_borrow_unaccepted_window_metadata(self):
+        from app.extraction_evidence import validate_metadata, reconcile_metadata
+        name = "Example Assurance Company"
+        rejected = f"Customer: {name}."
+        accepted = f"Provider: {name}."
+        source = rejected + "\n" + accepted
+        for raw_metadata in ({"provider": None}, {}, {"provider": "Other Bank"}):
+            with self.subTest(raw_metadata=raw_metadata):
+                self.graph.edges.clear()
+                issues = []
+                first = validate_metadata({"metadata": raw_metadata,
+                    "evidence": [{"path": "provider", "quote": rejected}]}, rejected, 0, issues)
+                second = validate_metadata({"metadata": {"provider": name},
+                    "evidence": [{"path": "provider", "quote": accepted}]}, accepted, len(rejected)+1, issues)
+                metadata, evidence, _ = reconcile_metadata([first, second])
+                span = {"start": len(rejected)+1, "end": len(source), "quote": accepted}
+                extracted = {**metadata, "metadata_evidence": evidence,
+                    "all_entities": [{"entity_id": "provider", "name": name, "type": "Organization", "evidence": [span]}]}
+                bindings = DocumentBindings(101, extracted, source, self.resolver)
+                await pipeline._process_extraction(101, "101", "insurance", extracted, bindings=bindings)
+                props = self.graph.edges[("101", f"accepted-Organization-{name}", "PROVIDER_FOR")]
+                self.assertEqual(support_records(props)[101]["evidence_spans"], [span])
+
+    async def test_metadata_provenance_excludes_unmatched_field_quotes(self):
+        from app.extraction_evidence import validate_metadata
+        name = "Example Assurance Company"
+        quote = f"Provider: {name}."
+        source = quote + " Previous: Other Bank."
+        metadata, evidence = validate_metadata({"metadata": {"provider": name}, "evidence": [
+            {"path": "provider", "quote": quote}, {"path": "provider", "quote": "Other Bank"},
+            {"path": "unaccepted_field", "quote": quote}]}, source, 0, [])
+        self.assertEqual(metadata, {"provider": name})
+        self.assertEqual(evidence, {"provider": [{"start": 0, "end": len(quote), "quote": quote}]})
+
     async def test_metadata_roles_reject_incompatible_corrected_types_matrix(self):
         cases = [
             ("medical_lab", {"patient_name": "Morgan Lee", "diagnoses": ["Atlas"]}, "DIAGNOSED_WITH"),

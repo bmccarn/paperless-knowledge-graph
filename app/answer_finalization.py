@@ -194,7 +194,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     first_per_document, remaining, represented = [], [], set()
     for pair in ranked:
         doc_id = pair[1].get("document_id")
-        if doc_id in requested_ids and doc_id not in represented and len(pair[1]["content"]) <= budget:
+        if rank(pair)[0] < 0 and doc_id not in represented and len(pair[1]["content"]) <= budget:
             first_per_document.append(pair)
             represented.add(doc_id)
         else:

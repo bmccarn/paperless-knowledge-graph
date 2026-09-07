@@ -41,3 +41,10 @@ class EntityVectorConsistencyTests(unittest.TestCase):
             self.assertTrue(result["legacy_type_representation"])
         self.assertFalse(classify_entity_vector({**self.vector, "entity_type": "organization"}, self.graph)["accepted"])
 
+    def test_paperless_document_nodes_never_count_as_extracted_document_references(self):
+        for labels in (["Document"], ["Document", "DocumentRef"]):
+            for vector_type in ("Document", "DocumentRef"):
+                result = classify_entity_vector({**self.vector, "entity_type": vector_type},
+                                                {**self.graph, "labels": labels})
+                self.assertFalse(result["accepted"])
+                self.assertIn("type", result["problems"])

@@ -59,6 +59,16 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
     def unparsed_declarations(fragment, start):
         return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
             r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+', fragment, re.I)]
+    def enclosed(position):
+        # Attributions inside another bracket/parenthesis are outside the
+        # restricted grammar, including nested Markdown link labels.
+        stack = []
+        for char in text[:position]:
+            if char in "[(":
+                stack.append(char)
+            elif stack and (stack[-1], char) in {("[", "]"), ("(", ")")}:
+                stack.pop()
+        return bool(stack)
     for match in pattern.finditer(text):
         prefix = text[end:match.start()]
         declarations.extend(unparsed_declarations(prefix, length))
@@ -77,8 +87,14 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(numeric[1])
         elif link and link[1] == link[2] and int(link[1]) in document_ids:
             doc_id = int(link[1])
+        if enclosed(match.start()):
+            doc_id = None
         if match.group(1) is not None:
             replacement = match.group(1)
+            # A generic link must not launder unknown/malformed source syntax
+            # into ordinary prose when its Markdown wrapper is removed.
+            if unparsed_declarations(raw, 0):
+                declarations.append({"offset": length, "document_id": None})
         else:
             declarations.append({"offset": length, "document_id": doc_id})
             replacement = "" if doc_id is not None else canonical_prose(raw)

@@ -34,10 +34,24 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
                             '[Source: "Policy 2026 revision 4"] coverage is $900000 USD.',
                             '(Paperless document 101; coverage is unlimited)',
                             '[Source: "Unknown title"', '( Source: "Unknown title")',
-                            '[Source: "[Policy 2026 revision 4]"]'):
+                            '[Source: "[Policy 2026 revision 4]"]',
+                            '[ Source: "Unknown title"](/documents/999)',
+                            '[(Source: "Unknown title")](https://example.invalid)',
+                            '[[Source: "Policy 2026 revision 4"]]',
+                            '[see [Source: "Policy 2026 revision 4"]]',
+                            '([Document 101](/documents/101))'):
             with self.subTest(attribution=attribution):
                 result = await AnswerFinalizer(QuoteAuditor(QUOTE)).finalize("What is documented?", f'{QUOTE} {attribution}', PACK)
                 self.assertFalse(result["finalization"]["complete"])
+
+    async def test_repair_cannot_hide_an_unknown_source_inside_link_label(self):
+        class Repair:
+            async def repair_answer(self, *args):
+                return {"answer": QUOTE + ' [(Source: "Unknown title")](https://example.invalid)'}
+        result = await AnswerFinalizer(QuoteAuditor(QUOTE), Repair()).finalize(
+            "What is documented?", QUOTE + ' (Paperless document 999)', PACK)
+        self.assertEqual(result["finalization"]["attempts"], 2)
+        self.assertFalse(result["finalization"]["complete"])
 
     async def test_title_must_unambiguously_identify_certifying_evidence(self):
         for other in ({**PACK["items"][0], "id": "other", "document_id": 102},

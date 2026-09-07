@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
+from contextlib import ExitStack
 import httpx
 
 from tests.runtime import configure_test_environment
@@ -9,6 +10,45 @@ import app.main as main
 
 
 class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lifespan_drains_periodic_steward_before_closing_dependencies(self):
+        started, drained = asyncio.Event(), asyncio.Event()
+        workers = []
+        async def steward(**kwargs):
+            workers.append(asyncio.current_task())
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                drained.set()
+        async def periodic():
+            await main._run_entity_steward_task(reason="periodic")
+            await asyncio.Event().wait()
+        async def close():
+            self.assertTrue(drained.is_set(), "Dependencies closed before Steward drained")
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(main, "_tasks", {}))
+                stack.enter_context(patch.object(main, "_schedule_task_cleanup"))
+                stack.enter_context(patch.object(main, "_auto_sync_loop", AsyncMock()))
+                stack.enter_context(patch.object(main, "_entity_steward_loop", periodic))
+                stack.enter_context(patch.object(main.entity_steward, "run_once", steward))
+                for dependency in (main.graph_store, main.embeddings_store, main.conversations):
+                    stack.enter_context(patch.object(dependency, "init", AsyncMock()))
+                for dependency in (main.query_engine, main.extractor, main.classifier,
+                                   main.strands_orchestrator, main.graph_store,
+                                   main.embeddings_store, main.conversations):
+                    stack.enter_context(patch.object(dependency, "close", close))
+                stack.enter_context(patch.object(main, "close_pipeline_clients", close))
+                async with main.lifespan(main.app):
+                    await asyncio.wait_for(started.wait(), 1)
+                self.assertTrue(all(worker.done() for worker in workers))
+                self.assertEqual([task["status"] for task in main._tasks.values()], ["cancelled"])
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
     async def test_post_sync_steward_is_visible_and_holds_mutation_admission_until_drained(self):
         started, release, drained = asyncio.Event(), asyncio.Event(), asyncio.Event()
         async def steward(**kwargs):

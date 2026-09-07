@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 # Track background tasks
 _tasks: dict[str, dict] = {}
+_background_workers: set[asyncio.Task] = set()
 _cancel_events: dict[str, asyncio.Event] = {}  # task_id -> cancel event
 _last_failed_extraction: dict | None = None
 _auto_sync_task: asyncio.Task | None = None
@@ -78,6 +79,14 @@ _freshness_cache: dict | None = None
 _freshness_cache_at: float = 0.0
 FRESHNESS_CACHE_TTL_SECONDS = int(os.getenv("FRESHNESS_CACHE_TTL_SECONDS", "60"))
 FRESHNESS_SAMPLE_LIMIT = int(os.getenv("FRESHNESS_SAMPLE_LIMIT", "50"))
+
+
+def _start_background_worker(coro):
+    """Keep dependency-using workers alive and drain them before shutdown."""
+    task = asyncio.create_task(coro)
+    _background_workers.add(task)
+    task.add_done_callback(_background_workers.discard)
+    return task
 
 
 def _schedule_task_cleanup(task_id: str, delay: int = 300):
@@ -395,6 +404,9 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             if _tasks[task_id]["status"] == "completed":
                 _tasks[task_id]["steward_task_id"] = await _run_entity_steward_task(
                     limit=settings.entity_steward_candidate_limit, reason="post-sync")
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -405,7 +417,7 @@ async def _run_sync_task(task_type: str = "sync") -> str:
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id
 
 
@@ -453,7 +465,7 @@ async def _run_entity_steward_task(limit: int = 75, reason: str = "manual", focu
         finally:
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id
 
 
@@ -574,6 +586,9 @@ async def _run_reindex_documents_task(
             _tasks[task_id]["estimated_remaining_seconds"] = 0
             if errors:
                 _tasks[task_id]["error"] = f"{errors} document(s) failed"
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error("%s task %s failed: %s", task_type, task_id, e, exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -585,7 +600,7 @@ async def _run_reindex_documents_task(
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return task_id, message
 
 
@@ -641,24 +656,32 @@ async def lifespan(app: FastAPI):
     _entity_steward_task = asyncio.create_task(_entity_steward_loop())
     _startup_ready = True
     logger.info("Startup complete")
-    yield
-    logger.info("Shutting down...")
-    _startup_ready = False
-    if _auto_sync_task:
-        _auto_sync_task.cancel()
-    if _entity_steward_task:
-        _entity_steward_task.cancel()
-    background_tasks = [task for task in (_auto_sync_task, _entity_steward_task) if task]
-    if background_tasks:
-        await asyncio.gather(*background_tasks, return_exceptions=True)
-    await query_engine.close()
-    await extractor.close()
-    await classifier.close()
-    await close_pipeline_clients()
-    await strands_orchestrator.close()
-    await graph_store.close()
-    await embeddings_store.close()
-    await conversations.close()
+    try:
+        yield
+    finally:
+        logger.info("Shutting down...")
+        _startup_ready = False
+        if _auto_sync_task:
+            _auto_sync_task.cancel()
+        if _entity_steward_task:
+            _entity_steward_task.cancel()
+        background_tasks = [task for task in (_auto_sync_task, _entity_steward_task) if task]
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+        # Schedulers are stopped first, so no new graph workers can be admitted.
+        workers = list(_background_workers)
+        for worker in workers:
+            worker.cancel()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
+        await query_engine.close()
+        await extractor.close()
+        await classifier.close()
+        await close_pipeline_clients()
+        await strands_orchestrator.close()
+        await graph_store.close()
+        await embeddings_store.close()
+        await conversations.close()
 
 
 app = FastAPI(
@@ -969,6 +992,9 @@ async def reindex():
             elapsed = time.time() - _tasks[task_id]["_start_time"]
             _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
             _tasks[task_id]["estimated_remaining_seconds"] = 0
+        except asyncio.CancelledError:
+            _tasks[task_id]["status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error(f"Reindex task {task_id} failed: {e}", exc_info=True)
             _tasks[task_id]["status"] = "failed"
@@ -979,7 +1005,7 @@ async def reindex():
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
 
-    asyncio.create_task(_run())
+    _start_background_worker(_run())
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
 
 
@@ -1363,7 +1389,7 @@ async def query_stream(req: QueryRequest):
             await queue.put(None)  # sentinel
 
     # Start query as background task — runs to completion even if client disconnects
-    asyncio.create_task(_run_query())
+    _start_background_worker(_run_query())
 
     async def event_generator():
         try:

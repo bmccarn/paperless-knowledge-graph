@@ -2,8 +2,9 @@
 from app.entity_policy import ENTITY_TYPES, name_key
 
 VERIFIER_VERSION = "typed-vector-source-name-v1"
-LEGACY_TYPES = {"Document": "DocumentRef", "Financialitem": "FinancialItem",
-                "Insurancepolicy": "InsurancePolicy", "Dateevent": "DateEvent"}
+LEGACY_LABELS = {"Financialitem": "FinancialItem", "Insurancepolicy": "InsurancePolicy",
+                 "Dateevent": "DateEvent"}
+LEGACY_TYPES = {"Document": "DocumentRef", **LEGACY_LABELS}
 
 
 def canonical_vector_type(kind):
@@ -23,8 +24,11 @@ def classify_entity_vector(vector: dict, graph: dict | None, *, verified_aliases
     if not vector.get("entity_uuid") or vector["entity_uuid"] != graph.get("uuid"):
         problems.append("uuid")
     vector_type = canonical_vector_type(vector.get("entity_type"))
-    graph_types = {canonical_vector_type(label) for label in graph.get("labels", []) if label in ENTITY_TYPES or label in LEGACY_TYPES}
-    if vector_type not in ENTITY_TYPES or graph_types != {vector_type}:
+    labels = graph.get("labels", [])
+    graph_types = {LEGACY_LABELS.get(label, label) for label in labels if label in ENTITY_TYPES or label in LEGACY_LABELS}
+    # Graph Document is the reserved Paperless source node. Only extraction
+    # vectors translate Document to the graph's DocumentRef entity label.
+    if "Document" in labels or vector_type not in ENTITY_TYPES or graph_types != {vector_type}:
         problems.append("type")
     if type(vector.get("dimension")) is not int or vector["dimension"] != 3072:
         problems.append("dimension")
@@ -44,4 +48,4 @@ def classify_entity_vector(vector: dict, graph: dict | None, *, verified_aliases
         problems.append("name")
     return {"accepted": not problems, "problems": problems, "name_agreement": agreement,
             "legacy_type_representation": vector.get("entity_type") in LEGACY_TYPES
-                or any(label in LEGACY_TYPES for label in graph.get("labels", []))}
+                or any(label in LEGACY_LABELS for label in labels)}

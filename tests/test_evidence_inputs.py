@@ -50,12 +50,14 @@ class EvidenceInputTests(unittest.TestCase):
         chunks += [{"document_id": 102, "chunk_index": i, "title": "Invoice",
                     "content": "describe each invoice subject using exact source quotations " * 65}
                    for i in range(8)]
-        pack = build_evidence_pack(question, {}, chunks, [])
-        rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=6000))
-        self.assertEqual({s["document_id"] for s in rendered["spans"]}, {101, 102})
-        selected = select_spans(question, [], evidence_spans(pack), budget=5000)
-        self.assertEqual({s["document_id"] for s in selected}, {101, 102})
-        self.assertLessEqual(sum(len(s["content"]) for s in selected), 5000)
+        for question in (question, 'Compare the documents titled "Postage" and "Invoice", '
+                         'describe each invoice subject using exact source quotations.'):
+            pack = build_evidence_pack(question, {}, chunks, [])
+            rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=6000))
+            self.assertEqual({s["document_id"] for s in rendered["spans"]}, {101, 102})
+            selected = select_spans(question, [], evidence_spans(pack), budget=5000)
+            self.assertEqual({s["document_id"] for s in selected}, {101, 102})
+            self.assertLessEqual(sum(len(s["content"]) for s in selected), 5000)
 
     def test_document_reference_priority_does_not_interpret_account_numbers(self):
         from app.answer_finalization import select_spans

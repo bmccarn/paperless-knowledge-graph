@@ -63,6 +63,31 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 props={"uuid": node_uuid, "name": name, "entity_type": kind, "source_doc_ids": docs or [], **properties})
         return node_uuid
 
+    async def test_post_sync_steward_preserves_legacy_suggestion_history(self):
+        from app import entity_steward as steward_module
+        left = await self.seed("steward-left", "Cobalt Tools", "Organization", [991711])
+        right = await self.seed("steward-right", "Cobalt Tools", "Organization", [991712])
+        original = await self.store.add_entity_review_decision(left, right, "suggest_merge", "original legacy note")
+        native_candidates = self.graph.get_entity_review_candidates
+
+        async def scoped_candidates(ignored, limit):
+            candidates = await native_candidates(ignored, limit=200)
+            return [c for c in candidates if c["left"]["uuid"].startswith(self.prefix)
+                    and c["right"]["uuid"].startswith(self.prefix)][:limit]
+
+        agent = AsyncMock(return_value={"recommendation": "merge", "confidence": .99, "risk": "low"})
+        with patch.object(steward_module, "graph_store", self.graph), \
+                patch.object(steward_module, "embeddings_store", self.store), \
+                patch.object(self.graph, "get_entity_review_candidates", scoped_candidates), \
+                patch.object(steward_module.strands_orchestrator, "review_entity_candidate", agent):
+            for _ in range(2):
+                report = await steward_module.EntitySteward().run_once(reason="post-sync")
+                self.assertEqual(report["reviewed_count"], 0)
+        self.assertEqual(await self.store.get_entity_review_decisions(), [original])
+        agent.assert_not_awaited()
+        self.assertIsNotNone(await self.graph.get_node(left))
+        self.assertIsNotNone(await self.graph.get_node(right))
+
     async def test_mixed_nineteen_vetoes_hydrate_quarantine_and_preserve_exact_history(self):
         pairs = []
         for index in range(19):

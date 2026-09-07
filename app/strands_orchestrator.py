@@ -70,7 +70,13 @@ class StrandsQueryOrchestrator:
                 "Use missing when evidence is absent and conflicting when sources disagree. Headings and "
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
                 "Use the shortest complete exact quote that supports the assertion; do not copy entire "
-                "source spans when a shorter quote suffices. Return JSON only, with no explanations. "
+                "source spans when a shorter quote suffices. Copy span_id, evidence_id and document_id "
+                "together from the same supplied span. Each quote must be a contiguous substring of that span. "
+                "Include exact source forms for every asserted number and quantity; a four-digit asserted "
+                "year needs a quote containing that four-digit year, not only a two-digit date. Use separate "
+                "references for disjoint passages; never splice quotes. Dated policy terms are historical "
+                "document observations unless the assertion claims current real-world validity. "
+                "Return JSON only, with no explanations. "
                 "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
                 "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|current|none}]}.") ,
             prompt=json.dumps(payload, ensure_ascii=False))
@@ -192,8 +198,11 @@ Return only JSON:
 
 Rules:
 - Preserve supported details that answer the user's question.
+- Resolve each unsupported claim using its rejection_reasons: invalid_reference requires an exact source passage with matching source identifiers; value_mismatch requires the exact asserted values and units in that passage; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
+- Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
 - Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
+- For a policy inventory, begin directly with the documented policy types, identifying names/numbers and dated terms. Avoid a separate introductory claim about which policies are most recent or currently valid; omit agent, address and premium details unless asked.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.

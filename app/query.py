@@ -1039,7 +1039,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - Reference knowledge graph relationships when they add context
 - Structure complex answers with unnumbered headings and bullet points. Do not add numeric section labels; reserve numbers for source-backed facts.
 - Describe a material limitation as a limitation of the retrieved evidence; do not claim that an item is absent from the entire archive.
-- When multiple documents corroborate the same fact, cite all of them for completeness
+- When multiple documents corroborate the same fact, preserve its meaning; the source audit supplies the validated references.
 
 	Question: {question}
 	{conv_section}{draft_section}{plan_section}{timeline_section}{evidence_section}

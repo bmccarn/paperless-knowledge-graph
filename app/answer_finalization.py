@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v4"
+POLICY_VERSION = "source-audit-v5"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -174,8 +174,32 @@ def evidence_spans(pack: dict) -> list[dict]:
 
 def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000) -> list[dict]:
     tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
-    ranked = sorted(enumerate(spans), key=lambda pair: (
-        -len(tokens & set(re.findall(r"[\w$%]+", pair[1]["content"].lower()))), pair[0]))
+    # Retrieval metadata identifies explicitly requested documents even when
+    # their short OCR has fewer shared words than a long unrelated notice.
+    # This affects relevance only; reference validation still requires OCR.
+    requested_ids = {int(value) for value in re.findall(
+        r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*"
+        r"([1-9]\d{0,18})\b", question, re.I)}
+    quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
+    def rank(pair):
+        index, span = pair
+        title = normalize_quote(str(span.get("title") or "")).casefold()
+        requested = (2 if span.get("document_id") in requested_ids else
+                     1 if title and title in quoted_titles else 0)
+        overlap = len(tokens & set(re.findall(r"[\w$%]+", span["content"].lower())))
+        return (-requested, -overlap, index)
+    ranked = sorted(enumerate(spans), key=rank)
+    # A long requested document must not crowd out another explicitly named
+    # source before either synthesis or auditing gets a chance to compare them.
+    first_per_document, remaining, represented = [], [], set()
+    for pair in ranked:
+        doc_id = pair[1].get("document_id")
+        if rank(pair)[0] < 0 and doc_id not in represented and len(pair[1]["content"]) <= budget:
+            first_per_document.append(pair)
+            represented.add(doc_id)
+        else:
+            remaining.append(pair)
+    ranked = first_per_document + remaining
     result, used = [], 0
     for _, span in ranked:
         if used + len(span["content"]) > budget:

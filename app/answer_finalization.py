@@ -266,11 +266,15 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     return result
 
 
-def _plain_field_labels(text: str):
+def _plain_field_labels(text: str, content_start: int = 0, content_end: int | None = None):
     """Ignore only balanced bold alphabetic field labels, retaining raw ranges."""
     pattern = r"(?<![\w*\\])\*\*([A-Za-z][A-Za-z \t]*:)\*\*(?=\s|$)"
     characters, ranges, cursor = [], [], 0
     for match in re.finditer(pattern, text):
+        # Boundary context may guard a wrapper, but cannot authorize one whose
+        # own opening/closing syntax lies outside the selected source content.
+        if match.start() < content_start or match.end() > (len(text) if content_end is None else content_end):
+            continue
         for index in range(cursor, match.start()):
             characters.append(text[index])
             ranges.append((index, index + 1))
@@ -317,7 +321,8 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     bounds = _quote_range(source, quote)
     if bounds is None:
         prefix, suffix = span.get("boundary_before", ""), span.get("boundary_after", "")
-        visible, ranges = _plain_field_labels(prefix + source + suffix)
+        visible, ranges = _plain_field_labels(
+            prefix + source + suffix, len(prefix), len(prefix) + len(source))
         # Context controls the grammar, but a match must begin and end in
         # this span. An outside prefix occurrence must not hide a later match.
         eligible = [i for i, (start, end) in enumerate(ranges)

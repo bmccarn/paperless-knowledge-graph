@@ -179,6 +179,21 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ref["start"], source.rindex("**Policy:"))
         self.assertEqual(source[ref["start"]:ref["end"]], "**Policy:** ZX123.")
 
+    async def test_partial_label_cannot_borrow_an_outside_bold_wrapper(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                selected = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": selected["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Number: ZX123."}]} for u in units]}
+        for prefix in ("x", "*", "\\"):
+            source = " " * 3797 + prefix + "**Policy Number:** ZX123."
+            evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                                  "title": "Record", "source_kind": "ocr", "content": source}]}
+            result = await AnswerFinalizer(Auditor()).finalize(
+                "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+            self.assertFalse(result["finalization"]["complete"], prefix)
+
     async def test_quote_cannot_truncate_a_combining_character(self):
         class Auditor:
             async def audit_answer_units(self, question, units, spans, plan):

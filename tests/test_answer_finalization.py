@@ -28,6 +28,25 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["claim_ledger"]["claims"][0]["document_id"], 101)
         self.assertEqual(result["verification"]["status"], "verified")
 
+    async def test_requested_short_source_reaches_auditor_among_long_distractors(self):
+        from app.evidence import build_evidence_pack
+        question = ('For Paperless ID 101, describe the invoice subject using only this document '
+                    'and an exact source quotation.')
+        content = "For the document describe the invoice subject using only an exact source quotation. " * 45
+        chunks = [{"document_id": 101, "title": "Parcel Invoice", "content": "Monthly premium: $321.00 USD."}]
+        chunks += [{"document_id": i, "title": "Unrelated notice", "content": content} for i in range(200, 225)]
+        pack = build_evidence_pack(question, {}, chunks, [])
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                source = next((s for s in spans if s["document_id"] == 101), None)
+                return {"assessments": [{"unit_id": u["id"], "status": "supported" if source else "missing",
+                    "references": [{"span_id": source["span_id"], "evidence_id": source["evidence_id"],
+                                    "document_id": 101, "quote": source["content"]}] if source else []}
+                    for u in units]}
+        result = await AnswerFinalizer(Auditor()).finalize(question, "Monthly premium: $321.00 USD.", pack)
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertEqual(result["finalization"]["cited_document_ids"], [101])
+
     async def test_wrong_digit_and_unit_fail_even_when_auditor_says_supported(self):
         for answer in ("Monthly premium is $312.00 USD.", "Monthly premium is €321.00 EUR."):
             with self.subTest(answer=answer):

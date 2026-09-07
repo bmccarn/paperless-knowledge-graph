@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v5"
+POLICY_VERSION = "source-audit-v6"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -128,15 +128,49 @@ def parse_date(value: Any) -> tuple[str, str] | None:
 
 def answer_units(answer: str) -> list[dict]:
     units = []
-    # Retain offsets into the exact revision, including text after old audit caps.
-    for match in re.finditer(r"\S(?:.*?)(?:(?<=[.!?])(?=\s)|(?=\n)|$)", answer, re.S):
-        start, end = match.span()
+    pending_heading = None
+    pending_end = 0
+
+    def append(start, end):
+        # Retain exact revision offsets and the existing per-unit size bound.
         while start < end:
             stop = min(start + 1200, end)
-            text = answer[start:stop]
-            if text.strip():
-                units.append({"id": f"u{len(units) + 1}", "start": start, "end": stop, "text": text})
+            units.append({"id": f"u{len(units) + 1}", "start": start,
+                          "end": stop, "text": answer[start:stop]})
             start = stop
+
+    for line_match in re.finditer(r"[^\r\n]+", answer):
+        line = line_match.group()
+        if not line.strip() or re.fullmatch(r"([*_-])(?:[ \t]*\1){2,}", line.strip()):
+            continue  # A Markdown thematic break contains no factual prose.
+        first = line_match.start() + len(line) - len(line.lstrip())
+        last = line_match.end() - len(line) + len(line.rstrip())
+        heading = re.match(r" {0,3}#{1,6}[ \t]+\S", line)
+        label = re.fullmatch(r"\s*(?:[-+*]\s+)?\*\*[^*\n]+:\*\*\s*", line)
+        if heading or label:
+            pending_heading = first if pending_heading is None else pending_heading
+            pending_end = last
+            continue  # Audit heading meaning together with the following claim.
+        start = first
+        for boundary in re.finditer(r"[.!?](?=\s|$)", line):
+            end = line_match.start() + boundary.end()
+            prefix = answer[start:end]
+            if boundary.group() == "." and (
+                re.fullmatch(r"\s*\d+\.", prefix)
+                or re.search(r"\b(?:No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd)\.$", prefix, re.I)
+                or re.search(r"(?:\b[A-Z]\.){2,}$", prefix)
+            ):
+                continue
+            append(pending_heading if pending_heading is not None else start, end)
+            pending_heading = None
+            start = end
+            while start < last and answer[start].isspace():
+                start += 1
+        if start < last:
+            append(pending_heading if pending_heading is not None else start, last)
+            pending_heading = None
+    if pending_heading is not None:
+        append(pending_heading, pending_end)  # A trailing factual heading is audited.
     return units
 
 
@@ -263,6 +297,7 @@ def values_match(text: str, references: list[dict]) -> bool:
     # explicit calculation evidence; the auditor cannot simply bless a new value.
     # Compare rendered prose without changing the audited revision or offsets.
     text = canonical_prose(text)
+    text = re.sub(r"^ {0,3}#{1,6}[ \t]+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*\d+\.(?:\s|$)", "", text, flags=re.MULTILINE)
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:

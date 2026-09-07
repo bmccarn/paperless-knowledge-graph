@@ -192,6 +192,8 @@ Return only JSON:
 
 Rules:
 - Preserve supported details that answer the user's question.
+- Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
+- Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Add a short "Evidence limits" note only when missing evidence materially limits the direct answer. Omit it when the answer already provides the requested facts with support.

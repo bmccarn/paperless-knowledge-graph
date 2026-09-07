@@ -9,7 +9,7 @@ import json
 import re
 import unicodedata
 
-RESOLUTION_POLICY = "evidence-identity-v1"
+RESOLUTION_POLICY = "evidence-identity-v2"
 EXPLICIT_REVIEW_METHOD = "entity_review_api"
 ENTITY_TYPES = frozenset({
     "Person", "Organization", "Location", "System", "Product", "Document",
@@ -51,11 +51,12 @@ def name_key(name: str, kind: str = "") -> str:
     return " ".join(value.split())
 
 
-def context_bound_name(name: str, kind: str) -> bool:
-    """Short/initial-only references are not globally unique names."""
+def context_bound_name(name: str, kind: str, name_usage: str = "") -> bool:
+    """Scope by reviewed usage/type, never by invoice typography."""
     words = name_key(name, kind).split()
     letters = "".join(c for c in name if c.isalpha())
-    return (len(letters) <= 2 or (len(words) == 1 and letters.isupper() and len(letters) <= 10)
+    return (name_usage in {"abbreviation", "initials", "ambiguous"}
+            or len(letters) <= 2
             or (kind == "Person" and (len(words) < 2 or any(len(w) == 1 for w in words))))
 
 
@@ -79,7 +80,7 @@ def verified_spans(name: str, evidence: list, source: str) -> list[dict]:
 
 
 def coreference_span(left: str, right: str, source: str) -> dict | None:
-    """Recognize explicit aliases, not issuer/brand/parent/subsidiary proximity.
+    """Find a candidate alias phrase; NEVER an affirmative identity verdict.
 
     Deliberately small grammar. Unsupported co-reference goes to human review.
     Parentheses alone prove only a mechanically matching initialism.
@@ -152,7 +153,7 @@ def has_local_alias_definition(alias: str, source: str) -> bool:
     escaped = r"\s+".join(re.escape(word) for word in alias.split())
     parenthetical = re.search(r'\(\s*["“]?' + escaped + r'["”]?\s*\)', source, re.I)
     compact = re.sub(r"[^\w]", "", alias)
-    abbreviation_like = compact.isupper() or (compact.islower() and len(compact) <= 5)
+    abbreviation_like = compact.isalpha() and len(compact) <= 5
     return bool((parenthetical and abbreviation_like) or re.search(r'(?:also known as|doing business as|d/b/a|aka|hereinafter referred to as)\s+["“]?'
                           + escaped + r'(?!\w)', source, re.I))
 
@@ -192,11 +193,8 @@ def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str
         elif (source and record.get("provenance") == "source_coreference"
               and record.get("policy") == RESOLUTION_POLICY and record.get("source_doc_id") == doc_id
               and record.get("source_hash") == digest(source)):
-            span = coreference_span(node["name"], alias, source)
-            if not span:
-                expansions = initialism_expansions(alias, source)
-                if len(expansions) == 1 and name_key(expansions[0], kind) == name_key(node["name"], kind):
-                    span = coreference_span(expansions[0], alias, source)
+            proof = record.get("identity_proof")
+            span = verified_coreference(node["name"], alias, kind, source, [proof])
             if (span and digest(span["quote"]) == record.get("quote_hash")
                     and span["start"] == record.get("start") and span["end"] == record.get("end")):
                 result.append(alias)
@@ -204,10 +202,71 @@ def trusted_aliases(node: dict, kind: str, doc_id: int, source: str) -> list[str
 
 
 def source_alias_record(canonical: str, alias: str, kind: str, doc_id: int, source: str, span: dict) -> dict:
+    # A literal regex span cannot mint positive authority. Keep the public shape
+    # compatible, but require the independently verified structured receipt.
+    proof = span.get("identity_proof")
+    if not verified_coreference(canonical, alias, kind, source, [proof]):
+        raise ValueError("Source alias requires an accepted source-review identity proof")
     return {"alias": alias, "canonical_name": canonical, "type": kind,
             "provenance": "source_coreference", "policy": RESOLUTION_POLICY,
             "source_doc_id": doc_id, "source_hash": digest(source),
-            "start": span["start"], "end": span["end"], "quote_hash": digest(span["quote"])}
+            "start": span["start"], "end": span["end"], "quote_hash": digest(span["quote"]),
+            "identity_proof": proof}
+
+
+def identity_proof_id(proof: dict) -> str:
+    fields = ("left_id", "right_id", "left_name", "right_name", "type", "evidence", "scope")
+    return "coref-" + digest(json.dumps({key: proof.get(key) for key in fields}, sort_keys=True))
+
+
+def valid_identity_receipt(proof: dict, source: str) -> bool:
+    """Check receipt integrity independently of whether the verdict is positive."""
+    if not isinstance(proof, dict) or any(not isinstance(proof.get(field), str) or not proof[field].strip()
+            for field in ("left_name", "right_name", "left_id", "right_id", "rationale")):
+        return False
+    if (proof.get("type") not in ENTITY_TYPES or proof["left_id"] == proof["right_id"]
+            or proof.get("status") not in {"affirmed", "denied", "unknown"}
+            or proof.get("assertion_scope") not in {"current_direct", "quoted", "hypothetical", "historical", "disputed", "unknown"}
+            or type(proof.get("explicit")) is not bool
+            or proof.get("provenance") != "source_identity_review" or proof.get("proof_id") != identity_proof_id(proof)):
+        return False
+    evidence, scope = proof.get("evidence"), proof.get("scope")
+    if not isinstance(evidence, dict) or not isinstance(scope, dict):
+        return False
+    if (not verified_spans(proof["left_name"], [evidence], source)
+            or not verified_spans(proof["right_name"], [evidence], source)):
+        return False
+    start, end = scope.get("start"), scope.get("end")
+    return (type(start) is int and type(end) is int and 0 <= start < end <= len(source)
+            and digest(source[start:end]) == scope.get("source_hash")
+            and start <= evidence["start"] < evidence["end"] <= end)
+
+
+def verified_coreference(left: str, right: str, kind: str, source: str, proofs: list) -> dict | None:
+    """Validate a source-aware review receipt, not semantic truth from a regex.
+
+    The reviewer must have accepted both typed identities AND explicitly affirmed
+    their present, direct equivalence against the full recorded source window.
+    Missing, contradictory, stale, or out-of-scope receipts grant no authority.
+    """
+    pair = {name_key(left, kind), name_key(right, kind)}
+    matches = []
+    for proof in proofs or []:
+        if not isinstance(proof, dict):
+            continue
+        if any(not isinstance(proof.get(field), str) or not proof[field].strip()
+               for field in ("left_name", "right_name", "left_id", "right_id", "rationale")):
+            continue
+        proof_kind = "DocumentRef" if proof.get("type") == "Document" else proof.get("type")
+        if proof_kind != ("DocumentRef" if kind == "Document" else kind):
+            continue
+        if {name_key(proof.get("left_name", ""), kind), name_key(proof.get("right_name", ""), kind)} != pair:
+            continue
+        if (not valid_identity_receipt(proof, source) or proof.get("status") != "affirmed"
+                or proof.get("assertion_scope") != "current_direct" or proof.get("explicit") is not True):
+            return None
+        matches.append({**proof["evidence"], "identity_proof": proof})
+    return matches[0] if matches else None
 
 
 def human_alias_record(canonical: str, alias: str, kind: str, review_id: str, *, review_method: str) -> dict:

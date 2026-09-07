@@ -1,7 +1,7 @@
 """Document-lifetime identity bindings, never a process-wide name cache."""
 from __future__ import annotations
 
-from app.entity_policy import ENTITY_TYPES, name_key, verified_spans
+from app.entity_policy import ENTITY_TYPES, name_key, verified_spans, valid_identity_receipt
 
 
 class ResolvedEntity(str):
@@ -34,6 +34,17 @@ class DocumentBindings:
             if entity_id in self.entities:
                 raise ValueError("Duplicate extraction identity ID")
             self.entities[entity_id] = entity
+        self.identity_proofs = []
+        for entity in self.entities.values():
+            for proof in entity.get("identity_proofs") or []:
+                if not isinstance(proof, dict):
+                    continue
+                left, right = self.entities.get(proof.get("left_id")), self.entities.get(proof.get("right_id"))
+                if (left and right and left["type"] == right["type"] == proof.get("type")
+                        and left["name"] == proof.get("left_name") and right["name"] == proof.get("right_name")
+                        and valid_identity_receipt(proof, source)
+                        and proof not in self.identity_proofs):
+                    self.identity_proofs.append(proof)
 
     async def resolve_all(self):
         # Long explicit forms first, so a new acronym can bind to its expansion
@@ -44,7 +55,9 @@ class DocumentBindings:
             entity = self.entities[entity_id]
             uuid = await self.resolver.resolve(entity["name"], entity["type"], self.doc_id,
                 description=entity.get("description"), source=self.source,
-                identity_hint=entity.get("identity_hint") or "")
+                identity_hint=entity.get("identity_hint") or "",
+                identity_proofs=[proof for proof in self.identity_proofs if entity_id in (proof["left_id"], proof["right_id"])],
+                name_usage=entity.get("name_usage", ""))
             if not uuid:
                 raise ValueError("Accepted identity did not resolve")
             self.resolved[entity_id] = ResolvedEntity(uuid, entity["type"], entity["name"], entity.get("description", ""))

@@ -143,11 +143,14 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.resolver.resolve_person("Alice Jones", 12), "a")
 
     async def test_explicit_source_alias_proof_is_not_similarity_or_global_acronym_cache(self):
+        from tests.test_entity_review_closure import reviewed_entities, proofs
         self.graph.nodes = {"a": node("a", "Network Entity Systems"), "b": node("b", "New Era Services")}
         first_source = "Network Entity Systems (NES) signed."
         second_source = "New Era Services (NES) signed."
-        self.assertEqual(await self.resolver.resolve_organization("NES", 11, source=first_source), "a")
-        self.assertEqual(await self.resolver.resolve_organization("NES", 22, source=second_source), "b")
+        self.assertEqual(await self.resolver.resolve_organization("NES", 11, source=first_source,
+            identity_proofs=proofs(reviewed_entities("Network Entity Systems", "NES", first_source))), "a")
+        self.assertEqual(await self.resolver.resolve_organization("NES", 22, source=second_source,
+            identity_proofs=proofs(reviewed_entities("New Era Services", "NES", second_source))), "b")
         self.assertNotIn(await self.resolver.resolve_organization("NES", 33), {"a", "b"})
         self.assertEqual(self.graph.nodes["a"]["alias_records"][0]["provenance"], "source_coreference")
         self.assertEqual(self.graph.nodes["a"]["alias_records"][0]["source_hash"], digest(first_source))
@@ -161,8 +164,8 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(await self.resolver.resolve_organization("NES", 33, source=ambiguous), "a")
 
     async def test_same_name_different_type_and_context_are_independent(self):
-        self.graph.nodes = {"org": node("org", "MERS", "Organization", [11]),
-                            "condition": node("condition", "MERS", "Condition", [22])}
+        self.graph.nodes = {"org": node("org", "MERS", "Organization", [11], name_usage="abbreviation"),
+                            "condition": node("condition", "MERS", "Condition", [22], name_usage="abbreviation")}
         self.assertEqual(await self.resolver.resolve_organization("MERS", 11), "org")
         self.assertEqual(await self.resolver.resolve_generic("MERS", "Condition", 22), "condition")
         other = await self.resolver.resolve_organization("MERS", 33)

@@ -152,6 +152,55 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Alice Example appears in this document.", review_calls[0])
         self.assertEqual(result["all_entities"], [])
 
+    async def test_source_identity_review_receipts_reach_public_document_binding(self):
+        from unittest.mock import patch
+        from app import entity_resolver as resolver_module
+        from app.entity_bindings import DocumentBindings
+        from app.entity_policy import trusted_aliases
+        from tests.test_entity_review_closure import Graph, Ledger, node, review_for
+        left, right = "Juniper Instruments", "Silver Bay Services"
+        phrase = f"{left} also known as {right}"
+        for source, status, scope, same_identity in [
+            (f"{phrase} operates here.", "affirmed", "current_direct", True),
+            (f'The assertion "{phrase}" is untrue.', "denied", "quoted", False),
+            (f'"{phrase}" is reproduced as an exhibit.', "unknown", "quoted", False),
+            (f"{phrase}. The prior statement is disputed.", "denied", "disputed", False),
+            (f"{phrase} is a hypothetical example.", "unknown", "hypothetical", False),
+            (f"{phrase} operated in 1920; they are distinct today.", "unknown", "historical", False)]:
+            with self.subTest(source=source):
+                raw_entities = [{"name": name, "type": "Organization", "confidence": .95,
+                                 "evidence_quote": source} for name in (left, right)]
+                def review(response, client):
+                    prompt = client.calls[-1][2]
+                    self.assertIn(source, prompt)
+                    self.assertIn("denial anywhere in this window", prompt)
+                    proposals = json.loads(prompt.split("Proposals:\n", 1)[1])
+                    return {"entities": raw_entities, "identity_reviews": [
+                        review_for(proposal, status=status, scope=scope) for proposal in proposals]}
+                client = CompletionClient({"entities": {"entities": raw_entities}, "entity_review": review})
+                extracted = await self.extract(source, client)
+                self.assertEqual(extracted["extraction_coverage"]["status"], "complete")
+                self.assertEqual(len(extracted["all_entities"]), 2)
+                graph, ledger = Graph(), Ledger()
+                graph.nodes["existing"] = node("existing", left)
+                with patch.object(resolver_module, "graph_store", graph), patch.object(resolver_module, "embeddings_store", ledger):
+                    bindings = DocumentBindings(101, extracted, source, resolver_module.EntityResolver())
+                    await bindings.resolve_all()
+                self.assertEqual(len(set(bindings.resolved.values())), 1 if same_identity else 2)
+                self.assertEqual(trusted_aliases(graph.nodes["existing"], "Organization", 101, source), [right] if same_identity else [])
+
+    async def test_source_name_usage_is_reviewed_not_inferred_from_uppercase(self):
+        for name, usage in [("ZENTARA", "brand"), ("QRS", "abbreviation"), ("qrs", "abbreviation")]:
+            source = f"{name} is the supplier {'brand' if usage == 'brand' else 'abbreviation'} on this invoice."
+            entity = {"name": name, "type": "Organization", "confidence": .95, "evidence_quote": source}
+            reviewed = {**entity, "name_usage": usage, "name_usage_evidence_quote": source,
+                        "name_usage_rationale": "The source explicitly describes this usage."}
+            client = CompletionClient({"entities": {"entities": [entity]}, "entity_review": {"entities": [reviewed]}})
+            result = await self.extract(source, client)
+            accepted = result["all_entities"][0]
+            self.assertEqual(accepted["name_usage"], usage)
+            self.assertEqual(source[accepted["name_usage_evidence"]["start"]:accepted["name_usage_evidence"]["end"]], source)
+
     async def test_fabricated_entity_quote_and_verifier_added_names_are_rejected(self):
         def forged_proposal(response, _):
             response["entities"].append({"name": "Fabricated Person", "type": "Person", "confidence": 0.99, "evidence_quote": "Fabricated Person"})

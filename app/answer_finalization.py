@@ -52,8 +52,10 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             titles.setdefault(normalize_quote(title), set()).add(doc_id)
     # Recognize citation-shaped text broadly enough that malformed declarations
     # cannot be silently erased. Ordinary Markdown links keep their labels.
-    pattern = re.compile(r'\[Source:[^\n]*?\]|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)'
-                         r'|\[Document\s+[^\]\n]*\]\([^\)\n]*\)|\[([^\]\n]+)\]\([^\)\n]*\)', re.I)
+    # Consume complete Markdown links before considering a bracketed title:
+    # otherwise a verified title could hide an unverified attached link target.
+    pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
+                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)', re.I)
     parts, declarations, end, length = [], [], 0, 0
     text = text.strip()
     def unparsed_declarations(fragment, start):
@@ -89,7 +91,7 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(link[1])
         if enclosed(match.start()):
             doc_id = None
-        if match.group(1) is not None:
+        if match.group(1) is not None and not link:
             replacement = match.group(1)
             # A generic link must not launder unknown/malformed source syntax
             # into ordinary prose when its Markdown wrapper is removed.

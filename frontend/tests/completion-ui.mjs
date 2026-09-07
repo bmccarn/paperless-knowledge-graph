@@ -240,6 +240,7 @@ test("failed catalog searches do not claim an empty result or reuse old totals",
   await page.getByRole("button", { name: "Search documents", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Synthetic document search failure" }).waitFor();
   assert.equal(await page.getByText(/303 matching indexed documents/).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "invoice 151", exact: true }).count(), 0);
   assert.equal(await page.getByText("No documents found", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Next page", exact: true }).count(), 0);
   await page.getByRole("textbox", { name: "Search indexed documents" }).fill("January");

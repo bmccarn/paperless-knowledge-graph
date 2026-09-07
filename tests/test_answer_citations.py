@@ -53,6 +53,19 @@ class AnswerCitationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["finalization"]["attempts"], 2)
         self.assertFalse(result["finalization"]["complete"])
 
+    async def test_title_link_target_cannot_borrow_a_number_from_supported_prose(self):
+        quote = "The recorded premium is 999 USD."
+        pack = {"items": [{**PACK["items"][0], "title": "Policy",
+                           "content": quote, "source_content": quote}]}
+        candidate = quote + ' [Source: "Policy"](/documents/999)'
+        class Repair:
+            async def repair_answer(self, *args):
+                return {"answer": candidate}
+        for repair in (None, Repair()):
+            result = await AnswerFinalizer(QuoteAuditor(quote), repair).finalize(
+                "Recorded premium?", candidate, pack)
+            self.assertFalse(result["finalization"]["complete"])
+
     async def test_title_must_unambiguously_identify_certifying_evidence(self):
         for other in ({**PACK["items"][0], "id": "other", "document_id": 102},
                       {**PACK["items"][0], "source_kind": "generated"}):

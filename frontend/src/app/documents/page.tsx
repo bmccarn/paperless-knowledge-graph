@@ -227,7 +227,7 @@ export default function DocumentsPage() {
         </div>
 
         {/* Stats bar */}
-        {!loading && Object.keys(typeCounts).length > 0 && (
+        {!loading && !error && Object.keys(typeCounts).length > 0 && (
           <div className="flex flex-wrap gap-1.5 md:gap-2 overflow-x-auto">
             {Object.entries(typeCounts)
               .sort((a, b) => b[1] - a[1])

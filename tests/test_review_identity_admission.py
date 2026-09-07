@@ -14,10 +14,10 @@ NAMES = ("Cedar Analytics", "Willow Research")
 SOURCE = "Cedar Analytics also known as Willow Research signed this agreement."
 
 
-def alias_client(transform=lambda rows: rows, *, kind="Organization", status="affirmed"):
+def alias_client(transform=lambda rows: rows, *, kind="Organization", status="affirmed", source=SOURCE, names=NAMES):
     def entities(response, client):
         return {"entities": [{"name": name, "type": kind, "confidence": .95,
-                              "evidence_quote": SOURCE} for name in NAMES]}
+                              "evidence_quote": source} for name in names]}
     def review(response, client):
         proposals = json.loads(client.calls[-1][2].split("Proposals:\n", 1)[1])
         result = entities(response, client)

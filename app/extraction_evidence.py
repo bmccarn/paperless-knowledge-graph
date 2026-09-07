@@ -13,7 +13,7 @@ ENTITY_TYPES = {
     "Event", "Condition", "FinancialItem", "InsurancePolicy", "Contract",
     "DateEvent", "Address",
 }
-RECONCILIATION_VERSION = "review-admission-v3"
+RECONCILIATION_VERSION = "review-admission-v4"
 
 
 def source_name_key(name: str) -> str:

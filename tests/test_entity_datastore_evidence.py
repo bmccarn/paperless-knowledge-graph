@@ -64,20 +64,28 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         return node_uuid
 
     async def test_public_ingestion_preserves_review_alias_and_vector_contract_across_sources(self):
+        from tests.test_review_identity_admission import SOURCE, NAMES
+        await self._check_public_alias_ingestion(SOURCE, NAMES)
+
+    async def test_public_ingestion_persists_markdown_acronym_alias_on_repeat(self):
+        await self._check_public_alias_ingestion(
+            "**Network Entity Systems (NES)** signed.", ("Network Entity Systems", "NES"))
+
+    async def _check_public_alias_ingestion(self, source, names):
         from app import pipeline
         from app.extractor import EntityExtractor
         from app.paperless import PaperlessClient
         from app.entity_vector_consistency import classify_entity_vector
-        from tests.test_review_identity_admission import alias_client, SOURCE, NAMES
+        from tests.test_review_identity_admission import alias_client
         from tests.test_ingestion import PaperlessFixture, ClassifierFixture, document
-        canonical = await self.seed("canonical", NAMES[0], "Organization", [991712])
+        canonical = await self.seed("canonical", names[0], "Organization", [991712])
         await self.graph.create_document_node(991712, "Synthetic retained source", "general", "2026-09-07", "synthetic")
         await self.graph.create_relationship("991712", "Document", canonical, "Organization", "MENTIONS", {"source_doc": 991712})
         original = await self.graph.get_node(canonical)
-        doc = document(991711, SOURCE)
+        doc = document(991711, source)
         def uppercase(rows):
             return [{**row, "name": row["name"].upper()} for row in rows]
-        extractor = EntityExtractor(alias_client(uppercase))
+        extractor = EntityExtractor(alias_client(uppercase, source=source, names=names))
         with patch.object(pipeline, "paperless_client", PaperlessFixture([doc])), \
                 patch.object(pipeline, "classifier", ClassifierFixture()), \
                 patch.object(pipeline, "extractor", extractor), \
@@ -91,7 +99,7 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["status"], "processed", result)
                 persisted = await self.graph.get_node(canonical)
                 props = persisted["properties"]
-                self.assertEqual(len(trusted_aliases(props, "Organization", 991711, SOURCE)), 1)
+                self.assertEqual(len(trusted_aliases(props, "Organization", 991711, source)), 1)
                 self.assertEqual(set(props["source_doc_ids"]), {991711, 991712})
                 old_edges = [e for e in original["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
                 retained = [e for e in persisted["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
@@ -99,7 +107,7 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 async with self.store.pool.acquire() as conn:
                     vector = dict(await conn.fetchrow("SELECT entity_uuid,entity_name,entity_type,vector_dims(embedding) AS dimension FROM entity_embeddings WHERE entity_uuid=$1", canonical))
                 consistency = classify_entity_vector(vector, {"uuid": canonical, "name": props["name"], "labels": ["Organization"]},
-                    verified_aliases=trusted_aliases(props, "Organization", 991711, SOURCE))
+                    verified_aliases=trusted_aliases(props, "Organization", 991711, source))
                 self.assertTrue(consistency["accepted"], consistency)
                 self.assertEqual((await self.store.get_ingestion_fingerprints([991711]))[991711], PaperlessClient.ingestion_fingerprint(doc))
             self.assertEqual((await pipeline.process_document(doc))["status"], "skipped")

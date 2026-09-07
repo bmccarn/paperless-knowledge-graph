@@ -29,6 +29,18 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
             item.start()
         self.addCleanup(lambda: [item.stop() for item in reversed(self.patches)])
 
+    async def test_unrelated_candidates_do_not_load_neighborhoods_when_vetoes_exist(self):
+        from app.entity_decisions import entity_identity
+        canonical = node("canonical", "Example Assurance Company")
+        unrelated = [node(f"other-{i}", f"Unrelated Organization {i}") for i in range(100)]
+        self.graph.nodes = {n["uuid"]: n for n in [canonical, *unrelated]}
+        self.decisions.rows = [{"left_uuid": "other-0", "right_uuid": "other-1", "decision": "split",
+            "left_identity": entity_identity(unrelated[0]), "right_identity": entity_identity(unrelated[1]),
+            "identity_status": "active", "provenance": "human_review"}]
+        with patch.object(self.graph, "get_node", wraps=self.graph.get_node) as neighborhoods:
+            self.assertEqual(await self.resolver.resolve_organization("Example Assurance Company", 42), "canonical")
+            self.assertEqual([call.args[0] for call in neighborhoods.await_args_list], ["canonical"])
+
     async def test_unattributed_or_automated_merge_cannot_mutate_or_claim_human_review(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person"), "b": node("b", "Alice Smyth", "Person")}
         original = copy.deepcopy(self.graph.nodes)

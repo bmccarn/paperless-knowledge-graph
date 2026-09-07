@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v8"
+POLICY_VERSION = "source-audit-v9"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -225,12 +225,13 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*"
         r"([1-9]\d{0,18})\b", question, re.I)}
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
-    def rank(pair):
+    span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
+    def rank(pair, query_tokens=tokens):
         index, span = pair
         title = normalize_quote(str(span.get("title") or "")).casefold()
         requested = (2 if span.get("document_id") in requested_ids else
                      1 if title and title in quoted_titles else 0)
-        overlap = len(tokens & set(re.findall(r"[\w$%]+", span["content"].lower())))
+        overlap = len(query_tokens & span_tokens[index])
         return (-requested, -overlap, index)
     ranked = sorted(enumerate(spans), key=rank)
     # A long requested document must not crowd out another explicitly named
@@ -243,12 +244,24 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
-    ranked = first_per_document + remaining
-    result, used = [], 0
-    for _, span in ranked:
+    # A batch's combined vocabulary can hide the only source for one of its
+    # assertions. Reserve each unit's best whole window before filling the
+    # remaining budget with the batch-wide ranking.
+    per_unit = []
+    fitting = [pair for pair in ranked if len(pair[1]["content"]) <= budget]
+    for unit in units:
+        unit_tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + unit["text"].lower()))
+        if fitting:
+            per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
+    ranked = first_per_document + per_unit + remaining
+    result, used, selected = [], 0, set()
+    for index, span in ranked:
+        if index in selected:
+            continue
         if used + len(span["content"]) > budget:
             continue
         result.append(span)
+        selected.add(index)
         used += len(span["content"])
     return result
 

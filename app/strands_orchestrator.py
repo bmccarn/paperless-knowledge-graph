@@ -80,7 +80,7 @@ class StrandsQueryOrchestrator:
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
                 "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
                 "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|current|none}]}.") ,
-            prompt=json.dumps(payload, ensure_ascii=False), max_tokens=6000)
+            prompt=json.dumps(payload, ensure_ascii=False))
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:
         if not self.enabled:
@@ -122,7 +122,6 @@ Rules:
                 "You do not answer the user. You produce compact JSON plans only."
             ),
             prompt=prompt,
-            max_tokens=1600,
         )
 
     async def extract_timeline(self, question: str, context: str) -> list[dict[str, Any]]:
@@ -164,7 +163,6 @@ Rules:
                 "You never infer dates not present in the context."
             ),
             prompt=prompt,
-            max_tokens=2200,
         )
         events = result.get("events", []) if isinstance(result, dict) else []
         return [event for event in events if isinstance(event, dict)]
@@ -216,7 +214,6 @@ Rules:
                 "without making the answer vague."
             ),
             prompt=prompt,
-            max_tokens=6200,
         )
 
     async def review_entity_candidate(self, candidate: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any] | None:
@@ -253,15 +250,14 @@ Rules:
                 "Bad merges corrupt the graph, so you prefer review unless evidence is clear."
             ),
             prompt=prompt,
-            max_tokens=1800,
         )
 
-    async def _json_agent(self, name: str, system_prompt: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+    async def _json_agent(self, name: str, system_prompt: str, prompt: str) -> dict[str, Any]:
         async with self._client_lock:
             try:
                 agent = Agent(
                     name=name,
-                    model=self._model(max_tokens=max_tokens),
+                    model=self._model(),
                     system_prompt=system_prompt,
                     callback_handler=None,
                 )
@@ -292,7 +288,7 @@ Rules:
         async with self._client_lock:
             await self._close_litellm_clients()
 
-    def _model(self, max_tokens: int):
+    def _model(self):
         model_id = settings.strands_model or settings.gemini_model
         return LiteLLMModel(
             client_args={
@@ -301,9 +297,6 @@ Rules:
                 "use_litellm_proxy": True,
             },
             model_id=model_id,
-            params={
-                "max_tokens": max_tokens,
-            },
         )
 
 

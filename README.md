@@ -20,6 +20,8 @@ A knowledge graph system that extracts structured entities and relationships fro
 
 Saved conversations retain their complete messages for display. Model prompts use only the latest 10 messages within a shared 12,000-character conversation budget across planning, synthesis, and source auditing. When that budget is exceeded, older context is omitted first; an oversized retained message keeps its ending with an explicit truncation marker. Query-cache versioning prevents reuse of answers generated under the previous unbounded-context policy.
 
+Strands planning, source auditing, answer repair, timeline extraction and entity review omit application-imposed output-token limits and use the provider's normal output allowance. Per-call and overall source-audit timeouts still apply. Incomplete or truncated audits cannot certify an answer.
+
 Document extraction has no document-size or window-count cap: it processes overlapping source windows through the end of every document. The first normal sync after the ingestion-fingerprint migration rebuilds legacy derived records; a wipe or manual Reindex All is not required. Only complete extraction can commit a completion fingerprint, and transient processing failures remain retryable.
 
 ## Architecture

@@ -162,6 +162,23 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                     "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
                 self.assertFalse(result["finalization"]["complete"], (prefix, len(padding)))
 
+    async def test_field_label_match_skips_an_outside_prefix_occurrence(self):
+        source = "x" * 3798 + "**Policy:** ZX123.\nAn intervening line.\n**Policy:** ZX123."
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                selected = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": selected["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Policy: ZX123."}]} for u in units]}
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "title": "Record", "source_kind": "ocr", "content": source}]}
+        result = await AnswerFinalizer(Auditor()).finalize(
+            "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+        self.assertTrue(result["finalization"]["complete"])
+        ref = result["claim_ledger"]["claims"][0]["references"][0]
+        self.assertEqual(ref["start"], source.rindex("**Policy:"))
+        self.assertEqual(source[ref["start"]:ref["end"]], "**Policy:** ZX123.")
+
     async def test_quote_cannot_truncate_a_combining_character(self):
         class Auditor:
             async def audit_answer_units(self, question, units, spans, plan):

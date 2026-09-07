@@ -318,6 +318,14 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     if bounds is None:
         prefix, suffix = span.get("boundary_before", ""), span.get("boundary_after", "")
         visible, ranges = _plain_field_labels(prefix + source + suffix)
+        # Context controls the grammar, but a match must begin and end in
+        # this span. An outside prefix occurrence must not hide a later match.
+        eligible = [i for i, (start, end) in enumerate(ranges)
+                    if len(prefix) <= start < end <= len(prefix) + len(source)]
+        if not eligible:
+            return None
+        first, last = eligible[0], eligible[-1] + 1
+        visible, ranges = visible[first:last], ranges[first:last]
         plain_quote, _ = _plain_field_labels(quote)
         visible_bounds = _quote_range(visible, plain_quote)
         if visible_bounds is None:

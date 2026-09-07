@@ -13,7 +13,7 @@ from app.paperless import paperless_client, PaperlessClient
 from app.classifier import classifier
 from app.extractor import extractor
 from app.entity_resolver import entity_resolver
-from app.graph import graph_store
+from app.graph import graph_store, _sanitize_rel_type
 from app.embeddings import embeddings_store, chunk_text
 from app.cache import invalidate_on_sync
 
@@ -35,6 +35,7 @@ async def close_clients():
 async def _create_relationship(from_uuid, from_label, to_uuid, to_label, rel_type, properties=None):
     """Carry exact resolved labels through legacy metadata processors too."""
     bindings = _document_bindings.get()
+    rel_type = _sanitize_rel_type(rel_type)
     if bindings is not None:
         from app.relationship_support import merge_support_properties
         key = (str(from_uuid), str(to_uuid), rel_type)
@@ -156,6 +157,7 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
 
     logger.info(f"Processing doc {doc_id}: {title}")
 
+    binding_token = None
     try:
         # Step 1: Classify
         classification = await classifier.classify(title, content)
@@ -216,6 +218,10 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
             },
         )
 
+        # Keep one generation's evidence accumulator across every graph writer,
+        # including implied relationships after the metadata processor returns.
+        binding_token = _document_bindings.set(bindings)
+
         # Step 5: Process extracted entities based on doc type
         await _process_extraction(doc_id, doc_node_id, doc_type, extracted, title=title, bindings=bindings)
 
@@ -244,6 +250,8 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
         logger.error(f"Failed to process doc {doc_id}: {e}", exc_info=True)
         return {"doc_id": doc_id, "status": "error", "error": str(e)}
     finally:
+        if binding_token is not None:
+            _document_bindings.reset(binding_token)
         if mutation_started or force:
             await asyncio.to_thread(invalidate_on_sync)
 
@@ -542,21 +550,28 @@ async def _store_entity_embeddings(doc_id: int, extracted: dict, *, bindings: Do
 
 
 async def _process_implied_relationships(doc_id: int, extracted: dict, *, bindings: DocumentBindings | None = None):
-    """Relationships may reference accepted identities, never create new ones."""
-    for rel in extracted.get("implied_relationships") or []:
-        if bindings is None or bindings.doc_id != doc_id:
-            raise ValueError("Relationships require this document's identity bindings")
-        left = bindings.lookup(rel.get("from_entity", ""), rel.get("from_type", ""), rel.get("from_entity_id"))
-        right = bindings.lookup(rel.get("to_entity", ""), rel.get("to_type", ""), rel.get("to_entity_id"))
-        if not left or not right:
-            raise ValueError("Relationship endpoint is missing or ambiguous in accepted identities")
-        await _create_relationship(left, left.entity_type, right, right.entity_type,
-            rel.get("relationship", "RELATED_TO"), {
-                "source_doc": doc_id, "confidence": rel.get("confidence", 0),
-                "implied": bool(rel.get("inferred", True)),
-                "rationale": _coerce_text(rel.get("rationale") or rel.get("explanation")),
-                "evidence_json": _json.dumps(rel.get("evidence") or []),
-            })
+    """Bind accepted identities and accumulate support even for direct callers."""
+    relationships = extracted.get("implied_relationships") or []
+    if not relationships:
+        return
+    if bindings is None or bindings.doc_id != doc_id:
+        raise ValueError("Relationships require this document's identity bindings")
+    token = _document_bindings.set(bindings)
+    try:
+        for rel in relationships:
+            left = bindings.lookup(rel.get("from_entity", ""), rel.get("from_type", ""), rel.get("from_entity_id"))
+            right = bindings.lookup(rel.get("to_entity", ""), rel.get("to_type", ""), rel.get("to_entity_id"))
+            if not left or not right:
+                raise ValueError("Relationship endpoint is missing or ambiguous in accepted identities")
+            await _create_relationship(left, left.entity_type, right, right.entity_type,
+                rel.get("relationship", "RELATED_TO"), {
+                    "source_doc": doc_id, "confidence": rel.get("confidence", 0),
+                    "implied": bool(rel.get("inferred", True)),
+                    "rationale": _coerce_text(rel.get("rationale") or rel.get("explanation")),
+                    "evidence_json": _json.dumps(rel.get("evidence") or []),
+                })
+    finally:
+        _document_bindings.reset(token)
 
 
 # Canonical PascalCase map — .title() breaks multi-capital types like FinancialItem
@@ -599,8 +614,14 @@ def _neo4j_label(entity_type: str) -> str:
     return ENTITY_TYPE_TO_LABEL.get(entity_type, entity_type)
 
 
-async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "", description: str = "") -> str:
-    """Legacy metadata may reuse accepted identity, but cannot retype/recreate it."""
+async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: str = "", description: str = "",
+                          *, allowed_types: set[str] | None = None) -> str:
+    """Reuse identity without confusing a corrected type with a compatible role.
+
+    Metadata processors specify their role's allowed endpoint types; generic
+    mentions leave this unset. Independently reviewed relationships bypass these
+    metadata assumptions and bind their exact accepted endpoints directly.
+    """
     name, entity_type = _coerce_text(name), _normalize_entity_type(entity_type)
     bindings = _document_bindings.get()
     if bindings is not None:
@@ -608,6 +629,10 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
             raise ValueError("Cross-document identity binding attempted")
         found = bindings.lookup(name) if bindings.authoritative else bindings.lookup(name, entity_type)
         if found:
+            if allowed_types is not None and found.entity_type not in allowed_types:
+                logger.warning("Metadata role omitted: doc_id=%s allowed_types=%s accepted_type=%s",
+                               doc_id, sorted(allowed_types), found.entity_type)
+                return ""
             return found
         if bindings.authoritative:
             return ""  # metadata cannot bypass an omitted/ambiguous entity
@@ -615,6 +640,8 @@ async def _resolve_entity(name: str, entity_type: str, doc_id: int, doc_title: s
         return ""
     if entity_type not in VALID_ENTITY_TYPES:
         raise ValueError("Unsupported entity type; name-only inference is prohibited")
+    if allowed_types is not None and entity_type not in allowed_types:
+        return ""
     # Source-less compatibility callers retain their explicit type and get only
     # conservative canonical/reviewed matching, with no type model or cache.
     uuid = await entity_resolver.resolve(name, entity_type, doc_id, description=description)
@@ -660,21 +687,21 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
 async def _process_medical(doc_id, doc_node_id, data, source_props):
     patient = data.get("patient_name")
     if patient and _is_valid_entity_name(patient):
-        person_uuid = await _resolve_entity(patient, "Person", doc_id, doc_title="")
+        person_uuid = await _resolve_entity(patient, "Person", doc_id, doc_title="", allowed_types={'Person'})
         if person_uuid:
             await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "PATIENT_OF", source_props)
 
     provider = data.get("provider")
     if provider and _is_valid_entity_name(provider):
-        org_uuid = await _resolve_entity(provider, "Organization", doc_id, doc_title="")
+        org_uuid = await _resolve_entity(provider, "Organization", doc_id, doc_title="", allowed_types={'Person', 'Organization'})
         if org_uuid:
             await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     physician = data.get("ordering_physician")
     if physician and _is_valid_entity_name(physician):
-        phys_uuid = await _resolve_entity(physician, "Person", doc_id, doc_title="")
+        phys_uuid = await _resolve_entity(physician, "Person", doc_id, doc_title="", allowed_types={'Person'})
         if phys_uuid:
             await _create_relationship(
                 doc_node_id, "Document", phys_uuid, "Person", "AUTHORED_BY", source_props)
@@ -701,13 +728,13 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     for diagnosis in (data.get("diagnoses") or []):
         if not diagnosis or not _is_valid_entity_name(diagnosis):
             continue
-        condition_uuid = await _resolve_entity(diagnosis, "Condition", doc_id, doc_title="")
+        condition_uuid = await _resolve_entity(diagnosis, "Condition", doc_id, doc_title="", allowed_types={'Condition'})
         if condition_uuid:
             await _create_relationship(
                 doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
             # Link patient to condition if we have one
             if patient and _is_valid_entity_name(patient):
-                patient_uuid = await _resolve_entity(patient, "Person", doc_id)
+                patient_uuid = await _resolve_entity(patient, "Person", doc_id, allowed_types={'Person'})
                 if patient_uuid:
                     await _create_relationship(
                         patient_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION", source_props)
@@ -716,7 +743,7 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
 async def _process_financial(doc_id, doc_node_id, data, source_props):
     vendor = data.get("vendor")
     if vendor and _is_valid_entity_name(vendor):
-        org_uuid = await _resolve_entity(vendor, "Organization", doc_id, doc_title="")
+        org_uuid = await _resolve_entity(vendor, "Organization", doc_id, doc_title="", allowed_types={'Person', 'Organization'})
         if org_uuid:
             await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "INVOICED_BY", source_props)
@@ -744,10 +771,10 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
         
         # Determine if it's a person or organization based on name patterns
         if any(w in name.lower() for w in ["inc", "llc", "corp", "company", "ltd", "agency", "dept", "department"]):
-            entity_uuid = await _resolve_entity(name, "Organization", doc_id)
+            entity_uuid = await _resolve_entity(name, "Organization", doc_id, allowed_types={'Person', 'Organization'})
             entity_type = "Organization"
         else:
-            entity_uuid = await _resolve_entity(name, "Person", doc_id)
+            entity_uuid = await _resolve_entity(name, "Person", doc_id, allowed_types={'Person', 'Organization'})
             entity_type = "Person"
         
         if entity_uuid:
@@ -776,14 +803,14 @@ async def _process_contract(doc_id, doc_node_id, data, source_props):
 async def _process_insurance(doc_id, doc_node_id, data, source_props):
     provider = data.get("provider")
     if provider and _is_valid_entity_name(provider):
-        org_uuid = await _resolve_entity(provider, "Organization", doc_id)
+        org_uuid = await _resolve_entity(provider, "Organization", doc_id, allowed_types={'Person', 'Organization'})
         if org_uuid:
             await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
 
     policyholder = data.get("policyholder")
     if policyholder and _is_valid_entity_name(policyholder):
-        person_uuid = await _resolve_entity(policyholder, "Person", doc_id)
+        person_uuid = await _resolve_entity(policyholder, "Person", doc_id, allowed_types={'Person', 'Organization'})
         if person_uuid:
             await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "COVERS", source_props)
@@ -803,14 +830,14 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
 async def _process_tax(doc_id, doc_node_id, data, source_props):
     filer = data.get("filer_name")
     if filer and _is_valid_entity_name(filer):
-        person_uuid = await _resolve_entity(filer, "Person", doc_id)
+        person_uuid = await _resolve_entity(filer, "Person", doc_id, allowed_types={'Person', 'Organization'})
         if person_uuid:
             await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "AUTHORED_BY", source_props)
 
     preparer = data.get("preparer")
     if preparer and _is_valid_entity_name(preparer):
-        prep_uuid = await _resolve_entity(preparer, "Person", doc_id)
+        prep_uuid = await _resolve_entity(preparer, "Person", doc_id, allowed_types={'Person', 'Organization'})
         if prep_uuid:
             await _create_relationship(
                 doc_node_id, "Document", prep_uuid, "Person", "PREPARED_BY", source_props)
@@ -853,28 +880,28 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
     service_member = data.get("service_member")
     person_uuid = None
     if service_member and _is_valid_entity_name(service_member):
-        person_uuid = await _resolve_entity(service_member, "Person", doc_id)
+        person_uuid = await _resolve_entity(service_member, "Person", doc_id, allowed_types={'Person'})
         if person_uuid:
             await _create_relationship(
                 doc_node_id, "Document", person_uuid, "Person", "SERVICE_RECORD_OF", source_props)
 
     branch = data.get("branch")
     if branch and _is_valid_entity_name(branch):
-        org_uuid = await _resolve_entity(branch, "Organization", doc_id)
+        org_uuid = await _resolve_entity(branch, "Organization", doc_id, allowed_types={'Organization'})
         if org_uuid:
             await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "BRANCH_OF_SERVICE", source_props)
 
     unit = data.get("unit")
     if unit and _is_valid_entity_name(unit):
-        org_uuid = await _resolve_entity(unit, "Organization", doc_id)
+        org_uuid = await _resolve_entity(unit, "Organization", doc_id, allowed_types={'Organization'})
         if org_uuid:
             await _create_relationship(
                 doc_node_id, "Document", org_uuid, "Organization", "ASSIGNED_TO", source_props)
 
     base = data.get("base")
     if base and _is_valid_entity_name(base):
-        base_uuid = await _resolve_entity(base, "Location", doc_id)
+        base_uuid = await _resolve_entity(base, "Location", doc_id, allowed_types={'Location', 'Address', 'Organization'})
         if base_uuid:
             await _create_relationship(
                 doc_node_id, "Document", base_uuid, "Location", "STATIONED_AT", source_props)
@@ -898,7 +925,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             doc_node_id, "Document", result_uuid, "MedicalResult", "CONTAINS_RESULT", source_props)
         # Link person to condition
         if person_uuid and condition and _is_valid_entity_name(condition):
-            condition_uuid = await _resolve_entity(condition, "Condition", doc_id)
+            condition_uuid = await _resolve_entity(condition, "Condition", doc_id, allowed_types={'Condition'})
             if condition_uuid:
                 await _create_relationship(
                     person_uuid, "Person", condition_uuid, "Condition", "HAS_CONDITION",
@@ -928,7 +955,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
         name = cond.get("name") if isinstance(cond, dict) else cond
         if not name or not _is_valid_entity_name(name):
             continue
-        condition_uuid = await _resolve_entity(name, "Condition", doc_id)
+        condition_uuid = await _resolve_entity(name, "Condition", doc_id, allowed_types={'Condition'})
         if condition_uuid:
             await _create_relationship(
                 doc_node_id, "Document", condition_uuid, "Condition", "DIAGNOSED_WITH", source_props)
@@ -968,7 +995,7 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
             continue
         if _is_full_address(name):
             continue
-        loc_uuid = await _resolve_entity(name, "Location", doc_id)
+        loc_uuid = await _resolve_entity(name, "Location", doc_id, allowed_types={'Location', 'Address', 'Organization'})
         if loc_uuid:
             context = _coerce_text(loc.get("context", "mentioned")) if isinstance(loc, dict) else "mentioned"
             rel_type = "DEPLOYED_TO" if "deploy" in context.lower() else "STATIONED_AT" if "station" in context.lower() else "LOCATED_AT"

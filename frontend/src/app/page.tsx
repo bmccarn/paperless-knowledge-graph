@@ -441,7 +441,7 @@ export default function DashboardPage() {
               className="pl-9"
             />
           </div>
-          <Button type="submit" size="icon" disabled={searching || !searchQuery.trim()}>
+          <Button type="submit" size="icon" aria-label="Search the knowledge graph" disabled={searching || !searchQuery.trim()}>
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </form>

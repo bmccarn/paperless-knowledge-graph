@@ -684,6 +684,23 @@ async def _process_extraction(doc_id: int, doc_node_id: str, doc_type: str, extr
     return bindings
 
 
+def _metadata_field_support(data, field, source_props):
+    """Carry only this field's exact current-source quotes into its role edge."""
+    from app.entity_policy import verified_spans
+    bindings = _document_bindings.get()
+    value = data.get(field)
+    if (bindings is None or not bindings.source or not isinstance(value, str)
+            or source_props.get("source_doc") != bindings.doc_id):
+        return source_props
+    spans = []
+    for evidence in (data.get("metadata_evidence") or {}).values():
+        for span in verified_spans(value, evidence.get(field), bindings.source):
+            exact = {key: span[key] for key in ("start", "end", "quote")}
+            if exact not in spans:
+                spans.append(exact)
+    return {**source_props, "evidence_spans": spans} if spans else source_props
+
+
 async def _process_medical(doc_id, doc_node_id, data, source_props):
     patient = data.get("patient_name")
     if patient and _is_valid_entity_name(patient):
@@ -697,7 +714,8 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
         org_uuid = await _resolve_entity(provider, "Organization", doc_id, doc_title="", allowed_types={'Person', 'Organization'})
         if org_uuid:
             await _create_relationship(
-                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR",
+                _metadata_field_support(data, "provider", source_props))
 
     physician = data.get("ordering_physician")
     if physician and _is_valid_entity_name(physician):
@@ -806,7 +824,8 @@ async def _process_insurance(doc_id, doc_node_id, data, source_props):
         org_uuid = await _resolve_entity(provider, "Organization", doc_id, allowed_types={'Person', 'Organization'})
         if org_uuid:
             await _create_relationship(
-                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR", source_props)
+                doc_node_id, "Document", org_uuid, "Organization", "PROVIDER_FOR",
+                _metadata_field_support(data, "provider", source_props))
 
     policyholder = data.get("policyholder")
     if policyholder and _is_valid_entity_name(policyholder):

@@ -58,6 +58,9 @@ class EntitySteward:
                 tuple(sorted([d["left_uuid"], d["right_uuid"]]))
                 for d in decisions
                 if d["decision"] in TERMINAL_DECISIONS
+                # Legacy suggestions have unknown actors and immutable history.
+                # Reconsideration requires explicit review, not background upsert.
+                or (d.get("provenance") or "legacy_unknown") == "legacy_unknown"
             }
             candidates = await graph_store.get_entity_review_candidates(
                 ignored_pairs,

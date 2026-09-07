@@ -50,6 +50,25 @@ class TemporalTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(result["verification"]["status"], "verified")
         self.assertEqual(result["current_state"]["active_documented_interval_ids"], ["term"])
 
+    async def test_current_status_failure_can_repair_to_dated_observations(self):
+        class Auditor(SupportedAuditor):
+            async def audit_answer_units(self, question, units, *args):
+                raw = await super().audit_answer_units(question, units, *args)
+                for unit, assessment in zip(units, raw["assessments"]):
+                    assessment["temporal_scope"] = "current" if "current" in unit["text"] else "historical"
+                return raw
+        for replacement, expected in (("The statement records a premium of $321.00 USD.", "qualified"),
+                                      ("The current premium is $321.00 USD.", "current_unresolved")):
+            class Repair:
+                async def repair_answer(inner, question, answer, evidence, verification):
+                    self.assertEqual(verification["status"], "current_unresolved")
+                    return {"answer": replacement}
+            result = await AnswerFinalizer(Auditor(), Repair()).finalize(
+                "Current premium?", "My current premium is $321.00 USD.", PACK,
+                evaluated_at="2026-09-07")
+            self.assertEqual(result["finalization"]["disposition"], expected)
+            self.assertEqual(result["finalization"]["attempts"], 2)
+
     async def test_timeline_accepts_sourced_event_and_rejects_unknown_source_and_invalid_date(self):
         pack = {"items": [{"id": "move", "document_id": 88, "title": "Move record", "content": "Moved to Durham in 2024-02."}]}
         span = evidence_spans(pack)[0]

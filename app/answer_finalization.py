@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
 
-POLICY_VERSION = "source-audit-v6"
+POLICY_VERSION = "source-audit-v7"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -54,22 +54,29 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
     # cannot be silently erased. Ordinary Markdown links keep their labels.
     # Consume complete Markdown links before considering a bracketed title:
     # otherwise a verified title could hide an unverified attached link target.
+    paired_pattern = (r'\(\*(?P<paired_title>[^*\[\]()\n]+)\*,[ \t]*Paperless ID[ \t]+'
+                      r'(?P<paired_id>[1-9]\d*)\)')
     pattern = re.compile(r'\[([^\]\n]+)\]\([^\)\n]*\)|\[Source:[^\n]*?\]'
-                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)', re.I)
+                         r'|\(Source:[^\n]*?\)|\(Paperless document[^)\n]*\)'
+                         r'|' + paired_pattern, re.I)
     parts, declarations, end, length = [], [], 0, 0
     text = text.strip()
     def unparsed_declarations(fragment, start):
         return [{"offset": start + match.start(), "document_id": None} for match in re.finditer(
-            r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+', fragment, re.I)]
+            r'[\[(]\s*Source:|\(\s*Paperless\s+document\b|\[Document\s+'
+            r'|\bPaperless\s+ID\b', fragment, re.I)]
+    stack, scanned = [], 0
     def enclosed(position):
         # Attributions inside another bracket/parenthesis are outside the
-        # restricted grammar, including nested Markdown link labels.
-        stack = []
-        for char in text[:position]:
+        # restricted grammar, including nested Markdown link labels. Match
+        # positions advance, so scan each prefix character only once.
+        nonlocal scanned
+        for char in text[scanned:position]:
             if char in "[(":
                 stack.append(char)
             elif stack and (stack[-1], char) in {("[", "]"), ("(", ")")}:
                 stack.pop()
+        scanned = position
         return bool(stack)
     for match in pattern.finditer(text):
         prefix = text[end:match.start()]
@@ -81,6 +88,7 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
         title = re.fullmatch(r'(?:\[Source:\s*"([^"\[\]\n]*)"\s*\]|\(Source:\s*"([^"()\n]*)"\s*\))', raw, re.I)
         numeric = re.fullmatch(r'\(Paperless document\s+([1-9]\d*)\)', raw, re.I)
         link = re.fullmatch(r'\[Document\s+([1-9]\d*)\]\(/documents/([1-9]\d*)\)', raw, re.I)
+        paired = re.fullmatch(paired_pattern, raw, re.I)
         if title:
             ids = titles.get(normalize_quote(title[1] if title[1] is not None else title[2]), set())
             if len(ids) == 1:
@@ -89,7 +97,9 @@ def canonical_candidate(text: str, pack: dict) -> tuple[str, list[dict]]:
             doc_id = int(numeric[1])
         elif link and link[1] == link[2] and int(link[1]) in document_ids:
             doc_id = int(link[1])
-        if enclosed(match.start()):
+        elif paired and titles.get(normalize_quote(paired["paired_title"]), set()) == {int(paired["paired_id"])}:
+            doc_id = int(paired["paired_id"])
+        if enclosed(match.start()) or (paired and re.match(r'\s*[\])]', text[match.end():])):
             doc_id = None
         if match.group(1) is not None and not link:
             replacement = match.group(1)
@@ -344,6 +354,23 @@ def empty_ledger(candidate: str) -> dict:
             "candidate_digest": hashlib.sha256(candidate.encode()).hexdigest()}
 
 
+def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evaluated_at):
+    # Evaluate the same current-state boundary for every audited revision so a
+    # temporal-only failure can receive the bounded repair attempt too.
+    plan = dict(plan)
+    current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
+    asserts_current = re.search(current_words, candidate, re.I)
+    plan["requires_current"] = bool(plan.get("requires_current")) or bool(
+        asserts_current or re.search(current_words, question, re.I)
+        or any(claim["temporal_scope"] == "current" for claim in ledger["claims"]))
+    current = current_state(plan, evidence_pack, evaluated_at)
+    disposition = "supported"
+    if plan["requires_current"] and current["status"] != "resolved":
+        historical_only = all(c["temporal_scope"] == "historical" for c in ledger["claims"])
+        disposition = "qualified" if historical_only and not asserts_current else "current_unresolved"
+    return disposition, current
+
+
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
                  concurrency: int = 4):
@@ -362,7 +389,7 @@ class AnswerFinalizer:
     async def _audit(self, question, answer, pack, plan, declarations=()):
         units = answer_units(answer)
         spans = evidence_spans(pack)
-        manifest, claims = {}, []
+        manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
@@ -397,10 +424,16 @@ class AnswerFinalizer:
                         status = "unchecked"
                     if status != "unchecked":
                         checked += 1
-                    if status == "supported" and (not valid or not values_match(unit["text"], refs)):
+                    claim_rejections = []
+                    if not valid:
+                        claim_rejections.append("invalid_reference")
+                    elif not values_match(unit["text"], refs):
+                        claim_rejections.append("value_mismatch")
+                    if status == "supported" and claim_rejections:
                         status = "unsupported"
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
+                                   "rejection_reasons": claim_rejections,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
@@ -411,10 +444,12 @@ class AnswerFinalizer:
             preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
             if not preceding:
                 complete = False
+                rejection_reasons.append("invalid_attribution")
                 continue
             claim = preceding[-1]
             if declaration["document_id"] not in {r["document_id"] for r in claim["references"]}:
                 claim["status"] = "unsupported"
+                claim["rejection_reasons"].append("invalid_attribution")
         # Formatting and quantities can cross audit-unit boundaries. Recheck the
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
@@ -422,12 +457,14 @@ class AnswerFinalizer:
             if not values_match(answer, references):
                 for claim in claims:
                     claim["status"] = "unsupported"
+                    claim["rejection_reasons"].append("answer_value_mismatch")
         complete = complete and checked == len(units)
         summary = {status: sum(c["status"] == status for c in claims)
                    for status in ("supported", "unsupported", "conflicting", "missing", "unchecked")}
         summary.update(total=len(units), audited=checked, audit_coverage=checked / len(units) if units else 0,
                        support_ratio=summary["supported"] / len(units) if units else 0)
         return {"claims": claims, "summary": summary, "complete": complete,
+                "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest()}
 
@@ -454,37 +491,35 @@ class AnswerFinalizer:
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations)
                     summary = ledger["summary"]
                     if ledger["complete"] and summary["supported"] == summary["total"]:
-                        disposition = "supported"
-                        break
-                    disposition = "unsupported" if ledger["complete"] else "incomplete"
+                        disposition, _ = temporal_acceptance(
+                            question, candidate, ledger, plan, evidence_pack, evaluated_at)
+                        if disposition in {"supported", "qualified"}:
+                            break
+                    else:
+                        disposition = "unsupported" if ledger["complete"] else "incomplete"
                     if attempt == 0 and self.repairer and len(candidate) <= 96000:
                         async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
-                                {"status": disposition, "claims": ledger["claims"]})
+                                {"status": disposition, "claims": ledger["claims"],
+                                 "rejection_reasons": ledger.get("rejection_reasons", [])})
                         replacement = repaired.get("answer") if isinstance(repaired, dict) else None
-                        if not isinstance(replacement, str) or not replacement.strip() or replacement.strip() == candidate:
+                        if not isinstance(replacement, str) or not replacement.strip():
                             break
-                        candidate, declarations = canonical_candidate(replacement, evidence_pack)
+                        revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
+                        if (revised, revised_declarations) == (candidate, declarations):
+                            break
+                        candidate, declarations = revised, revised_declarations
                     else:
                         break
             except TimeoutError:
                 disposition, error = "timeout", "The source audit exceeded its time budget."
             except Exception:
                 disposition, error = "audit_failed", "The source audit was unavailable or returned invalid data."
-        # Current status is a separate claim. A date on a document is insufficient;
-        # require explicit intervals and a semantic no-conflict assessment in plan.
-        current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
-        asserts_current = re.search(current_words, candidate, re.I)
-        # A fallible planner cannot switch off temporal acceptance for an
-        # explicitly current question or a claim the auditor labels current.
-        plan["requires_current"] = bool(plan.get("requires_current")) or bool(
-            asserts_current or re.search(current_words, question, re.I)
-            or any(claim["temporal_scope"] == "current" for claim in ledger["claims"]))
-        current = current_state(plan, evidence_pack, evaluated_at)
-        if disposition == "supported" and plan.get("requires_current") and current["status"] != "resolved":
-            historical_only = all(c["temporal_scope"] == "historical" for c in ledger["claims"])
-            disposition = "qualified" if historical_only and not asserts_current else "current_unresolved"
+        temporal_disposition, current = temporal_acceptance(
+            question, candidate, ledger, plan, evidence_pack, evaluated_at)
+        if disposition in {"supported", "qualified", "current_unresolved"}:
+            disposition = temporal_disposition
         supported = disposition in {"supported", "qualified"}
         public_answer = candidate if supported else ABSTENTION
         if disposition == "unaudited" and evidence_pack.get("items"):

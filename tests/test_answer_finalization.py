@@ -146,6 +146,33 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                 "What declaration is recorded?", "Policy ZX123 has a recorded term from 2026 to 2027.", other)
             self.assertFalse(result["finalization"]["complete"])
 
+    async def test_field_label_fallback_respects_window_context_and_escapes(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                source = max(spans, key=lambda s: s["start"])
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": source["span_id"], "evidence_id": source["evidence_id"],
+                    "document_id": 101, "quote": "Policy: ZX123."}]} for u in units]}
+        for prefix in ("X", "*", "\\"):
+            for padding in ("", " " * 3799):
+                source = padding + prefix + "**Policy:** ZX123."
+                evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                                      "title": "Record", "source_kind": "ocr", "content": source}]}
+                result = await AnswerFinalizer(Auditor()).finalize(
+                    "Which policy is recorded?", "The recorded policy is ZX123.", evidence)
+                self.assertFalse(result["finalization"]["complete"], (prefix, len(padding)))
+
+    async def test_quote_cannot_truncate_a_combining_character(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {"assessments": [{"unit_id": u["id"], "status": "supported", "references": [{
+                    "span_id": spans[0]["span_id"], "evidence_id": "record", "document_id": 101,
+                    "quote": "Jose"}]} for u in units]}
+        evidence = {"items": [{"id": "record", "document_id": 101, "chunk_index": 0,
+                              "title": "Record", "source_kind": "ocr", "content": "Jose\u0301"}]}
+        result = await AnswerFinalizer(Auditor()).finalize("Who is recorded?", "Jose", evidence)
+        self.assertFalse(result["finalization"]["complete"])
+
     async def test_wrong_digit_and_unit_fail_even_when_auditor_says_supported(self):
         for answer in ("Monthly premium is $312.00 USD.", "Monthly premium is €321.00 EUR."):
             with self.subTest(answer=answer):

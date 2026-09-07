@@ -268,7 +268,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
 
 def _plain_field_labels(text: str):
     """Ignore only balanced bold alphabetic field labels, retaining raw ranges."""
-    pattern = r"(?<![\w*])\*\*([A-Za-z][A-Za-z \t]*:)\*\*(?=\s|$)"
+    pattern = r"(?<![\w*\\])\*\*([A-Za-z][A-Za-z \t]*:)\*\*(?=\s|$)"
     characters, ranges, cursor = [], [], 0
     for match in re.finditer(pattern, text):
         for index in range(cursor, match.start()):
@@ -286,12 +286,12 @@ def _plain_field_labels(text: str):
 
 
 def _quote_range(source: str, quote: str):
-    start = source.find(quote)
-    if start >= 0:
-        return start, start + len(quote)
     normalized = normalize_quote(quote)
     if normalized not in normalize_quote(source):
         return None
+    start = source.find(quote)
+    if start >= 0:
+        return start, start + len(quote)
     words = list(re.finditer(r"\S+", source))
     tokens = [unicodedata.normalize("NFC", w.group()) for w in words]
     wanted = normalized.split(" ")
@@ -316,13 +316,16 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     source = span["content"]
     bounds = _quote_range(source, quote)
     if bounds is None:
-        visible, ranges = _plain_field_labels(source)
+        prefix, suffix = span.get("boundary_before", ""), span.get("boundary_after", "")
+        visible, ranges = _plain_field_labels(prefix + source + suffix)
         plain_quote, _ = _plain_field_labels(quote)
         visible_bounds = _quote_range(visible, plain_quote)
         if visible_bounds is None:
             return None
         first, last = visible_bounds
-        bounds = ranges[first][0], ranges[last - 1][1]
+        bounds = ranges[first][0] - len(prefix), ranges[last - 1][1] - len(prefix)
+        if not 0 <= bounds[0] < bounds[1] <= len(source):
+            return None
     start, end = bounds
     before = (span.get("boundary_before", "") + source[:start])[-1:]
     after = (source[end:] + span.get("boundary_after", ""))[:2]

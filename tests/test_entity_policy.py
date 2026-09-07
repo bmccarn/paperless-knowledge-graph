@@ -105,6 +105,18 @@ class CoreferenceTests(unittest.TestCase):
         self.assertEqual(initialism_expansions("DOE", "US Department of Energy (DOE) signed."), [])
         self.assertEqual(initialism_expansions("NES", "Network Entity Systems (NES). Network Entity Systems (NES)."), ["Network Entity Systems"])
 
+    def test_markdown_emphasis_is_not_part_of_a_local_expansion(self):
+        for marker in ("**",):
+            with self.subTest(marker=marker):
+                source = f"{marker}Network Entity Systems (NES){marker} signed."
+                self.assertEqual(initialism_expansions("NES", source), ["Network Entity Systems"])
+                self.assertEqual(initialism_expansions("DOE", f"{marker}US Department of Energy (DOE){marker} signed."), [])
+                self.assertEqual(initialism_expansions("NES", f"Not {marker}Network Entity Systems (NES){marker} signed."), [])
+                self.assertEqual(initialism_expansions("DOE", "US **Department of Energy (DOE)** signed."), [])
+                self.assertEqual(initialism_expansions("NES", "Parent **Network Entity Systems (NES)** signed."), [])
+                ambiguous = source + f"\n{marker}New Era Services (NES){marker} signed."
+                self.assertEqual(set(initialism_expansions("NES", ambiguous)), {"Network Entity Systems", "New Era Services"})
+
     def test_legacy_aliases_never_gain_authority_by_existence_or_score(self):
         node = {"name": "Department of Defense", "aliases": ["US Department of Energy"],
                 "alias_records": ["broken-json", {"alias": "US Department of Energy", "score": .999,

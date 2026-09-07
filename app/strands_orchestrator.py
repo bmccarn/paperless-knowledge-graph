@@ -192,9 +192,12 @@ Return only JSON:
 
 Rules:
 - Preserve supported details that answer the user's question.
+- Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
+- Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
+- Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
-- Add a short "Evidence limits" note only when missing evidence materially limits the direct answer. Omit it when the answer already provides the requested facts with support.
+- Keep dated source observations as the answer when real-world current status is not established. The acceptance layer appends its own current-status limitation; do not add a generic current-status disclaimer to the candidate. Add an evidence-limit note only for a different missing fact that materially limits the direct answer.
 - Do not add new facts unless they are directly supported by the evidence context and relevant to the question.
 - Remove source/admin details, account/client identifiers, logistics, or adjacent facts when they are merely evidence context and not part of the answer requested.
 - Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.

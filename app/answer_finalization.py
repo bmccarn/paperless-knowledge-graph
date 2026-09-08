@@ -191,20 +191,46 @@ def answer_units(answer: str) -> list[dict]:
 
 
 
-def _without_list_markers(text: str, first_line_indent: int | None = 0) -> str:
-    # A quote boundary is not a source line boundary. Only certified source
-    # context can authorize a list marker at the start of a quoted fragment.
-    def replace(match):
-        indent = len(match.group()) - len(match.group().lstrip(" "))
-        if match.start() == 0 and (first_line_indent is None or first_line_indent + indent > 3):
-            return match.group()
-        return ""
-    return re.sub(r"(?m)^ {0,3}[-+*][ \t]+(?=\S|$)", replace, text)
+def _fence_transition(line: str, fence: str | None) -> str | None:
+    if fence == "?":
+        return fence  # A continuation chunk cannot establish prior fence state.
+    if fence:
+        return None if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", line.rstrip("\r\n")) else fence
+    opening = re.match(r" {0,3}(`{3,}|~{3,})", line)
+    if opening:
+        return opening[1]
+    # Nested/container or ambiguous fence syntax cannot authorize subsequent
+    # list stripping without its enclosing Markdown context.
+    return "?" if re.search(r"`{3,}|~{3,}", line) else None
 
 
-def _value_context(text: str) -> str:
+def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+    """Identify structural markers on the complete source, never a quote slice."""
+    fence, offset, ranges = (None if known_start else "?"), 0, []
+    for line in text.splitlines(keepends=True):
+        next_fence = _fence_transition(line, fence)
+        marker = re.match(r" {0,3}([-+*][ \t]+)(?=\S|$)", line)
+        if marker and fence is None and next_fence is None:
+            ranges.append([offset + marker.start(1), offset + marker.end(1)])
+        offset += len(line)
+        fence = next_fence
+    return ranges
+
+
+def _slice_markers(markers: list, start: int, end: int) -> list[list[int]]:
+    return [[first - start, last - start] for first, last in markers if start <= first < last <= end]
+
+
+def _without_list_markers(text: str, markers: list) -> str:
+    for first, last in reversed(markers):
+        text = text[:first] + text[last:]
+    return text
+
+
+def _value_context(text: str, markers: list = ()) -> str:
     # Guard adjacency only; never use this copy as a matching quote or evidence.
-    return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_list_markers(text)))
+    return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_list_markers(text, markers)))
+
 
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
@@ -229,6 +255,7 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
+        list_markers = _list_marker_ranges(content, known_start=item.get("chunk_index", 0) == 0)
         for start in range(0, len(content), window - 200):
             text = content[start:start + window]
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
@@ -242,8 +269,9 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "boundary_after": content[start + len(text):start + len(text) + 2],
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
-                          "value_boundary_before": _value_context(content[:start])[-16:],
-                          "value_boundary_after": _value_context(content[start + len(text):])[:2],
+                          "list_markers": _slice_markers(list_markers, start, start + len(text)),
+                          "value_boundary_before": _value_context(content[:start], _slice_markers(list_markers, 0, start))[-16:],
+                          "value_boundary_after": _value_context(content[start + len(text):], _slice_markers(list_markers, start + len(text), len(content)))[:2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
 
@@ -507,15 +535,13 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         return None
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
         return None
-    raw_prefix = span.get("boundary_before", "") + source[:start]
-    line_prefix = raw_prefix.rsplit("\n", 1)[-1]
-    source_line_indent = (len(line_prefix) if (span["start"] == 0 or "\n" in raw_prefix)
-                          and re.fullmatch(r" {0,3}", line_prefix) else None)
-    visible = presentation_text(source[start:end], first_line_indent=source_line_indent)
-    prefix = span.get("value_boundary_before", span.get("boundary_before", "")) + source[:start]
-    suffix = source[end:] + span.get("value_boundary_after", span.get("boundary_after", ""))
-    before_visible = _value_context(prefix)
-    after_visible = _value_context(suffix)
+    markers = span.get("list_markers", [])
+    source_list_markers = _slice_markers(markers, start, end)
+    visible = presentation_text(source[start:end], list_markers=source_list_markers)
+    before_visible = (span.get("value_boundary_before", _value_context(span.get("boundary_before", "")))
+                      + _value_context(source[:start], _slice_markers(markers, 0, start)))
+    after_visible = (_value_context(source[end:], _slice_markers(markers, end, len(source)))
+                     + span.get("value_boundary_after", _value_context(span.get("boundary_after", ""))))
     if visible:
         first, last = visible[0], visible[-1]
         before, after = before_visible[-1:], after_visible[:2]
@@ -540,14 +566,14 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
             return None
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
-            "quote": source[start:end], "source_line_indent": source_line_indent,
+            "quote": source[start:end], "source_list_markers": source_list_markers,
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 
-def presentation_text(text: str, *, first_line_indent: int | None = 0) -> str:
-    text = _without_list_markers(text, first_line_indent)
+def presentation_text(text: str, *, list_markers: list | None = None) -> str:
+    text = _without_list_markers(text, _list_marker_ranges(text) if list_markers is None else list_markers)
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:
         previous_length = len(text)
@@ -583,7 +609,7 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
     numeric_text = without_dates(text, dates)
-    numeric_sources = [presentation_text(source, first_line_indent=ref.get("source_line_indent"))
+    numeric_sources = [presentation_text(source, list_markers=ref.get("source_list_markers", []))
                        for source, ref in zip(sources, references)]
     mismatches = {}
     if missing_dates:

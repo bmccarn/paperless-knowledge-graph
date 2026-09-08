@@ -252,8 +252,10 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(result["claim_ledger"]["claims"][0]["references"][0]["start"], 18000)
         answer = "Monthly premium: $321.00 USD. " * 40 + "The deductible is $999.00 USD."
         result = await AnswerFinalizer(SupportedAuditor()).finalize("Premium?", answer, PACK)
-        self.assertEqual(result["finalization"]["disposition"], "unsupported")
-        self.assertEqual(result["claim_ledger"]["summary"]["total"], 41)
+        self.assertEqual(result["finalization"]["disposition"], "partial")
+        self.assertEqual(result["verification"]["partial"]["original_total"], 41)
+        self.assertEqual(result["claim_ledger"]["summary"]["total"], 40)
+        self.assertNotIn("999", result["answer"])
 
     async def test_timeout_empty_evidence_and_provider_failure_do_not_keep_draft(self):
         class Slow:
@@ -274,7 +276,9 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                 return {"answer": "Monthly premium: $321.00 USD. Deductible: $999.00 USD."}
         result = await AnswerFinalizer(SupportedAuditor(), Repair()).finalize("Premium?", "$123.00 USD.", PACK)
         self.assertEqual(result["finalization"]["attempts"], 2)
-        self.assertEqual(result["finalization"]["disposition"], "unsupported")
+        self.assertEqual(result["finalization"]["disposition"], "partial")
+        self.assertFalse(result["finalization"]["complete"])
+        self.assertEqual(result["claim_ledger"]["summary"]["total"], 1)
         self.assertNotIn("999", result["answer"])
 
     async def test_supported_repair_is_accepted(self):

@@ -266,3 +266,41 @@ test("all navigation and theme controls remain visible on narrow phones", async 
   assert.notEqual(await page.locator("html").getAttribute("class"), before);
   await record(page, "narrow-phone-navigation");
 });
+
+
+test("verified partial history keeps its notice, ledger, timeline and source across restoration and mobile", async t => {
+  const { context, page } = await fixturePage(t);
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  const input = page.getByPlaceholder("Ask a question...");
+  await input.fill("Show partial recorded history"); await input.press("Enter");
+  const notice = page.getByRole("status").filter({ hasText: "Verified partial answer" });
+  await notice.waitFor();
+  assert.ok((await notice.innerText()).includes("1 claim was omitted"));
+  await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
+  await page.getByText("Timeline events (1)", { exact: true }).waitFor();
+  assert.equal(await page.getByText("0%", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("$999", { exact: true }).count(), 0);
+  await record(page, "verified-partial-history");
+  const conversations = await (await context.request.get(`${base}/api/conversations`)).json();
+  const saved = await (await context.request.get(`${base}/api/conversations/${conversations[0].id}`)).json();
+  const assistant = saved.messages.find(message => message.role === "assistant");
+  assert.equal(assistant.finalization.complete, false);
+  assert.equal(assistant.finalization.answer_verified, true);
+  assert.equal(assistant.verification.partial.omitted_count, 1);
+  await page.reload();
+  await page.getByRole("button", { name: saved.title, exact: true }).click();
+  await notice.waitFor();
+  await page.getByText("Timeline events (1)", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /January premium statement/ }).last().click();
+  const source = page.getByRole("dialog");
+  await source.waitFor();
+  assert.ok((await source.innerText()).includes("January statement: the premium is $25."));
+  await page.screenshot({ path: `${artifacts}/verified-partial-source.png`, fullPage: true, animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await notice.scrollIntoViewIfNeeded();
+  assert.equal(await notice.isVisible(), true);
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await record(page, "verified-partial-mobile");
+});

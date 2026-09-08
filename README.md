@@ -2,6 +2,10 @@
 
 A knowledge graph system that extracts structured entities and relationships from [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) documents. Uses LLM-powered document classification and type-aware extraction, stores results in Neo4j (graph) and pgvector (embeddings), and provides hybrid search with a visual graph explorer frontend.
 
+History queries reserve a bounded set of indexed sources across recorded periods before synthesis. A latest documented observation is qualified as a comparison of retrieved records; it does not establish current real-world status or archive completeness. Written-month, ISO and configured numeric dates share calendar validation while citations preserve exact original text.
+
+When a complete audit and bounded repair leave unsupported claims, the system can re-audit the whole supported units as a new partial answer. “Verified partial answer” means every displayed claim passed source checks, with omitted counts and an explicit completeness limitation. Failed, conflicting, incomplete or changing-source audits remain withheld. Partial answers are not cached as completed successes. See the [query reliability specification](docs/specs/evidence-query-reliability.md).
+
 ## Features
 
 - **Document-type-aware extraction** — Classifies documents first (invoice, medical, tax, etc.), then uses specialized extraction prompts per type
@@ -121,6 +125,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `GEMINI_MODEL` | Primary model for classification, extraction, query synthesis and entity helpers | `gemini-3.8-flash` |
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
+| `SOURCE_DATE_ORDER` | Numeric source date convention: `mdy`, `dmy`, or `reject_ambiguous`; short years never supply a century | `mdy` |
 | `ANSWER_AUDIT_TIMEOUT_SECONDS` | Allowance per concurrent audit wave and per repair; the audit deadline scales with required waves | `60` |
 | `STRANDS_MAX_CONCURRENT_CALLS` | Maximum active helper calls and audit workers per answer | `4` |
 | `STRANDS_CALL_TIMEOUT_SECONDS` | Deadline for one active helper invocation | `45` |

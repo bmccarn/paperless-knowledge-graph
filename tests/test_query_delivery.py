@@ -79,6 +79,41 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[Document 101](/documents/101)", streamed["answer"])
         self.assertEqual(streamed["evidence_pack"]["items"][0]["support_spans"][0]["document_id"], 101)
 
+    async def test_partial_is_consistent_across_delivery_and_never_cached(self):
+        from tests.test_partial_answers import MixedAuditor, SOURCE
+        from tests.test_source_dates import pack
+        answer = "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD."
+        with patch("app.query.strands_orchestrator", MixedAuditor()), \
+                patch.object(self.engine, "_build_evidence_pack", AsyncMock(side_effect=lambda *a, **kw: pack(SOURCE))), \
+                patch.object(self.engine, "_final_synthesis", AsyncMock(return_value={"answer": answer})):
+            ordinary = await self.engine.query("Recorded charges?", mode="strict")
+            events = [e async for e in self.engine.query_stream("Recorded charges?", mode="strict")]
+        streamed = {k: v for k, v in events[-1].items() if k != "type"}
+        for result in (ordinary, streamed):
+            for step in result["trace"]:
+                step.pop("timestamp", None)
+        self.assertEqual(ordinary, streamed)
+        self.assertFalse(streamed["cached"])
+        self.assertEqual(streamed["verification"]["status"], "partial")
+        self.assertTrue(streamed["finalization"]["answer_verified"])
+        self.assertFalse(streamed["evidence"]["coverage"]["answer_complete"])
+        self.assertNotIn("999", streamed["answer"])
+        self.assertEqual(len(streamed["claim_ledger"]["claims"]), 1)
+
+    async def test_snapshot_change_clears_partial_verdict_and_diagnostics(self):
+        from tests.test_partial_answers import MixedAuditor, SOURCE
+        from tests.test_source_dates import pack
+        with patch("app.query.strands_orchestrator", MixedAuditor()), \
+                patch.object(self.engine, "_build_evidence_pack", AsyncMock(return_value=pack(SOURCE))), \
+                patch.object(self.engine, "_final_synthesis", AsyncMock(return_value={"answer": "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD."})), \
+                patch("app.query.embeddings_store.get_incomplete_document_ids", AsyncMock(return_value={101})):
+            result = await self.engine.query("Recorded charges?", mode="strict")
+        self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+        self.assertFalse(result["finalization"]["answer_verified"])
+        self.assertNotIn("partial", result["verification"])
+        self.assertNotIn("321", result["answer"])
+        self.assertEqual(result["claim_ledger"]["claims"], [])
+
     async def test_concurrent_models_and_full_history_have_distinct_cache_identity(self):
         history_a = [{"role": "user", "content": "same " * 100 + "A"}]
         history_b = [{"role": "user", "content": "same " * 100 + "B"}]

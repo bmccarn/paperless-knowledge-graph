@@ -295,7 +295,9 @@ Rules:
                 )
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
                 result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
-                return _extract_json(str(result))
+                text = str(result)
+                invalid = {"audit_protocol_error": "invalid_json"} if name == "source_auditor" and text.strip() else None
+                return _extract_json(text, invalid_result=invalid)
             except asyncio.TimeoutError:
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
                 return {}
@@ -321,7 +323,7 @@ Rules:
         )
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def _extract_json(text: str, *, invalid_result: dict | None = None) -> dict[str, Any]:
     text = (text or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -338,8 +340,8 @@ def _extract_json(text: str) -> dict[str, Any]:
         try:
             return json.loads(text[start:end + 1])
         except Exception:
-            return {}
-    return {}
+            return invalid_result if invalid_result is not None else {}
+    return invalid_result if invalid_result is not None else {}
 
 
 strands_orchestrator = StrandsQueryOrchestrator()

@@ -229,13 +229,13 @@ class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
         from app.answer_finalization import AnswerFinalizer
         for subject, identifier in [('Invoice', 'IVQ742'), ('Laboratory', 'LABR928')]:
             fact = f'{subject} {identifier}: $421 USD.'
-            boilerplate = f'{subject} latest record $421 USD.'
+            boilerplate = f'{subject} service charges changed over the years most current recorded amount latest record $421 USD.'
             items = [{'id': f'notice-{i}', 'document_id': i+1, 'chunk_index': 0, 'source_kind': 'ocr',
                       'content': boilerplate + ' Repetitive filing language.' * 140} for i in range(40)]
             items.append({'id': 'latest-source', 'document_id': 999, 'chunk_index': 0, 'source_kind': 'ocr',
                           'content': fact + ' Supporting text.' * 220})
             auditor = HistoryAuditor()
-            result = await AnswerFinalizer(auditor).finalize(f'What does the latest {subject} record show?', fact, {'items': items})
+            result = await AnswerFinalizer(auditor).finalize(f'How have my {subject} service charges changed over the years and what is the most current recorded amount?', fact, {'items': items})
             self.assertTrue(result['finalization']['answer_verified'])
             self.assertIn(999, auditor.seen)
             self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['document_id'], 999)

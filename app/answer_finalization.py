@@ -261,7 +261,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     per_unit = []
     fitting = [pair for pair in ranked if costs[pair[0]] <= budget]
     for unit in units:
-        unit_tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + unit["text"].lower()))
+        unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower()))
         if fitting:
             per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
     history, history_docs = [], set()
@@ -531,7 +531,8 @@ class AnswerFinalizer:
         batches = math.ceil(min(len(answer_units(candidate)), self.max_units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
-    async def _audit(self, question, answer, pack, plan, declarations=()):
+    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None):
+        diagnostics = diagnostics if diagnostics is not None else []
         units = answer_units(answer)
         spans = evidence_spans(pack)
         manifest, claims, rejection_reasons = {}, [], []
@@ -543,22 +544,37 @@ class AnswerFinalizer:
             # is bounded answer prose, not an additional source of evidence.
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": "\n".join(unit["text"] for unit in units)}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
+                               for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
                     selected = select_spans(question, batch, spans, serialized=True)
-                    raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
+                    protocol = diagnostics[index]
+                    async def invoke(audit_context):
+                        protocol.update(attempts=protocol["attempts"] + 1, status="running")
+                        try:
+                            return await self.auditor.audit_answer_units(question, batch, selected, audit_context)
+                        except asyncio.CancelledError:
+                            protocol.update(status="cancelled", final_errors=["cancelled"])
+                            raise
+                        except TimeoutError:
+                            protocol.update(status="failed", final_errors=["timeout"])
+                            raise
+                        except Exception:
+                            protocol.update(status="failed", final_errors=["unavailable"])
+                            raise
+                    raw = await invoke(audit_plan)
                     errors = audit_protocol_errors(raw, batch)
-                    initial_errors, attempts = errors, 1
+                    protocol["initial_errors"] = errors
                     if errors and errors != ["unavailable"]:
                         correction_plan = {**audit_plan, "audit_protocol_recovery": {
                             "expected_unit_ids": [unit["id"] for unit in batch], "errors": errors}}
-                        raw = await self.auditor.audit_answer_units(question, batch, selected, correction_plan)
-                        attempts = 2
+                        raw = await invoke(correction_plan)
                         errors = audit_protocol_errors(raw, batch)
-                    protocol = {"attempts": attempts, "status": "invalid" if errors else "corrected" if attempts == 2 else "valid",
-                                "initial_errors": initial_errors, "final_errors": errors}
+                    protocol.update(status="invalid" if errors else "corrected" if protocol["attempts"] == 2 else "valid",
+                                    final_errors=errors)
                     results[index] = (selected, raw, protocol)
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
@@ -653,7 +669,7 @@ class AnswerFinalizer:
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
                 "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected)}
                                        for index, (selected, _, _) in enumerate(results)],
-                "audit_batches": [{"batch": index, **protocol} for index, (_, _, protocol) in enumerate(results)]}
+                "audit_batches": diagnostics}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
@@ -674,8 +690,9 @@ class AnswerFinalizer:
                     # A failed second audit must not attach the prior
                     # candidate's ledger to the replacement's digest.
                     ledger = empty_ledger(candidate)
+                    ledger["audit_batches"] = diagnostics = []
                     async with asyncio.timeout(self._audit_timeout(candidate)):
-                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations)
+                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations, diagnostics=diagnostics)
                     summary = ledger["summary"]
                     if ledger["complete"] and summary["supported"] == summary["total"]:
                         disposition, _ = temporal_acceptance(
@@ -716,9 +733,10 @@ class AnswerFinalizer:
                         and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
             subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")
+            ledger["subset_audit_batches"] = subset_diagnostics = []
             try:
                 async with asyncio.timeout(self._audit_timeout(subset)):
-                    subset_ledger = await self._audit(question, subset, evidence_pack, plan)
+                    subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
                 subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
                         and subset_status in {"supported", "qualified"}):

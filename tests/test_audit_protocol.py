@@ -79,6 +79,10 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
             auditor = Auditor()
             result = await AnswerFinalizer(auditor).finalize('What charge?', ANSWER, pack(ANSWER))
             self.assertEqual(auditor.calls, 2)
+            protocol = result['claim_ledger']['audit_batches'][0]
+            self.assertEqual(protocol['attempts'], 2)
+            self.assertEqual(protocol['initial_errors'], ['unexpected_unit_id'])
+            self.assertTrue(protocol['final_errors'])
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertNotIn('321', result['answer'])
             self.assertNotIn('partial', result['verification'])
@@ -98,5 +102,30 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
         result = await AnswerFinalizer(auditor, timeout_seconds=0.02).finalize('What charge?', ANSWER, pack(ANSWER))
         self.assertEqual(auditor.calls, 2)
         self.assertTrue(cancelled.is_set())
+        protocol = result['claim_ledger']['audit_batches'][0]
+        self.assertEqual(protocol['attempts'], 2)
+        self.assertEqual(protocol['status'], 'cancelled')
+        self.assertEqual(protocol['initial_errors'], ['missing_unit_id'])
         self.assertEqual(result['finalization']['disposition'], 'timeout')
         self.assertFalse(result['finalization']['answer_verified'])
+
+    async def test_real_adapter_distinguishes_malformed_json_from_empty_output(self):
+        import json
+        from unittest.mock import AsyncMock, patch
+        from app import strands_orchestrator as module
+        from app.answer_finalization import evidence_spans
+        span = evidence_spans(pack(ANSWER))[0]
+        valid = json.dumps({"assessments": [{"unit_id": "u1", "status": "supported", "temporal_scope": "historical",
+            "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
+                            "document_id": 101, "quote": ANSWER}]}]})
+        for raw, expected_calls in [(' {"assessments":', 2), ('private malformed model text', 2), ('', 1), ('{}', 1)]:
+            with patch.object(module, 'STRANDS_AVAILABLE', True), patch.object(module.settings, 'strands_enabled', True), \
+                    patch.object(module, 'Agent') as agent, patch.object(module.StrandsQueryOrchestrator, '_model', return_value=object()):
+                agent.return_value.invoke_async = AsyncMock(side_effect=[raw, valid])
+                result = await AnswerFinalizer(module.StrandsQueryOrchestrator()).finalize('What charge?', ANSWER, pack(ANSWER))
+                self.assertEqual(agent.return_value.invoke_async.await_count, expected_calls)
+                self.assertEqual(result['finalization']['answer_verified'], expected_calls == 2)
+                self.assertNotIn('private', str(result['claim_ledger']['audit_batches']))
+                if expected_calls == 2:
+                    correction_prompt = agent.return_value.invoke_async.await_args_list[1].args[0]
+                    self.assertNotIn('private malformed', correction_prompt)

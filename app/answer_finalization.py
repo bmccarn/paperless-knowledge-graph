@@ -10,15 +10,17 @@ import asyncio
 import hashlib
 import json
 import math
+from collections import Counter
 import re
 import unicodedata
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
+from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
-POLICY_VERSION = "source-audit-v11"
+POLICY_VERSION = "source-audit-v12"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -213,6 +215,7 @@ def evidence_spans(pack: dict) -> list[dict]:
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
+                          "chunk_index": item.get("chunk_index", 0),
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
                           "boundary_before": content[max(0, start - 2):start],
@@ -233,12 +236,14 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
     costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
     span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
+    frequency = Counter(token for words in span_tokens for token in words)
+    weights = {token: 1 + math.log((len(spans) + 1) / (count + 1)) for token, count in frequency.items()}
     def rank(pair, query_tokens=tokens):
         index, span = pair
         title = normalize_quote(str(span.get("title") or "")).casefold()
         requested = (2 if span.get("document_id") in requested_ids else
                      1 if title and title in quoted_titles else 0)
-        overlap = len(query_tokens & span_tokens[index])
+        overlap = math.fsum(weights[token] for token in query_tokens & span_tokens[index])
         return (-requested, -overlap, index)
     ranked = sorted(enumerate(spans), key=rank)
     # A long requested document must not crowd out another explicitly named
@@ -251,21 +256,51 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
-    # A batch's combined vocabulary can hide the only source for one of its
-    # assertions. Reserve each unit's best whole window before filling the
-    # remaining budget with the batch-wide ranking.
-    per_unit = []
-    fitting = [pair for pair in ranked if costs[pair[0]] <= budget]
-    for unit in units:
-        unit_tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + unit["text"].lower()))
-        if fitting:
-            per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
     history, history_docs = [], set()
-    for pair in sorted(enumerate(spans), key=rank):
+    for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair))):
         span = pair[1]
         if span.get("history_reserved") and not span.get("feedback_open") and span["document_id"] not in history_docs:
             history.append(pair)
             history_docs.add(span["document_id"])
+    # A combined assertion can need identity on the opening and a later dated
+    # observation from that same document. Rank the document's combined unit
+    # coverage, then reserve complementary windows within it before boilerplate.
+    by_document = {}
+    for pair in ranked:
+        if costs[pair[0]] <= budget and not pair[1].get("feedback_open"):
+            by_document.setdefault(pair[1]["document_id"], []).append(pair)
+    document_tokens = {doc_id: set().union(*(span_tokens[index] for index, _ in pairs))
+                       for doc_id, pairs in by_document.items()}
+    per_unit = []
+    for unit in units:
+        unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower())) - QUERY_STOPWORDS
+        if not by_document:
+            continue
+        outstanding = unit_tokens.copy()
+        candidates = set(by_document)
+        while candidates:
+            # Start with the most discriminating uncovered assertion term. A
+            # comparison may need several documents; repeated generic wording
+            # must not beat their rare identifying fields in aggregate.
+            def document_rank(doc_id):
+                scores = [weights[token] for token in outstanding & document_tokens[doc_id]]
+                return (-max(scores, default=0), -math.fsum(scores), by_document[doc_id][0][0])
+            doc_id = min(candidates, key=document_rank)
+            candidates.remove(doc_id)
+            if not outstanding & document_tokens[doc_id]:
+                break
+            covered = set().union(*(span_tokens[index] for index, span in first_per_document + history + per_unit
+                                    if span["document_id"] == doc_id))
+            needed = (unit_tokens & document_tokens[doc_id]) - covered
+            while needed:
+                pair = min(by_document[doc_id], key=lambda pair: rank(pair, needed))
+                matched = needed & span_tokens[pair[0]]
+                if not matched:
+                    break
+                per_unit.append(pair)
+                covered |= span_tokens[pair[0]]
+                needed -= matched
+            outstanding -= covered
     ranked = first_per_document + history + per_unit + remaining
     result, used, selected = [], 0, set()
     for index, span in ranked:
@@ -484,6 +519,33 @@ def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evalua
     return "qualified", current
 
 
+def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
+    """Structural errors only; semantic rejection never justifies another vote."""
+    if not raw:
+        return ["unavailable"]
+    if not isinstance(raw, dict) or not isinstance(raw.get("assessments"), list):
+        return ["invalid_assessments"]
+    expected = {unit["id"] for unit in units}
+    assessments = raw["assessments"]
+    if any(not isinstance(item, dict) for item in assessments):
+        return ["invalid_assessment"]
+    ids = [item.get("unit_id") for item in assessments]
+    errors = []
+    if any(not isinstance(value, str) or value not in expected for value in ids):
+        errors.append("unexpected_unit_id")
+    valid_ids = [value for value in ids if isinstance(value, str) and value in expected]
+    if len(set(valid_ids)) != len(valid_ids):
+        errors.append("duplicate_unit_id")
+    if set(valid_ids) != expected:
+        errors.append("missing_unit_id")
+    if any(not isinstance(item.get("status"), str) or
+           item["status"] not in {"supported", "unsupported", "missing", "conflicting"} for item in assessments):
+        errors.append("invalid_status")
+    if any(not isinstance(item.get("references"), list) for item in assessments):
+        errors.append("invalid_references_list")
+    return errors
+
+
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
                  concurrency: int = 4, date_order: str = "mdy"):
@@ -500,7 +562,8 @@ class AnswerFinalizer:
         batches = math.ceil(min(len(answer_units(candidate)), self.max_units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
-    async def _audit(self, question, answer, pack, plan, declarations=()):
+    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None):
+        diagnostics = diagnostics if diagnostics is not None else []
         units = answer_units(answer)
         spans = evidence_spans(pack)
         manifest, claims, rejection_reasons = {}, [], []
@@ -512,19 +575,44 @@ class AnswerFinalizer:
             # is bounded answer prose, not an additional source of evidence.
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": "\n".join(unit["text"] for unit in units)}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
+                               for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
                     selected = select_spans(question, batch, spans, serialized=True)
-                    raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
-                    results[index] = (selected, raw)
+                    protocol = diagnostics[index]
+                    async def invoke(audit_context):
+                        protocol.update(attempts=protocol["attempts"] + 1, status="running")
+                        try:
+                            return await self.auditor.audit_answer_units(question, batch, selected, audit_context)
+                        except asyncio.CancelledError:
+                            protocol.update(status="cancelled", final_errors=["cancelled"])
+                            raise
+                        except TimeoutError:
+                            protocol.update(status="failed", final_errors=["timeout"])
+                            raise
+                        except Exception:
+                            protocol.update(status="failed", final_errors=["unavailable"])
+                            raise
+                    raw = await invoke(audit_plan)
+                    errors = audit_protocol_errors(raw, batch)
+                    protocol["initial_errors"] = errors
+                    if errors and errors != ["unavailable"]:
+                        correction_plan = {**audit_plan, "audit_protocol_recovery": {
+                            "expected_unit_ids": [unit["id"] for unit in batch], "errors": errors}}
+                        raw = await invoke(correction_plan)
+                        errors = audit_protocol_errors(raw, batch)
+                    protocol.update(status="invalid" if errors else "corrected" if protocol["attempts"] == 2 else "valid",
+                                    final_errors=errors)
+                    results[index] = (selected, raw, protocol)
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())
-            for batch, (selected, raw) in zip(batches, results):
+            for batch, (selected, raw, protocol) in zip(batches, results):
                 manifest.update({s["span_id"]: s for s in selected})
-                assessments = raw.get("assessments", []) if isinstance(raw, dict) else []
+                assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
                     assessments = []
                 expected_ids = {u["id"] for u in batch}
@@ -611,7 +699,8 @@ class AnswerFinalizer:
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
                 "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected)}
-                                       for index, (selected, _) in enumerate(results)]}
+                                       for index, (selected, _, _) in enumerate(results)],
+                "audit_batches": diagnostics}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
@@ -632,8 +721,9 @@ class AnswerFinalizer:
                     # A failed second audit must not attach the prior
                     # candidate's ledger to the replacement's digest.
                     ledger = empty_ledger(candidate)
+                    ledger["audit_batches"] = diagnostics = []
                     async with asyncio.timeout(self._audit_timeout(candidate)):
-                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations)
+                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations, diagnostics=diagnostics)
                     summary = ledger["summary"]
                     if ledger["complete"] and summary["supported"] == summary["total"]:
                         disposition, _ = temporal_acceptance(
@@ -674,9 +764,10 @@ class AnswerFinalizer:
                         and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
             subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")
+            ledger["subset_audit_batches"] = subset_diagnostics = []
             try:
                 async with asyncio.timeout(self._audit_timeout(subset)):
-                    subset_ledger = await self._audit(question, subset, evidence_pack, plan)
+                    subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
                 subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
                         and subset_status in {"supported", "qualified"}):

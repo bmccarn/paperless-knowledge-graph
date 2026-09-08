@@ -53,7 +53,7 @@ async def validate_timeline(events: list, pack: dict, auditor, question: str, *,
             reject("evidence_budget")
             continue
         # Proposer-selected references cannot hide supplied conflicting sources.
-        for span in select_spans(question, [{"text": text}], spans, serialized=True):
+        for span in select_spans(question, [{"text": text}], spans, serialized=True, date_order=date_order):
             cost = len(json.dumps(span, ensure_ascii=False)) + 2
             if span not in selected and used + cost <= 28000:
                 selected.append(span)

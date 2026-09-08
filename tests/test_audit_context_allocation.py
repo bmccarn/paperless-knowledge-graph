@@ -51,24 +51,32 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
         old = 'Orchid service invoice OLDX742 dated January 1, 2020 records $321 USD.'
         new = 'Orchid service invoice NEWY813 dated September 1, 2026 records $421 USD.'
         claim = 'The latest Orchid service invoice is OLDX742 dated January 1, 2020 for $321 USD.'
-        items = [item(1, old, reserved=True, title='Orchid service invoice 2020')]
-        items += [item(i+2, f'Historical ARCHIVE{i} service charges.', reserved=True) for i in range(7)]
-        items += [item(100+i, 'The latest Orchid service invoice is OLDX742 dated January 1, 2020 for $321 USD.',
-                       title='Administrative terms') for i in range(35)]
-        items += [item(999, new, title='Orchid service invoice 2026')]
-        seen = []
-        class Auditor:
-            async def audit_answer_units(self, question, units, spans, plan):
-                has_new = any(new in s['content'] for s in spans)
-                seen.append(has_new)
-                old_span = next(s for s in spans if s['document_id'] == 1)
-                return {'assessments': [{'unit_id': u['id'], 'status': 'conflicting' if has_new else 'supported',
-                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
-                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [s['document_id'] for s in spans], 'references': [reference(old_span, old)]} for u in units]}
-        result = await AnswerFinalizer(Auditor()).finalize('What is the latest Orchid service invoice?', claim, {'items': items})
-        self.assertTrue(all(seen))
-        self.assertFalse(result['finalization']['answer_verified'])
-        self.assertNotIn(claim, result['answer'])
+        for variation in ('ordinary', 'short_title', 'large_amounts', 'dmy'):
+            actual_new = new if variation != 'dmy' else new.replace('September 1, 2026', '02/05/2026')
+            items = [item(1, old, reserved=True, title='Orchid service invoice 2020')]
+            items += [item(i+2, f'Historical ARCHIVE{i} service charges.', reserved=True) for i in range(7)]
+            items += [item(100+i, 'The latest Orchid service invoice is OLDX742 dated January 1, 2020 for $321 USD.',
+                           title='Orchid service invoice 2020' if variation == 'short_title' else 'Administrative terms') for i in range(35)]
+            items += [item(999, actual_new, title='Service invoice 2026' if variation == 'short_title' else 'Orchid service invoice 2026')]
+            if variation == 'large_amounts':
+                items += [item(888, 'Orchid service invoice dated January 1, 2021 records $5000 USD.', title='Orchid service invoice 2021'),
+                          item(889, 'Orchid service invoice dated January 1, 2022 records $6000 USD.', title='Orchid service invoice 2022')]
+            if variation == 'dmy':
+                items += [item(888, 'Orchid service invoice dated 03/02/2026 records $400 USD.', title='Orchid service invoice 2026'),
+                          item(889, 'Orchid service invoice dated 04/02/2026 records $450 USD.', title='Orchid service invoice 2026')]
+            seen = []
+            class Auditor:
+                async def audit_answer_units(self, question, units, spans, plan):
+                    has_new = any(actual_new in s['content'] for s in spans)
+                    seen.append(has_new)
+                    old_span = next(s for s in spans if s['document_id'] == 1)
+                    return {'assessments': [{'unit_id': u['id'], 'status': 'conflicting' if has_new else 'supported',
+                        'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                        'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [s['document_id'] for s in spans], 'references': [reference(old_span, old)]} for u in units]}
+            result = await AnswerFinalizer(Auditor(), date_order='dmy' if variation == 'dmy' else 'mdy').finalize('What is the latest Orchid service invoice?', claim, {'items': items})
+            self.assertTrue(all(seen))
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertNotIn(claim, result['answer'])
 
     def test_history_priority_is_stage_specific_and_explicit_requests_remain(self):
         question = 'Compare document 901 with historical service invoices.'

@@ -856,9 +856,9 @@ function QueryContent() {
                     )}
                   </div>
 
-                  {msg.role === "assistant" && (msg.queryTime || msg.confidence) && (
+                  {msg.role === "assistant" && (msg.queryTime != null || msg.confidence != null) && (
                     <div className="flex flex-wrap items-center gap-2 px-1">
-                      {msg.queryTime && (
+                      {msg.queryTime != null && (
                         <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                           <Clock className="h-2.5 w-2.5" />
                           {(msg.queryTime / 1000).toFixed(1)}s

@@ -1,5 +1,5 @@
 from app.source_text import certifying_text
-from app.history_coverage import history_requested, subject_terms, choose_documents, MAX_CANDIDATES, MAX_DOCUMENTS
+from app.history_coverage import history_requested, subject_terms, choose_documents, choose_recent_documents, MAX_CANDIDATES, MAX_DOCUMENTS
 import json
 import logging
 import hashlib
@@ -225,7 +225,10 @@ class QueryEngine:
         async with asyncio.TaskGroup() as group:
             broad_decompose_task = group.create_task(self._decompose_query(question)) if is_broad else None
             graph_docs_task = group.create_task(self._retrieve_graph_documents(question)) if is_broad else None
-            history_task = group.create_task(self._retrieve_history(question)) if history_requested(question, plan, mode) else None
+            history_task = group.create_task(self._retrieve_history(
+                question, include_history=history_requested(question, plan, mode),
+                include_recent=bool(plan.get("requires_current")) or latest_check_used)) if (
+                    history_requested(question, plan, mode) or plan.get("requires_current") or latest_check_used) else None
             retrieval_tasks = [group.create_task(_retrieve_one(item)) for item in queries]
         retrieved = [task.result() for task in retrieval_tasks]
         all_context: dict | None = None
@@ -283,6 +286,9 @@ class QueryEngine:
         if history_task:
             history = history_task.result()
             all_context = self._merge_context(all_context, history)
+            if history.get("recent_document_ids"):
+                trace.append(trace_step("recent_coverage", "limited" if history["recent_coverage"].get("truncated") else "ok",
+                                        "Reserved distinct recent indexed records", history["recent_coverage"]))
             trace.append(trace_step("historical_coverage", "limited" if history["history_coverage"].get("truncated") else "ok",
                                     "Reserved indexed sources across recorded periods", history["history_coverage"]))
         used_queries = [q["query"] for q in queries[1:]] + broad_queries
@@ -742,7 +748,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "entity_names": [],
         }
 
-    async def _retrieve_history(self, question: str) -> dict:
+    async def _retrieve_history(self, question: str, *, include_history=True, include_recent=False) -> dict:
         terms = subject_terms(question)
         try:
             candidates = await embeddings_store.historical_document_candidates(terms, MAX_CANDIDATES)
@@ -752,11 +758,18 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                 dates = {}  # OCR/title periods still provide a deterministic fallback.
             candidates["documents"] = [{**row, "indexed_date": dates.get(row["document_id"])} for row in candidates["documents"]]
             coverage = {}
-            chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=coverage)
+            chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=coverage) if include_history else []
+            recent_coverage = {}
+            recent = choose_recent_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=recent_coverage) if include_recent else []
+            recent_ids = [row["document_id"] for row in recent]
             ids = [row["document_id"] for row in chosen]
-            chunks = await embeddings_store.get_chunks_for_documents(ids, chunks_per_doc=3, relevance_terms=terms, include_opening=True)
+            chunks = await embeddings_store.get_chunks_for_documents(list(dict.fromkeys(ids + recent_ids)), chunks_per_doc=3, relevance_terms=terms, include_opening=True)
             # Reservation metadata survives duplicate chunk merging separately.
-            return {"vector_results": chunks, "history_chunks": chunks, "history_document_ids": ids,
+            return {"vector_results": chunks, "history_chunks": [c for c in chunks if c["document_id"] in ids], "history_document_ids": ids,
+                    "recent_chunks": [c for c in chunks if c["document_id"] in recent_ids], "recent_document_ids": recent_ids,
+                    "recent_coverage": {**recent_coverage, "candidate_limit": MAX_CANDIDATES, "document_limit": MAX_DOCUMENTS,
+                        "reserved_document_ids": recent_ids, "truncated": candidates["truncated"] or len(candidates["documents"]) > len(recent_ids),
+                        "retrieval_is_exhaustive": False},
                     "history_coverage": {**coverage, "candidate_count": candidates["candidate_count"],
                         "candidate_limit": MAX_CANDIDATES, "document_limit": MAX_DOCUMENTS,
                         "reserved_document_ids": ids, "truncated": candidates["truncated"] or len(candidates["documents"]) > len(ids),
@@ -1215,11 +1228,12 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     seen_names.add(name)
                     entity_names.append(name)
         merged["entity_names"] = entity_names
-        merged["history_document_ids"] = list(dict.fromkeys(ctx1.get("history_document_ids", []) + ctx2.get("history_document_ids", [])))[:MAX_DOCUMENTS]
-        merged["history_coverage"] = ctx1.get("history_coverage") or ctx2.get("history_coverage") or {}
-        history_chunks = {(chunk["document_id"], chunk.get("chunk_index", 0)): chunk
-                          for chunk in ctx1.get("history_chunks", []) + ctx2.get("history_chunks", [])}
-        merged["history_chunks"] = list(history_chunks.values())[:MAX_DOCUMENTS * 3]
+        for scope in ("history", "recent"):
+            merged[f"{scope}_document_ids"] = list(dict.fromkeys(ctx1.get(f"{scope}_document_ids", []) + ctx2.get(f"{scope}_document_ids", [])))[:MAX_DOCUMENTS]
+            merged[f"{scope}_coverage"] = ctx1.get(f"{scope}_coverage") or ctx2.get(f"{scope}_coverage") or {}
+            chunks = {(chunk["document_id"], chunk.get("chunk_index", 0)): chunk
+                      for chunk in ctx1.get(f"{scope}_chunks", []) + ctx2.get(f"{scope}_chunks", [])}
+            merged[f"{scope}_chunks"] = list(chunks.values())[:MAX_DOCUMENTS * 3]
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
@@ -1279,16 +1293,19 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             except Exception as e:
                 logger.warning("Evidence neighbor chunk expansion failed: %s", e)
         selected = self._rank_evidence_chunks(selected, question, sources)
-        reserved_ids = context.get("history_document_ids", [])
-        # Preserve the selected opening and relevant historical chunks after
-        # rank/neighbor passes. A document ID alone is not enough source context.
-        reserved = []
-        for doc_id in reserved_ids:
-            choices = [chunk for chunk in (context.get("history_chunks") or combined)
-                       if chunk.get("document_id") == doc_id and certifying_text(chunk)]
-            for chunk in sorted(choices, key=lambda chunk: chunk.get("chunk_index", 0))[:3]:
-                reserved.append({**chunk, "history_reserved": True})
-        selected = reserved + selected
+        # Expansion can contribute many chunks from one document. Preserve a
+        # diverse base again before applying the explicit source reservations.
+        selected = self._diversify_chunks(selected, limit=90 if broad or high_accuracy else 60,
+                                          max_per_doc=4 if high_accuracy else 3)
+        reserved = {}
+        for scope in ("recent", "history"):
+            for doc_id in context.get(f"{scope}_document_ids", []):
+                choices = [chunk for chunk in (context.get(f"{scope}_chunks") or combined)
+                           if chunk.get("document_id") == doc_id and certifying_text(chunk)]
+                for chunk in sorted(choices, key=lambda chunk: chunk.get("chunk_index", 0))[:3]:
+                    key = (doc_id, chunk.get("chunk_index", 0))
+                    reserved.setdefault(key, dict(chunk))[f"{scope}_reserved"] = True
+        selected = list(reserved.values()) + selected
 
         pack = build_evidence_pack(
             question=question,
@@ -1298,6 +1315,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             max_items=90 if broad or high_accuracy else 60,
         )
         pack["coverage"]["history"] = context.get("history_coverage", {})
+        pack["coverage"]["recent"] = context.get("recent_coverage", {})
         flagged = await embeddings_store.get_open_feedback_document_ids(
             list({item["document_id"] for item in pack["items"] if type(item.get("document_id")) is int}))
         for item in pack["items"]:
@@ -1645,6 +1663,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "doc_type": item.get("doc_type"),
                 "source_kind": item.get("source_kind"),
                 "history_reserved": item.get("history_reserved") is True,
+                "recent_reserved": item.get("recent_reserved") is True,
                 "source_quality": item.get("source_quality"),
                 "date_signals": item.get("date_signals"),
                 "structured_fact_count": item.get("structured_fact_count"),

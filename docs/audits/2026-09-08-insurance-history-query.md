@@ -139,3 +139,25 @@ The editor now returns prose directly through the same request-owned Strands tra
 Balanced markup is normalized only on comparison copies. Signed quantities retain their signs, including spaces around displayed negatives. Reference validation uses bounded adjacency guards derived from the whole certified chunk so formatting cannot hide a chopped identifier, sign, magnitude or decimal tail. Original source quotes, offsets and digests remain unchanged.
 
 Independent review reproduced and closed four further false-acceptance paths: less detailed titles hiding newer counterevidence, bare monetary amounts treated as recency years, spaced negative source quantities accepted as positive, and a decimal continuation hidden beyond a formatted source-window edge. Public regressions cover each failure. The final local actual-datastore suite at `9482029` passed 420 tests with zero skips. Native-adapter tests include complete prose, re-audit, cancellation and all failure controls. Final independent review and exact-head CI remain pending; production is still v12 and the retained failed live runs do not count as acceptance.
+
+
+### Final v13 review and deployment checkpoint
+
+The final review also closed source-context edge cases involving list markers, quoted fragments, Unicode whitespace and literal code/HTML. Structural marker authority is derived from the whole certified source using pinned CommonMark tokenization and retained as raw offsets; model-provided marker metadata cannot authorize a sign change. All affected public controls passed. Both final review axes reported zero remaining findings at `4d6c0c5`; the actual-datastore suite passed428tests with zero skips, and exact-head backend/frontend/browser CI passed.
+
+PR36 merged as `3f5b192` and was deployed through independently reviewed, CI-passing GitOps PR152 (`74433eb`). Only two immutable image pins changed. Fresh writer drain passed immediately before merge. Flux, readiness, published-to-running image chains, original453review records, configured models/deadlines and absence of output caps passed after rollout. Separately observed ingestion activity had increased the pre-rollout baseline to924document hashes,6966embeddings and529review rows, generation2052. That complete hash digest and all counts/generation were unchanged across rollout. No resync or source mutation was performed by this release. Live query acceptance remains a separate gate.
+
+
+### v13 live acceptance: failed, retained
+
+Conversation `4e0dea2f-a60a-4e63-a5e1-f49893cc3364` submitted the unchanged Timeline question once at21:07:58Z and completed source audit at21:12:19Z, about262seconds. It was uncached, policyv13, disposition unsupported, two candidate attempts. All42units were audited:33supported,7unsupported,2missing,0conflicting/unchecked. Eight timeline events validated. All90canonical items and69retained claim references were reconstructed against stable current OCR. No provider errors/warnings were logged.
+
+The newest auto declaration was absent from the canonical pack but exists in the bounded indexed candidate set. Historical selection also admits a four-digit street number as a period, disrupting newest-period ordering. Neighbor expansion re-ranks a diversified set but does not enforce document diversity again before the90-item cut. The exact contribution of vector retrieval versus final packing to the missing record is not recoverable from the saved payload; both boundaries need public reproductions. A certified field leader before a positive premium reproduced a false negative-amount mismatch. The complete missing verdicts excluded subset re-audit. H4/D4/A5 record the generalized follow-up.
+
+The browser rendered the refusal, ledger and source-detail link with no page errors. The acceptance harness then timed out restoring history by a nonunique title; this is a harness ambiguity, not established application failure. It did not resubmit the query. Neither the semantic run nor the unfinished UI restoration counts as acceptance.
+
+
+The read-only browser follow-up restored the exact v13 conversation using its current list identity, rendered its42-claim ledger and captured desktop/mobile views with zero page errors. No query was submitted. This closes the harness ambiguity, not the semantic failure. The H4/D4/A5 implementation's initial full datastore run passed438tests, then independent review found the additional date-ranking/unit/title and field-label defects recorded in the spec. Those findings supersede that preliminary green checkpoint.
+
+
+The v14 follow-up review closed wrapped-equation and independently formatted-unit boundaries with source-preserving controls. Read-only visual inspection of the saved v13 mobile conversation additionally reproduced a stray zero instead of the zero-score/copy row. The UI now distinguishes numeric zero from missing metrics; a production-browser regression restores an assistant message without a duration. Final reviewed-head validation and live query acceptance are still pending.

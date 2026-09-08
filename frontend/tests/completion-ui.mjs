@@ -133,6 +133,21 @@ test("conversation switching isolates delayed completion and subsequent question
   await record(page, "conversation-switch");
 });
 
+test("restored zero-score answers retain their score and copy control without a recorded duration", async t => {
+  const { context, page } = await fixturePage(t);
+  const saved = await (await context.request.post(`${base}/api/conversations`, { data: { title: "Saved unverified answer" } })).json();
+  await page.route(`**/api/conversations/${saved.id}`, route => route.fulfill({ json: {
+    ...saved, messages: [{ role: "assistant", content: "Source support could not be verified.", confidence: 0 }],
+  } }));
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: saved.title, exact: true }).click();
+  await page.getByText("Source support could not be verified.", { exact: true }).waitFor();
+  await page.getByText("0%", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Copy answer", exact: true }).isVisible(), true);
+  assert.equal(await page.getByText("0", { exact: true }).count(), 0);
+  await record(page, "restored-zero-score");
+});
+
 for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex refreshes the current document view`, async t => {
   const { page } = await fixturePage(t);
   const held = deferred(), started = deferred();

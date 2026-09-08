@@ -33,6 +33,15 @@ class SourceDate:
     reason: str | None = None
 
 
+def date_context(text: str) -> str:
+    """Bound lexical context after removing presentation-only marker/space runs.
+
+    Collapse before truncating so whitespace or an opening value wrapper cannot
+    hide an immediately governing identifier label. Never use this as a quote.
+    """
+    return " ".join(re.sub(r"[*_`]", "", text).split())[-80:] + (" " if text and text[-1].isspace() else "")
+
+
 def source_dates(text: str, date_order: str = "mdy", *, context_before: str = "") -> list[SourceDate]:
     if date_order not in {"mdy", "dmy", "reject_ambiguous"}:
         raise ValueError("Unsupported numeric source date order")
@@ -40,9 +49,7 @@ def source_dates(text: str, date_order: str = "mdy", *, context_before: str = ""
     for match in _PATTERN.finditer(text):
         # Explicit identifier labels disambiguate calendar-shaped record IDs.
         # They retain scalar validation and cannot supply date authority.
-        prefix = (context_before + text[:match.start()])[-80:]
-        # Inspect label presentation on a copy; source offsets stay untouched.
-        prefix = re.sub(r"(\*\*|__|`)([^\n]+?)\1", r"\2", prefix)
+        prefix = date_context(context_before + text[:match.start()])
         if _IDENTIFIER_PREFIX.search(prefix):
             continue
         value, precision, reason = None, None, None

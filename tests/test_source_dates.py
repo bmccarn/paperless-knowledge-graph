@@ -132,7 +132,9 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
                 for assessment in result["assessments"]:
                     assessment["references"][0]["quote"] = "2026-09-01"
                 return result
-        for source in ("Policy #2026-09-01.", "**Policy number:** 2026-09-01.", "**Policy #** 2026-09-01."):
+        for source in ("Policy #2026-09-01.", "**Policy number:** 2026-09-01.", "**Policy #** 2026-09-01.",
+                       "Policy #**2026-09-01**.", "**Policy number:** `2026-09-01`.",
+                       "Policy #" + " " * 200 + "2026-09-01.") :
             for auditor in (ExactAuditor(), TrimmedAuditor()):
                 with self.subTest(source=source, auditor=type(auditor).__name__):
                     result = await AnswerFinalizer(auditor).finalize(
@@ -157,3 +159,23 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
         reasons = {}
         self.assertEqual(await validate_timeline([event], evidence, TrimmedAuditor(), "Recorded date?", diagnostics=reasons), [])
         self.assertEqual(reasons, {"unsupported_audited_date": 1})
+
+    async def test_trimmed_malformed_date_cannot_gain_calendar_authority(self):
+        class TrimmedAuditor(ExactAuditor):
+            async def audit_answer_units(self, *args):
+                result = await super().audit_answer_units(*args)
+                for assessment in result["assessments"]:
+                    assessment["references"][0]["quote"] = "2026-09-01"
+                return result
+        for source in ("Recorded date 2026-09-01-02.", "Recorded date 2026-09-01/02."):
+            evidence = pack(source)
+            result = await AnswerFinalizer(TrimmedAuditor()).finalize(
+                "What date was recorded?", "The record date is 2026-09-01.", evidence)
+            self.assertFalse(result["finalization"]["complete"])
+            self.assertNotIn("2026-09-01", result["answer"])
+            span = evidence_spans(evidence)[0]
+            reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
+                         "document_id": 101, "quote": "2026-09-01"}
+            event = {"date": "2026-09-01", "title": "Record dated", "summary": "Recorded date.",
+                     "document_id": 101, "references": [reference]}
+            self.assertEqual(await validate_timeline([event], evidence, ExactAuditor(), "Recorded date?"), [])

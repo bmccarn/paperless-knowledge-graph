@@ -216,6 +216,7 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
                           "boundary_before": content[max(0, start - 2):start],
+                          "date_context_before": content[max(0, start - 80):start],
                           "boundary_after": content[start + len(text):start + len(text) + 2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
@@ -382,6 +383,7 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "start": span["start"] + start,
+            "date_context_before": (span.get("date_context_before", "") + source[:start])[-80:],
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 
@@ -408,7 +410,8 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     # Bare four-digit tokens remain scalars: identifiers and quantities may
     # look like years and still require the original Decimal comparison.
     dates = [found for found in source_dates(text, date_order) if not re.fullmatch(r"\d{4}", found.text)]
-    source_occurrences = [source_dates(source, date_order) for source in sources]
+    source_occurrences = [source_dates(source, date_order, context_before=ref.get("date_context_before", ""))
+                          for source, ref in zip(sources, references)]
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
     numeric_text = without_dates(text, dates)
@@ -443,8 +446,8 @@ def values_match(text: str, references: list[dict], *, date_order: str = "mdy") 
     return not value_mismatches(text, references, date_order=date_order)
 
 
-def date_occurs(value: str, source: str, date_order: str = "mdy") -> bool:
-    return source_date_occurs(value, source, date_order)
+def date_occurs(value: str, source: str, date_order: str = "mdy", *, context_before: str = "") -> bool:
+    return source_date_occurs(value, source, date_order, context_before=context_before)
 
 
 def empty_ledger(candidate: str) -> dict:
@@ -719,7 +722,7 @@ class AnswerFinalizer:
             verification["missing_evidence"] = ["Some claims were omitted because they could not be verified."]
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
-        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after"}} for span in ledger["spans"]]
+        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in ledger["spans"]]
         return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,

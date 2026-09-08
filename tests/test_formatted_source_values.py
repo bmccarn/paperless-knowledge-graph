@@ -50,14 +50,21 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(values_match('Charge -$500.', [{'quote': 'Charge $**500.00**.'}]))
 
     async def test_full_formatted_negative_source_cannot_verify_positive_claim(self):
-        for claim, source in [('The charge is $500.', 'The charge is - $**500**.'),
-                              ('The dose is 5 mg.', 'The dose is - **5** mg.')]:
-            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', claim, pack(source))
-            self.assertFalse(result['finalization']['answer_verified'])
-            self.assertNotIn(claim, result['answer'])
-            negative = claim.replace('$500', '-$500').replace('5 mg', '-5 mg')
-            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', negative, pack(source))
-            self.assertTrue(result['finalization']['answer_verified'])
+        for spacing in (' ', '\u00a0', '\u2009', '\n'):
+            for claim, source in [('The charge is $500.', 'The charge is - $**500**.'),
+                                  ('The dose is 5 mg.', 'The dose is - **5** mg.')]:
+                source = source.replace('- ', '-' + spacing)
+                result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', claim, pack(source))
+                self.assertFalse(result['finalization']['answer_verified'])
+                self.assertNotIn(claim, result['answer'])
+                negative = claim.replace('$500', '-$500').replace('5 mg', '-5 mg')
+                result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', negative, pack(source))
+                self.assertTrue(result['finalization']['answer_verified'])
+                spans = evidence_spans(pack(source))
+                span = spans[0]
+                quote = source.split(spacing, 1)[-1] if source.startswith('-') else source.split('-' + spacing, 1)[-1]
+                ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': quote}
+                self.assertIsNone(validate_reference(ref, spans))
 
     async def test_formatted_decimal_tail_beyond_window_cannot_be_trimmed(self):
         quote = '$`500`'

@@ -191,7 +191,7 @@ def answer_units(answer: str) -> list[dict]:
 
 def _value_context(text: str) -> str:
     # Guard adjacency only; never use this copy as a matching quote or evidence.
-    return re.sub(r"[ \t]+", " ", re.sub(r"[*_`\[\]]", "", text))
+    return re.sub(r"\s+", " ", re.sub(r"[*_`\[\]]", "", text))
 
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
@@ -495,7 +495,7 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
             return None
         numeric_start = re.match(r"(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?\s*\d", visible)
         if numeric_start and (before in {"+", "-", "−", ".", ","}
-                              or re.search(r"[+−-][ \t]*(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?[ \t]*$", before_visible)):
+                              or re.search(r"[+−-]\s*(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?\s*$", before_visible)):
             return None
         if last.isdigit() and len(after) > 1 and after[0] in ".,/-" and after[1].isdigit():
             return None
@@ -529,7 +529,7 @@ def presentation_text(text: str) -> str:
     text = text.replace("−", "-")
     # Whitespace around a displayed sign must not turn a negative quantity into
     # a positive one after its balanced formatting is peeled.
-    text = re.sub(r"(?<![\w.,])([+-])[ \t]+(?=(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?[ \t]*\d)", r"\1", text)
+    text = re.sub(r"(?<![\w.,])([+-])\s+(?=(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?\s*\d)", r"\1", text)
     return re.sub(r"(?<![\w.,])([+-])((?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*)(?=\d)", r"\2\1", text)
 
 

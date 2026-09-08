@@ -51,7 +51,7 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
         old = 'Orchid service invoice OLDX742 dated January 1, 2020 records $321 USD.'
         new = 'Orchid service invoice NEWY813 dated September 1, 2026 records $421 USD.'
         claim = 'The latest Orchid service invoice is OLDX742 dated January 1, 2020 for $321 USD.'
-        for variation in ('ordinary', 'short_title', 'large_amounts', 'dmy', 'later_footer', 'durations'):
+        for variation in ('ordinary', 'short_title', 'large_amounts', 'dmy', 'later_footer', 'durations', 'split_observation'):
             actual_new = new if variation != 'dmy' else new.replace('September 1, 2026', '02/05/2026')
             items = [item(1, old, reserved=True, title='Orchid service invoice 2020')]
             items += [item(i+2, f'Historical ARCHIVE{i} service charges.', reserved=True) for i in range(7)]
@@ -69,10 +69,18 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
             if variation == 'dmy':
                 items += [item(888, 'Orchid service invoice dated 03/02/2026 records $400 USD.', title='Orchid service invoice 2026'),
                           item(889, 'Orchid service invoice dated 04/02/2026 records $450 USD.', title='Orchid service invoice 2026')]
+            if variation == 'split_observation':
+                items = [i for i in items if i['document_id'] != 999]
+                items += [item(999, 'Orchid service invoice NEWY813.', title='Orchid service invoice 2026'),
+                          item(999, 'The charge is $421 USD effective September 1, 2026.', chunk=1, title='Orchid service invoice 2026'),
+                          item(999, 'Administrative printing record: October 1, 2026.', chunk=3, title='Orchid service invoice 2026')]
             seen = []
             class Auditor:
                 async def audit_answer_units(self, question, units, spans, plan):
                     has_new = any(actual_new in s['content'] for s in spans)
+                    if variation == 'split_observation':
+                        has_new = all(any(needle in s['content'] and s['document_id'] == 999 for s in spans) for needle in
+                                      ('Orchid service invoice NEWY813.', 'The charge is $421 USD effective September 1, 2026.'))
                     seen.append(has_new)
                     old_span = next(s for s in spans if s['document_id'] == 1)
                     return {'assessments': [{'unit_id': u['id'], 'status': 'conflicting' if has_new else 'supported',

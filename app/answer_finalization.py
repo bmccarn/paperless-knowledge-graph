@@ -191,10 +191,15 @@ def answer_units(answer: str) -> list[dict]:
 
 
 
-def _without_list_markers(text: str) -> str:
-    # A Markdown marker is structural at the start of a line, unlike a sign
-    # inside a sentence or immediately adjacent to an amount.
-    return re.sub(r"(?m)^ {0,3}[-+*][ \t]+(?=\S|$)", "", text)
+def _without_list_markers(text: str, first_line_indent: int | None = 0) -> str:
+    # A quote boundary is not a source line boundary. Only certified source
+    # context can authorize a list marker at the start of a quoted fragment.
+    def replace(match):
+        indent = len(match.group()) - len(match.group().lstrip(" "))
+        if match.start() == 0 and (first_line_indent is None or first_line_indent + indent > 3):
+            return match.group()
+        return ""
+    return re.sub(r"(?m)^ {0,3}[-+*][ \t]+(?=\S|$)", replace, text)
 
 
 def _value_context(text: str) -> str:
@@ -368,9 +373,11 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
         topical = max(relevant, key=lambda row: (row[0], -row[3].get("chunk_index", 0), -row[3].get("start", 0), -row[2]))
         latest = max(dated, key=lambda row: (row[1], -row[2]))
         newest = max((row[1] for row in relevant), default="") or latest[1]
+        # Preserve continuation opportunities in source order. A fixed choice
+        # of just identity plus latest date can skip the actual middle record.
         windows = [(topical[2], topical[3])]
-        if latest[2] != topical[2]:
-            windows.append((latest[2], latest[3]))
+        windows.extend(pair for pair in sorted(pairs, key=lambda p: (p[1].get("chunk_index", 0), p[1].get("start", 0), p[0]))
+                       if pair[0] != topical[2])
         candidates.append((overlap, newest, topical[2], windows))
     # OCR overlap admits the topical cohort. Within that cohort, a richer old
     # title must not crowd out a newer alternative whose OCR matches the subject.
@@ -500,7 +507,11 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         return None
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
         return None
-    visible = presentation_text(source[start:end])
+    raw_prefix = span.get("boundary_before", "") + source[:start]
+    line_prefix = raw_prefix.rsplit("\n", 1)[-1]
+    source_line_indent = (len(line_prefix) if (span["start"] == 0 or "\n" in raw_prefix)
+                          and re.fullmatch(r" {0,3}", line_prefix) else None)
+    visible = presentation_text(source[start:end], first_line_indent=source_line_indent)
     prefix = span.get("value_boundary_before", span.get("boundary_before", "")) + source[:start]
     suffix = source[end:] + span.get("value_boundary_after", span.get("boundary_after", ""))
     before_visible = _value_context(prefix)
@@ -529,13 +540,14 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
             return None
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
-            "quote": source[start:end], "start": span["start"] + start,
+            "quote": source[start:end], "source_line_indent": source_line_indent,
+            "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 
-def presentation_text(text: str) -> str:
-    text = _without_list_markers(text)
+def presentation_text(text: str, *, first_line_indent: int | None = 0) -> str:
+    text = _without_list_markers(text, first_line_indent)
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:
         previous_length = len(text)
@@ -571,7 +583,8 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
     numeric_text = without_dates(text, dates)
-    numeric_sources = [presentation_text(source) for source in sources]
+    numeric_sources = [presentation_text(source, first_line_indent=ref.get("source_line_indent"))
+                       for source, ref in zip(sources, references)]
     mismatches = {}
     if missing_dates:
         mismatches["dates"] = list(dict.fromkeys(missing_dates))[:30]

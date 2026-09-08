@@ -90,3 +90,18 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
         span = spans[0]
         ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': '$**500** service fee.'}
         self.assertIsNotNone(validate_reference(ref, spans))
+
+    async def test_quoted_in_sentence_sign_never_becomes_a_list_marker(self):
+        for source, quote, claim in [('The charge is - $**500**.', '- $**500**.', 'The charge is $500.'),
+                                     ('The dose is - **5** mg.', '- **5** mg.', 'The dose is 5 mg.')]:
+            class Auditor:
+                async def audit_answer_units(self, question, units, spans, plan):
+                    span = spans[0]
+                    ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': quote,
+                           'source_line_indent': 0}  # A model cannot supply this authority.
+                    return {'assessments': [{'unit_id': u['id'], 'status': 'supported', 'references': [ref]} for u in units]}
+            result = await AnswerFinalizer(Auditor()).finalize('What is recorded?', claim, pack(source))
+            self.assertTrue(result['claim_ledger']['complete'])
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertIsNone(result['claim_ledger']['claims'][0]['references'][0]['source_line_indent'])
+            self.assertNotIn(claim, result['answer'])

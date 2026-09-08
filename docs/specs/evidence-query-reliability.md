@@ -197,3 +197,6 @@ Final boundary review combined the previously isolated cases: ordered prose unde
 
 
 A further independent-letter control showed that right-side capitalization alone was insufficient when a new sentence began with a content noun. Initial continuation now also requires left-side name context: a leading initial, a prior name/initial or a generic name-introducing relation. The rule does not enumerate document domains or letter-value labels. Public subset regressions retain supported letter facts before unrelated unsupported sentences.
+
+
+Name inspection now tracks prose separately from its raw heading/list range, preserving leading and wrapped initials under structural prefixes. Coordination carries prior name context rather than treating bare `and` as proof of a name. Generic copulas and reporting predicates cover ordinary name introductions. Ambiguous name-like prepositional constructions stay atomic; text-only sentence segmentation cannot certify linguistic meaning, and full source/temporal audit remains mandatory. The combined boundary matrix now contains189cases plus public subset controls for introductions, coordination and independent letter values.

@@ -168,21 +168,26 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
         return False
     if not (word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'}):
         return False
-    before = prefix[:initial.start()]
-    prior = re.search(r"([^\W\d_][\w’'-]*)(?:\.)?\s+$", before)
+    before = re.sub(r"^\s*(?:\d+[.)]|[-+*])\s+", "", prefix[:initial.start()])
+    prior = re.search(r"([^\W\d_][\w’'-]*)(\.)?\s+$", before)
+    if prior and prior[1].lower() == 'and':
+        prior = re.search(r"([^\W\d_][\w’'-]*)(\.)?\s+$", before[:prior.start()])
     # Capitalization on the right alone also describes a new sentence after
     # a letter value. Require name-shaped context on the left: a leading
     # initial, another name/initial, or a name-introducing relation.
     if prior is None:
         return not re.search(r"\w", before)
-    return prior[1][0].isupper() or prior[1].lower() in {
-        'names', 'named', 'by', 'to', 'for', 'from', 'with', 'and',
+    return (prior[1][0].isupper() and (len(prior[1]) > 1 or bool(prior[2]))) or prior[1].lower() in {
+        'names', 'named', 'by', 'to', 'for', 'from', 'with',
+        'is', 'was', 'are', 'were', 'lists', 'listed', 'includes', 'included',
+        'identifies', 'identified', 'called', 'records', 'reports',
     }
 
 
 def answer_units(answer: str) -> list[dict]:
     units = []
     pending_heading = None
+    pending_content_start = None
     pending_end = 0
 
     def append(start, end):
@@ -209,27 +214,32 @@ def answer_units(answer: str) -> list[dict]:
         for boundary in re.finditer(r"[.!?](?=\s|$)", line):
             end = line_match.start() + boundary.end()
             prefix = answer[pending_heading if pending_heading is not None else start:end]
+            name_prefix = answer[pending_content_start if pending_content_start is not None else start:end]
             if boundary.group() == "." and (
                 re.fullmatch(r"\s*\d+\.", answer[start:end])
                 or _abbreviation_continues(prefix, answer[end:])
-                or _name_initial_continues(prefix, answer[end:])
+                or _name_initial_continues(name_prefix, answer[end:])
             ):
                 continue
             append(pending_heading if pending_heading is not None else start, end)
             pending_heading = None
+            pending_content_start = None
             start = end
             while start < last and answer[start].isspace():
                 start += 1
         if start < last:
             prefix = answer[pending_heading if pending_heading is not None else start:last]
+            name_prefix = answer[pending_content_start if pending_content_start is not None else start:last]
             continuation = re.match(r"[ \t]*(?:\r\n?|\n)[ \t]*(?![#>]|[-+*]\s|\d+[.)]\s)\S", answer[last:])
-            if continuation and (_name_initial_continues(prefix, answer[last:])
+            if continuation and (_name_initial_continues(name_prefix, answer[last:])
                                  or _abbreviation_continues(prefix, answer[last:])):
                 pending_heading = start if pending_heading is None else pending_heading
+                pending_content_start = start if pending_content_start is None else pending_content_start
                 pending_end = last
                 continue
             append(pending_heading if pending_heading is not None else start, last)
             pending_heading = None
+            pending_content_start = None
     if pending_heading is not None:
         append(pending_heading, pending_end)  # A trailing factual heading is audited.
     return units

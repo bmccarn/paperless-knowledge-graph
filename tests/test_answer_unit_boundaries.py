@@ -23,6 +23,10 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
                        'The form lists examples, e.g.', 'The receipt names J. Smith',
                        'The receipt names Alice Q.\nR. Example', 'The receipt names Alice Q.\rExample',
                        'The receipt names J. van der Meer', 'The receipt names J. de Vries',
+                       'Recipients:\nJ. Smith', '# Recorded observations\n1. J. Smith',
+                       'The receipt names Alice Example and J. Smith',
+                       'The receipt lists J. Smith', 'The physician is J. Smith',
+                       'The patient was J. Smith', 'The record identifies J. Smith',
                        'The record says approx.\n', 'The form lists examples, e.g.\na prior invoice'):
             await self.check_subset(prefix + ' and costs $999.', 'The statement records $321.', prefix)
 
@@ -35,6 +39,7 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
         for first, second in (
             ('The laboratory reports grade B.', 'Follow-up testing costs $999.'),
             ('The record lists vitamin A.', 'Supplements cost $999.'),
+            ('The form records vitamins A and B.', 'Supplements cost $999.'),
             ('The record lists apartment Q.', 'Rent is $999.'),
         ):
             await self.check_subset(first, second, '$999', expected=first)
@@ -43,7 +48,7 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
         for newline in ('\n', '\r\n', '\r'):
             for heading in ('', '# Recorded observations'+newline, 'Recorded observations:'+newline):
                 for marker in ('', '1. ', '* '):
-                    for body in ('The invoice charges $999.', 'The receipt names J. van der Meer and costs $999.',
+                    for body in ('The invoice charges $999.', 'J. Smith costs $999.', 'J.'+newline+'Smith costs $999.', 'The receipt names J. van der Meer and costs $999.',
                                  'The receipt names Alice Q.'+newline+'R. Example and costs $999.',
                                  'The record says approx.'+newline+'$999.',
                                  'The record gives examples, e.g.'+newline+'a prior charge of $999.'):

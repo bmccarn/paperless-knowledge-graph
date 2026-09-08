@@ -31,7 +31,7 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
     def test_wrapped_reference_cannot_chop_numeric_tokens_or_signs(self):
         cases = [('$**500**0', '$**500**'), ('1**500** USD', '**500** USD'),
                  ('-$**500** USD', '$**500** USD'), ('-$**500** USD', '**500** USD'),
-                 ('- $**500** USD', '$**500** USD'), ('- **5** mg', '**5** mg'),
+                 ('Charge - $**500** USD', '$**500** USD'), ('Dose - **5** mg', '**5** mg'),
                  ('$**500**.01', '$**500**'), ('$**500**e2', '$**500**'),
                  ('ID**500**A', '**500**'), ('**1.500** USD', '**500** USD')]
         for source, quote in cases:
@@ -78,3 +78,15 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
         result = await AnswerFinalizer(Auditor()).finalize('What was charged?', 'The charge was $500.', pack(source))
         self.assertFalse(result['finalization']['answer_verified'])
         self.assertNotIn('The charge was $500.', result['answer'])
+
+    async def test_markdown_list_markers_are_not_numeric_signs(self):
+        for claim, source in [('- $500 service fee.', 'The service fee is $500.'),
+                              ('The service fee is $500.', 'Recorded charges:\n- $**500** service fee.\n- $**50** tax.')]:
+            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', claim, pack(source))
+            self.assertTrue(result['finalization']['answer_verified'])
+            self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['quote'], source)
+        source = 'Recorded charges:\n- $**500** service fee.\n- $**50** tax.'
+        spans = evidence_spans(pack(source))
+        span = spans[0]
+        ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': '$**500** service fee.'}
+        self.assertIsNotNone(validate_reference(ref, spans))

@@ -45,3 +45,20 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
             'The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.', pack(SOURCE))
         self.assertFalse(result['finalization']['answer_verified'])
         self.assertEqual(result['finalization']['disposition'], 'incomplete')
+
+    async def test_unavailable_subset_is_reported_as_incomplete_with_its_own_diagnostics(self):
+        class Unavailable(MissingAuditor):
+            async def audit_answer_units(self, *args):
+                if self.contexts:
+                    return None
+                return await super().audit_answer_units(*args)
+        result = await AnswerFinalizer(Unavailable()).finalize('What is recorded?',
+            'The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.', pack(SOURCE))
+        self.assertEqual(result['finalization']['disposition'], 'incomplete')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertNotIn('$321', result['answer'])
+        audit = result['claim_ledger']['subset_audit']
+        self.assertFalse(audit['complete'])
+        self.assertEqual(audit['summary']['unchecked'], 1)
+        self.assertEqual(audit['audit_batches'][0]['final_errors'], ['unavailable'])
+        self.assertIn('partial answer source audit did not complete', result['verification']['missing_evidence'][0])

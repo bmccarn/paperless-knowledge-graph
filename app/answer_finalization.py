@@ -18,11 +18,11 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from markdown_it import MarkdownIt
-from app.source_text import certifying_text
+from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v14"
+POLICY_VERSION = "source-audit-v15"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -175,6 +175,7 @@ def answer_units(answer: str) -> list[dict]:
                 re.fullmatch(r"\s*\d+\.", prefix)
                 or re.search(r"\b(?:No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd)\.$", prefix, re.I)
                 or re.search(r"(?:\b[A-Z]\.){2,}$", prefix)
+                or (re.search(r"\b[^\W\d_]\.$", prefix) and prefix[-2].isupper())
             ):
                 continue
             append(pending_heading if pending_heading is not None else start, end)
@@ -268,6 +269,7 @@ def _value_context(text: str, markers: list = ()) -> str:
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
     seen = {}
+    source_structures = {}
     # A history pack has more priority documents to compare. Use smaller whole
     # windows throughout so requested and historical sources can coexist.
     window = 1800 if any((item.get("history_reserved") or item.get("recent_reserved")) for item in pack.get("items", []) if isinstance(item, dict)) else 4000
@@ -281,18 +283,37 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         if not isinstance(content, str):
             raise ValueError("Evidence source content must be text")
-        identity = (item["document_id"], item.get("chunk_index"), item.get("title"), content, bool(item.get("feedback_open")))
+        identity = (item["document_id"], item.get("chunk_index"), item.get("title"), content, bool(item.get("feedback_open")),
+                    item.get('source_context'), item.get('_source_document_content'))
         if item["id"] in seen:
             if seen[item["id"]] != identity:
                 raise ValueError("Evidence identity refers to conflicting source records")
             continue
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
-        list_markers = _list_marker_ranges(content, known_start=item.get("chunk_index", 0) == 0)
-        field_leaders = _field_leader_ranges(content, known_start=item.get("chunk_index", 0) == 0)
+        context = certified_document_context(item, content)
+        if context:
+            document_text, offset = context
+            key = (item['document_id'], item['source_context']['digest'])
+            if key not in source_structures:
+                source_structures[key] = (_list_marker_ranges(document_text), _field_leader_ranges(document_text))
+            lists, fields = source_structures[key]
+            list_markers = _slice_markers(lists, offset, offset + len(content))
+            field_leaders = _slice_markers(fields, offset, offset + len(content))
+        else:
+            # A failed full-source binding never falls back to chunk-local
+            # authority. Unknown continuation context also stays conservative.
+            known_start = item.get('chunk_index', 0) == 0 and not item.get('source_context') and '_source_document_content' not in item
+            list_markers = _list_marker_ranges(content, known_start=known_start)
+            field_leaders = _field_leader_ranges(content, known_start=known_start)
         presentation_ranges = sorted(list_markers + field_leaders)
+        guard_content, guard_offset, guard_ranges = content, 0, presentation_ranges
+        if context:
+            guard_content, guard_offset = context
+            guard_ranges = sorted(lists + fields)
         for start in range(0, len(content), window - 200):
             text = content[start:start + window]
+            guard_start, guard_end = guard_offset + start, guard_offset + start + len(text)
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
@@ -300,15 +321,16 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "chunk_index": item.get("chunk_index", 0),
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
-                          "boundary_before": content[max(0, start - 2):start],
-                          "date_context_before": date_context(content[:start]),
-                          "boundary_after": content[start + len(text):start + len(text) + 2],
+                          **({'source_context': item['source_context']} if context else {}),
+                          "boundary_before": guard_content[max(0, guard_start - 2):guard_start],
+                          "date_context_before": date_context(guard_content[:guard_start]),
+                          "boundary_after": guard_content[guard_end:guard_end + 2],
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
                           "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
-                          "value_boundary_before": _value_context(content[:start], _slice_markers(presentation_ranges, 0, start))[-16:],
-                          "value_boundary_after": _value_context(content[start + len(text):], _slice_markers(presentation_ranges, start + len(text), len(content)))[:2],
+                          "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
+                          "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
 
@@ -616,6 +638,7 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
             "source_field_leaders": source_field_leaders,
+            **({'source_context': span['source_context']} if span.get('source_context') else {}),
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
@@ -980,6 +1003,13 @@ class AnswerFinalizer:
                 async with asyncio.timeout(self._audit_timeout(subset)):
                     subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
                 subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
+                ledger['subset_audit'] = {
+                    'candidate_digest': subset_ledger['candidate_digest'],
+                    'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
+                    'rejection_reasons': subset_ledger.get('rejection_reasons', []),
+                    'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
+                    'temporal_disposition': subset_status,
+                }
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
                         and subset_status in {"supported", "qualified"}):
                     omitted = [c for c in ledger["claims"] if c["status"] != "supported"]
@@ -989,6 +1019,8 @@ class AnswerFinalizer:
                                "omitted_units": [{"id": c["id"], "status": c["status"],
                                                   "rejection_reasons": c["rejection_reasons"]} for c in omitted]}
                     candidate, ledger, disposition = subset, subset_ledger, "partial"
+                elif not subset_ledger['complete']:
+                    disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
             except TimeoutError:
                 disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
             except Exception:

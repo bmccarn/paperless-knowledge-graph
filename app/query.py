@@ -1,4 +1,4 @@
-from app.source_text import certifying_text
+from app.source_text import certifying_text, bind_document_context
 from app.history_coverage import history_requested, subject_terms, choose_documents, choose_recent_documents, MAX_CANDIDATES, MAX_DOCUMENTS
 import json
 import logging
@@ -1270,6 +1270,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             if chunk.get("document_id") is not None:
                 doc_ids.append(int(chunk["document_id"]))
         doc_ids = list(dict.fromkeys(doc_ids))[:14 if high_accuracy else 8]
+        full_doc_chunks = []
         if doc_ids:
             try:
                 neighbor_chunks = await embeddings_store.get_chunks_for_documents(
@@ -1314,6 +1315,13 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
+        # Full OCR is already available from bounded source expansion. Keep it
+        # private and bind every retained chunk of those documents to its context.
+        document_contexts = {c['document_id']: c['_source_document_content'] for c in full_doc_chunks
+                             if isinstance(c.get('_source_document_content'), str)}
+        for item in pack['items']:
+            if item['document_id'] in document_contexts:
+                bind_document_context(item, document_contexts[item['document_id']])
         pack["coverage"]["history"] = context.get("history_coverage", {})
         pack["coverage"]["recent"] = context.get("recent_coverage", {})
         flagged = await embeddings_store.get_open_feedback_document_ids(
@@ -1375,6 +1383,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     "similarity": 0.78,
                     "rank_score": 1.0,
                     "_source": "paperless_full_document",
+                    "_source_document_content": content,
                 })
         if expanded:
             logger.info("Expanded %s full-document evidence chunks from %s source docs", len(expanded), len(seen))
@@ -1662,6 +1671,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "title": item.get("title"),
                 "doc_type": item.get("doc_type"),
                 "source_kind": item.get("source_kind"),
+                "source_context": item.get("source_context"),
                 "history_reserved": item.get("history_reserved") is True,
                 "recent_reserved": item.get("recent_reserved") is True,
                 "source_quality": item.get("source_quality"),

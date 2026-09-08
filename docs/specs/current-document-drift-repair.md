@@ -1,0 +1,11 @@
+# Current documents and drift repair
+
+Status: implemented and validated locally; independent review and delivery pending.
+
+After one partial full sync followed by successful targeted recovery, all 903 current source documents pass exact ID, fingerprint, source coverage and chunk checks. The global full-sync watermark correctly remains older. However, freshness still reports 12 already-current documents as stale solely because their modified timestamps are later than that watermark. Repair drift selects those documents again, then leaves the same warning because targeted repair intentionally does not advance the global watermark.
+
+Use the current per-document ingestion fingerprints and cross-store ID parity to decide whether a document needs repair. Retain modified-after-sync counts as informational diagnostics; an old global watermark alone must not mark otherwise current documents stale or select them for reindex. Actual source or metadata changes, missing legacy fingerprints, and missing/extra graph, embedding or completion IDs must still produce drift and appropriate targets. Do not advance the global sync watermark after targeted repair or change ingestion fingerprints.
+
+Regression checks must use the public freshness and repair endpoints with controlled stores: an already-indexed source newer than the checkpoint is current and repair returns no work; a real metadata change still requires repair. Existing missing-state and sync-watermark regressions remain mandatory. Verify no new background task is admitted for the current case. Follow independent Standards/Spec review, exact-head CI, GitOps delivery with paused controls, and final live freshness verification. Preserve the separately paused paperless-brain jobs.
+
+The new public-endpoint regression failed on the old implementation because `stale` was true despite matching per-document fingerprints. Removing the timestamp-only stale condition and repair target fixes it. The same test then changes the source title and confirms the real drift still admits exactly that document. The global checkpoint remains unchanged throughout. All 27 ingestion tests and all 366 backend tests with real disposable datastores pass without skips.

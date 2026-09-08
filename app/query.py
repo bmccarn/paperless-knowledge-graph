@@ -376,7 +376,7 @@ class QueryEngine:
         if normalize_mode(mode) != "timeline":
             return [], []
         pack = evidence_pack or {}
-        spans = select_spans(question, [], evidence_spans(pack))
+        spans = select_spans(question, [], evidence_spans(pack), serialized=True)
         try:
             async with asyncio.timeout(settings.answer_audit_timeout_seconds):
                 events = await strands_orchestrator.extract_timeline(question, json.dumps(spans, ensure_ascii=False))
@@ -384,7 +384,7 @@ class QueryEngine:
                 accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans,
                                                    date_order=settings.source_date_order, diagnostics=rejections)
             return accepted, [trace_step("timeline", "ok" if accepted else "needs_review",
-                                        f"{len(accepted)} source-validated events; {len(events) - len(accepted)} rejected",
+                                        f"{len(accepted)} source-validated events; {sum(rejections.values())} rejected",
                                         {"accepted": len(accepted), "rejection_reasons": rejections})]
         except (TimeoutError, Exception):
             return [], [trace_step("timeline", "needs_review", "Timeline audit unavailable; no unverified events published")]
@@ -746,12 +746,18 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         terms = subject_terms(question)
         try:
             candidates = await embeddings_store.historical_document_candidates(terms, MAX_CANDIDATES)
-            chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order)
+            try:
+                dates = await graph_store.get_document_dates([row["document_id"] for row in candidates["documents"]])
+            except Exception:
+                dates = {}  # OCR/title periods still provide a deterministic fallback.
+            candidates["documents"] = [{**row, "indexed_date": dates.get(row["document_id"])} for row in candidates["documents"]]
+            coverage = {}
+            chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=coverage)
             ids = [row["document_id"] for row in chosen]
             chunks = await embeddings_store.get_chunks_for_documents(ids, chunks_per_doc=3, relevance_terms=terms)
             # Reservation metadata survives duplicate chunk merging separately.
             return {"vector_results": chunks, "history_document_ids": ids,
-                    "history_coverage": {"candidate_count": candidates["candidate_count"],
+                    "history_coverage": {**coverage, "candidate_count": candidates["candidate_count"],
                         "candidate_limit": MAX_CANDIDATES, "document_limit": MAX_DOCUMENTS,
                         "reserved_document_ids": ids, "truncated": candidates["truncated"] or len(candidates["documents"]) > len(ids),
                         "retrieval_is_exhaustive": False}}
@@ -1634,6 +1640,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "title": item.get("title"),
                 "doc_type": item.get("doc_type"),
                 "source_kind": item.get("source_kind"),
+                "history_reserved": item.get("history_reserved") is True,
                 "source_quality": item.get("source_quality"),
                 "date_signals": item.get("date_signals"),
                 "structured_fact_count": item.get("structured_fact_count"),

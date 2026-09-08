@@ -321,5 +321,5 @@ class RepairDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(expected, verification["claims"][0]["rejection_reasons"])
                     return None
             result = await AnswerFinalizer(Auditor(), Repair()).finalize("Premium?", candidate, PACK)
-            self.assertEqual(result["finalization"]["disposition"], "unsupported")
+            self.assertEqual(result["finalization"]["disposition"], "audit_failed")
             self.assertIn(expected, result["claim_ledger"]["claims"][0]["rejection_reasons"])

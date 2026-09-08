@@ -88,12 +88,16 @@ class StrandsQueryOrchestrator:
                 "Use temporal_scope=documented only for an explicit comparison among the retrieved documents, "
                 "such as the latest dated record for the same subject. Check all supplied relevant dated records "
                 "and conflicts. This scope never establishes current real-world validity or archive completeness. "
+                "Also set temporal_assertion to source_observation for historical descriptions (including quoted "
+                "active/current source language), retrieved_comparison for documented comparisons, present_world "
+                "for currently true assertions, or none for nontemporal assertions. Assess what the answer itself "
+                "asserts, not words quoted from a past source. The assertion must agree with temporal_scope. "
                 "Include comparison_scope=retrieved_documents and comparison_document_ids listing the supplied "
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
                 "Return JSON only, with no explanations. "
                 "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
-                "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|documented|current|none,comparison_scope,comparison_document_ids}]}.") ,
+                "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|documented|current|none,temporal_assertion:source_observation|retrieved_comparison|present_world|none,comparison_scope,comparison_document_ids}]}.") ,
             prompt=json.dumps(payload, ensure_ascii=False))
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:

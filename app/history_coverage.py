@@ -1,13 +1,12 @@
 """Bounded historical source reservations; metadata guides retrieval, never proof."""
-from collections import Counter, defaultdict
+from collections import defaultdict
 import re
-from app.evidence import query_terms
+from app.evidence import query_terms, infer_source_quality
 from app.source_dates import source_dates
 
 MAX_CANDIDATES = 500
 MAX_DOCUMENTS = 8
 HISTORY_WORDS = {"history", "historical", "timeline", "chronological", "changed", "changes", "change", "over", "years", "year", "most", "recent", "records", "record", "previous", "earlier", "since", "through", "time", "across", "compare", "comparison"}
-TITLE_WORDS = HISTORY_WORDS | {"updated", "page", "pages", "notice", "copy", "number", "date", "dated", "application", "declaration", "declarations"}
 
 
 def history_requested(question: str, plan: dict, mode: str) -> bool:
@@ -22,7 +21,7 @@ def subject_terms(question: str) -> list[str]:
     return sorted(term for term in terms if not term.isdigit())[:24]
 
 
-def choose_documents(candidates: list[dict], question: str, *, date_order="mdy", limit=MAX_DOCUMENTS) -> list[dict]:
+def choose_documents(candidates: list[dict], question: str, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics: dict | None = None) -> list[dict]:
     subjects = set(subject_terms(question))
     records = []
     for row in candidates:
@@ -32,36 +31,51 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
         if not (subjects & terms):
             continue
         title_dates = [d for d in source_dates(title, date_order) if d.value]
-        source = [d for d in source_dates(preview, date_order) if d.value and d.precision != "year"]
-        dates = [d for d in title_dates if d.precision != "year"] or title_dates[-1:] or source
+        source = [d for d in source_dates(preview, date_order) if d.value and (d.precision != "year" or
+                  re.search(r"\b(?:calendar year|year|dated|date|period|term)\s*:?\s*$", preview[max(0, d.start-30):d.start], re.I))]
+        indexed = source_dates(str(row.get("indexed_date") or "")[:10], date_order)
+        indexed = [d for d in indexed if d.value]
+        dates = [d for d in title_dates if d.precision != "year"] or source or indexed or title_dates[-1:]
         # First recorded metadata date is a diversity signal, not an assertion
         # of effective status; synthesis and audit must establish its meaning.
         period = dates[0].value if dates else ""
-        masked_title = title
-        for found in reversed(source_dates(title, date_order)):
-            masked_title = masked_title[:found.start] + " " + masked_title[found.end:]
-        hints = {t for t in query_terms(masked_title) - subjects - TITLE_WORDS if t.isalpha()}
-        records.append({**row, "period": period, "hints": hints,
+        records.append({**row, "period": period,
+                        "metadata_relevance": len(subjects & query_terms(title + " " + str(row.get("doc_type") or ""))),
+                        "subjects": tuple(sorted(subjects & query_terms(title + " " + str(row.get("doc_type") or ""))) or sorted(subjects & terms)),
+                        "quality": infer_source_quality(title, "", "")["score"],
                         "relevance": len(subjects & terms)})
-    # Shared title vocabulary refines existing type metadata, without a fixed
-    # industry taxonomy or treating one-off identifiers as subject families.
-    frequency = Counter(t for row in records for t in row["hints"])
+    # An incidental footer mention must not displace documents whose title or
+    # indexed type identifies the user's subject. Unknown subjects still use
+    # the source-preview fallback when no metadata match exists.
+    metadata = [row for row in records if row["metadata_relevance"]]
+    if metadata:
+        records = metadata
+    # Reserve temporal/type strata before repeated revisions. Title vocabulary
+    # never partitions source families: added issuer/form words must not strand
+    # an older short-title record in a low-population singleton group.
     groups = defaultdict(list)
     for row in records:
-        hints = sorted((t for t in row["hints"] if frequency[t] >= 2), key=lambda t: (-frequency[t], t))[:2]
-        group = (str(row.get("doc_type") or "unknown"), tuple(hints))
+        group = (str(row.get("doc_type") or "unknown"), row["subjects"], row["period"][:4])
         groups[group].append(row)
-    ordered = sorted(groups.values(), key=lambda rows: (-max(r["relevance"] for r in rows), -len(rows), min(r["document_id"] for r in rows)))
+    periods = sorted({key[2] for key in groups if key[2]})
+    period_order = []
+    while periods:
+        period_order.append(periods.pop(0))
+        if periods:
+            period_order.append(periods.pop())
+    period_order.append("")
+    keys = sorted(groups, key=lambda key: (period_order.index(key[2]), key[0], key[1]))
     queues = []
-    for rows in ordered:
-        dated = sorted((r for r in rows if r["period"]), key=lambda r: (r["period"], r["document_id"]))
-        undated = sorted((r for r in rows if not r["period"]), key=lambda r: r["document_id"])
-        # Oldest/latest first, then one representative from each remaining
-        # period. Repeated recent revisions cannot monopolize the reservation.
-        by_period = {}
-        for row in dated:
-            by_period.setdefault(row["period"][:4], row)
-        queues.append(([dated[0], dated[-1]] if dated else []) + list(by_period.values()) + undated)
+    for key in keys:
+        rows = groups[key]
+        # Prefer direct source genres within each stratum. Stable calendar
+        # endpoints then determine order; document count gives no advantage.
+        dated = sorted(rows, key=lambda row: (row["period"], row["document_id"]))
+        newest = bool(key[2]) and key[2] == max((k[2] for k in groups), default="")
+        period_rank = {period: index for index, period in enumerate(sorted({row["period"] for row in rows}))}
+        primary = sorted(rows, key=lambda row: (-row["metadata_relevance"], -row["quality"],
+                         period_rank[row["period"]] * (-1 if newest else 1), row["document_id"]))
+        queues.append([primary[0]] + ([dated[0], dated[-1]] if newest else [dated[-1], dated[0]]) + primary[1:])
     result, seen = [], set()
     while any(queues) and len(result) < limit:
         for queue in queues:
@@ -72,4 +86,9 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
                 seen.add(row["document_id"])
                 result.append({"document_id": row["document_id"], "period": row["period"],
                                "doc_type": row.get("doc_type") or "unknown"})
+    if diagnostics is not None:
+        omitted = [key for key, rows in groups.items() if not any(row["document_id"] in seen for row in rows)]
+        diagnostics.update(relevant_candidate_count=len(records), bucket_count=len(groups),
+                           selected_bucket_count=len(groups)-len(omitted), omitted_bucket_count=len(omitted),
+                           omitted_buckets=[{"doc_type": key[0], "subjects": list(key[1]), "period": key[2]} for key in sorted(omitted)[:32]])
     return result

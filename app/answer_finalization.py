@@ -188,6 +188,9 @@ def answer_units(answer: str) -> list[dict]:
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
     seen = {}
+    # A history pack has more priority documents to compare. Use smaller whole
+    # windows throughout so requested and historical sources can coexist.
+    window = 1800 if any(item.get("history_reserved") for item in pack.get("items", []) if isinstance(item, dict)) else 4000
     for item in pack.get("items", []):
         if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
             continue
@@ -205,7 +208,6 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
-        window = 1800 if item.get("history_reserved") else 4000
         for start in range(0, len(content), window - 200):
             text = content[start:start + window]
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
@@ -219,7 +221,7 @@ def evidence_spans(pack: dict) -> list[dict]:
     return spans
 
 
-def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000) -> list[dict]:
+def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False) -> list[dict]:
     tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
     # Retrieval metadata identifies explicitly requested documents even when
     # their short OCR has fewer shared words than a long unrelated notice.
@@ -228,6 +230,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*"
         r"([1-9]\d{0,18})\b", question, re.I)}
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
+    costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
     span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
     def rank(pair, query_tokens=tokens):
         index, span = pair
@@ -242,7 +245,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     first_per_document, remaining, represented = [], [], set()
     for pair in ranked:
         doc_id = pair[1].get("document_id")
-        if rank(pair)[0] < 0 and doc_id not in represented and len(pair[1]["content"]) <= budget:
+        if rank(pair)[0] < 0 and doc_id not in represented and costs[pair[0]] <= budget:
             first_per_document.append(pair)
             represented.add(doc_id)
         else:
@@ -251,7 +254,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     # assertions. Reserve each unit's best whole window before filling the
     # remaining budget with the batch-wide ranking.
     per_unit = []
-    fitting = [pair for pair in ranked if len(pair[1]["content"]) <= budget]
+    fitting = [pair for pair in ranked if costs[pair[0]] <= budget]
     for unit in units:
         unit_tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + unit["text"].lower()))
         if fitting:
@@ -267,12 +270,25 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     for index, span in ranked:
         if index in selected:
             continue
-        if used + len(span["content"]) > budget:
+        if used + costs[index] > budget:
             continue
         result.append(span)
         selected.add(index)
-        used += len(span["content"])
+        used += costs[index]
     return result
+
+
+def span_coverage(question: str, available: list[dict], selected: list[dict]) -> dict:
+    requested = {int(value) for value in re.findall(
+        r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*([1-9]\d{0,18})\b", question, re.I)}
+    titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
+    requested |= {s["document_id"] for s in available if normalize_quote(str(s.get("title") or "")).casefold() in titles}
+    historical = {s["document_id"] for s in available if s.get("history_reserved") and not s.get("feedback_open")}
+    delivered = {s["document_id"] for s in selected}
+    priority = requested | historical
+    return {"requested_document_ids": sorted(requested), "reserved_document_ids": sorted(historical),
+            "selected_document_ids": sorted(delivered), "omitted_priority_document_ids": sorted(priority - delivered),
+            "limited": bool(priority - delivered)}
 
 
 def _plain_field_labels(text: str, content_start: int = 0, content_end: int | None = None):
@@ -389,12 +405,14 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     text = text.replace("−", "-")
     # A quote boundary is not source adjacency, even within the same document.
     sources = [r["quote"].replace("−", "-") for r in references]
-    dates = source_dates(text, date_order)
+    # Bare four-digit tokens remain scalars: identifiers and quantities may
+    # look like years and still require the original Decimal comparison.
+    dates = [found for found in source_dates(text, date_order) if not re.fullmatch(r"\d{4}", found.text)]
     source_occurrences = [source_dates(source, date_order) for source in sources]
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
     numeric_text = without_dates(text, dates)
-    numeric_sources = [without_dates(source, occurrences) for source, occurrences in zip(sources, source_occurrences)]
+    numeric_sources = sources  # Preserve ordinary scalar checks against exact source values.
     mismatches = {}
     if missing_dates:
         mismatches["dates"] = list(dict.fromkeys(missing_dates))[:30]
@@ -450,7 +468,8 @@ def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evalua
         return "supported", current
     source_relative = bool(claims) and all(
         c["temporal_scope"] == "documented" or (
-            c["temporal_scope"] == "historical" and not re.search(current_words, c["claim"], re.I))
+            c["temporal_scope"] == "historical" and (
+                c.get("temporal_assertion") == "source_observation" or not re.search(current_words, c["claim"], re.I)))
         for c in claims)
     if not source_relative:
         return "current_unresolved", current
@@ -483,6 +502,7 @@ class AnswerFinalizer:
         spans = evidence_spans(pack)
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
+        results = []
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
@@ -493,7 +513,7 @@ class AnswerFinalizer:
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
-                    selected = select_spans(question, batch, spans)
+                    selected = select_spans(question, batch, spans, serialized=True)
                     raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
                     results[index] = (selected, raw)
             async with asyncio.TaskGroup() as group:
@@ -536,8 +556,17 @@ class AnswerFinalizer:
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
                                    "source_title": refs[0]["source_title"] if valid else ""})
+                    assertion = assessment.get("temporal_assertion")
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "documented", "current", "none", "unknown"} else "unknown"
+                    if assertion is not None:
+                        if isinstance(assertion, str) and (scope, assertion) in {
+                                ("historical", "source_observation"), ("documented", "retrieved_comparison"),
+                                ("current", "present_world"), ("none", "none")}:
+                            claims[-1]["temporal_assertion"] = assertion
+                        else:
+                            claims[-1]["status"] = "unsupported"
+                            claims[-1]["rejection_reasons"].append("invalid_temporal_assertion")
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
@@ -549,6 +578,7 @@ class AnswerFinalizer:
                                               comparison_document_ids=sorted(set(compared)))
                         else:
                             claims[-1]["temporal_scope"] = "unknown"
+                            claims[-1]["status"] = "unsupported"
                             claims[-1]["rejection_reasons"].append("invalid_comparison_scope")
         for declaration in declarations:
             preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
@@ -576,7 +606,9 @@ class AnswerFinalizer:
         return {"claims": claims, "summary": summary, "complete": complete,
                 "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
-                "candidate_digest": hashlib.sha256(answer.encode()).hexdigest()}
+                "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
+                "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected)}
+                                       for index, (selected, _) in enumerate(results)]}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
@@ -615,6 +647,7 @@ class AnswerFinalizer:
                                  "rejection_reasons": ledger.get("rejection_reasons", [])})
                         replacement = repaired.get("answer") if isinstance(repaired, dict) else None
                         if not isinstance(replacement, str) or not replacement.strip():
+                            disposition, error = "audit_failed", "The answer repair returned no valid candidate."
                             break
                         revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
                         if (revised, revised_declarations) == (candidate, declarations):
@@ -635,7 +668,7 @@ class AnswerFinalizer:
                 and 0 < summary.get("supported", 0) < summary.get("total", 0)
                 and not ledger.get("rejection_reasons")
                 and all(c["status"] in {"supported", "unsupported"}
-                        and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope"}
+                        and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
             subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")
             try:

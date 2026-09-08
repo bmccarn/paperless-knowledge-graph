@@ -9,8 +9,9 @@ MONTHS.update({name[:3]: value for name, value in list(MONTHS.items())})
 MONTHS["sept"] = 9
 _MONTH = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
 _PATTERN = re.compile(
-    r"(?<![\w/+-])(?:"
-    r"(?P<iso>\d{4}-\d{1,2}(?:-\d{1,2})?)"
+    r"(?<![\w/+.,-])(?:"
+    r"(?P<year_range>\d{4}[-–]\d{4})(?![-–]\d)"
+    r"|(?P<iso>\d{4}-(?:\d+[-.])*\d+)"
     r"|(?P<slash>\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))"
     rf"|(?P<named>{_MONTH}\s+(?:\d{{1,2}}(?:st|nd|rd|th)?(?:,\s*|\s+))?\d{{4}})"
     rf"|(?P<day_first>\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}\s+\d{{4}})"
@@ -35,8 +36,17 @@ def source_dates(text: str, date_order: str = "mdy") -> list[SourceDate]:
     for match in _PATTERN.finditer(text):
         value, precision, reason = None, None, None
         try:
+            if match["year_range"]:
+                for start in (match.start(), match.end() - 4):
+                    token = text[start:start + 4]
+                    occurrences.append(SourceDate(start, start + 4, token, token if int(token) else None,
+                                                  "year", None if int(token) else "invalid_calendar_date"))
+                continue
             if match["iso"]:
-                parts = [int(p) for p in match["iso"].split("-")]
+                fields = match["iso"].split("-")
+                if len(fields) not in {2, 3} or any(not field.isdigit() or len(field) > 2 for field in fields[1:]):
+                    raise ValueError("Malformed calendar date")
+                parts = [int(p) for p in fields]
                 year, month = parts[:2]
                 day = parts[2] if len(parts) == 3 else 1
                 parsed = date(year, month, day)

@@ -239,3 +239,35 @@ class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result['finalization']['answer_verified'])
             self.assertIn(999, auditor.seen)
             self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['document_id'], 999)
+
+    async def test_combined_assertion_keeps_same_document_identity_and_continuation(self):
+        from app.answer_finalization import AnswerFinalizer
+        for subject, value in [('Invoice', '$421 USD'), ('Laboratory', '5 mg')]:
+            opening = f'{subject} identifier RECORDX742.'
+            detail = f'Recorded measurement: {value}. Dated January 1, 2026.'
+            claim = f'{subject} RECORDX742 records a measurement of {value} dated January 1, 2026.'
+            boiler = f'{subject} records a measurement of {value} dated January 1, 2026.'
+            items = [{'id': f'opening-{i}', 'document_id': i, 'chunk_index': 0, 'source_kind': 'ocr',
+                      'history_reserved': True, 'content': (opening if i == 1 else f'{subject} historical identifier RECORD{i}.') + ' Filing context.' * 120}
+                     for i in range(1, 9)]
+            items.append({'id': 'detail-1', 'document_id': 1, 'chunk_index': 3, 'source_kind': 'ocr',
+                          'history_reserved': True, 'content': detail + ' Filing context.' * 120})
+            items.extend({'id': f'notice-{i}', 'document_id': 100+i, 'chunk_index': 0, 'source_kind': 'ocr',
+                          'content': boiler + ' Filing context.' * 120} for i in range(40))
+            seen = []
+            class Auditor:
+                async def audit_answer_units(self, question, units, spans, plan):
+                    refs = []
+                    for s in spans:
+                        quote = opening if s['evidence_id'] == 'opening-1' else detail if s['evidence_id'] == 'detail-1' else None
+                        if quote and quote in s['content']:
+                            refs.append({'span_id': s['span_id'], 'evidence_id': s['evidence_id'],
+                                         'document_id': s['document_id'], 'quote': quote})
+                    seen.append({ref['evidence_id'] for ref in refs})
+                    return {'assessments': [{'unit_id': unit['id'], 'status': 'supported' if len(refs) == 2 else 'missing',
+                                            'temporal_scope': 'historical', 'references': refs} for unit in units]}
+            result = await AnswerFinalizer(Auditor()).finalize(
+                f'How have my {subject} measurements changed over the years and what is the most current recorded amount?', claim, {'items': items})
+            self.assertEqual(seen, [{'opening-1', 'detail-1'}])
+            self.assertTrue(result['finalization']['answer_verified'])
+            self.assertEqual(len(result['claim_ledger']['claims'][0]['references']), 2)

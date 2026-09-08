@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -6,6 +7,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.retry import is_transient_provider_error
 from app.extraction_evidence import (adjudicate_types, adjudicate_coreferences, adjudicate_name_usage, coreference_candidates,
     reconcile_entities, relationship_key,source_windows, validate_entities, validate_relationships,
     validate_metadata, reconcile_metadata, merge_unique, covered_characters)
@@ -547,6 +549,7 @@ def _parse_json_object(raw_text: str) -> dict:
 
 
 MAX_PASS_ATTEMPTS = 3
+TRANSIENT_PASS_BACKOFF_SECONDS = (20, 40)
 
 
 async def _extract_json_with_retry(call_fn, operation: str) -> dict:
@@ -562,6 +565,11 @@ async def _extract_json_with_retry(call_fn, operation: str) -> dict:
             # Provider errors can contain source/request bodies. Log only the type.
             logger.warning("%s: completion rejected (attempt %s/%s): %s",
                            operation, attempt + 1, MAX_PASS_ATTEMPTS, type(exc).__name__)
+            if attempt + 1 < MAX_PASS_ATTEMPTS and is_transient_provider_error(exc):
+                # Let a brief proxy recycle recover within the existing attempt budget.
+                delay = TRANSIENT_PASS_BACKOFF_SECONDS[attempt]
+                logger.info("%s: waiting %ss before transient-provider retry", operation, delay)
+                await asyncio.sleep(delay)
     raise PassResponseError(f"Required pass failed after {MAX_PASS_ATTEMPTS} attempts") from None
 
 

@@ -1,5 +1,6 @@
 """Bounded historical source reservations; metadata guides retrieval, never proof."""
 from collections import defaultdict
+from itertools import zip_longest
 import re
 from app.evidence import query_terms, infer_source_quality
 from app.source_dates import source_dates, without_dates, calendar_year_context
@@ -58,6 +59,30 @@ def _records(candidates, question, date_order):
     return records
 
 
+def _share_date_precision(rows):
+    """Give overlapping partial dates opportunities beside fully dated rows."""
+    years = defaultdict(list)
+    for row in rows:
+        years[row["period"][:4]].append(row)
+    ordered = []
+    def interleave(left, right):
+        return [row for pair in zip_longest(left, right) for row in pair if row is not None]
+    for year in sorted(years, reverse=True):
+        months, partial_year = defaultdict(list), []
+        for row in years[year]:
+            if len(row["period"]) < 7:
+                partial_year.append(row)
+            else:
+                months[row["period"][:7]].append(row)
+        dated = []
+        for month in sorted(months, reverse=True):
+            full = [row for row in months[month] if len(row["period"]) > 7]
+            partial = [row for row in months[month] if len(row["period"]) == 7]
+            dated.extend(interleave(full, partial))
+        ordered.extend(interleave(dated, partial_year))
+    return ordered
+
+
 def choose_recent_documents(candidates, question, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics=None):
     """Reserve distinct recent records; recency and titles are only hints."""
     records = _records(candidates, question, date_order)
@@ -79,9 +104,8 @@ def choose_recent_documents(candidates, question, *, date_order="mdy", limit=MAX
     queues.sort(key=lambda rows: rank(rows[0]))
     chosen = []
     while queues and len(chosen) < limit:
-        for queue in queues:
-            if queue and len(chosen) < limit:
-                chosen.append(queue.pop(0))
+        wave = _share_date_precision([queue.pop(0) for queue in queues if queue])
+        chosen.extend(wave[:limit-len(chosen)])
         queues = [queue for queue in queues if queue]
     if diagnostics is not None:
         diagnostics.update(relevant_candidate_count=len(records), selected_document_count=len(chosen),

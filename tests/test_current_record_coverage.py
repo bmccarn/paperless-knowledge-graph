@@ -32,12 +32,17 @@ class CurrentRecordCoverageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(choose_recent_documents(list(reversed(rows)),"Current invoices",limit=2),selected)
 
     def test_quantity_and_duration_cannot_displace_newest_calendar_record(self):
-        for unit in ("ms", "s", "h", "mmol/L", "mcg", "kWh", "hours", "USD"):
+        for unit in ("ms", "s", "h", "mmol/L", "mcg", "kWh", "hours", "USD", "milliseconds", "microseconds", "nanoseconds", "hrs", "secs"):
             rows=[{"document_id":1,"title":"Invoice record","doc_type":"invoice", "preview":f"Invoice period 5000 {unit}."},
                   {"document_id":2,"title":"Invoice record","doc_type":"invoice", "preview":"Invoice dated September 1, 2026."}]
             with self.subTest(unit=unit):
                 self.assertEqual(choose_recent_documents(rows,"Current invoices",limit=1)[0]["document_id"],2)
                 self.assertEqual(choose_documents(rows,"Invoice history",limit=1)[0]["document_id"],2)
+
+    def test_partial_month_gets_opportunity_amid_precise_date_titles(self):
+        rows=[{"document_id":i,"title":f"Invoice Alpha FORM{i} September 1, 2026", "doc_type":"invoice", "preview":"Invoice Alpha dated September 1, 2026 records 30 USD."} for i in range(1,9)]
+        rows.append({"document_id":99,"title":"Invoice Beta September 2026","doc_type":"invoice", "preview":"Invoice Beta dated September 2026 records 40 USD."})
+        self.assertIn(99,{r["document_id"] for r in choose_recent_documents(rows,"Current invoices")})
 
     def test_generic_title_does_not_erase_distinct_subject_or_latest_day(self):
         rows=[{"document_id":1,"title":"Invoice record","doc_type":"invoice","preview":"Invoice Alpha dated September 1, 2026."},
@@ -118,6 +123,10 @@ class CurrentRecordCoverageTests(unittest.IsolatedAsyncioTestCase):
         rows=[{'document_id':1,'title':'Invoice record','doc_type':'invoice','preview':'Invoice Alpha dated September 1, 2026 records 30 USD.'},
               {'document_id':2,'title':'Invoice record','doc_type':'invoice','preview':'Invoice Beta dated August 1, 2026 records 40 USD.'}]
         cases.append(('generic_title',rows,2))
+        rows=[{'document_id':i,'title':f'Invoice Alpha FORM{i} September 1, 2026','doc_type':'invoice',
+               'preview':'Invoice Alpha dated September 1, 2026 records 30 USD.'} for i in range(1,9)]
+        rows.append({'document_id':99,'title':'Invoice Beta September 2026','doc_type':'invoice','preview':'Invoice Beta dated September 2026 records 40 USD.'})
+        cases.append(('partial_precision',rows,99))
         for name,rows,target in cases:
             with self.subTest(case=name), ExitStack() as stack:
                 chunks=[{**row,'chunk_index':0,'source_kind':'ocr','source_content':row['preview'],

@@ -234,7 +234,12 @@ def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[in
             first, last = starts[line], starts[line+1] if line+1 < len(starts) else len(text)
             match = re.match(pattern, text[first:last])
             if match:
-                ranges.append([first+match.start(1), first+match.end(1)])
+                tail = text[first+match.end(1):last].rstrip("\r\n")
+                scalar = r"(?P<bold>\*\*)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[ \t]+" + VALUE_UNITS + r")?(?(bold)\*\*)[ \t]*\.?[ \t]*"
+                # A display field ends in one scalar. Arithmetic, equations and
+                # following prose cannot authorize erasing a numeric sign.
+                if re.fullmatch(scalar, tail):
+                    ranges.append([first+match.start(1), first+match.end(1)])
     return ranges
 
 

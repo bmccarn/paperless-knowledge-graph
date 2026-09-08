@@ -39,6 +39,18 @@ class SourceFieldLeaderTests(unittest.IsolatedAsyncioTestCase):
             result=await AnswerFinalizer(ExactAuditor()).finalize("What is recorded?",claim,pack(source.replace("**-","**")))
             self.assertFalse(result["finalization"]["answer_verified"])
 
+    async def test_equations_cannot_authorize_field_leaders_in_full_or_trimmed_quotes(self):
+        for source, claim in [('**CALCULATED VALUE** - - - 500 = -500','The calculated value is 500.'),
+                              ('**ANNUAL CHARGE** - - - $500 = -$500','The annual charge is $500.')]:
+            for quote in (source, source.split(' = ')[0]):
+                class Auditor:
+                    async def audit_answer_units(self,question,units,spans,plan):
+                        span=spans[0]
+                        ref={**{k:span[k] for k in ('span_id','evidence_id','document_id')},'quote':quote}
+                        return {'assessments':[{'unit_id':u['id'],'status':'supported','references':[ref]} for u in units]}
+                result=await AnswerFinalizer(Auditor()).finalize('What is recorded?',claim,pack(source))
+                self.assertFalse(result['finalization']['answer_verified'])
+
     async def test_unknown_chunk_and_sliced_literal_context_cannot_authorize_leader(self):
         evidence=pack('**ANNUAL CHARGE** - - - - $500')
         evidence['items'][0]['chunk_index']=1

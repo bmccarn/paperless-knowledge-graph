@@ -79,6 +79,10 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
             chunks = await self.store.get_chunks_for_documents([offset], 1, relevance_terms=["detailed"])
             self.assertEqual(chunks[0]["chunk_index"], 20)
             self.assertEqual(chunks[0]["source_content"], f"Detailed {subject} reference amount 5 mg.")
+            contextual = await self.store.get_chunks_for_documents([offset], 2, relevance_terms=["detailed"], include_opening=True)
+            self.assertEqual([chunk["chunk_index"] for chunk in contextual], [0, 20])
+            self.assertIn("January 1, 2022", contextual[0]["source_content"])
+            self.assertEqual(contextual[1]["source_content"], f"Detailed {subject} reference amount 5 mg.")
         self.assertEqual((await self.store.historical_document_candidates(["invoice.*"]))["documents"], [])
 
     async def test_review_snapshot_reorders_with_ids_and_roundtrips(self):

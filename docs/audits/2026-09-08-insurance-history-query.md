@@ -77,3 +77,27 @@ The follow-up implementation keeps bare four-digit values under ordinary Decimal
 A read-only production metadata probe found incidental subject mentions crowding historical retrieval. Metadata subject relevance and temporal/type strata now precede duplicate/title population; indexed dates provide a fallback for undated titles. The retained older incident source reached the eight-document reservation in a local deterministic replay of the read-only metadata. This is a retrieval-stage observation, not a live model acceptance result. End-to-end regressions cover renamed higher-ID old sources and newer records across invoices, medical measurements and unknown subjects. No source, ingestion fingerprint, model route or output-token allowance changed.
 
 Release and exact uncached live acceptance remain pending.
+
+
+## Implementation and independent review
+
+The general implementation was reviewed at `2f0daee657bbbe4274932b4fac6a6857c37a315e` against `9d84bd3c0db95fbfa6412ecde609ff25e4de795e`, then merged in [PR #34](https://github.com/bmccarn/paperless-knowledge-graph/pull/34) as `0d07743d2447dda8723d5f836818fd057c09da86`.
+
+### Standards
+
+No remaining actionable correctness defects, documented-standard violations or Fowler smells. The independent reviewer ran 52 focused tests with network connections blocked. Earlier findings about missing-metadata history, date-shaped scalar values, failed repair envelopes, formatted source labels and trimmed date tokens were closed with public behavior regressions.
+
+### Spec
+
+No remaining implementation findings. The independent reviewer ran 49 focused tests and separately inspected the exact-cache-entry acceptance operator. Earlier findings about source-window serialization, typed temporal assertions, swallowed Strands repair failures, historical diversity and date/identifier boundaries were closed. Deployment and live acceptance were explicitly outside this code review.
+
+Standards: zero remaining findings. Spec: zero remaining implementation findings.
+
+The final local backend suite passed 397 tests against disposable PostgreSQL/pgvector, Neo4j/APOC and Redis, with no skips. Frontend lint, type checking, production build, 12 unit tests and all production browser contracts passed. Desktop, mobile and source-detail screenshots for the partial-answer fixture were visually inspected. Both PR-head and merged-head backend/frontend CI passed. These checks establish controlled behavior, not live-corpus answer accuracy.
+
+
+## First live acceptance did not pass
+
+The first uncached Timeline run on `0d07743` retained the previously missed older source and produced four source-validated events, but the final repaired answer was withheld as incomplete: 10 units, 6 audited, 3 supported, 1 unsupported, 2 missing and 4 unchecked. No provider timeout/error was logged. All 90 pack items and 12 retained references were reconstructed against stable current OCR.
+
+Offline selection replay reproduced loss of identifying context from a reserved historical document and omission of a latest-record source from a comparison audit batch despite its presence in the canonical pack. The all-unchecked batch establishes an incomplete protocol result; the exact original malformed envelope was not saved. H2/A3 extend the general plan to address these boundaries without accepting unchecked output. The source corpus and review history remained unchanged; live acceptance remains open.

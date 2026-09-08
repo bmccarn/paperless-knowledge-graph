@@ -414,10 +414,11 @@ class EmbeddingsStore:
         count = int(rows[0]["candidate_count"]) if rows else 0
         return {"documents": [dict(row) for row in rows], "candidate_count": count, "truncated": count > limit}
 
-    async def get_chunks_for_documents(self, doc_ids: list[int], chunks_per_doc: int = 2, *, relevance_terms: list[str] | None = None) -> list[dict]:
+    async def get_chunks_for_documents(self, doc_ids: list[int], chunks_per_doc: int = 2, *, relevance_terms: list[str] | None = None, include_opening: bool = False) -> list[dict]:
         """Retrieve stored chunks for multiple documents in a single query.
         Returns up to `chunks_per_doc` chunks per document. Optional query terms
         prioritize matching OCR chunks before chunk order, without model calls.
+        include_opening retains chunk zero before relevant later chunks.
         """
         if not doc_ids:
             return []
@@ -428,6 +429,7 @@ class EmbeddingsStore:
                 FROM (
                     SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
                            ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY
+                               CASE WHEN $4::boolean AND chunk_index = 0 THEN 0 ELSE 1 END,
                                CASE WHEN $3::text IS NOT NULL AND coalesce(source_content, content) ~* $3 THEN 0 ELSE 1 END,
                                chunk_index) AS rn
                     FROM document_embeddings
@@ -437,7 +439,7 @@ class EmbeddingsStore:
                 ORDER BY document_id, chunk_index
                 """,
                 doc_ids, chunks_per_doc,
-                r"\m(?:" + "|".join(re.escape(t) for t in relevance_terms[:24]) + r")\M" if relevance_terms else None,
+                r"\m(?:" + "|".join(re.escape(t) for t in relevance_terms[:24]) + r")\M" if relevance_terms else None, include_opening,
             )
             return [
                 {

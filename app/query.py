@@ -754,9 +754,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             coverage = {}
             chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=coverage)
             ids = [row["document_id"] for row in chosen]
-            chunks = await embeddings_store.get_chunks_for_documents(ids, chunks_per_doc=3, relevance_terms=terms)
+            chunks = await embeddings_store.get_chunks_for_documents(ids, chunks_per_doc=3, relevance_terms=terms, include_opening=True)
             # Reservation metadata survives duplicate chunk merging separately.
-            return {"vector_results": chunks, "history_document_ids": ids,
+            return {"vector_results": chunks, "history_chunks": chunks, "history_document_ids": ids,
                     "history_coverage": {**coverage, "candidate_count": candidates["candidate_count"],
                         "candidate_limit": MAX_CANDIDATES, "document_limit": MAX_DOCUMENTS,
                         "reserved_document_ids": ids, "truncated": candidates["truncated"] or len(candidates["documents"]) > len(ids),
@@ -1217,6 +1217,9 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         merged["entity_names"] = entity_names
         merged["history_document_ids"] = list(dict.fromkeys(ctx1.get("history_document_ids", []) + ctx2.get("history_document_ids", [])))[:MAX_DOCUMENTS]
         merged["history_coverage"] = ctx1.get("history_coverage") or ctx2.get("history_coverage") or {}
+        history_chunks = {(chunk["document_id"], chunk.get("chunk_index", 0)): chunk
+                          for chunk in ctx1.get("history_chunks", []) + ctx2.get("history_chunks", [])}
+        merged["history_chunks"] = list(history_chunks.values())[:MAX_DOCUMENTS * 3]
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
@@ -1277,13 +1280,14 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 logger.warning("Evidence neighbor chunk expansion failed: %s", e)
         selected = self._rank_evidence_chunks(selected, question, sources)
         reserved_ids = context.get("history_document_ids", [])
-        # Reintroduce one exact stored chunk per reserved document after all
-        # rank/neighbor passes. Ranking metadata never replaces certifying OCR.
+        # Preserve the selected opening and relevant historical chunks after
+        # rank/neighbor passes. A document ID alone is not enough source context.
         reserved = []
         for doc_id in reserved_ids:
-            choices = [chunk for chunk in combined if chunk.get("document_id") == doc_id and certifying_text(chunk)]
-            if choices:
-                reserved.append({**choices[0], "history_reserved": True})
+            choices = [chunk for chunk in (context.get("history_chunks") or combined)
+                       if chunk.get("document_id") == doc_id and certifying_text(chunk)]
+            for chunk in sorted(choices, key=lambda chunk: chunk.get("chunk_index", 0))[:3]:
+                reserved.append({**chunk, "history_reserved": True})
         selected = reserved + selected
 
         pack = build_evidence_pack(

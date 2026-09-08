@@ -58,6 +58,8 @@ class StrandsQueryOrchestrator:
                    "conversation_context": plan.get("conversation_context", ""),
                    "answer_context": plan.get("answer_context", ""),
                    "source_date_order": plan.get("source_date_order", settings.source_date_order),
+                   "expected_unit_ids": [unit["id"] for unit in units],
+                   "protocol_correction": plan.get("audit_protocol_recovery"),
                    "units": units, "source_spans": spans}
         return await self._json_agent(
             name="source_auditor",
@@ -67,7 +69,10 @@ class StrandsQueryOrchestrator:
                 "Conversation context resolves the user's subject; earlier assistant answers are not source evidence. "
                 "Answer context preserves surrounding headings and dated source-observation framing across batches. "
                 "Use it to interpret each unit, never as evidence that its facts are true. Still assess only the "
-                "supplied unit IDs. A field within an answer describing what dated declarations record is a "
+                "supplied unit IDs. Copy the expected_unit_ids exactly; never restart their numbering or assess other "
+                "units from answer_context. If protocol_correction is present, correct only the output structure; "
+                "make a fresh source assessment without changing the supplied units or treating the correction "
+                "as a request for a supported verdict. A field within an answer describing what dated declarations record is a "
                 "historical document observation unless the answer asserts present real-world validity. "
                 "Supported means ALL assertions in the unit follow from the cited source quotes, with "
                 "matching subject, time, amount, sign, units and scope. Quotes merely sharing words do "
@@ -222,7 +227,7 @@ Rules:
 - Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
 - Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
-- For a policy inventory, write a complete source-observation sentence for each policy: "The [policy type] declaration records policy [identifier] with [documented issuer] for the term [start] to [end]." Include only fields supported by that record. Keep the dated source context in each sentence instead of detached insurer/number labels that imply a current-status answer. Omit agent, address and premium details unless asked, and avoid a separate introductory claim about which policies are most recent or currently valid.
+- For a record inventory, write a complete source-observation sentence for each relevant subject, using the identifying fields and dated terms the source actually supports. For a history question, preserve meaningful earlier observations and the latest documented observations for each relevant subject. Remove an unsupported identifying field rather than discarding an otherwise supported dated observation. Do not collapse the requested history or comparison into an inventory template.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - A dated record does not itself prove a submission or other event occurred on that date. Use the exact event meaning the cited passage establishes.
 - Remove unsupported precise values if no support exists in evidence.

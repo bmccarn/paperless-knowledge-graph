@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import math
+from collections import Counter
 import re
 import unicodedata
 from datetime import date, datetime, timezone
@@ -18,7 +19,7 @@ from typing import Any
 from app.source_text import certifying_text
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
-POLICY_VERSION = "source-audit-v11"
+POLICY_VERSION = "source-audit-v12"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -213,6 +214,7 @@ def evidence_spans(pack: dict) -> list[dict]:
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
+                          "chunk_index": item.get("chunk_index", 0),
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
                           "boundary_before": content[max(0, start - 2):start],
@@ -233,12 +235,14 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
     costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
     span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
+    frequency = Counter(token for words in span_tokens for token in words)
+    weights = {token: 1 + math.log((len(spans) + 1) / (count + 1)) for token, count in frequency.items()}
     def rank(pair, query_tokens=tokens):
         index, span = pair
         title = normalize_quote(str(span.get("title") or "")).casefold()
         requested = (2 if span.get("document_id") in requested_ids else
                      1 if title and title in quoted_titles else 0)
-        overlap = len(query_tokens & span_tokens[index])
+        overlap = math.fsum(weights[token] for token in query_tokens & span_tokens[index])
         return (-requested, -overlap, index)
     ranked = sorted(enumerate(spans), key=rank)
     # A long requested document must not crowd out another explicitly named
@@ -261,7 +265,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         if fitting:
             per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
     history, history_docs = [], set()
-    for pair in sorted(enumerate(spans), key=rank):
+    for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair))):
         span = pair[1]
         if span.get("history_reserved") and not span.get("feedback_open") and span["document_id"] not in history_docs:
             history.append(pair)
@@ -484,6 +488,33 @@ def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evalua
     return "qualified", current
 
 
+def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
+    """Structural errors only; semantic rejection never justifies another vote."""
+    if not raw:
+        return ["unavailable"]
+    if not isinstance(raw, dict) or not isinstance(raw.get("assessments"), list):
+        return ["invalid_assessments"]
+    expected = {unit["id"] for unit in units}
+    assessments = raw["assessments"]
+    if any(not isinstance(item, dict) for item in assessments):
+        return ["invalid_assessment"]
+    ids = [item.get("unit_id") for item in assessments]
+    errors = []
+    if any(not isinstance(value, str) or value not in expected for value in ids):
+        errors.append("unexpected_unit_id")
+    valid_ids = [value for value in ids if isinstance(value, str) and value in expected]
+    if len(set(valid_ids)) != len(valid_ids):
+        errors.append("duplicate_unit_id")
+    if set(valid_ids) != expected:
+        errors.append("missing_unit_id")
+    if any(not isinstance(item.get("status"), str) or
+           item["status"] not in {"supported", "unsupported", "missing", "conflicting"} for item in assessments):
+        errors.append("invalid_status")
+    if any(not isinstance(item.get("references"), list) for item in assessments):
+        errors.append("invalid_references_list")
+    return errors
+
+
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
                  concurrency: int = 4, date_order: str = "mdy"):
@@ -518,13 +549,23 @@ class AnswerFinalizer:
                 for index, batch in pending:
                     selected = select_spans(question, batch, spans, serialized=True)
                     raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
-                    results[index] = (selected, raw)
+                    errors = audit_protocol_errors(raw, batch)
+                    initial_errors, attempts = errors, 1
+                    if errors and errors != ["unavailable"]:
+                        correction_plan = {**audit_plan, "audit_protocol_recovery": {
+                            "expected_unit_ids": [unit["id"] for unit in batch], "errors": errors}}
+                        raw = await self.auditor.audit_answer_units(question, batch, selected, correction_plan)
+                        attempts = 2
+                        errors = audit_protocol_errors(raw, batch)
+                    protocol = {"attempts": attempts, "status": "invalid" if errors else "corrected" if attempts == 2 else "valid",
+                                "initial_errors": initial_errors, "final_errors": errors}
+                    results[index] = (selected, raw, protocol)
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())
-            for batch, (selected, raw) in zip(batches, results):
+            for batch, (selected, raw, protocol) in zip(batches, results):
                 manifest.update({s["span_id"]: s for s in selected})
-                assessments = raw.get("assessments", []) if isinstance(raw, dict) else []
+                assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
                     assessments = []
                 expected_ids = {u["id"] for u in batch}
@@ -611,7 +652,8 @@ class AnswerFinalizer:
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
                 "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected)}
-                                       for index, (selected, _) in enumerate(results)]}
+                                       for index, (selected, _, _) in enumerate(results)],
+                "audit_batches": [{"batch": index, **protocol} for index, (_, _, protocol) in enumerate(results)]}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:

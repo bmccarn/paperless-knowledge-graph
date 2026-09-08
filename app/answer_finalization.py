@@ -17,6 +17,7 @@ import unicodedata
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from markdown_it import MarkdownIt
 from app.source_text import certifying_text
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
@@ -191,30 +192,31 @@ def answer_units(answer: str) -> list[dict]:
 
 
 
-def _fence_transition(line: str, fence: str | None) -> str | None:
-    if fence == "?":
-        return fence  # A continuation chunk cannot establish prior fence state.
-    if fence:
-        return None if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", line.rstrip("\r\n")) else fence
-    opening = re.match(r" {0,3}(`{3,}|~{3,})", line)
-    if opening:
-        return opening[1]
-    # Nested/container or ambiguous fence syntax cannot authorize subsequent
-    # list stripping without its enclosing Markdown context.
-    return "?" if re.search(r"`{3,}|~{3,}", line) else None
+_MARKDOWN = MarkdownIt("commonmark")
+_CODE_SPANS = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
 
 
 def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
     """Identify structural markers on the complete source, never a quote slice."""
-    fence, offset, ranges = (None if known_start else "?"), 0, []
-    for line in text.splitlines(keepends=True):
-        next_fence = _fence_transition(line, fence)
-        marker = re.match(r" {0,3}([-+*][ \t]+)(?=\S|$)", line)
-        if marker and fence is None and next_fence is None:
-            ranges.append([offset + marker.start(1), offset + marker.end(1)])
-        offset += len(line)
-        fence = next_fence
-    return ranges
+    if not known_start:
+        return []  # A continuation chunk cannot establish its enclosing block.
+    # CommonMark normalizes CR/LF, but offsets must still point into raw OCR.
+    starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", text))]
+    protected = [match.span() for match in _CODE_SPANS.finditer(text)]
+    ranges = set()
+    for token in _MARKDOWN.parse(text):
+        if token.type != "list_item_open" or token.markup not in {"-", "+", "*"} or not token.map:
+            continue
+        line = token.map[0]
+        first, last = starts[line], starts[line + 1] if line + 1 < len(starts) else len(text)
+        marker = re.match(r" {0,3}([-+*][ \t]+)(?=\S|$)", text[first:last])
+        if marker:
+            start, end = first + marker.start(1), first + marker.end(1)
+            # A block-interrupting marker inside balanced raw code delimiters
+            # is ambiguous literal text, so it cannot remove a numeric sign.
+            if not any(a <= start < b for a, b in protected):
+                ranges.add((start, end))
+    return [list(pair) for pair in sorted(ranges)]
 
 
 def _slice_markers(markers: list, start: int, end: int) -> list[list[int]]:

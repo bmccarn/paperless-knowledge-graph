@@ -145,3 +145,29 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
         result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', 'The dose is 500 mg.', pack(source))
         self.assertTrue(result['claim_ledger']['complete'])
         self.assertFalse(result['finalization']['answer_verified'])
+
+    async def test_literal_html_inline_code_and_unicode_whitespace_keep_signs(self):
+        sources = ['`Dose\n- 500 mg`', '``Dose\n- 500 mg``',
+                   '<pre>\n- **500** mg\n</pre>', '<script>\n- **500** mg\n</script>']
+        sources += ['The dose is' + space + '- **500** mg.' for space in ('\u0085', '\v', '\u2028')]
+        for source in sources:
+            quotes = [source, '- **500** mg' if '**500**' in source else '- 500 mg']
+            for quote in quotes:
+                class Auditor:
+                    async def audit_answer_units(self, question, units, spans, plan):
+                        span = spans[0]
+                        ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': quote}
+                        return {'assessments': [{'unit_id': u['id'], 'status': 'supported', 'references': [ref]} for u in units]}
+                result = await AnswerFinalizer(Auditor()).finalize('What is recorded?', 'The dose is 500 mg.', pack(source))
+                self.assertTrue(result['claim_ledger']['complete'])
+                self.assertFalse(result['finalization']['answer_verified'], (source, quote))
+
+    async def test_commonmark_crlf_source_offsets_and_list_support_stay_exact(self):
+        for newline in ('\n', '\r\n', '\r'):
+            source = 'Recorded charges:' + newline + '- $**500** service fee.'
+            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', 'The service fee is $500.', pack(source))
+            self.assertTrue(result['finalization']['answer_verified'])
+            ref = result['claim_ledger']['claims'][0]['references'][0]
+            self.assertEqual(ref['quote'], source)
+            first, last = ref['source_list_markers'][0]
+            self.assertEqual(source[first:last], '- ')

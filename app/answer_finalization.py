@@ -16,8 +16,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
+from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
-POLICY_VERSION = "source-audit-v10"
+POLICY_VERSION = "source-audit-v11"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -187,6 +188,9 @@ def answer_units(answer: str) -> list[dict]:
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
     seen = {}
+    # A history pack has more priority documents to compare. Use smaller whole
+    # windows throughout so requested and historical sources can coexist.
+    window = 1800 if any(item.get("history_reserved") for item in pack.get("items", []) if isinstance(item, dict)) else 4000
     for item in pack.get("items", []):
         if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
             continue
@@ -204,19 +208,21 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
-        for start in range(0, len(content), 3800):
-            text = content[start:start + 4000]
+        for start in range(0, len(content), window - 200):
+            text = content[start:start + window]
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
+                          "history_reserved": item.get("history_reserved") is True,
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
                           "boundary_before": content[max(0, start - 2):start],
+                          "date_context_before": date_context(content[:start]),
                           "boundary_after": content[start + len(text):start + len(text) + 2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
 
 
-def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000) -> list[dict]:
+def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False) -> list[dict]:
     tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
     # Retrieval metadata identifies explicitly requested documents even when
     # their short OCR has fewer shared words than a long unrelated notice.
@@ -225,6 +231,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*"
         r"([1-9]\d{0,18})\b", question, re.I)}
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
+    costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
     span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
     def rank(pair, query_tokens=tokens):
         index, span = pair
@@ -239,7 +246,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     first_per_document, remaining, represented = [], [], set()
     for pair in ranked:
         doc_id = pair[1].get("document_id")
-        if rank(pair)[0] < 0 and doc_id not in represented and len(pair[1]["content"]) <= budget:
+        if rank(pair)[0] < 0 and doc_id not in represented and costs[pair[0]] <= budget:
             first_per_document.append(pair)
             represented.add(doc_id)
         else:
@@ -248,22 +255,41 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     # assertions. Reserve each unit's best whole window before filling the
     # remaining budget with the batch-wide ranking.
     per_unit = []
-    fitting = [pair for pair in ranked if len(pair[1]["content"]) <= budget]
+    fitting = [pair for pair in ranked if costs[pair[0]] <= budget]
     for unit in units:
         unit_tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + unit["text"].lower()))
         if fitting:
             per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
-    ranked = first_per_document + per_unit + remaining
+    history, history_docs = [], set()
+    for pair in sorted(enumerate(spans), key=rank):
+        span = pair[1]
+        if span.get("history_reserved") and not span.get("feedback_open") and span["document_id"] not in history_docs:
+            history.append(pair)
+            history_docs.add(span["document_id"])
+    ranked = first_per_document + history + per_unit + remaining
     result, used, selected = [], 0, set()
     for index, span in ranked:
         if index in selected:
             continue
-        if used + len(span["content"]) > budget:
+        if used + costs[index] > budget:
             continue
         result.append(span)
         selected.add(index)
-        used += len(span["content"])
+        used += costs[index]
     return result
+
+
+def span_coverage(question: str, available: list[dict], selected: list[dict]) -> dict:
+    requested = {int(value) for value in re.findall(
+        r"\b(?:paperless\s+(?:document\s+)?|document\s+)(?:id\s*)?[:#]?\s*([1-9]\d{0,18})\b", question, re.I)}
+    titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
+    requested |= {s["document_id"] for s in available if normalize_quote(str(s.get("title") or "")).casefold() in titles}
+    historical = {s["document_id"] for s in available if s.get("history_reserved") and not s.get("feedback_open")}
+    delivered = {s["document_id"] for s in selected}
+    priority = requested | historical
+    return {"requested_document_ids": sorted(requested), "reserved_document_ids": sorted(historical),
+            "selected_document_ids": sorted(delivered), "omitted_priority_document_ids": sorted(priority - delivered),
+            "limited": bool(priority - delivered)}
 
 
 def _plain_field_labels(text: str, content_start: int = 0, content_end: int | None = None):
@@ -350,17 +376,18 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         return None
     if source[start].isdigit() and before in {"+", "-", "−", ".", ","}:
         return None
-    if source[end - 1].isdigit() and len(after) > 1 and after[0] in ".," and after[1].isdigit():
+    if source[end - 1].isdigit() and len(after) > 1 and after[0] in ".,/-" and after[1].isdigit():
         return None
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
         return None
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "start": span["start"] + start,
+            "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 
-def values_match(text: str, references: list[dict]) -> bool:
+def value_mismatches(text: str, references: list[dict], *, date_order: str = "mdy") -> dict:
     # Supplement (never replace) semantic audit. Exact source values are needed
     # for generated precise numbers and named units. Computations need their own
     # explicit calculation evidence; the auditor cannot simply bless a new value.
@@ -380,30 +407,47 @@ def values_match(text: str, references: list[dict]) -> bool:
     text = text.replace("−", "-")
     # A quote boundary is not source adjacency, even within the same document.
     sources = [r["quote"].replace("−", "-") for r in references]
-    # A valid date prefix must not disguise an impossible or more precise date.
-    for value in re.findall(r"(?<!\w)\d{4}-\d{1,2}(?:-\d{1,2})?(?!\d)", text):
-        if not parse_date(value) or not any(date_occurs(value, source) for source in sources):
-            return False
+    # Bare four-digit tokens remain scalars: identifiers and quantities may
+    # look like years and still require the original Decimal comparison.
+    dates = [found for found in source_dates(text, date_order) if not re.fullmatch(r"\d{4}", found.text)]
+    source_occurrences = [source_dates(source, date_order, context_before=ref.get("date_context_before", ""))
+                          for source, ref in zip(sources, references)]
+    missing_dates = [found.text for found in dates
+                     if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
+    numeric_text = without_dates(text, dates)
+    numeric_sources = sources  # Preserve ordinary scalar checks against exact source values.
+    mismatches = {}
+    if missing_dates:
+        mismatches["dates"] = list(dict.fromkeys(missing_dates))[:30]
     number = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
     def numbers(value):
         return {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,])(" + number + r")(?!\w|[.,]\d)", value)}
-    if not numbers(text) <= {value for source in sources for value in numbers(source)}:
-        return False
+    missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in numbers(source)}
+    if missing_numbers:
+        mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
     units = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
     unit_pattern = r"(?<![A-Za-z'’])" + units + r"(?![A-Za-z])"
-    if not set(re.findall(unit_pattern, text)) <= {unit for source in sources for unit in re.findall(unit_pattern, source)}:
-        return False
+    missing_units = set(re.findall(unit_pattern, text)) - {unit for source in sources for unit in re.findall(unit_pattern, source)}
+    if missing_units:
+        mismatches["units"] = sorted(missing_units)[:30]
     def quantities(value):
         pairs = {(Decimal(amount.replace(",", "")), unit) for amount, unit in re.findall(
             r"(?<![\w.,])(" + number + r")\s*(" + units + r")(?![A-Za-z])", value)}
         for unit, amount in re.findall(r"(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*(" + number + r")(?!\w|[.,]\d)", value):
             pairs.add((Decimal(amount.replace(",", "")), unit))
         return pairs
-    return quantities(text) <= {pair for source in sources for pair in quantities(source)}
+    missing_quantities = quantities(text) - {pair for source in sources for pair in quantities(source)}
+    if missing_quantities:
+        mismatches["quantities"] = sorted(f"{amount} {unit}" for amount, unit in missing_quantities)[:30]
+    return mismatches
 
 
-def date_occurs(value: str, source: str) -> bool:
-    return bool(re.search(r"(?<![\w-])" + re.escape(value) + r"(?![\w-])", source))
+def values_match(text: str, references: list[dict], *, date_order: str = "mdy") -> bool:
+    return not value_mismatches(text, references, date_order=date_order)
+
+
+def date_occurs(value: str, source: str, date_order: str = "mdy", *, context_before: str = "") -> bool:
+    return source_date_occurs(value, source, date_order, context_before=context_before)
 
 
 def empty_ledger(candidate: str) -> dict:
@@ -414,25 +458,36 @@ def empty_ledger(candidate: str) -> dict:
 
 
 def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evaluated_at):
-    # Evaluate the same current-state boundary for every audited revision so a
-    # temporal-only failure can receive the bounded repair attempt too.
-    plan = dict(plan)
+    # Keywords only identify claims that need a temporal assessment. An explicit
+    # source-relative assessment can establish a documented comparison, never
+    # the completeness of the archive or present real-world validity.
     current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
-    asserts_current = re.search(current_words, candidate, re.I)
-    plan["requires_current"] = bool(plan.get("requires_current")) or bool(
-        asserts_current or re.search(current_words, question, re.I)
-        or any(claim["temporal_scope"] == "current" for claim in ledger["claims"]))
-    current = current_state(plan, evidence_pack, evaluated_at)
-    disposition = "supported"
-    if plan["requires_current"] and current["status"] != "resolved":
-        historical_only = all(c["temporal_scope"] == "historical" for c in ledger["claims"])
-        disposition = "qualified" if historical_only and not asserts_current else "current_unresolved"
-    return disposition, current
+    claims = ledger["claims"]
+    required = bool(plan.get("requires_current")) or bool(
+        re.search(current_words, question + " " + candidate, re.I)
+        or any(c["temporal_scope"] in {"current", "documented"} for c in claims))
+    current = current_state({**plan, "requires_current": required}, evidence_pack, evaluated_at)
+    if not required:
+        return "supported", current
+    source_relative = bool(claims) and all(
+        c["temporal_scope"] == "documented" or (
+            c["temporal_scope"] == "historical" and (
+                c.get("temporal_assertion") == "source_observation" or not re.search(current_words, c["claim"], re.I)))
+        for c in claims)
+    if not source_relative:
+        return "current_unresolved", current
+    compared = sorted({doc for c in claims for doc in c.get("comparison_document_ids", [])})
+    if compared:
+        current.update(status="documented", comparison_scope="retrieved_documents",
+                       comparison_document_ids=compared,
+                       note="The comparison describes the retrieved documents; current real-world status and archive completeness are not established.")
+    return "qualified", current
 
 
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
-                 concurrency: int = 4):
+                 concurrency: int = 4, date_order: str = "mdy"):
+        self.date_order = date_order
         self.auditor = auditor
         self.repairer = repairer
         self.timeout_seconds = timeout_seconds
@@ -450,17 +505,18 @@ class AnswerFinalizer:
         spans = evidence_spans(pack)
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
+        results = []
         complete = bool(units) and len(units) <= self.max_units and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
-            audit_plan = {**plan, "answer_context": "\n".join(unit["text"] for unit in units)}
+            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": "\n".join(unit["text"] for unit in units)}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
-                    selected = select_spans(question, batch, spans)
+                    selected = select_spans(question, batch, spans, serialized=True)
                     raw = await self.auditor.audit_answer_units(question, batch, selected, audit_plan)
                     results[index] = (selected, raw)
             async with asyncio.TaskGroup() as group:
@@ -487,21 +543,46 @@ class AnswerFinalizer:
                     if status != "unchecked":
                         checked += 1
                     claim_rejections = []
+                    mismatch_details = {}
                     if not valid:
                         claim_rejections.append("invalid_reference")
-                    elif not values_match(unit["text"], refs):
-                        claim_rejections.append("value_mismatch")
+                    else:
+                        mismatch_details = value_mismatches(unit["text"], refs, date_order=self.date_order)
+                        if mismatch_details:
+                            claim_rejections.append("value_mismatch")
                     if status == "supported" and claim_rejections:
                         status = "unsupported"
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
-                                   "rejection_reasons": claim_rejections,
+                                   "rejection_reasons": claim_rejections, "value_mismatches": mismatch_details,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
                                    "source_title": refs[0]["source_title"] if valid else ""})
+                    assertion = assessment.get("temporal_assertion")
                     scope = assessment.get("temporal_scope", "unknown")
-                    claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "current", "none", "unknown"} else "unknown"
+                    claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "documented", "current", "none", "unknown"} else "unknown"
+                    if assertion is not None:
+                        if isinstance(assertion, str) and (scope, assertion) in {
+                                ("historical", "source_observation"), ("documented", "retrieved_comparison"),
+                                ("current", "present_world"), ("none", "none")}:
+                            claims[-1]["temporal_assertion"] = assertion
+                        else:
+                            claims[-1]["status"] = "unsupported"
+                            claims[-1]["rejection_reasons"].append("invalid_temporal_assertion")
+                    if scope == "documented":
+                        compared = assessment.get("comparison_document_ids")
+                        available = {span["document_id"] for span in selected if not span.get("feedback_open")}
+                        if (assessment.get("comparison_scope") == "retrieved_documents"
+                                and isinstance(compared, list) and compared
+                                and all(type(doc) is int and doc in available for doc in compared)
+                                and {r["document_id"] for r in refs if r}.issubset(set(compared))):
+                            claims[-1].update(comparison_scope="retrieved_documents",
+                                              comparison_document_ids=sorted(set(compared)))
+                        else:
+                            claims[-1]["temporal_scope"] = "unknown"
+                            claims[-1]["status"] = "unsupported"
+                            claims[-1]["rejection_reasons"].append("invalid_comparison_scope")
         for declaration in declarations:
             preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
             if not preceding:
@@ -516,7 +597,7 @@ class AnswerFinalizer:
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
             references = [reference for claim in claims for reference in claim["references"]]
-            if not values_match(answer, references):
+            if not values_match(answer, references, date_order=self.date_order):
                 for claim in claims:
                     claim["status"] = "unsupported"
                     claim["rejection_reasons"].append("answer_value_mismatch")
@@ -528,7 +609,9 @@ class AnswerFinalizer:
         return {"claims": claims, "summary": summary, "complete": complete,
                 "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
-                "candidate_digest": hashlib.sha256(answer.encode()).hexdigest()}
+                "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
+                "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected)}
+                                       for index, (selected, _) in enumerate(results)]}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
@@ -567,6 +650,7 @@ class AnswerFinalizer:
                                  "rejection_reasons": ledger.get("rejection_reasons", [])})
                         replacement = repaired.get("answer") if isinstance(repaired, dict) else None
                         if not isinstance(replacement, str) or not replacement.strip():
+                            disposition, error = "audit_failed", "The answer repair returned no valid candidate."
                             break
                         revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
                         if (revised, revised_declarations) == (candidate, declarations):
@@ -578,11 +662,41 @@ class AnswerFinalizer:
                 disposition, error = "timeout", "The source audit exceeded its time budget."
             except Exception:
                 disposition, error = "audit_failed", "The source audit was unavailable or returned invalid data."
+        partial = None
+        # Only the final completed, nonconflicting audit is eligible. Never reuse
+        # an earlier ledger after a failed repair/audit, or slice within a unit.
+        summary = ledger["summary"]
+        if (disposition == "unsupported" and ledger["complete"]
+                and summary.get("audited") == summary.get("total")
+                and 0 < summary.get("supported", 0) < summary.get("total", 0)
+                and not ledger.get("rejection_reasons")
+                and all(c["status"] in {"supported", "unsupported"}
+                        and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
+                                 & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
+            subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")
+            try:
+                async with asyncio.timeout(self._audit_timeout(subset)):
+                    subset_ledger = await self._audit(question, subset, evidence_pack, plan)
+                subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
+                if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
+                        and subset_status in {"supported", "qualified"}):
+                    omitted = [c for c in ledger["claims"] if c["status"] != "supported"]
+                    partial = {"original_candidate_digest": ledger["candidate_digest"],
+                               "original_total": summary["total"], "original_supported": summary["supported"],
+                               "omitted_count": len(omitted),
+                               "omitted_units": [{"id": c["id"], "status": c["status"],
+                                                  "rejection_reasons": c["rejection_reasons"]} for c in omitted]}
+                    candidate, ledger, disposition = subset, subset_ledger, "partial"
+            except TimeoutError:
+                disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
+            except Exception:
+                disposition, error = "audit_failed", "The partial answer source audit was unavailable or returned invalid data."
         temporal_disposition, current = temporal_acceptance(
             question, candidate, ledger, plan, evidence_pack, evaluated_at)
         if disposition in {"supported", "qualified", "current_unresolved"}:
             disposition = temporal_disposition
-        supported = disposition in {"supported", "qualified"}
+        complete = disposition in {"supported", "qualified"}
+        supported = complete or disposition == "partial"
         public_answer = candidate if supported else ABSTENTION
         if disposition == "unaudited" and evidence_pack.get("items"):
             public_answer = "Unaudited quick answer — verify the source documents before relying on it.\n\n" + candidate
@@ -593,27 +707,32 @@ class AnswerFinalizer:
                 ids = list(dict.fromkeys(r["document_id"] for r in claim["references"]))
                 citations = " " + " ".join(f"[Document {i}](/documents/{i})" for i in ids)
                 public_answer = public_answer[:claim["end"]] + citations + public_answer[claim["end"]:]
-        if disposition == "qualified":
+        if disposition == "partial":
+            public_answer += "\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question."
+        if supported and temporal_disposition == "qualified":
             public_answer += f"\n\nThese are documented facts. Current status as of {evaluated_at} is not established by the retrieved evidence."
-        verification = {"status": "verified" if supported else disposition,
+        verification = {"status": "verified" if complete else disposition,
                         "supported_claims": [c["claim"] for c in ledger["claims"] if c["status"] == "supported"],
                         "unsupported_claims": [c["claim"] for c in ledger["claims"] if c["status"] == "unsupported"],
                         "stale_or_conflicting_claims": [c["claim"] for c in ledger["claims"] if c["status"] == "conflicting"],
                         "missing_evidence": [] if supported else [error or "Not every material claim has validated source support."],
                         "notes": ["Semantic support is model-assessed; source membership and audit coverage are checked independently."]}
+        if partial:
+            verification["partial"] = partial
+            verification["missing_evidence"] = ["Some claims were omitted because they could not be verified."]
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
-        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after"}} for span in ledger["spans"]]
+        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in ledger["spans"]]
         return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,
                                  "answer_digest": hashlib.sha256(public_answer.encode()).hexdigest(),
                                  "candidate_digest": revision, "evaluated_at": evaluated_at,
-                                 "attempts": attempts, "complete": supported, "cited_document_ids": doc_ids},
-                "evidence": {"score": 0.65 if disposition == "qualified" else 0.8 if supported else 0.25 if disposition == "unaudited" else 0.0,
-                             "level": "medium" if disposition == "qualified" else "high" if supported else "low", "audit_status": disposition,
+                                 "attempts": attempts, "complete": complete, "answer_verified": supported, "cited_document_ids": doc_ids},
+                "evidence": {"score": 0.65 if disposition in {"qualified", "partial"} else 0.8 if supported else 0.25 if disposition == "unaudited" else 0.0,
+                             "level": "medium" if disposition in {"qualified", "partial"} else "high" if supported else "low", "audit_status": disposition,
                              "source_count": len(doc_ids), "claim_summary": ledger["summary"],
-                             "coverage": {"answer_complete": ledger["complete"],
+                             "coverage": {"answer_complete": complete,
                                           "selected_span_count": len(ledger["spans"]),
                                           "available_span_count": ledger["available_span_count"]},
                              "reasons": ["All answer units have validated source references."] if supported else [],

@@ -458,6 +458,18 @@ class GraphStore:
             return {"nodes": record["nodes"][:50], "relationships": record["rels"][:100]}
 
 
+    async def get_document_dates(self, document_ids: list[int]) -> dict[int, str]:
+        """Indexed Paperless dates are retrieval hints, not event evidence."""
+        if not document_ids:
+            return {}
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (d:Document) WHERE d.paperless_id IN $ids
+                RETURN d.paperless_id AS document_id, coalesce(toString(d.date), '') AS date
+                ORDER BY document_id
+                """, ids=document_ids[:500])
+            return {row["document_id"]: row["date"] for row in await result.data()}
+
     async def get_all_document_ids(self) -> set[int]:
         """Return all paperless_id values for Document nodes in the graph."""
         async with self.driver.session() as session:

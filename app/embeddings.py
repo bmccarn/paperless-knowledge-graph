@@ -383,9 +383,41 @@ class EmbeddingsStore:
                 for r in rows
             ]
 
-    async def get_chunks_for_documents(self, doc_ids: list[int], chunks_per_doc: int = 2) -> list[dict]:
+    async def historical_document_candidates(self, terms: list[str], limit: int = 500) -> dict:
+        """Bounded per-document index discovery independent of vector top-k.
+
+        Only certifying, completed, feedback-free records participate. Preview
+        text is a retrieval signal; the later chunk fetch supplies exact OCR.
+        No embeddings or models are invoked by this metadata query.
+        """
+        if not terms:
+            return {"documents": [], "candidate_count": 0, "truncated": False}
+        pattern = r"\m(?:" + "|".join(re.escape(t) for t in terms[:24]) + r")\M"
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                WITH matching AS (
+                    SELECT e.document_id, e.chunk_index, e.title, e.doc_type,
+                           left(coalesce(e.source_content, e.content), 4000) AS preview,
+                           row_number() OVER (PARTITION BY e.document_id ORDER BY e.chunk_index) AS rn
+                    FROM document_embeddings e
+                    JOIN document_hashes h ON h.document_id = e.document_id
+                    WHERE e.source_kind IN ('ocr', 'legacy') AND e.chunk_index <> 9999
+                      AND coalesce(e.doc_type, '') <> 'no_content'
+                      AND NOT EXISTS (SELECT 1 FROM document_feedback f
+                                      WHERE f.document_id = e.document_id AND f.status = 'open')
+                      AND (coalesce(e.title, '') || ' ' || coalesce(e.doc_type, '') || ' ' ||
+                           left(coalesce(e.source_content, e.content), 4000)) ~* $1
+                )
+                SELECT document_id, title, doc_type, preview, count(*) OVER () AS candidate_count
+                FROM matching WHERE rn = 1 ORDER BY document_id LIMIT $2
+                """, pattern, limit)
+        count = int(rows[0]["candidate_count"]) if rows else 0
+        return {"documents": [dict(row) for row in rows], "candidate_count": count, "truncated": count > limit}
+
+    async def get_chunks_for_documents(self, doc_ids: list[int], chunks_per_doc: int = 2, *, relevance_terms: list[str] | None = None) -> list[dict]:
         """Retrieve stored chunks for multiple documents in a single query.
-        Returns up to `chunks_per_doc` chunks per document, ordered by chunk_index.
+        Returns up to `chunks_per_doc` chunks per document. Optional query terms
+        prioritize matching OCR chunks before chunk order, without model calls.
         """
         if not doc_ids:
             return []
@@ -395,7 +427,9 @@ class EmbeddingsStore:
                 SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content
                 FROM (
                     SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
-                           ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY chunk_index) AS rn
+                           ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY
+                               CASE WHEN $3::text IS NOT NULL AND coalesce(source_content, content) ~* $3 THEN 0 ELSE 1 END,
+                               chunk_index) AS rn
                     FROM document_embeddings
                     WHERE document_id = ANY($1::int[])
                 ) sub
@@ -403,6 +437,7 @@ class EmbeddingsStore:
                 ORDER BY document_id, chunk_index
                 """,
                 doc_ids, chunks_per_doc,
+                r"\m(?:" + "|".join(re.escape(t) for t in relevance_terms[:24]) + r")\M" if relevance_terms else None,
             )
             return [
                 {

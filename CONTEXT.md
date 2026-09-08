@@ -30,6 +30,12 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Evidence pack**: Source excerpts and provenance assembled for answer synthesis and verification.
 
-**Claim ledger**: Structured claims with supporting evidence and verification status attached to an answer.
+**Claim ledger**: Structured claims with supporting evidence and verification status bound to one exact answer candidate. A complete ledger means every unit was audited, not that the answer or archive is complete.
+
+**Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
+
+**Documented state**: An audited observation or comparison scoped to retrieved dated records. It does not establish active real-world status or archive completeness.
+
+**Historical source reservation**: A bounded retrieval opportunity for older and newer relevant indexed documents that survives ranking into synthesis and audit context. It confers no factual authority.
 
 **Trust dimensions**: Reported quality signals about evidence, verification, coverage, and answer risk; these are computed signals, not guarantees of correctness.

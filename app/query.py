@@ -1,3 +1,5 @@
+from app.source_text import certifying_text
+from app.history_coverage import history_requested, subject_terms, choose_documents, MAX_CANDIDATES, MAX_DOCUMENTS
 import json
 import logging
 import hashlib
@@ -223,6 +225,7 @@ class QueryEngine:
         async with asyncio.TaskGroup() as group:
             broad_decompose_task = group.create_task(self._decompose_query(question)) if is_broad else None
             graph_docs_task = group.create_task(self._retrieve_graph_documents(question)) if is_broad else None
+            history_task = group.create_task(self._retrieve_history(question)) if history_requested(question, plan, mode) else None
             retrieval_tasks = [group.create_task(_retrieve_one(item)) for item in queries]
         retrieved = [task.result() for task in retrieval_tasks]
         all_context: dict | None = None
@@ -277,6 +280,11 @@ class QueryEngine:
                     {"vector_results": len(graph_doc_context.get("vector_results", []))},
                 ))
 
+        if history_task:
+            history = history_task.result()
+            all_context = self._merge_context(all_context, history)
+            trace.append(trace_step("historical_coverage", "limited" if history["history_coverage"].get("truncated") else "ok",
+                                    "Reserved indexed sources across recorded periods", history["history_coverage"]))
         used_queries = [q["query"] for q in queries[1:]] + broad_queries
         return all_context, used_queries, latest_check_used, trace
 
@@ -368,13 +376,16 @@ class QueryEngine:
         if normalize_mode(mode) != "timeline":
             return [], []
         pack = evidence_pack or {}
-        spans = select_spans(question, [], evidence_spans(pack))
+        spans = select_spans(question, [], evidence_spans(pack), serialized=True)
         try:
             async with asyncio.timeout(settings.answer_audit_timeout_seconds):
                 events = await strands_orchestrator.extract_timeline(question, json.dumps(spans, ensure_ascii=False))
-                accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans)
+                rejections = {}
+                accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans,
+                                                   date_order=settings.source_date_order, diagnostics=rejections)
             return accepted, [trace_step("timeline", "ok" if accepted else "needs_review",
-                                        f"{len(accepted)} source-validated events; {len(events) - len(accepted)} rejected")]
+                                        f"{len(accepted)} source-validated events; {sum(rejections.values())} rejected",
+                                        {"accepted": len(accepted), "rejection_reasons": rejections})]
         except (TimeoutError, Exception):
             return [], [trace_step("timeline", "needs_review", "Timeline audit unavailable; no unverified events published")]
 
@@ -392,7 +403,8 @@ class QueryEngine:
             timeline_events[:] = [event for event in timeline_events if event.get("document_id") not in flagged]
         final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
                                       timeout_seconds=settings.answer_audit_timeout_seconds,
-                                      concurrency=settings.strands_max_concurrent_calls).finalize(
+                                      concurrency=settings.strands_max_concurrent_calls,
+                                      date_order=settings.source_date_order).finalize(
             question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
         verification = final["verification"]
         verification["finalization"] = final["finalization"]
@@ -473,7 +485,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         identity = {"policy": QUERY_CACHE_VERSION, "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
                     "strands_model": settings.strands_model or settings.gemini_model,
-                    "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at}
+                    "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at,
+                    "source_date_order": settings.source_date_order}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)
         if self._cacheable_answer(cached, mode):
@@ -604,8 +617,11 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             result["current_state"] = current
             for item in result.get("evidence_pack", {}).get("items", []):
                 item["support_spans"] = []
-            result["finalization"].update(disposition="corpus_changed", complete=False, cited_document_ids=[],
+            result["finalization"].update(disposition="corpus_changed", complete=False, answer_verified=False, cited_document_ids=[],
                 answer_digest=hashlib.sha256(result["answer"].encode()).hexdigest())
+            result["verification"].pop("partial", None)
+            current.pop("comparison_scope", None)
+            current.pop("comparison_document_ids", None)
             result["verification"].update(status="corpus_changed", missing_evidence=missing,
                 supported_claims=[], unsupported_claims=[], stale_or_conflicting_claims=[],
                 current_state=current, finalization=result["finalization"])
@@ -725,6 +741,30 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "subgraph": {},
             "entity_names": [],
         }
+
+    async def _retrieve_history(self, question: str) -> dict:
+        terms = subject_terms(question)
+        try:
+            candidates = await embeddings_store.historical_document_candidates(terms, MAX_CANDIDATES)
+            try:
+                dates = await graph_store.get_document_dates([row["document_id"] for row in candidates["documents"]])
+            except Exception:
+                dates = {}  # OCR/title periods still provide a deterministic fallback.
+            candidates["documents"] = [{**row, "indexed_date": dates.get(row["document_id"])} for row in candidates["documents"]]
+            coverage = {}
+            chosen = choose_documents(candidates["documents"], question, date_order=settings.source_date_order, diagnostics=coverage)
+            ids = [row["document_id"] for row in chosen]
+            chunks = await embeddings_store.get_chunks_for_documents(ids, chunks_per_doc=3, relevance_terms=terms)
+            # Reservation metadata survives duplicate chunk merging separately.
+            return {"vector_results": chunks, "history_document_ids": ids,
+                    "history_coverage": {**coverage, "candidate_count": candidates["candidate_count"],
+                        "candidate_limit": MAX_CANDIDATES, "document_limit": MAX_DOCUMENTS,
+                        "reserved_document_ids": ids, "truncated": candidates["truncated"] or len(candidates["documents"]) > len(ids),
+                        "retrieval_is_exhaustive": False}}
+        except Exception as exc:
+            logger.warning("Historical index discovery unavailable: %s", type(exc).__name__)
+            return {"history_document_ids": [], "history_coverage": {"status": "unavailable", "truncated": True,
+                                                                     "retrieval_is_exhaustive": False}}
 
     async def _retrieve_graph_documents(self, question: str) -> dict:
         """Retrieve graph-linked documents for broad coverage."""
@@ -1042,7 +1082,8 @@ TEMPORAL AWARENESS — CRITICAL:
 - Do not make negative absence claims (for example, "document X has no newer result") unless the source context explicitly proves that absence. Prefer "I did not find a newer source-backed value in the retrieved evidence."
 - Evaluation date (UTC): {plan.get("evaluated_at")}. A recent document date does not establish current status.
 - For a current-status question without explicit resolution evidence, answer with dated document observations only. Do not add a generic current-status disclaimer to the candidate; the final acceptance layer appends its own limitation to accepted documented facts.
-- For a policy inventory, use a complete source-observation sentence for each policy: "The [policy type] declaration records policy [identifier] with [documented issuer] for the term [start] to [end]." Include only fields supported by that record. Keep the source context in every sentence; detached insurer/number labels can imply current validity even when a separate term is dated.
+- Keep every changing-state statement tied to its source and recorded date or term. Identify the relevant subject with only the fields needed to distinguish it. Detached value or status labels can imply current validity even when a separate sentence is dated.
+- For a history question, compare the earliest relevant records, material intermediate changes, and latest documented observations for each relevant subject. Reserved historical sources are context opportunities, not proof of facts or archive completeness. Use their original text; report a coverage gap if the requested history cannot be established.
 - Write facts without inline citations or links; the source audit attaches authoritative citations after validation.
 - Include the specific dates, amounts, percentages, names, terms, identifiers, and statuses needed to answer the question. Do not include unrelated precise details just because they are source-backed.
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
@@ -1174,6 +1215,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     seen_names.add(name)
                     entity_names.append(name)
         merged["entity_names"] = entity_names
+        merged["history_document_ids"] = list(dict.fromkeys(ctx1.get("history_document_ids", []) + ctx2.get("history_document_ids", [])))[:MAX_DOCUMENTS]
+        merged["history_coverage"] = ctx1.get("history_coverage") or ctx2.get("history_coverage") or {}
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
@@ -1233,6 +1276,15 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             except Exception as e:
                 logger.warning("Evidence neighbor chunk expansion failed: %s", e)
         selected = self._rank_evidence_chunks(selected, question, sources)
+        reserved_ids = context.get("history_document_ids", [])
+        # Reintroduce one exact stored chunk per reserved document after all
+        # rank/neighbor passes. Ranking metadata never replaces certifying OCR.
+        reserved = []
+        for doc_id in reserved_ids:
+            choices = [chunk for chunk in combined if chunk.get("document_id") == doc_id and certifying_text(chunk)]
+            if choices:
+                reserved.append({**choices[0], "history_reserved": True})
+        selected = reserved + selected
 
         pack = build_evidence_pack(
             question=question,
@@ -1241,6 +1293,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
+        pack["coverage"]["history"] = context.get("history_coverage", {})
         flagged = await embeddings_store.get_open_feedback_document_ids(
             list({item["document_id"] for item in pack["items"] if type(item.get("document_id")) is int}))
         for item in pack["items"]:
@@ -1587,6 +1640,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                 "title": item.get("title"),
                 "doc_type": item.get("doc_type"),
                 "source_kind": item.get("source_kind"),
+                "history_reserved": item.get("history_reserved") is True,
                 "source_quality": item.get("source_quality"),
                 "date_signals": item.get("date_signals"),
                 "structured_fact_count": item.get("structured_fact_count"),

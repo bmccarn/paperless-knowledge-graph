@@ -43,6 +43,44 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.store.close()
 
+    async def test_historical_index_query_uses_raw_completed_unflagged_sources(self):
+        from app.history_coverage import subject_terms, choose_documents
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("DELETE FROM document_feedback")
+            for subject, offset in [("Invoice", 1000), ("Laboratory", 2000), ("Orchid", 3000)]:
+                for index in range(24):
+                    doc_id = offset + index
+                    year = 2022 if index == 0 else 2026
+                    await conn.execute("""INSERT INTO document_embeddings
+                        (document_id,chunk_index,content,title,source_kind,source_content)
+                        VALUES($1,0,'derived hint',$2,'ocr',$3)""", doc_id,
+                        f"{subject} record {year}", f"{subject} dated January 1, {year}.")
+                    await self.store.set_doc_hash(doc_id, "synthetic-hash")
+                await conn.execute("INSERT INTO document_feedback(document_id,reason) VALUES($1,'synthetic')", offset+1)
+                await self.store.delete_doc_hash(offset+2)
+                await conn.execute("UPDATE document_embeddings SET source_kind='generated' WHERE document_id=$1", offset+3)
+                await conn.execute("UPDATE document_embeddings SET chunk_index=9999 WHERE document_id=$1", offset+4)
+                await conn.execute("""INSERT INTO document_embeddings(document_id,chunk_index,content,source_content,source_kind,title)
+                                    VALUES($1,20,$2,$2,'ocr','Untitled')""", offset,
+                                    f"Detailed {subject} reference amount 5 mg.")
+        for subject, offset in [("Invoice", 1000), ("Laboratory", 2000), ("Orchid", 3000)]:
+            terms = subject_terms(f"{subject} history")
+            result = await self.store.historical_document_candidates(terms)
+            ids = {row["document_id"] for row in result["documents"]}
+            self.assertEqual(result["candidate_count"], 20)
+            self.assertIn(offset, ids)
+            self.assertFalse({offset+1, offset+2, offset+3, offset+4} & ids)
+            self.assertTrue(all(offset <= doc_id < offset+24 for doc_id in ids))
+            chosen = choose_documents(result["documents"], f"{subject} history")
+            self.assertIn(offset, [row["document_id"] for row in chosen])
+            limited = await self.store.historical_document_candidates(terms, 2)
+            self.assertTrue(limited["truncated"])
+            self.assertEqual(limited["candidate_count"], 20)
+            chunks = await self.store.get_chunks_for_documents([offset], 1, relevance_terms=["detailed"])
+            self.assertEqual(chunks[0]["chunk_index"], 20)
+            self.assertEqual(chunks[0]["source_content"], f"Detailed {subject} reference amount 5 mg.")
+        self.assertEqual((await self.store.historical_document_candidates(["invoice.*"]))["documents"], [])
+
     async def test_review_snapshot_reorders_with_ids_and_roundtrips(self):
         left = {"type": "Person", "names": ["zed"], "source_doc_ids": [11]}
         right = {"type": "Person", "names": ["amy"], "source_doc_ids": [12]}
@@ -198,6 +236,12 @@ class RelationshipIntegrityTests(unittest.IsolatedAsyncioTestCase):
         async with self.store.driver.session() as session:
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH 'relationship-test-' OR n.paperless_id IN [990101,990102] DETACH DELETE n")
         await self.store.driver.close()
+
+    async def test_indexed_dates_are_batched_and_missing_sources_do_not_invent_dates(self):
+        await self.store.create_document_node(990101, "Undated title", "invoice", "2020-01-01", "test")
+        self.assertEqual(await self.store.get_document_dates([990101, 990102, 999999]),
+                         {990101: "2020-01-01", 990102: "2026-09-04"})
+        self.assertEqual(await self.store.get_document_dates([]), {})
 
     async def edge(self):
         async with self.store.driver.session() as session:

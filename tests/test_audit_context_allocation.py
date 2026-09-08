@@ -51,7 +51,7 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
         old = 'Orchid service invoice OLDX742 dated January 1, 2020 records $321 USD.'
         new = 'Orchid service invoice NEWY813 dated September 1, 2026 records $421 USD.'
         claim = 'The latest Orchid service invoice is OLDX742 dated January 1, 2020 for $321 USD.'
-        for variation in ('ordinary', 'short_title', 'large_amounts', 'dmy'):
+        for variation in ('ordinary', 'short_title', 'large_amounts', 'dmy', 'later_footer', 'durations'):
             actual_new = new if variation != 'dmy' else new.replace('September 1, 2026', '02/05/2026')
             items = [item(1, old, reserved=True, title='Orchid service invoice 2020')]
             items += [item(i+2, f'Historical ARCHIVE{i} service charges.', reserved=True) for i in range(7)]
@@ -61,6 +61,11 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
             if variation == 'large_amounts':
                 items += [item(888, 'Orchid service invoice dated January 1, 2021 records $5000 USD.', title='Orchid service invoice 2021'),
                           item(889, 'Orchid service invoice dated January 1, 2022 records $6000 USD.', title='Orchid service invoice 2022')]
+            if variation == 'durations':
+                items += [item(888, 'Orchid service invoice dated January 1, 2021. Billing period: 5000 hours.', title='Orchid service invoice 2021'),
+                          item(889, 'Orchid service invoice dated January 1, 2022. Sampling period: 6000 ms.', title='Orchid service invoice 2022')]
+            if variation == 'later_footer':
+                items.append(item(999, 'Administrative printing record: October 1, 2026.', chunk=3, title='Orchid service invoice 2026'))
             if variation == 'dmy':
                 items += [item(888, 'Orchid service invoice dated 03/02/2026 records $400 USD.', title='Orchid service invoice 2026'),
                           item(889, 'Orchid service invoice dated 04/02/2026 records $450 USD.', title='Orchid service invoice 2026')]
@@ -74,7 +79,10 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
                         'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
                         'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [s['document_id'] for s in spans], 'references': [reference(old_span, old)]} for u in units]}
             result = await AnswerFinalizer(Auditor(), date_order='dmy' if variation == 'dmy' else 'mdy').finalize('What is the latest Orchid service invoice?', claim, {'items': items})
-            self.assertTrue(all(seen))
+            self.assertTrue(seen, variation)
+            self.assertTrue(all(seen), variation)
+            self.assertTrue(result['claim_ledger']['complete'], variation)
+            self.assertEqual(result['claim_ledger']['claims'][0]['status'], 'conflicting', variation)
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertNotIn(claim, result['answer'])
 

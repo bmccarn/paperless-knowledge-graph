@@ -22,6 +22,8 @@ from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
 POLICY_VERSION = "source-audit-v13"
+VALUE_UNITS = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
+
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
 
@@ -189,9 +191,15 @@ def answer_units(answer: str) -> list[dict]:
 
 
 
+def _without_list_markers(text: str) -> str:
+    # A Markdown marker is structural at the start of a line, unlike a sign
+    # inside a sentence or immediately adjacent to an amount.
+    return re.sub(r"(?m)^ {0,3}[-+*][ \t]+(?=\S|$)", "", text)
+
+
 def _value_context(text: str) -> str:
     # Guard adjacency only; never use this copy as a matching quote or evidence.
-    return re.sub(r"\s+", " ", re.sub(r"[*_`\[\]]", "", text))
+    return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_list_markers(text)))
 
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
@@ -316,9 +324,9 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
                 needed -= matched
             outstanding -= covered
         alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order)
-        # Give a comparison its first supporting window and then an alternative
-        # before its remaining supporting detail. Interleave across units below.
-        per_unit[1:1] = alternatives
+        # Share opportunities between supporting details and alternatives, then
+        # across units. A comparison cannot delay another unit's needed detail.
+        per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
     per_unit = [pair for row in zip_longest(*queues) for pair in row if pair is not None]
     ranked = first_per_document + history + per_unit + remaining
     result, used, selected = [], 0, set()
@@ -353,16 +361,24 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
         overlap = len(topic & title_words), len(topic & content_words)
         if not overlap[1]:
             continue
-        dated = [(_source_recency(span, date_order), index, span)
-                 for index, span in pairs]
-        newest, index, span = max(dated, key=lambda row: (row[0], -row[1]))
-        candidates.append((overlap, newest, index, span))
+        dated = [(len(topic & set(re.findall(r"\b[a-z]{3,}\b", span["content"].lower()))),
+                  _source_recency(span, date_order), index, span) for index, span in pairs]
+        relevant = [row for row in dated if row[0] >= max(1, math.ceil(max(row[0] for row in dated) / 2))]
+        # A printing date alone does not replace the subject-bearing passage.
+        topical = max(relevant, key=lambda row: (row[0], -row[3].get("chunk_index", 0), -row[3].get("start", 0), -row[2]))
+        latest = max(dated, key=lambda row: (row[1], -row[2]))
+        newest = max((row[1] for row in relevant), default="") or latest[1]
+        windows = [(topical[2], topical[3])]
+        if latest[2] != topical[2]:
+            windows.append((latest[2], latest[3]))
+        candidates.append((overlap, newest, topical[2], windows))
     # OCR overlap admits the topical cohort. Within that cohort, a richer old
     # title must not crowd out a newer alternative whose OCR matches the subject.
     minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates), default=0) / 2))
     candidates = [row for row in candidates if row[0][1] >= minimum_overlap]
     candidates.sort(key=lambda row: (row[1], row[0], -row[2]), reverse=True)
-    return [(index, span) for _, _, index, span in candidates[:2]]
+    return [pair for row in zip_longest(*(windows for _, _, _, windows in candidates[:2]))
+            for pair in row if pair is not None]
 
 
 def _source_recency(span: dict, date_order: str) -> str:
@@ -375,6 +391,9 @@ def _source_recency(span: dict, date_order: str) -> str:
             # A bare four-digit amount/measurement is not recency. Year-only
             # ordering needs explicit calendar context rather than a magnitude.
             prefix = date_context(span.get("date_context_before", "") + text[:found.start])
+            suffix = _value_context(text[found.end:])
+            if re.match(r"\s*(?:" + VALUE_UNITS + r"|years?|months?|weeks?|days?|hours?|minutes?|seconds?|ms)(?![A-Za-z])", suffix, re.I):
+                continue
             if not re.search(r"\b(?:year|dated|date|during|in|since|until|effective|period|term)\s*:?\s*$", prefix, re.I):
                 continue
         values.append(found.value)
@@ -516,6 +535,7 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
 
 
 def presentation_text(text: str) -> str:
+    text = _without_list_markers(text)
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:
         previous_length = len(text)
@@ -561,7 +581,7 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in numbers(source)}
     if missing_numbers:
         mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
-    units = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
+    units = VALUE_UNITS
     unit_pattern = r"(?<![A-Za-z'’])" + units + r"(?![A-Za-z])"
     missing_units = set(re.findall(unit_pattern, text)) - {unit for source in numeric_sources for unit in re.findall(unit_pattern, source)}
     if missing_units:

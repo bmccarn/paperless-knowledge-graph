@@ -36,6 +36,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.editor_started = asyncio.Event()
         self.audit_count = 0
         self.reject_first_audit = False
+        self.reject_all_audits = False
         self.quote = QUOTE
         self.active = self.peak = 0
         self.clients = []
@@ -71,7 +72,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             if "units" in payload:
                 self.audit_count += 1
                 span = payload["source_spans"][0]
-                result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_first_audit and self.audit_count == 1 else "supported",
+                result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_all_audits or (self.reject_first_audit and self.audit_count == 1) else "supported",
                     "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
                         "document_id": span["document_id"], "quote": self.quote}]} for unit in payload["units"]]}
             # Simulate a provider completion that exceeds the former 6,000-token
@@ -271,3 +272,13 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.audit_count, 1)
         self.assertEqual(len(self.requests), 2)
         self.assertTrue(all(client.is_closed for client in self.clients))
+
+    async def test_unexpected_editor_format_and_refusal_still_require_source_audit(self):
+        self.reject_all_audits = True
+        for text in ('I cannot provide that answer.', '{"answer": "An unsupported fact."}'):
+            self.editor_text = text
+            count = self.audit_count
+            result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK)
+            self.assertEqual(self.audit_count - count, 2)
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertNotIn(text, result['answer'])

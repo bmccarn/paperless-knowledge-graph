@@ -166,9 +166,18 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
     word = following[1]
     if word in _SENTENCE_OPENERS:
         return False
-    # A surname can follow a leading initial too. An ambiguous initial stays
-    # with name-shaped context; an explicit sentence opener ends the unit.
-    return bool(word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'})
+    if not (word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'}):
+        return False
+    before = prefix[:initial.start()]
+    prior = re.search(r"([^\W\d_][\w’'-]*)(?:\.)?\s+$", before)
+    # Capitalization on the right alone also describes a new sentence after
+    # a letter value. Require name-shaped context on the left: a leading
+    # initial, another name/initial, or a name-introducing relation.
+    if prior is None:
+        return not re.search(r"\w", before)
+    return prior[1][0].isupper() or prior[1].lower() in {
+        'names', 'named', 'by', 'to', 'for', 'from', 'with', 'and',
+    }
 
 
 def answer_units(answer: str) -> list[dict]:

@@ -194,3 +194,6 @@ The next review extended the name controls to leading initials, CR-only wrapping
 
 
 Final boundary review combined the previously isolated cases: ordered prose under a pending heading and leading initials before lowercase surname particles. Ordered-marker recognition now uses the current line while semantic continuation retains the pending unit context. A135-case matrix crosses headings/labels, numbering/bullets, three line endings, initials and abbreviations; every raw unit range remains exact. Public subset controls also cover leading surname particles. These changes remain domain-independent. Final independent review and full validation follow.
+
+
+A further independent-letter control showed that right-side capitalization alone was insufficient when a new sentence began with a content noun. Initial continuation now also requires left-side name context: a leading initial, a prior name/initial or a generic name-introducing relation. The rule does not enumerate document domains or letter-value labels. Public subset regressions retain supported letter facts before unrelated unsupported sentences.

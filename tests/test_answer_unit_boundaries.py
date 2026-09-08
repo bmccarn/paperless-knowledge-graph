@@ -31,6 +31,14 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
                       'The record lists apartment Q.', 'The record names Acme Inc.'):
             await self.check_subset(first, 'An extra charge is $999.', '$999', expected=first)
 
+    async def test_letter_values_before_content_noun_sentences_remain_independent(self):
+        for first, second in (
+            ('The laboratory reports grade B.', 'Follow-up testing costs $999.'),
+            ('The record lists vitamin A.', 'Supplements cost $999.'),
+            ('The record lists apartment Q.', 'Rent is $999.'),
+        ):
+            await self.check_subset(first, second, '$999', expected=first)
+
     def test_headings_numbering_and_line_endings_do_not_create_fragments(self):
         for newline in ('\n', '\r\n', '\r'):
             for heading in ('', '# Recorded observations'+newline, 'Recorded observations:'+newline):

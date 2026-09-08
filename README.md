@@ -2,6 +2,14 @@
 
 A knowledge graph system that extracts structured entities and relationships from [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) documents. Uses LLM-powered document classification and type-aware extraction, stores results in Neo4j (graph) and pgvector (embeddings), and provides hybrid search with a visual graph explorer frontend.
 
+## Preview
+
+![Knowledge Query showing a cited answer, source evidence, and claim ledger](docs/audits/accuracy-ui/query-supported.png)
+
+*A synthetic UI-test demo: an answer linked to its source, with the supporting evidence visible below. The document and model response are test fixtures.*
+
+[Read the project case study](https://blakemccarn.dev/work/paperless-knowledge-graph)
+
 ## Features
 
 - **Document-type-aware extraction** — Classifies documents first (invoice, medical, tax, etc.), then uses specialized extraction prompts per type

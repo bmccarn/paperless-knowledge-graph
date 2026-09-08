@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
-from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates
+from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
 POLICY_VERSION = "source-audit-v11"
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
@@ -216,7 +216,7 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
                           "boundary_before": content[max(0, start - 2):start],
-                          "date_context_before": content[max(0, start - 80):start],
+                          "date_context_before": date_context(content[:start]),
                           "boundary_after": content[start + len(text):start + len(text) + 2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
@@ -376,14 +376,14 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         return None
     if source[start].isdigit() and before in {"+", "-", "−", ".", ","}:
         return None
-    if source[end - 1].isdigit() and len(after) > 1 and after[0] in ".," and after[1].isdigit():
+    if source[end - 1].isdigit() and len(after) > 1 and after[0] in ".,/-" and after[1].isdigit():
         return None
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
         return None
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "start": span["start"] + start,
-            "date_context_before": (span.get("date_context_before", "") + source[:start])[-80:],
+            "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 

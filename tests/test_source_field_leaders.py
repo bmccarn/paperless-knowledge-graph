@@ -15,6 +15,14 @@ class SourceFieldLeaderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ref['quote'],source)
             self.assertEqual(source[ref['start']:ref['end']],source)
 
+    async def test_field_label_colons_preserve_source_and_sign(self):
+        for label in ("**ANNUAL CHARGE:**", "**ANNUAL CHARGE**:"):
+            for negative in (False,True):
+                source=f'{label} - - - - **{"-" if negative else ""}$500**'
+                result=await AnswerFinalizer(ExactAuditor()).finalize("What is recorded?","The annual charge is $500.",pack(source))
+                self.assertEqual(result["finalization"]["answer_verified"],not negative)
+                if not negative:self.assertEqual(result["claim_ledger"]["claims"][0]["references"][0]["quote"],source)
+
     async def test_leader_does_not_remove_attached_negative_or_literal_signs(self):
         sources=['**ANNUAL CHARGE** - - - - -$500', '**ANNUAL CHARGE** - $500',
                  'charge = - - - $500', '```\n**ANNUAL CHARGE** - - - - $500\n```',

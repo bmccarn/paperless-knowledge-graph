@@ -20,10 +20,9 @@ from typing import Any
 from markdown_it import MarkdownIt
 from app.source_text import certifying_text
 from app.evidence import QUERY_STOPWORDS
-from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
+from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
 POLICY_VERSION = "source-audit-v14"
-VALUE_UNITS = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -227,7 +226,7 @@ def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[in
     ranges = []
     # A bold uppercase multiword field label makes the presentation role
     # explicit. Ordinary arithmetic and free-form dashed text remain ambiguous.
-    pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+\*\*[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
+    pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+:?\*\*:?[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
     for token in _MARKDOWN.parse(text):
         if token.type != "inline" or not token.map or any(child.type in {"code_inline", "html_inline"} for child in token.children or []):
             continue
@@ -392,13 +391,20 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
     per_unit = [pair for row in zip_longest(*queues) for pair in row if pair is not None]
     ranked = first_per_document + history + per_unit + remaining
-    result, used, selected = [], 0, set()
+    explicit_indices = {pair[0] for pair in first_per_document}
+    result, used, selected, contents = [], 0, set(), set()
     for index, span in ranked:
         if index in selected:
             continue
         if used + costs[index] > budget:
             continue
+        # Repeated recent windows need not consume the historical context budget.
+        # Preserve history reservations, canonical records and audit/explicit slots.
+        if (not units and span.get("recent_reserved") and not span.get("history_reserved")
+                and span["content"] in contents and index not in explicit_indices):
+            continue
         result.append(span)
+        contents.add(span["content"])
         selected.add(index)
         used += costs[index]
     return result
@@ -457,9 +463,7 @@ def _source_recency(span: dict, date_order: str) -> str:
             # ordering needs explicit calendar context rather than a magnitude.
             prefix = date_context(span.get("date_context_before", "") + text[:found.start])
             suffix = _value_context(text[found.end:])
-            if re.match(r"\s*(?:" + VALUE_UNITS + r"|years?|months?|weeks?|days?|hours?|minutes?|seconds?|ms)(?![A-Za-z])", suffix, re.I):
-                continue
-            if not re.search(r"\b(?:year|dated|date|during|in|since|until|effective|period|term)\s*:?\s*$", prefix, re.I):
+            if not calendar_year_context(prefix, suffix):
                 continue
         values.append(found.value)
     return max(values, default="")

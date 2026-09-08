@@ -2,7 +2,7 @@
 from collections import defaultdict
 import re
 from app.evidence import query_terms, infer_source_quality
-from app.source_dates import source_dates, without_dates
+from app.source_dates import source_dates, without_dates, calendar_year_context
 
 MAX_CANDIDATES = 500
 MAX_DOCUMENTS = 8
@@ -27,10 +27,7 @@ def _calendar_dates(text, date_order):
         if not found.value:
             continue
         if found.precision == "year":
-            before, after = text[max(0, found.start-40):found.start], text[found.end:]
-            if not re.search(r"\b(?:calendar year|year|dated|date|period|term)\s*:?\s*$", before, re.I):
-                continue
-            if re.match(r"\s*(?:[$€£%]|USD|EUR|GBP|CAD|AUD|JPY|mg|kg|g|ml|mL|years?|months?|weeks?|days?|hours?|minutes?|seconds?)(?![A-Za-z])", after, re.I):
+            if not calendar_year_context(text[:found.start], text[found.end:]):
                 continue
         dates.append(found)
     return dates
@@ -64,23 +61,21 @@ def _records(candidates, question, date_order):
 def choose_recent_documents(candidates, question, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics=None):
     """Reserve distinct recent records; recency and titles are only hints."""
     records = _records(candidates, question, date_order)
-    # Month-level ordering puts day-specific and month-only records in the
-    # same recent cohort. Stable title families keep repeated notices from
-    # consuming every opportunity before another recent record appears.
+    # Title/precision queues are diversity hints. Exact dates order records
+    # within each queue; partial dates retain their own opportunity.
     groups = defaultdict(list)
     for row in records:
         title_text = str(row.get("title") or "")
         title = tuple(sorted(query_terms(without_dates(title_text, _calendar_dates(title_text, date_order)))))
-        groups[(str(row.get("doc_type") or "unknown"), title or (row["document_id"],))].append(row)
+        precision = len(row["period"].split("-")) if row["period"] else 0
+        groups[(str(row.get("doc_type") or "unknown"), title or (row["document_id"],), precision)].append(row)
     def rank(row):
-        parts = row["period"][:7].split("-") if row["period"] else []
-        year, month = (int(parts[0]) if parts else 0), (int(parts[1]) if len(parts)>1 else 0)
-        return (-row["metadata_relevance"], -year, -month, -row["quality"], row["document_id"])
-    queues = []
-    for rows in groups.values():
-        ordered = sorted(rows, key=rank)
-        cohort = ordered[0]["period"][:7]
-        queues.append([row for row in ordered if row["period"][:7] == cohort])
+        parts = row["period"].split("-") if row["period"] else []
+        calendar = [int(part) for part in parts] + [0] * (3-len(parts))
+        return (*(-part for part in calendar), -row["metadata_relevance"], -row["quality"], row["document_id"])
+    # Share opportunities across title/precision queues, but never treat a
+    # matching title as proof that another dated record is superseded.
+    queues = [sorted(rows, key=rank) for rows in groups.values()]
     queues.sort(key=lambda rows: rank(rows[0]))
     chosen = []
     while queues and len(chosen) < limit:

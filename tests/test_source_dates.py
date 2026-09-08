@@ -75,6 +75,10 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_scalar_quantities_identifiers_and_malformed_dates_keep_their_boundaries(self):
         for claim, source in [("Invoice number 0000.", "Invoice number 0000."),
+                              ("Invoice number 2026-001.", "Invoice number 2026-001."),
+                              ("Record identifier 2026-150.", "Record identifier 2026-150."),
+                              ("Contract no. 2026-09-001.", "Contract no. 2026-09-001."),
+                              ("Policy #2026-09-01.", "Policy #2026-09-01."),
                               ("Charge USD 1200.", "Charge USD 1,200."),
                               ("Dose 1200 mg.", "Dose 1,200 mg."),
                               ("Charge USD 1200.00.", "Charge USD 1200."),
@@ -87,6 +91,8 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
             result = await AnswerFinalizer(ExactAuditor()).finalize("Recorded date?", f"Record date {value}.", pack(f"Record date {value}."))
             self.assertEqual(result["finalization"]["disposition"], "unsupported", value)
         self.assertFalse(values_match("Value 1.2026.", [{"quote": "Value 1 recorded in 2026."}]))
+        self.assertFalse(values_match("Contract no. 2026-09-002.", [{"quote": "Contract no. 2026-09-001."}]))
+        self.assertFalse(values_match("Record date 2026-09-01.", [{"quote": "Policy #2026-09-01."}]))
 
     async def test_public_finalizer_preserves_original_written_date_quote(self):
         source = "On September 1, 2026, the monthly service charge became $321 USD."

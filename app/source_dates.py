@@ -18,6 +18,9 @@ _PATTERN = re.compile(
     r"|(?P<year>\d{4}))"
     r"(?!\w|[/.-]\d)", re.I)
 
+_IDENTIFIER_PREFIX = re.compile(
+    r"(?:\b(?:number|identifier|id|code|reference|ref|no)\.?\s*[:#]?\s*|#\s*)$", re.I)
+
 
 @dataclass(frozen=True)
 class SourceDate:
@@ -34,6 +37,10 @@ def source_dates(text: str, date_order: str = "mdy") -> list[SourceDate]:
         raise ValueError("Unsupported numeric source date order")
     occurrences = []
     for match in _PATTERN.finditer(text):
+        # Explicit identifier labels disambiguate calendar-shaped record IDs.
+        # They retain scalar validation and cannot supply date authority.
+        if _IDENTIFIER_PREFIX.search(text[max(0, match.start() - 40):match.start()]):
+            continue
         value, precision, reason = None, None, None
         try:
             if match["year_range"]:

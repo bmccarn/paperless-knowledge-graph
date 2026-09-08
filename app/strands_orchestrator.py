@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import time
 import httpx
 from typing import Any
 
@@ -284,10 +285,16 @@ Rules:
     async def _json_agent(self, name: str, system_prompt: str, prompt: str) -> dict[str, Any]:
         text = await self._text_agent(name, system_prompt, prompt)
         invalid = {"audit_protocol_error": "invalid_json"} if name == "source_auditor" and text and text.strip() else None
-        return _extract_json(text or "", invalid_result=invalid)
+        result = _extract_json(text or "", invalid_result=invalid)
+        if invalid and (not isinstance(result, dict) or not result):
+            return {"audit_protocol_error": "invalid_json_shape"}
+        return result
 
     async def _text_agent(self, name: str, system_prompt: str, prompt: str) -> str | None:
+        queued = time.monotonic()
         async with self._calls:
+            started = time.monotonic()
+            outcome = 'cancelled'
             try:
                 agent = Agent(
                     name=name,
@@ -298,15 +305,23 @@ Rules:
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
                 result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
                 if result.stop_reason != "end_turn":
+                    outcome = 'non_terminal_stop'
                     logger.warning("Strands %s did not complete normally: %s", name, result.stop_reason)
                     return None
-                return str(result)
+                text = str(result)
+                outcome = 'completed' if text.strip() else 'empty_text'
+                return text
             except asyncio.TimeoutError:
+                outcome = 'timeout'
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
                 return None
             except Exception as exc:
-                logger.warning("Strands %s failed: %s", name, exc)
+                outcome = 'provider_failure'
+                logger.warning("Strands %s failed: %s", name, type(exc).__name__)
                 return None
+            finally:
+                logger.info('Strands stage=%s outcome=%s queue_ms=%d elapsed_ms=%d',
+                            name, outcome, (started - queued) * 1000, (time.monotonic() - started) * 1000)
 
     async def close(self):
         # The pinned Strands OpenAI transport owns/closes each invocation's

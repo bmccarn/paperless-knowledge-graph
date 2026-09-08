@@ -161,3 +161,10 @@ The read-only browser follow-up restored the exact v13 conversation using its cu
 
 
 The v14 follow-up review closed wrapped-equation and independently formatted-unit boundaries with source-preserving controls. Read-only visual inspection of the saved v13 mobile conversation additionally reproduced a stray zero instead of the zero-score/copy row. The UI now distinguishes numeric zero from missing metrics; a production-browser regression restores an assistant message without a duration. Final reviewed-head validation and live query acceptance are still pending.
+
+
+### v14 reviewed deployment and retained acceptance failure
+
+PR37 merged as `cebf6a8`; both source review axes and CI passed after447actual-datastore tests with zero skips and full frontend/browser validation. Reviewed GitOps PR153 (`05e6748`) changed only two verified pins. Fresh writer drain, Flux, ready image chains, runtime policy, all924document hashes/6966embeddings/529review rows/generation2052 and original453review checksums passed. Deployed graph zoom260.514x, source inspection, fit and2D/3D checks passed with zero page errors; screenshots and restored-zero-score mobile UI were visually inspected.
+
+The unchanged Timeline query, conversation `61d28a0b-72c8-4c78-a9d8-1124a1ca43d1`, was submitted once22:11:02Z and completed22:17:05Z, uncached, policyv14. It validated17events and completely audited15repaired units (9supported,4unsupported,2missing). The subset audit had two valid batches and one unavailable batch. The result remained unsupported; no unavailable response payload was saved, so its exact cause is unknown. All81canonical items and43retained claim references were reconstructed against stable current OCR. The older policy and both latest declarations now appear in the repaired answer. General sentence-boundary, continuation-context and audit-failure classification findings extend the spec as A6/D5. This failure is retained and L1 remains open.

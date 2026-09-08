@@ -17,6 +17,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from app.source_text import certifying_text
+from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
 
 POLICY_VERSION = "source-audit-v12"
@@ -255,21 +256,41 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
-    # A batch's combined vocabulary can hide the only source for one of its
-    # assertions. Reserve each unit's best whole window before filling the
-    # remaining budget with the batch-wide ranking.
-    per_unit = []
-    fitting = [pair for pair in ranked if costs[pair[0]] <= budget]
-    for unit in units:
-        unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower()))
-        if fitting:
-            per_unit.append(min(fitting, key=lambda pair: rank(pair, unit_tokens)))
     history, history_docs = [], set()
     for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair))):
         span = pair[1]
         if span.get("history_reserved") and not span.get("feedback_open") and span["document_id"] not in history_docs:
             history.append(pair)
             history_docs.add(span["document_id"])
+    # A combined assertion can need identity on the opening and a later dated
+    # observation from that same document. Rank the document's combined unit
+    # coverage, then reserve complementary windows within it before boilerplate.
+    by_document = {}
+    for pair in ranked:
+        if costs[pair[0]] <= budget and not pair[1].get("feedback_open"):
+            by_document.setdefault(pair[1]["document_id"], []).append(pair)
+    document_tokens = {doc_id: set().union(*(span_tokens[index] for index, _ in pairs))
+                       for doc_id, pairs in by_document.items()}
+    per_unit = []
+    for unit in units:
+        unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower())) - QUERY_STOPWORDS
+        if not by_document:
+            continue
+        doc_id = min(by_document, key=lambda doc_id: (
+            -math.fsum(weights[token] for token in unit_tokens & document_tokens[doc_id]),
+            by_document[doc_id][0][0]))
+        covered = set().union(*(span_tokens[index] for index, span in first_per_document + history
+                                if span["document_id"] == doc_id))
+        outstanding = unit_tokens - covered
+        for _ in range(2):
+            if not outstanding:
+                break
+            pair = min(by_document[doc_id], key=lambda pair: rank(pair, outstanding))
+            matched = outstanding & span_tokens[pair[0]]
+            if not matched:
+                break
+            per_unit.append(pair)
+            outstanding -= matched
     ranked = first_per_document + history + per_unit + remaining
     result, used, selected = [], 0, set()
     for index, span in ranked:

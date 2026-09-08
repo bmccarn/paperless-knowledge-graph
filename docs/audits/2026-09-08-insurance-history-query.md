@@ -113,3 +113,6 @@ Validation: 404 backend tests passed against disposable PostgreSQL, Neo4j and Re
 
 
 Independent review of H2/A3 found three additional gaps: full question wording could dominate a unit reservation; the real Strands adapter collapsed malformed JSON to an unavailable result; failed correction lost its attempt diagnostics. The follow-up ranks unit reservations on assertion terms, preserves a source-auditor-only parse-failure marker, and carries sanitized batch state through exceptions/cancellation. Public regressions exercise long history wording, the real Strands adapter with a synthetic transport, and failed/timeout correction. No untrusted model text enters correction diagnostics.
+
+
+A second Spec review reproduced a combined-assertion gap: separate identity/date test units each received a slot, but a single assertion requiring both passages lost its later same-document source amid repeated notices. The regression now requires both exact references for invoice and laboratory claims under eight historical reservations and forty competing notices. Selection scores combined assertion coverage by document (excluding the existing query stopwords), then reserves up to two complementary whole windows, accounting for the already reserved opening. Existing serialized budgets remain unchanged; source matching remains selection only, never support proof.

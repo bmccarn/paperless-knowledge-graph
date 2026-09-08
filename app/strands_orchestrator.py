@@ -214,12 +214,7 @@ Evidence context:
 Verifier findings:
 {json.dumps(verification, default=str)}
 
-Return only JSON:
-{{
-  "answer": "repaired answer",
-  "changed": true,
-  "notes": ["what changed"]
-}}
+Return only the repaired answer as ordinary prose/Markdown. Do not wrap it in JSON or a code fence.
 
 Rules:
 - Rebuild the smallest complete answer to the user's direct question. Retain only the identifying facts needed to answer it. Omit ancillary fields even when the prior audit supported them; source support alone is not a reason to keep an unrequested detail.
@@ -238,7 +233,7 @@ Rules:
 - Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.
 - Do not assert that a newer document or record set lacks a value unless the evidence explicitly proves absence. If latest/current status is not fully provable, phrase it as the newest source-backed value found in the retrieved evidence.
 """
-        return await self._json_agent(
+        text = await self._text_agent(
             name="answer_editor",
             system_prompt=(
                 "You are a source-faithful answer editor. Rebuild a concise, complete answer to the user\'s "
@@ -247,6 +242,8 @@ Rules:
             ),
             prompt=prompt,
         )
+
+        return {"answer": text.strip()} if text and text.strip() else None
 
     async def review_entity_candidate(self, candidate: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any] | None:
         if not self.enabled:
@@ -285,6 +282,11 @@ Rules:
         )
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str) -> dict[str, Any]:
+        text = await self._text_agent(name, system_prompt, prompt)
+        invalid = {"audit_protocol_error": "invalid_json"} if name == "source_auditor" and text and text.strip() else None
+        return _extract_json(text or "", invalid_result=invalid)
+
+    async def _text_agent(self, name: str, system_prompt: str, prompt: str) -> str | None:
         async with self._calls:
             try:
                 agent = Agent(
@@ -295,15 +297,16 @@ Rules:
                 )
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
                 result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
-                text = str(result)
-                invalid = {"audit_protocol_error": "invalid_json"} if name == "source_auditor" and text.strip() else None
-                return _extract_json(text, invalid_result=invalid)
+                if result.stop_reason != "end_turn":
+                    logger.warning("Strands %s did not complete normally: %s", name, result.stop_reason)
+                    return None
+                return str(result)
             except asyncio.TimeoutError:
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
-                return {}
+                return None
             except Exception as exc:
                 logger.warning("Strands %s failed: %s", name, exc)
-                return {}
+                return None
 
     async def close(self):
         # The pinned Strands OpenAI transport owns/closes each invocation's

@@ -119,3 +119,12 @@ A second Spec review reproduced a combined-assertion gap: separate identity/date
 
 
 Standards review then extended the same reproducer to one comparison spanning two identified documents; selecting a single winning document lost both needed continuations. Complementary selection now follows the most discriminating uncovered assertion terms across documents and retains the relevant same-document windows. It stops when no additional assertion terms are covered, while the existing whole-window serialized budget remains authoritative. A combined two-document regression requires four exact references under the same competing-source load; it failed before this correction and passes afterward.
+
+
+### v12 live acceptance: failed, retained
+
+Application merge `f132b1e` was deployed through reviewed GitOps PR151 (`b03e532`). Flux, image chains, ready pods, runtime configuration and original453review rows were verified. A separate `/sync` request arrived during verification and completed; document hashes903, document embeddings6884 and review rows529 stayed unchanged while cache generation advanced1980→1983. A fresh post-sync baseline was taken before the query.
+
+The unchanged history question was submitted once in Timeline through the production browser, conversation `f0f01eef-7cd9-4e28-86eb-e7af13f0c950`, uncached, policyv12. It returned `audit_failed`:27audited units,10supported,5unsupported,12missing,0unchecked; all7batch protocols valid on their first attempt. Five timeline events validated. The failure reason was “The answer repair returned no valid candidate.” Raw editor output was not persisted, so its exact format failure is unknown. Current-source reconstruction verified all90pack items and33retained references. Offline selection showed irrelevant historical reservations consuming the entire first batch and excluding latest identifiers; a stage-specific, fair-unit prototype restores them without increasing the budget. A separate exact-source formatted-currency mismatch was reproduced. H3/A4/D3 in the spec record the general follow-up.
+
+The new frontend passed actual browser graph tests:265.666×zoom, constant11pxlabels, hover/inspector, fit-view, 2D/3D navigation and zero page errors. Close-up and restored2D screenshots were visually inspected. These graph checks do not imply query acceptance.

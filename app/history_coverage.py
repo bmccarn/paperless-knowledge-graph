@@ -44,12 +44,6 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
                         "subjects": tuple(sorted(subjects & query_terms(title + " " + str(row.get("doc_type") or ""))) or sorted(subjects & terms)),
                         "quality": infer_source_quality(title, "", "")["score"],
                         "relevance": len(subjects & terms)})
-    # An incidental footer mention must not displace documents whose title or
-    # indexed type identifies the user's subject. Unknown subjects still use
-    # the source-preview fallback when no metadata match exists.
-    metadata = [row for row in records if row["metadata_relevance"]]
-    if metadata:
-        records = metadata
     # Reserve temporal/type strata before repeated revisions. Title vocabulary
     # never partitions source families: added issuer/form words must not strand
     # an older short-title record in a low-population singleton group.
@@ -64,7 +58,10 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
         if periods:
             period_order.append(periods.pop())
     period_order.append("")
-    keys = sorted(groups, key=lambda key: (period_order.index(key[2]), key[0], key[1]))
+    # Reserve directly matched strata first, then source-only strata before
+    # repeated representatives. Missing metadata never silently erases history.
+    keys = sorted(groups, key=lambda key: (not any(row["metadata_relevance"] for row in groups[key]),
+                                          period_order.index(key[2]), key[0], key[1]))
     queues = []
     for key in keys:
         rows = groups[key]

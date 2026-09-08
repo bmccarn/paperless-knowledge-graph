@@ -71,12 +71,15 @@ class HistoryAuditor:
 
 class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
     async def test_old_and_latest_sources_reach_public_synthesis_audit_and_delivery(self):
-        for subject, doc_type in [("Insurance", "insurance"), ("Invoice", "financial"), ("Laboratory", "medical"), ("Orchid", None)]:
-            with self.subTest(subject=subject):
+        for subject, doc_type, old_metadata in [("Insurance", "insurance", True), ("Invoice", "financial", True),
+                                                 ("Laboratory", "medical", True), ("Orchid", None, True),
+                                                 ("Invoice", None, False), ("Laboratory", None, False)]:
+            with self.subTest(subject=subject, old_metadata=old_metadata):
                 invalidate_on_sync()
                 rows, chunks = fixtures(subject, doc_type)
-                rows[0].update(document_id=900, title=f"Archived {subject} source")
-                chunks[0].update(document_id=900, title=f"Archived {subject} source")
+                old_title = f"Archived {subject} source" if old_metadata else "Archived statement"
+                rows[0].update(document_id=900, title=old_title)
+                chunks[0].update(document_id=900, title=old_title)
                 rows[-2]["title"] = chunks[-1]["title"] = f"Renamed {subject} source"
                 engine, auditor = HistoricalEngine(subject, chunks), HistoryAuditor()
                 async def hydrate(ids, **kwargs): return [c for c in chunks if c["document_id"] in ids]
@@ -160,3 +163,17 @@ class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
             choose_documents(rows, f"{subject} history", limit=1, diagnostics=coverage)
             self.assertGreater(coverage["omitted_bucket_count"], 0)
             self.assertTrue(coverage["omitted_buckets"])
+
+    def test_mixed_metadata_retains_source_fallback_and_reports_omitted_strata(self):
+        rows = [{"document_id": 900, "title": "Archived statement", "doc_type": None,
+                 "preview": "Invoice for calendar year 2020. Charge $300."},
+                {"document_id": 1, "title": "Invoice January 2026", "doc_type": None,
+                 "preview": "Invoice for calendar year 2026. Charge $350."}]
+        coverage = {}
+        chosen = choose_documents(rows, "Invoice history", diagnostics=coverage)
+        self.assertEqual([row["document_id"] for row in chosen], [1, 900])
+        self.assertEqual(coverage["relevant_candidate_count"], 2)
+        self.assertEqual(coverage["omitted_bucket_count"], 0)
+        choose_documents(rows, "Invoice history", limit=1, diagnostics=coverage)
+        self.assertEqual(coverage["omitted_bucket_count"], 1)
+        self.assertEqual(coverage["omitted_buckets"][0]["period"], "2020")

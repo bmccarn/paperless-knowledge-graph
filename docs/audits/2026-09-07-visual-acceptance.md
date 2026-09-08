@@ -1,5 +1,8 @@
 # Issue 16 visual UI acceptance
 
+Current status at 2026-09-08: final release `cbdc610` passed deployed graph, freshness and original Strict insurance UI acceptance. The insurance answer completed in 164.9 seconds with four supported dated observations, exact current OCR/chunk references, complete matching digests and explicit current-status qualification. Visually confirmed answer, settled source panel and restored conversation. All 903 current documents passed two stable corpus snapshots and bounded vector reconciliation. Normal schedules are restored through GitOps PR146, with exact Flux revision, healthy workloads, unchanged image chains and runtime/history controls verified. Earlier observations below are historical checkpoints.
+
+
 Operator: Codex, September 7, 2026. User explicitly requested computer/browser-control visual end-to-end testing. This record supplements automated browser tests; it does not certify production corpus or model accuracy.
 
 ## Environment and evidence
@@ -25,7 +28,7 @@ Operator: Codex, September 7, 2026. User explicitly requested computer/browser-c
 | Hubs | Last page 301–303 of 303, domain change reset to page one, insurance question shortcut submitted the intended text in chat. | Passed for navigation/paging; fixture is not a domain relevance oracle |
 | Debug | Connected indicator, INFO/ERROR filtering, pause/resume, auto-scroll toggle and clear all worked. | Passed |
 | Dashboard | Cards/coverage rendered; full-reindex confirmation text and Cancel worked; ordinary synthetic sync admitted and completion appeared. | Passed: 1/1, one processed, zero skipped/errors, elapsed time and dismissal rendered |
-| Production | Deployed read-only navigation/query verification must use intended immutable release. | In progress on deployed bbbf82d: dashboard counts, stale-fingerprint notice and active-canary controls visually confirmed |
+| Production | Deployed read-only navigation/query verification uses intended immutable release. | Passed final cbdc610 graph/freshness and original Strict answer/source/history flows; earlier catalog/hub/review/debug navigation described below |
 
 ## Reproduced defects and fixture limitations
 
@@ -37,9 +40,9 @@ Operator: Codex, September 7, 2026. User explicitly requested computer/browser-c
 
 6. At 320px the bottom navigation clipped the theme button. Fixed equal-width flexible tabs and shortened the visible Dashboard caption to Home with a matching accessible name. Added a red-to-green viewport-boundary and theme-toggle browser regression.
 
-## Remaining acceptance
+## Acceptance boundary
 
-All local interactions and final-revision checks passed (328 real-datastore backend tests, 12 frontend regressions, 26 automated browser scenarios). Complete deployed read-only/live-query flows; live Chrome tab 419352177 uses the immutable bbbf82d release. No local screenshot or mocked answer proves real source support, successful migration or writer drain.
+All local interactions passed on the revisions recorded below; the final backend suite passed 366 tests with real disposable datastores and zero skips. Deployed read-only/live-query flows are complete on cbdc610. Local screenshots and mocked answers alone do not establish real source support, migration completeness or writer drain; the final live checks supply that separate evidence.
 
 ## Deployed observations in progress
 
@@ -67,3 +70,42 @@ At 1900×767 in Chrome through computer control, submitted the original insuranc
 Opened the grouped insurance source button, inspected the settled Source detail sheet screenshot, its retrieved excerpt, title/type/date and Paperless link, then closed it successfully. Private source text and screenshots stay in the operator conversation/private evidence, not this repository. This diagnostic does not close the original-query acceptance gate; repeat on the new release and inspect a useful source-grounded result and its persistence.
 
 On ac65ee0, a new live Strict conversation with the original insurance question completed in44.3seconds, with15/15claims audited,13supported, no token/time-limit error, and a usable composer. Two evidence failures withheld the answer: a full-year assertion supported only by a two-digit-year quote, and an invalid reference. The saved conversation retains the complete ledger privately. These observations drove PR24's precise repair feedback and dated source-observation prompts. A private native replay subsequently returned two fully supported observations with a current-status qualification; final deployed chat/source-sheet/history verification is still pending.
+
+## Latest live query checkpoints
+
+- On `1d59cf0` (v7), the original insurance question completed in 109.6 seconds with one four-unit audit batch unchecked. Runtime logs identified the 45-second source-auditor timeout. The UI finished cleanly, exposed the incomplete ledger and restored the composer. A separate targeted source query was qualified with exact source support; its original supported-only acceptance script was corrected in a reviewed supplemental assessment without modifying the captured response.
+- GitOps PR143 applied `5885269` (v8), including failed-cache retry handling, bounded answer context and finite 90/120-second call/wave settings. Both image digests and all runtime/history checks passed. The new targeted query completed in 51.8 seconds: three supported historical assertions, seven exact OCR references solely to the requested source, correct citation/candidate/answer digests, and a stable current source.
+- In a new live Chrome conversation at 1900×767, the exact original insurance question in Strict mode completed in 85.7 seconds. All ten units were audited; six were supported and four lacked valid references. No token-limit or timeout error occurred. The final failure and full ledger rendered, conversation persisted, and composer became usable. This is a reproduced failure, not original-query acceptance.
+- Reconstructed all 90 original evidence-item hashes privately. The mixed audit batch omitted every window containing one policy assertion's identifier; single-assertion ranking found the correct window. PR26's per-assertion source reservation restores that window locally without changing source bytes or the 28,000-character budget. Native exact-pack replay was stopped before execution by automatic approval review and awaits the specifically requested payload/destination authorization.
+
+The insurance acceptance verifier also needed a correction: reference offsets and content digests belong to individual OCR chunks. The revised private checker binds each original evidence-item hash, validates exact chunk-relative references, and separately checks each quotation against fresh full Paperless OCR. Its independent review does not replace the still-pending successful original UI query.
+
+
+## V10 original-question UI and migration boundary
+
+On `d4f340e`, a new Strict conversation with the original question completed in145.1seconds. Two of two units were audited and supported, with complete answer/candidate/ledger digests and the explicit current-status qualification. No token-limit, timeout or runtime error was observed. The composer recovered, and the saved conversation retained the complete answer and ledger.
+
+Browser control detached after the first screenshot. The native-window fallback failed; a fresh owned tab in the same Chrome session restored browser control. At1900×822, reopened the saved conversation, visually confirmed the answer and 100% support/coverage, opened the cited source sheet, inspected its exact excerpt and correct Paperless destination, closed the sheet and returned to the answer. Browser console warnings/errors were empty. This does not claim authenticated viewing inside Paperless.
+
+The unchanged private source-context verifier failed on a legacy indexed chunk, preserving the failed receipt. A separate diagnostic proves both source OCR hashes are current, both ingestion fingerprints are stale, all quotations are exact current OCR, item hashes/digests/ledger checks pass, and the indexed difference is only a five-byte page separator. It remains explicitly non-accepting. The reviewed plan admits one ordinary sync, followed by a new original-question UI conversation and the unchanged full verifier before R2 can close.
+
+At21:04UTC, the live dashboard displayed the single ordinary sync, 888 selected documents, a progressing count, healthy status and one active task. Competing Repair drift, Sync now, Sync New Docs and Full Reindex controls were disabled. The Cancel control was visible and was not invoked. The screenshot confirms live task admission/UI state, not corpus completion.
+
+- 2026-09-08 00:00 UTC: actual Chrome dashboard still shows a healthy API and one running sync, with 154 finished outcomes (150 successes plus four errors). Sync and Full Reindex controls remain disabled while the task runs. The failure panel states that incomplete extraction retained the previous index; successful progress continues. This mid-migration observation does not satisfy final corpus or fresh-query acceptance.
+
+- 2026-09-08 morning: attached to the user's existing live Chrome dashboard tab. Visually confirmed near-complete overnight sync, nine errors, healthy service, one active task, and disabled competing ingestion controls. The dashboard accurately exposes 12 new Paperless documents absent from the original index snapshot. Private source titles remain outside the public audit. Final query/source/history UI acceptance will follow targeted recovery and corpus verification.
+
+## September 8 deployed graph and freshness follow-up
+
+Release `cbdc610` is deployed through GitOps `ee2ebaa` with verified running image chains. Browser control against the real 624-node/980-edge graph reached 265.7x with real wheel input. Screen-space text and backgrounds remained stable; canvas selection opened the source inspector, Fit view returned to overview, 3D orbit/zoom and switching back to 2D worked, and page errors remained empty. Inspected the overview, close-up, populated inspector and 2D-return screenshots. A settled dashboard frame confirms 903 current documents, full embedding coverage and no obsolete timestamp-only stale warning. Private graph/source screenshots remain outside GitHub. The final insurance UI/source run is still pending.
+
+
+## Final original insurance query and source verification
+
+On `cbdc610`, used an actual Playwright-controlled Chromium browser at 1600x1100 against `https://kg.mccarn.tech`, submitted the exact original question once in Strict mode with the existing gemini-3.8-flash route, and waited for the streamed completion. The native CUA surface was unavailable at this checkpoint; this browser-control fallback performed the actual interactions, and screenshots were visually inspected separately from assertions.
+
+The answer completed in 164.9 seconds with four of four supported claims, 100% audit coverage, a usable composer and the explicit current-status qualification. Opened a cited source, reloaded and restored the exact saved conversation, and inspected the answer and ledger. Reopened that existing conversation without submitting another query to capture the fully settled source sheet after its opening animation. Its excerpt and Paperless destination were visible; the host equals the configured Paperless base and the path identifies the cited document. No uncaught page errors occurred. This does not claim authenticated viewing inside Paperless.
+
+The unchanged independent source-context verifier passes all 11 predicates: every reference binds an exact current indexed/expanded OCR chunk and fresh full source, every factual answer unit is audited, all four claims have support, all candidate/answer/ledger digests match, and source snapshots remain stable. Current coverage itself is not established by these dated observations; the UI says so explicitly. This is acceptance of the requested case, not a universal model-accuracy or corpus-recall certification. Private screenshots and payloads remain outside this repository.
+
+- Final operational check: GitOps PR146 restored automatic sync every 60 minutes, Steward every 360 minutes and document concurrency 10. Flux reports the exact restoration commit Ready/Healthy; deployed images, external health, current 903-document freshness and original review history pass. Separate paperless-brain schedules remain paused.

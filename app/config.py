@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     strands_max_concurrent_calls: int = Field(default=4, ge=1, le=16)
     stream_verification_timeout_seconds: float = 60
     answer_audit_timeout_seconds: float = 60
+    source_date_order: Literal["mdy", "dmy", "reject_ambiguous"] = "mdy"
 
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"

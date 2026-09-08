@@ -57,6 +57,7 @@ class StrandsQueryOrchestrator:
         payload = {"question": question, "evaluated_at": plan.get("evaluated_at"),
                    "conversation_context": plan.get("conversation_context", ""),
                    "answer_context": plan.get("answer_context", ""),
+                   "source_date_order": plan.get("source_date_order", settings.source_date_order),
                    "units": units, "source_spans": spans}
         return await self._json_agent(
             name="source_auditor",
@@ -78,12 +79,25 @@ class StrandsQueryOrchestrator:
                 "source spans when a shorter quote suffices. Copy span_id, evidence_id and document_id "
                 "together from the same supplied span. Each quote must be a contiguous substring of that span. "
                 "Include exact source forms for every asserted number and quantity; a four-digit asserted "
-                "year needs a quote containing that four-digit year, not only a two-digit date. Use separate "
+                "year needs a quote containing that four-digit year, not only a two-digit date. If a short-year "
+                "table and an explicit full-year field both exist, cite the full-year field. Respect the supplied "
+                "numeric date order. Calendar formatting may differ, but precision and event meaning must agree. "
+                "Include all supporting passages needed for the complete claim, not just its first field. Use separate "
                 "references for disjoint passages; never splice quotes. Dated policy terms are historical "
                 "document observations unless the assertion claims current real-world validity. "
+                "Use temporal_scope=documented only for an explicit comparison among the retrieved documents, "
+                "such as the latest dated record for the same subject. Check all supplied relevant dated records "
+                "and conflicts. This scope never establishes current real-world validity or archive completeness. "
+                "Also set temporal_assertion to source_observation for historical descriptions (including quoted "
+                "active/current source language), retrieved_comparison for documented comparisons, present_world "
+                "for currently true assertions, or none for nontemporal assertions. Assess what the answer itself "
+                "asserts, not words quoted from a past source. The assertion must agree with temporal_scope. "
+                "Include comparison_scope=retrieved_documents and comparison_document_ids listing the supplied "
+                "documents compared, including the cited documents. Use current for present-world assertions; "
+                "historical for individual dated observations without a latest comparison; none otherwise. "
                 "Return JSON only, with no explanations. "
                 "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
-                "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|current|none}]}.") ,
+                "references:[{span_id,evidence_id,document_id,quote}],temporal_scope:historical|documented|current|none,temporal_assertion:source_observation|retrieved_comparison|present_world|none,comparison_scope,comparison_document_ids}]}.") ,
             prompt=json.dumps(payload, ensure_ascii=False))
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:
@@ -156,6 +170,7 @@ Return only JSON:
 
 Rules:
 - Use document dates, effective dates, expiration dates, statement periods, and revision dates.
+- Numeric source dates use {settings.source_date_order}. Normalize explicit full-year calendar dates to ISO without changing precision. Do not expand two-digit years or compact digit identifiers to a full date.
 - Keep events tied to a source document.
 - Do not invent dates. Every event requires exact source quote and supplied span/evidence/document IDs.
 - The date and event meaning must both follow from that quote; a document date is not a life event.
@@ -203,12 +218,13 @@ Return only JSON:
 
 Rules:
 - Rebuild the smallest complete answer to the user's direct question. Retain only the identifying facts needed to answer it. Omit ancillary fields even when the prior audit supported them; source support alone is not a reason to keep an unrequested detail.
-- Resolve each unsupported claim using its rejection_reasons: invalid_reference requires an exact source passage with matching source identifiers; value_mismatch requires the exact asserted values and units in that passage; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
+- Resolve each unsupported claim using its rejection_reasons: invalid_reference requires an exact source passage with matching source identifiers; value_mismatch includes structured value_mismatches listing missing dates, values and units: cite their full supporting passages or remove the unsupported assertion; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
 - Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Use unnumbered headings and bullet points rather than numeric section labels; preserve factual numbers only when supported.
 - Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.
 - For a policy inventory, write a complete source-observation sentence for each policy: "The [policy type] declaration records policy [identifier] with [documented issuer] for the term [start] to [end]." Include only fields supported by that record. Keep the dated source context in each sentence instead of detached insurer/number labels that imply a current-status answer. Omit agent, address and premium details unless asked, and avoid a separate introductory claim about which policies are most recent or currently valid.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
+- A dated record does not itself prove a submission or other event occurred on that date. Use the exact event meaning the cited passage establishes.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Keep dated source observations as the answer when real-world current status is not established. The acceptance layer appends its own current-status limitation; do not add a generic current-status disclaimer to the candidate. Add an evidence-limit note only for a different missing fact that materially limits the direct answer.

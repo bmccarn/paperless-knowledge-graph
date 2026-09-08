@@ -121,6 +121,7 @@ def build_evidence_item(result: dict[str, Any], rank: int, question: str = "") -
         "title": title,
         "doc_type": doc_type,
         "rank": rank,
+        "history_reserved": result.get("history_reserved") is True,
         "retrieval_score": float(result.get("combined_score", result.get("similarity", result.get("rank_score", 0))) or 0),
         "exact_term_hits": exact_terms,
         "source_quality": quality,
@@ -218,13 +219,14 @@ def build_evidence_pack(
 
 def format_evidence_pack_for_llm(pack: dict[str, Any], max_items: int = 42, max_chars: int = 26000) -> str:
     """Select complete source windows, never silently cut source text prefixes."""
-    from app.answer_finalization import evidence_spans, select_spans
+    from app.answer_finalization import evidence_spans, select_spans, span_coverage
     if not pack:
         return ""
     available = evidence_spans(pack)
-    ranked = select_spans(pack.get("question", ""), [], available, budget=max_chars)
     payload = {"scope": "selected source windows, not the full archive", "available_span_count": len(available),
                "selected_span_count": 0, "spans": []}
+    ranked = select_spans(pack.get("question", ""), [], available,
+                          budget=max_chars - len(json.dumps(payload, ensure_ascii=False)) - 20, serialized=True)
     for span in ranked[:max_items]:
         candidate = {**payload, "spans": payload["spans"] + [span], "selected_span_count": payload["selected_span_count"] + 1}
         if len(json.dumps(candidate, ensure_ascii=False)) <= max_chars:
@@ -232,6 +234,7 @@ def format_evidence_pack_for_llm(pack: dict[str, Any], max_items: int = 42, max_
     pack.setdefault("coverage", {})["synthesis"] = {
         "available_span_count": len(available), "selected_span_count": payload["selected_span_count"],
         "selected_span_ids": [span["span_id"] for span in payload["spans"]],
+        **span_coverage(pack.get("question", ""), available, payload["spans"]),
     }
     return json.dumps(payload, ensure_ascii=False)
 

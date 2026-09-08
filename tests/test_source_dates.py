@@ -73,6 +73,21 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
         self.assertEqual(reasons, {"unsupported_event": 1, "invalid_date": 1, "unsupported_date": 1})
 
+    async def test_scalar_quantities_identifiers_and_malformed_dates_keep_their_boundaries(self):
+        for claim, source in [("Invoice number 0000.", "Invoice number 0000."),
+                              ("Charge USD 1200.", "Charge USD 1,200."),
+                              ("Dose 1200 mg.", "Dose 1,200 mg."),
+                              ("Charge USD 1200.00.", "Charge USD 1200."),
+                              ("Charge USD 1,200.", "Charge USD 1200."),
+                              ("Recorded term 2026-2027.", "Recorded term 2026-2027.")]:
+            with self.subTest(claim=claim):
+                result = await AnswerFinalizer(ExactAuditor()).finalize("What was recorded?", claim, pack(source))
+                self.assertTrue(result["finalization"]["complete"])
+        for value in ("2026-02-300", "2026-09-001", "2026-099-01", "2026-02-30.5", "2026-02-01-02"):
+            result = await AnswerFinalizer(ExactAuditor()).finalize("Recorded date?", f"Record date {value}.", pack(f"Record date {value}."))
+            self.assertEqual(result["finalization"]["disposition"], "unsupported", value)
+        self.assertFalse(values_match("Value 1.2026.", [{"quote": "Value 1 recorded in 2026."}]))
+
     async def test_public_finalizer_preserves_original_written_date_quote(self):
         source = "On September 1, 2026, the monthly service charge became $321 USD."
         result = await AnswerFinalizer(ExactAuditor()).finalize(

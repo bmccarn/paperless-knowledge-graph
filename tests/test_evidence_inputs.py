@@ -65,6 +65,26 @@ class EvidenceInputTests(unittest.TestCase):
                  {"document_id": 202, "title": "Postage", "content": "Postage account number 101"}]
         self.assertEqual(select_spans("Postage account number 101?", [], spans, budget=40)[0]["document_id"], 202)
 
+    def test_history_and_explicit_documents_share_serialized_budget(self):
+        from app.answer_finalization import evidence_spans, select_spans, span_coverage
+        question = "Compare document 901, document 902 and document 903 with the historical invoice records."
+        chunks = [{"document_id": i, "chunk_index": 0, "title": "Invoice", "content": "invoice source " * 500,
+                   "source_kind": "ocr", "history_reserved": i < 900} for i in [901, 902, 903, *range(101, 109)]]
+        pack = build_evidence_pack(question, {}, chunks, [])
+        payload = format_evidence_pack_for_llm(pack, max_chars=28000)
+        selected = json.loads(payload)["spans"]
+        priority = {901, 902, 903, *range(101, 109)}
+        self.assertTrue(priority.issubset({s["document_id"] for s in selected}))
+        self.assertLessEqual(len(payload), 28000)
+        spans = evidence_spans(pack)
+        audit = select_spans(question, [{"text": "Recorded invoice."}], spans, serialized=True)
+        self.assertTrue(priority.issubset({s["document_id"] for s in audit}))
+        self.assertLessEqual(len(json.dumps(audit, ensure_ascii=False)), 28000)
+        self.assertFalse(pack["coverage"]["synthesis"]["limited"])
+        limited = select_spans(question, [], spans, budget=4000, serialized=True)
+        self.assertTrue(span_coverage(question, spans, limited)["limited"])
+        self.assertTrue(span_coverage(question, spans, limited)["omitted_priority_document_ids"])
+
     def test_budget_drops_whole_spans_with_explicit_coverage_and_content_changes_identity(self):
         chunk = {"document_id": 101, "content": "source " * 800}
         pack = build_evidence_pack("source", {}, [chunk], [])

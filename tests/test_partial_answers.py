@@ -113,8 +113,11 @@ class PartialAnswerTests(unittest.IsolatedAsyncioTestCase):
                     result["assessments"][0].update(fields)
                     return result
             result = await AnswerFinalizer(Auditor()).finalize("Latest charge?", "The latest charge is $321 USD.", pack(SOURCE))
-            self.assertEqual(result["finalization"]["disposition"], "current_unresolved")
+            self.assertEqual(result["finalization"]["disposition"], "current_unresolved" if fields["temporal_scope"] == "current" else "unsupported")
             self.assertFalse(result["finalization"]["answer_verified"])
+            if fields["temporal_scope"] == "documented":
+                result = await AnswerFinalizer(Auditor()).finalize("Recorded charges?", "The invoice records $321 USD.", pack(SOURCE))
+                self.assertEqual(result["finalization"]["disposition"], "unsupported")
 
     async def test_incomplete_final_repair_and_subset_do_not_publish(self):
         for repair in (False, True):
@@ -131,3 +134,55 @@ class PartialAnswerTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(result["finalization"]["disposition"], "partial")
             self.assertNotIn("321", result["answer"])
             self.assertEqual(len(auditor.contexts), 2)
+
+    async def test_invalid_repair_envelopes_never_use_the_prior_subset(self):
+        for payload in ({}, {"answer": ""}, {"answer": 123}, None):
+            class Repair:
+                async def repair_answer(self, *args): return payload
+            result = await AnswerFinalizer(MixedAuditor(), Repair()).finalize("Recorded charges?",
+                "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.", pack(SOURCE))
+            self.assertEqual(result["finalization"]["disposition"], "audit_failed")
+            self.assertFalse(result["finalization"]["answer_verified"])
+            self.assertNotIn("partial", result["verification"])
+            self.assertNotIn("321", result["answer"])
+
+    async def test_typed_historical_assertion_allows_source_language_but_not_present_world_claim(self):
+        source = "The invoice dated January 1, 2020 records the then-current charge as $321 USD."
+        from tests.test_source_dates import ExactAuditor
+        for scope, assertion, expected in [
+            ("historical", "source_observation", "qualified"),
+            ("current", "present_world", "current_unresolved"),
+            ("historical", "present_world", "unsupported"),
+            ("current", "source_observation", "unsupported"),
+            ("historical", "invalid", "unsupported"),
+        ]:
+            class Auditor(ExactAuditor):
+                async def audit_answer_units(self, *args):
+                    result = await super().audit_answer_units(*args)
+                    for assessment in result["assessments"]:
+                        assessment.update(temporal_scope=scope, temporal_assertion=assertion)
+                    return result
+            result = await AnswerFinalizer(Auditor()).finalize("Recorded charge?", source, pack(source))
+            self.assertEqual(result["finalization"]["disposition"], expected)
+        class Auditor(ExactAuditor):
+            async def audit_answer_units(self, *args):
+                result = await super().audit_answer_units(*args)
+                result["assessments"][0].update(temporal_scope="historical", temporal_assertion="source_observation")
+                return result
+        wrong = await AnswerFinalizer(Auditor()).finalize("Recorded charge?", source.replace("321", "999"), pack(source))
+        self.assertFalse(wrong["finalization"]["answer_verified"])
+
+    async def test_actual_strands_repair_failure_cannot_admit_prior_subset(self):
+        from unittest.mock import AsyncMock, patch
+        from app import strands_orchestrator as module
+        for error in (TimeoutError(), RuntimeError("synthetic provider unavailable")):
+            with patch.object(module, "STRANDS_AVAILABLE", True), patch.object(module.settings, "strands_enabled", True), \
+                    patch.object(module, "Agent") as agent, patch.object(module.StrandsQueryOrchestrator, "_model", return_value=object()):
+                agent.return_value.invoke_async = AsyncMock(side_effect=error)
+                repairer = module.StrandsQueryOrchestrator()
+                auditor = MixedAuditor()
+                result = await AnswerFinalizer(auditor, repairer).finalize("Recorded charges?",
+                    "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.", pack(SOURCE))
+            self.assertEqual(result["finalization"]["disposition"], "audit_failed")
+            self.assertEqual(len(auditor.contexts), 1)
+            self.assertFalse(result["finalization"]["answer_verified"])

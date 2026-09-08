@@ -237,6 +237,12 @@ class RelationshipIntegrityTests(unittest.IsolatedAsyncioTestCase):
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH 'relationship-test-' OR n.paperless_id IN [990101,990102] DETACH DELETE n")
         await self.store.driver.close()
 
+    async def test_indexed_dates_are_batched_and_missing_sources_do_not_invent_dates(self):
+        await self.store.create_document_node(990101, "Undated title", "invoice", "2020-01-01", "test")
+        self.assertEqual(await self.store.get_document_dates([990101, 990102, 999999]),
+                         {990101: "2020-01-01", 990102: "2026-09-04"})
+        self.assertEqual(await self.store.get_document_dates([]), {})
+
     async def edge(self):
         async with self.store.driver.session() as session:
             row = await (await session.run("MATCH (:Person {uuid:'relationship-test-a'})-[r:WORKS_FOR]->() RETURN properties(r) AS props")).single()

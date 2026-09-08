@@ -64,3 +64,16 @@ Run with `PYTHONPATH=. /private/tmp/paperless-accuracy-venv/bin/python <script>`
 5. Retrieve history across distinct periods/policy families. Reproduce omission of an indexed prior policy and verify it survives candidate selection, evidence budgeting and synthesis input.
 6. Capture structured timeline rejection reasons and regress ordinary written/slash/ISO dates, invalid dates, ambiguous locale/century and exact-source references.
 7. Review and validate any resulting implementation before GitOps delivery. Acceptance must use this exact history-and-current question and its mode, retain the earlier narrow-query regression, inspect actual UI answer/timeline/citations/history, and verify fresh source support. A single shorter answer or the previous four-claim insurance query cannot substitute for this case.
+
+
+## Implementation review, before release
+
+The first implementation (`6c6066a`) passed 386 backend tests against disposable PostgreSQL, Neo4j and Redis with zero skips, frontend lint/type/build and 12 unit tests, and all production-build browser contracts. Actual desktop, mobile and source-panel screenshots showed the verified-partial notice and restored ledger. These checks were superseded by independent review findings, not treated as proof of completion.
+
+Standards review reproduced malformed ISO dates escaping validation, zero-padded identifiers being mistaken for years, invalid repair output admitting an earlier partial subset, and year-only historical sources losing reservations. Spec review additionally reproduced four-digit quantity-format regressions, serialized JSON overhead dropping reserved sources, the remaining historical-word veto, and the actual Strands adapter swallowing failed repair as an empty result. Root review found malformed comparison metadata needed an explicit rejection and public manifests needed to retain their reservation flag.
+
+The follow-up implementation keeps bare four-digit values under ordinary Decimal checks; validates complete date-shaped tokens; rejects invalid repair envelopes, including failures through the actual adapter; validates consistent semantic temporal categories; and budgets whole windows with serialized costs. New regressions retain all eight historical and three explicitly requested sources together within 28,000 characters, while reporting limits when the priority set cannot fit.
+
+A read-only production metadata probe found incidental subject mentions crowding historical retrieval. Metadata subject relevance and temporal/type strata now precede duplicate/title population; indexed dates provide a fallback for undated titles. The retained older incident source reached the eight-document reservation in a local deterministic replay of the read-only metadata. This is a retrieval-stage observation, not a live model acceptance result. End-to-end regressions cover renamed higher-ID old sources and newer records across invoices, medical measurements and unknown subjects. No source, ingestion fingerprint, model route or output-token allowance changed.
+
+Release and exact uncached live acceptance remain pending.

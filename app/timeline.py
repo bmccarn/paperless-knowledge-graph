@@ -1,4 +1,5 @@
 """Calendar and provenance validation for public timeline events."""
+import json
 from app.answer_finalization import date_occurs, evidence_spans, parse_date, select_spans, validate_reference, values_match
 
 
@@ -47,15 +48,16 @@ async def validate_timeline(events: list, pack: dict, auditor, question: str, *,
             continue
         text = f"{parsed[0]}: {event.get('title', '')}. {event.get('summary', '')}"
         selected = [s for s in spans if any(r["span_id"] == s["span_id"] for r in validated)]
-        used = sum(len(span["content"]) for span in selected)
+        used = sum(len(json.dumps(span, ensure_ascii=False)) + 2 for span in selected)
         if used > 28000:
             reject("evidence_budget")
             continue
         # Proposer-selected references cannot hide supplied conflicting sources.
-        for span in select_spans(question, [{"text": text}], spans):
-            if span not in selected and used + len(span["content"]) <= 28000:
+        for span in select_spans(question, [{"text": text}], spans, serialized=True):
+            cost = len(json.dumps(span, ensure_ascii=False)) + 2
+            if span not in selected and used + cost <= 28000:
                 selected.append(span)
-                used += len(span["content"])
+                used += cost
         try:
             audit = await auditor.audit_answer_units(question, [{"id": "event", "text": text, "start": 0, "end": len(text)}],
                                                      selected, {"source_date_order": date_order})

@@ -12,6 +12,20 @@ from tests.test_source_dates import ExactAuditor, pack
 
 
 class SourceDocumentContextTests(unittest.IsolatedAsyncioTestCase):
+    def test_full_document_structure_is_parsed_once_for_multiple_chunks(self):
+        from app import answer_finalization as module
+        fields = [f'**RECORDED DOSE** - - - **{i} mg**' for i in range(1, 21)]
+        source = '\n\n'.join(fields)
+        items = []
+        for index, field in enumerate(fields):
+            item = pack(field)['items'][0]
+            item.update(id=f'chunk-{index}', chunk_index=index)
+            bind_document_context(item, source)
+            items.append(item)
+        with patch.object(module._MARKDOWN, 'parse', wraps=module._MARKDOWN.parse) as parse:
+            self.assertEqual(len(evidence_spans({'items':items})), 20)
+        self.assertEqual(sum(call.args[0] == source for call in parse.call_args_list), 1)
+
     async def verify(self, source, chunk, claim, *, mutate=None):
         evidence = pack(chunk)
         item = evidence['items'][0]

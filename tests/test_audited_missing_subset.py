@@ -1,5 +1,6 @@
 """A completed absence verdict can be omitted only after fresh subset validation."""
 import unittest
+from unittest.mock import patch
 from app.answer_finalization import AnswerFinalizer
 from tests.test_partial_answers import MixedAuditor, SOURCE
 from tests.test_source_dates import pack
@@ -62,3 +63,25 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit['summary']['unchecked'], 1)
         self.assertEqual(audit['audit_batches'][0]['final_errors'], ['unavailable'])
         self.assertIn('partial answer source audit did not complete', result['verification']['missing_evidence'][0])
+
+    async def test_failed_subset_retains_its_distinct_sanitized_source_manifest(self):
+        from app.answer_finalization import evidence_spans
+        evidence = pack(SOURCE)
+        evidence['items'].append({**evidence['items'][0], 'id':'unrelated', 'document_id':102,
+                                  'content':'An extra charge is $999 USD.'})
+        spans = evidence_spans(evidence)
+        class Unavailable(MissingAuditor):
+            async def audit_answer_units(self, *args):
+                if self.contexts:
+                    return None
+                return await super().audit_answer_units(*args)
+        with patch('app.answer_finalization.select_spans', side_effect=[spans, spans[:1]]):
+            result = await AnswerFinalizer(Unavailable()).finalize('What is recorded?',
+                'The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.', evidence)
+        ledger = result['claim_ledger']
+        audit = ledger['subset_audit']
+        self.assertEqual(len(ledger['spans']), 2)
+        self.assertEqual([s['span_id'] for s in audit['spans']], [spans[0]['span_id']])
+        self.assertEqual(audit['available_span_count'], 2)
+        self.assertEqual(audit['selection_coverage'][0]['selected_document_ids'], [101])
+        self.assertTrue(all('content' not in s and 'date_context_before' not in s for s in audit['spans']))

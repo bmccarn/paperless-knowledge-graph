@@ -142,6 +142,36 @@ def parse_date(value: Any) -> tuple[str, str] | None:
     return None
 
 
+_SENTENCE_OPENERS = {'The', 'A', 'An', 'This', 'That', 'These', 'Those', 'It', 'Its', 'They', 'Their',
+                     'We', 'Our', 'You', 'Your', 'He', 'She', 'Another', 'However', 'Also'}
+
+
+def _abbreviation_continues(prefix: str, suffix: str) -> bool:
+    abbreviation = re.search(r"\b(No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd|approx|etc|vs|Fig|Eq|Vol|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$", prefix, re.I)
+    if not abbreviation:
+        return bool(re.search(r"(?:\b[A-Za-z]\.){2,}$", prefix))
+    if abbreviation[1].lower() in {'no', 'mr', 'mrs', 'ms', 'dr', 'prof', 'fig', 'eq', 'vol'}:
+        return True
+    following = re.match(r"\s+(\w+)", suffix)
+    return not following or following[1] not in _SENTENCE_OPENERS
+
+
+def _name_initial_continues(prefix: str, suffix: str) -> bool:
+    # Normalize an inspection copy only: persisted offsets refer to raw prose.
+    prefix, suffix = unicodedata.normalize('NFC', prefix), unicodedata.normalize('NFC', suffix)
+    initial = re.search(r"\b([^\W\d_])\.$", prefix)
+    following = re.match(r"[ \t]*(?:\r?\n[ \t]*)?([^\W\d_][\w’'-]*)(\.)?", suffix)
+    if not initial or not initial[1].isupper() or not following:
+        return False
+    word = following[1]
+    if word in _SENTENCE_OPENERS:
+        return False
+    prior = re.search(r"\b([^\W\d_][\w’'-]*)(?:\.)?\s+$", prefix[:initial.start()])
+    # A preceding proper name or a following initial supplies name context.
+    name_context = (prior and prior[1][0].isupper()) or (len(word) == 1 and word.isupper() and following[2])
+    return bool(name_context and (word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'}))
+
+
 def answer_units(answer: str) -> list[dict]:
     units = []
     pending_heading = None
@@ -173,9 +203,8 @@ def answer_units(answer: str) -> list[dict]:
             prefix = answer[start:end]
             if boundary.group() == "." and (
                 re.fullmatch(r"\s*\d+\.", prefix)
-                or re.search(r"\b(?:No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd)\.$", prefix, re.I)
-                or re.search(r"(?:\b[A-Z]\.){2,}$", prefix)
-                or (re.search(r"\b[^\W\d_]\.$", prefix) and prefix[-2].isupper())
+                or _abbreviation_continues(prefix, answer[end:])
+                or _name_initial_continues(prefix, answer[end:])
             ):
                 continue
             append(pending_heading if pending_heading is not None else start, end)
@@ -184,6 +213,10 @@ def answer_units(answer: str) -> list[dict]:
             while start < last and answer[start].isspace():
                 start += 1
         if start < last:
+            if _name_initial_continues(answer[start:last], answer[last:]):
+                pending_heading = start if pending_heading is None else pending_heading
+                pending_end = last
+                continue
             append(pending_heading if pending_heading is not None else start, last)
             pending_heading = None
     if pending_heading is not None:
@@ -196,7 +229,7 @@ _MARKDOWN = MarkdownIt("commonmark")
 _CODE_SPANS = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
 
 
-def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+def _list_marker_ranges(text: str, *, known_start: bool = True, parsed=None) -> list[list[int]]:
     """Identify structural markers on the complete source, never a quote slice."""
     if not known_start:
         return []  # A continuation chunk cannot establish its enclosing block.
@@ -204,7 +237,7 @@ def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int
     starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", text))]
     protected = [match.span() for match in _CODE_SPANS.finditer(text)]
     ranges = set()
-    for token in _MARKDOWN.parse(text):
+    for token in _MARKDOWN.parse(text) if parsed is None else parsed:
         if token.type != "list_item_open" or token.markup not in {"-", "+", "*"} or not token.map:
             continue
         line = token.map[0]
@@ -219,7 +252,7 @@ def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int
     return [list(pair) for pair in sorted(ranges)]
 
 
-def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+def _field_leader_ranges(text: str, *, known_start: bool = True, parsed=None) -> list[list[int]]:
     """Recognize explicit display-field leaders only in ordinary source prose."""
     if not known_start:
         return []
@@ -228,7 +261,7 @@ def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[in
     # A bold uppercase multiword field label makes the presentation role
     # explicit. Ordinary arithmetic and free-form dashed text remain ambiguous.
     pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+:?\*\*:?[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
-    for token in _MARKDOWN.parse(text):
+    for token in _MARKDOWN.parse(text) if parsed is None else parsed:
         if (token.type != "inline" or not token.map
                 or any(child.type in {"code_inline", "html_inline"} for child in token.children or [])):
             continue
@@ -296,7 +329,8 @@ def evidence_spans(pack: dict) -> list[dict]:
             document_text, offset = context
             key = (item['document_id'], item['source_context']['digest'])
             if key not in source_structures:
-                source_structures[key] = (_list_marker_ranges(document_text), _field_leader_ranges(document_text))
+                parsed = _MARKDOWN.parse(document_text)
+                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed), _field_leader_ranges(document_text, parsed=parsed))
             lists, fields = source_structures[key]
             list_markers = _slice_markers(lists, offset, offset + len(content))
             field_leaders = _slice_markers(fields, offset, offset + len(content))
@@ -1008,6 +1042,8 @@ class AnswerFinalizer:
                     'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
                     'rejection_reasons': subset_ledger.get('rejection_reasons', []),
                     'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
+                    'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
+                    'selection_coverage': subset_ledger['selection_coverage'],
                     'temporal_disposition': subset_status,
                 }
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
@@ -1056,7 +1092,9 @@ class AnswerFinalizer:
             verification["missing_evidence"] = ["Some claims were omitted because they could not be verified."]
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
-        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in ledger["spans"]]
+        for audit in (ledger, ledger.get('subset_audit', {})):
+            if 'spans' in audit:
+                audit['spans'] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in audit['spans']]
         return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,

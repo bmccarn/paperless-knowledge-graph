@@ -22,7 +22,7 @@ from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v15"
+POLICY_VERSION = "source-audit-v16"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -184,8 +184,28 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
     }
 
 
+def _strong_label_offsets(answer: str) -> set[int]:
+    """Locate standalone display labels using structure from the complete answer."""
+    starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", answer))]
+    labels = set()
+    for token in _MARKDOWN.parse(answer):
+        if token.type != 'inline' or not token.map or token.map[1] != token.map[0] + 1:
+            continue
+        children = [child for child in token.children or []
+                    if child.type != 'text' or child.content.strip()]
+        if (len(children) < 3 or children[0].type != 'strong_open'
+                or children[-1].type != 'strong_close'
+                or any(child.level < 1 for child in children[1:-1])):
+            continue
+        text = ''.join(child.content for child in children).rstrip()
+        if text and not re.search(r"[.!?]['\"’”)}\]]*$", text):
+            labels.add(starts[token.map[0]])
+    return labels
+
+
 def answer_units(answer: str) -> list[dict]:
     units = []
+    strong_labels = _strong_label_offsets(answer)
     pending_heading = None
     pending_content_start = None
     pending_end = 0
@@ -206,7 +226,7 @@ def answer_units(answer: str) -> list[dict]:
         last = line_match.end() - len(line) + len(line.rstrip())
         heading = re.match(r" {0,3}#{1,6}[ \t]+\S", line)
         label = re.fullmatch(r"\s*(?:[-+*]\s+)?(?:\*\*[^*\n]+:\*\*|[^\n]+:)\s*", line)
-        if heading or label:
+        if heading or label or line_match.start() in strong_labels:
             pending_heading = first if pending_heading is None else pending_heading
             pending_end = last
             continue  # Audit heading meaning together with the following claim.

@@ -191,3 +191,6 @@ The first implementation review reproduced overmerged terminal letter values, pr
 
 
 The next review extended the name controls to leading initials, CR-only wrapping, multiple wrapped initials and wrapped abbreviations. Boundary inspection now retains the pending unit context across LF/CRLF/CR continuations, and leading initials can use following name-shaped context while explicit sentence openers preserve independent facts. All49affected checks pass, including public fragment-omission regressions. Invalid empty source certificates also cannot fall back to chunk-local authority. Final review and validation remain pending.
+
+
+Final boundary review combined the previously isolated cases: ordered prose under a pending heading and leading initials before lowercase surname particles. Ordered-marker recognition now uses the current line while semantic continuation retains the pending unit context. A135-case matrix crosses headings/labels, numbering/bullets, three line endings, initials and abbreviations; every raw unit range remains exact. Public subset controls also cover leading surname particles. These changes remain domain-independent. Final independent review and full validation follow.

@@ -166,11 +166,9 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
     word = following[1]
     if word in _SENTENCE_OPENERS:
         return False
-    prior = re.search(r"\b([^\W\d_][\w’'-]*)(?:\.)?\s+$", prefix[:initial.start()])
     # A surname can follow a leading initial too. An ambiguous initial stays
     # with name-shaped context; an explicit sentence opener ends the unit.
-    return bool(word[0].isupper() or (prior and prior[1][0].isupper()
-                                    and word in {'de', 'del', 'da', 'di', 'van', 'von'}))
+    return bool(word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'})
 
 
 def answer_units(answer: str) -> list[dict]:
@@ -203,7 +201,7 @@ def answer_units(answer: str) -> list[dict]:
             end = line_match.start() + boundary.end()
             prefix = answer[pending_heading if pending_heading is not None else start:end]
             if boundary.group() == "." and (
-                re.fullmatch(r"\s*\d+\.", prefix)
+                re.fullmatch(r"\s*\d+\.", answer[start:end])
                 or _abbreviation_continues(prefix, answer[end:])
                 or _name_initial_continues(prefix, answer[end:])
             ):

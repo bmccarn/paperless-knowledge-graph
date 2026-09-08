@@ -158,3 +158,6 @@ The browser rendered the refusal, ledger and source-detail link with no page err
 
 
 The read-only browser follow-up restored the exact v13 conversation using its current list identity, rendered its42-claim ledger and captured desktop/mobile views with zero page errors. No query was submitted. This closes the harness ambiguity, not the semantic failure. The H4/D4/A5 implementation's initial full datastore run passed438tests, then independent review found the additional date-ranking/unit/title and field-label defects recorded in the spec. Those findings supersede that preliminary green checkpoint.
+
+
+The v14 follow-up review closed wrapped-equation and independently formatted-unit boundaries with source-preserving controls. Read-only visual inspection of the saved v13 mobile conversation additionally reproduced a stray zero instead of the zero-score/copy row. The UI now distinguishes numeric zero from missing metrics; a production-browser regression restores an assistant message without a duration. Final reviewed-head validation and live query acceptance are still pending.

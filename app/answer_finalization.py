@@ -228,17 +228,19 @@ def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[in
     # explicit. Ordinary arithmetic and free-form dashed text remain ambiguous.
     pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+:?\*\*:?[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
     for token in _MARKDOWN.parse(text):
-        if token.type != "inline" or not token.map or any(child.type in {"code_inline", "html_inline"} for child in token.children or []):
+        if (token.type != "inline" or not token.map or token.map[1] - token.map[0] != 1
+                or any(child.type in {"code_inline", "html_inline"} for child in token.children or [])):
             continue
         for line in range(*token.map):
             first, last = starts[line], starts[line+1] if line+1 < len(starts) else len(text)
             match = re.match(pattern, text[first:last])
             if match:
                 tail = text[first+match.end(1):last].rstrip("\r\n")
-                scalar = r"(?P<bold>\*\*)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[ \t]+" + VALUE_UNITS + r")?(?(bold)\*\*)[ \t]*\.?[ \t]*"
+                visible = presentation_text(tail, list_markers=[], field_leaders=[])
+                scalar = r"(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[ \t]+" + VALUE_UNITS + r")?[ \t]*\.?[ \t]*"
                 # A display field ends in one scalar. Arithmetic, equations and
                 # following prose cannot authorize erasing a numeric sign.
-                if re.fullmatch(scalar, tail):
+                if re.fullmatch(scalar, visible):
                     ranges.append([first+match.start(1), first+match.end(1)])
     return ranges
 

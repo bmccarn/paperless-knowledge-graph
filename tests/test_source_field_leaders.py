@@ -15,6 +15,19 @@ class SourceFieldLeaderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ref['quote'],source)
             self.assertEqual(source[ref['start']:ref['end']],source)
 
+    async def test_independent_balanced_value_and_unit_wrappers(self):
+        for field in ('**5** mg', '**5** **mg**', '**5 mg**'):
+            source='**RECORDED DOSE** - - - '+field
+            for quote in (source,field):
+                class Auditor:
+                    async def audit_answer_units(self,question,units,spans,plan):
+                        span=spans[0]
+                        ref={**{k:span[k] for k in ('span_id','evidence_id','document_id')},'quote':quote}
+                        return {'assessments':[{'unit_id':u['id'],'status':'supported','references':[ref]} for u in units]}
+                result=await AnswerFinalizer(Auditor()).finalize('What is recorded?','The recorded dose is 5 mg.',pack(source))
+                self.assertTrue(result['finalization']['answer_verified'])
+                self.assertIn(result['claim_ledger']['claims'][0]['references'][0]['quote'],source)
+
     async def test_field_label_colons_preserve_source_and_sign(self):
         for label in ("**ANNUAL CHARGE:**", "**ANNUAL CHARGE**:"):
             for negative in (False,True):
@@ -41,8 +54,10 @@ class SourceFieldLeaderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_equations_cannot_authorize_field_leaders_in_full_or_trimmed_quotes(self):
         for source, claim in [('**CALCULATED VALUE** - - - 500 = -500','The calculated value is 500.'),
-                              ('**ANNUAL CHARGE** - - - $500 = -$500','The annual charge is $500.')]:
-            for quote in (source, source.split(' = ')[0]):
+                              ('**ANNUAL CHARGE** - - - $500 = -$500','The annual charge is $500.'),
+                              ('**CALCULATED VALUE** - - - 500\n= -500','The calculated value is 500.'),
+                              ('**ANNUAL CHARGE** - - - $500\n= -$500','The annual charge is $500.')]:
+            for quote in (source, source.split('=')[0].rstrip()):
                 class Auditor:
                     async def audit_answer_units(self,question,units,spans,plan):
                         span=spans[0]

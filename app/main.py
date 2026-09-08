@@ -227,7 +227,8 @@ def _freshness_repair_targets(snapshot: dict) -> tuple[list[int], list[int]]:
     reindex_ids |= _doc_ref_ids(drift.get("missing_from_graph", []))
     reindex_ids |= _doc_ref_ids(drift.get("missing_embeddings", []))
     reindex_ids |= _doc_ref_ids(drift.get("missing_hashes", []))
-    reindex_ids |= _doc_ref_ids(drift.get("modified_after_last_sync", []))
+    # Per-document fingerprints include the indexed source and metadata. A
+    # completed targeted repair can be newer than the full-sync watermark.
     reindex_ids |= _doc_ref_ids(drift.get("changed_since_index", []))
 
     delete_ids = set()
@@ -298,7 +299,6 @@ async def _freshness_snapshot(force: bool = False) -> dict:
         or extra_embeddings
         or missing_hashes
         or extra_hashes
-        or modified_after_last_sync
         or changed_since_index
     )
     if latest_modified and not latest_dt:

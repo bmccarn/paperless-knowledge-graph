@@ -101,6 +101,21 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(terminal["answer"], ordinary.json()["answer"])
         self.assertEqual(assistants[0]["metadata"], assistants[1]["metadata"])
 
+    async def test_partial_metadata_roundtrips_ordinary_and_stream(self):
+        from app.answer_finalization import AnswerFinalizer
+        from tests.test_partial_answers import MixedAuditor, SOURCE
+        from tests.test_source_dates import pack
+        result = await AnswerFinalizer(MixedAuditor()).finalize("Recorded charges?",
+            "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.", pack(SOURCE))
+        payload = {**final_payload(), **result}
+        with patch(__name__ + ".final_payload", return_value=payload):
+            await self.test_ordinary_and_sse_persist_identical_complete_metadata()
+        for row in self.saved.messages:
+            if row["role"] == "assistant":
+                self.assertEqual(row["metadata"]["verification"]["partial"]["omitted_count"], 1)
+                self.assertFalse(row["metadata"]["finalization"]["complete"])
+                self.assertNotIn("999", row["content"])
+
     async def test_stream_error_does_not_persist_draft_as_assistant(self):
         self.engine.behavior = "error"
         response = await self.client.post("/query/stream", json={"question": "Synthetic question", "conversation_id": "error"})

@@ -327,6 +327,14 @@ class Handler(BaseHTTPRequestHandler):
             result['mode'] = body.get('mode', 'strict')
             if result['mode'] == 'timeline':
                 result['timeline_events'] = [{'date': '2026-01-31', 'title': 'January premium statement', 'document_id': 101}]
+            if 'partial' in question.lower():
+                result['answer'] += '\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question.'
+                result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1},
+                                               missing_evidence=['Some claims were omitted because they could not be verified.'])
+                result['finalization'].update(disposition='partial', complete=False, answer_verified=True)
+                result['confidence'] = 0.65
+                result['source_summary'].update(trust_score=0.65, trust_level='medium', verification_status='partial', audit_status='partial')
+                result['evidence'].update(score=0.65, level='medium', audit_status='partial', coverage={'answer_complete': False})
             if 'markup' in question.lower():
                 result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
             with LOCK:

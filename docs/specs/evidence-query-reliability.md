@@ -1,6 +1,6 @@
 # Reliable evidence-backed queries over historical and current records
 
-Status: generalized plan awaiting independent review. Owner: Codex, sole live-data and deployment operator. Baseline: `9d84bd3c0db95fbfa6412ecde609ff25e4de795e` (application tree deployed as `cbdc610`). Requested September 8, 2026: write and review the plan, then implement it and verify the exact reported question through the UI.
+Status: generalized plan reviewed at `5d70734`; implementation in progress. Owner: Codex, sole live-data and deployment operator. Baseline: `9d84bd3c0db95fbfa6412ecde609ff25e4de795e` (application tree deployed as `cbdc610`). Requested September 8, 2026: write and review the plan, then implement it and verify the exact reported question through the UI.
 
 ## Problem and intended outcome
 

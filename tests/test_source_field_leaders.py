@@ -28,6 +28,20 @@ class SourceFieldLeaderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result['finalization']['answer_verified'])
                 self.assertIn(result['claim_ledger']['claims'][0]['references'][0]['quote'],source)
 
+    async def test_adjacent_fields_keep_independent_scalar_authority(self):
+        source='**ANNUAL CHARGE** - - - **$500**\n**RECORDED DOSE** - - - **5 mg**'
+        for claim, field in [('The annual charge is $500.','**$500**'),
+                             ('The recorded dose is 5 mg.','**5 mg**')]:
+            for quote in (source,field):
+                class Auditor:
+                    async def audit_answer_units(self,question,units,spans,plan):
+                        span=spans[0]
+                        ref={**{k:span[k] for k in ('span_id','evidence_id','document_id')},'quote':quote}
+                        return {'assessments':[{'unit_id':u['id'],'status':'supported','references':[ref]} for u in units]}
+                result=await AnswerFinalizer(Auditor()).finalize('What is recorded?',claim,pack(source))
+                self.assertTrue(result['finalization']['answer_verified'])
+                self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['quote'],quote)
+
     async def test_field_label_colons_preserve_source_and_sign(self):
         for label in ("**ANNUAL CHARGE:**", "**ANNUAL CHARGE**:"):
             for negative in (False,True):

@@ -160,16 +160,17 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
     # Normalize an inspection copy only: persisted offsets refer to raw prose.
     prefix, suffix = unicodedata.normalize('NFC', prefix), unicodedata.normalize('NFC', suffix)
     initial = re.search(r"\b([^\W\d_])\.$", prefix)
-    following = re.match(r"[ \t]*(?:\r?\n[ \t]*)?([^\W\d_][\w’'-]*)(\.)?", suffix)
+    following = re.match(r"[ \t]*(?:(?:\r\n?|\n)[ \t]*)?([^\W\d_][\w’'-]*)(\.)?", suffix)
     if not initial or not initial[1].isupper() or not following:
         return False
     word = following[1]
     if word in _SENTENCE_OPENERS:
         return False
     prior = re.search(r"\b([^\W\d_][\w’'-]*)(?:\.)?\s+$", prefix[:initial.start()])
-    # A preceding proper name or a following initial supplies name context.
-    name_context = (prior and prior[1][0].isupper()) or (len(word) == 1 and word.isupper() and following[2])
-    return bool(name_context and (word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'}))
+    # A surname can follow a leading initial too. An ambiguous initial stays
+    # with name-shaped context; an explicit sentence opener ends the unit.
+    return bool(word[0].isupper() or (prior and prior[1][0].isupper()
+                                    and word in {'de', 'del', 'da', 'di', 'van', 'von'}))
 
 
 def answer_units(answer: str) -> list[dict]:
@@ -200,7 +201,7 @@ def answer_units(answer: str) -> list[dict]:
         start = first
         for boundary in re.finditer(r"[.!?](?=\s|$)", line):
             end = line_match.start() + boundary.end()
-            prefix = answer[start:end]
+            prefix = answer[pending_heading if pending_heading is not None else start:end]
             if boundary.group() == "." and (
                 re.fullmatch(r"\s*\d+\.", prefix)
                 or _abbreviation_continues(prefix, answer[end:])
@@ -213,7 +214,10 @@ def answer_units(answer: str) -> list[dict]:
             while start < last and answer[start].isspace():
                 start += 1
         if start < last:
-            if _name_initial_continues(answer[start:last], answer[last:]):
+            prefix = answer[pending_heading if pending_heading is not None else start:last]
+            continuation = re.match(r"[ \t]*(?:\r\n?|\n)[ \t]*(?![#>]|[-+*]\s|\d+[.)]\s)\S", answer[last:])
+            if continuation and (_name_initial_continues(prefix, answer[last:])
+                                 or _abbreviation_continues(prefix, answer[last:])):
                 pending_heading = start if pending_heading is None else pending_heading
                 pending_end = last
                 continue
@@ -337,7 +341,7 @@ def evidence_spans(pack: dict) -> list[dict]:
         else:
             # A failed full-source binding never falls back to chunk-local
             # authority. Unknown continuation context also stays conservative.
-            known_start = item.get('chunk_index', 0) == 0 and not item.get('source_context') and '_source_document_content' not in item
+            known_start = item.get('chunk_index', 0) == 0 and item.get('source_context') is None and '_source_document_content' not in item
             list_markers = _list_marker_ranges(content, known_start=known_start)
             field_leaders = _field_leader_ranges(content, known_start=known_start)
         presentation_ranges = sorted(list_markers + field_leaders)

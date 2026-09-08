@@ -46,7 +46,7 @@ def certified_document_context(item: dict, content: str) -> tuple[str, int] | No
     if not isinstance(text, str) or not isinstance(context, dict) or not content:
         return None
     start, end = context.get('start'), context.get('end')
-    if (context.get('document_id') != item.get('document_id')
+    if (type(context.get('document_id')) is not int or context.get('document_id') != item.get('document_id')
             or type(start) is not int or type(end) is not int
             or not 0 <= start < end <= len(text) or text[start:end] != content
             or text.find(content) != start or text.find(content, start + 1) >= 0

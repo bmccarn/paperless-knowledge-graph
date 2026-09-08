@@ -7,7 +7,8 @@ from tests.test_source_dates import pack
 class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
     def test_initials_stay_with_names_and_offsets_remain_exact(self):
         for name in ('Alice Q. Example', 'Dr. Maria T. Chen', 'Jordan R. Sample',
-                     'Émile Q. de Vries', 'Zoë É. Durand', 'Zoe E\u0301. Durand', 'Alice Q.\nExample'):
+                     'Émile Q. de Vries', 'Zoë É. Durand', 'Zoe E\u0301. Durand', 'Alice Q.\nExample',
+                     'Alice Q.\nR. Example', 'Alice Q.\rExample', 'J. Smith', 'É. Durand'):
             first = f'The receipt names {name}.'
             second = 'The recorded charge is $20.50.'
             answer = first + ' ' + second
@@ -19,7 +20,9 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_unsupported_named_sentence_cannot_publish_its_initial_fragments(self):
         for prefix in ('The receipt names Alice Q. Example and Jordan R. Sample',
                        'The receipt names Zoe E\u0301. Durand', 'The record says approx.',
-                       'The form lists examples, e.g.'):
+                       'The form lists examples, e.g.', 'The receipt names J. Smith',
+                       'The receipt names Alice Q.\nR. Example', 'The receipt names Alice Q.\rExample',
+                       'The record says approx.\n', 'The form lists examples, e.g.\na prior invoice'):
             await self.check_subset(prefix + ' and costs $999.', 'The statement records $321.', prefix)
 
     async def test_letter_values_and_terminal_abbreviations_keep_independent_sentences(self):

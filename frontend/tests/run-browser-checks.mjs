@@ -64,7 +64,7 @@ try {
   const ui = start(process.execPath, [".next/standalone/server.js"],
     { BACKEND_URL: backend, NEXT_TELEMETRY_DISABLED: "1", HOSTNAME: "127.0.0.1", PORT: String(uiPort) });
   await ready(`${base}/api/_fixture`, ui);
-  for (const suite of ["completion-ui", "accuracy-ui", "graph-support-ui", "hubs-ui"]) {
+  for (const suite of ["completion-ui", "accuracy-ui", "graph-support-ui", "graph-zoom-ui", "hubs-ui"]) {
     const args = suite === "completion-ui" ? ["--test", "tests/completion-ui.mjs"] : [`tests/${suite}.mjs`];
     const check = start(process.execPath, args, {
       UI_TEST_BASE_URL: base, UI_TEST_ARTIFACTS: path.join(artifacts, suite),

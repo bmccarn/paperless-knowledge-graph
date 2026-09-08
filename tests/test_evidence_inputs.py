@@ -78,7 +78,10 @@ class EvidenceInputTests(unittest.TestCase):
         self.assertLessEqual(len(payload), 28000)
         spans = evidence_spans(pack)
         audit = select_spans(question, [{"text": "Recorded invoice."}], spans, serialized=True)
-        self.assertTrue(priority.issubset({s["document_id"] for s in audit}))
+        # Audits reserve explicitly requested documents; archive breadth belongs
+        # to synthesis unless an audited assertion actually needs those sources.
+        self.assertTrue({901, 902, 903}.issubset({s["document_id"] for s in audit}))
+        self.assertEqual(span_coverage(question, spans, audit, reserve_history=False)["reserved_document_ids"], [])
         self.assertLessEqual(len(json.dumps(audit, ensure_ascii=False)), 28000)
         self.assertFalse(pack["coverage"]["synthesis"]["limited"])
         limited = select_spans(question, [], spans, budget=4000, serialized=True)

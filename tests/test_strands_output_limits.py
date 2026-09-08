@@ -29,6 +29,14 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
         self.force_length = False
+        self.editor_text = QUOTE
+        self.editor_delay = 0
+        self.editor_error = False
+        self.editor_truncated = False
+        self.editor_started = asyncio.Event()
+        self.audit_count = 0
+        self.reject_first_audit = False
+        self.quote = QUOTE
         self.active = self.peak = 0
         self.clients = []
         self.delay = .01
@@ -53,16 +61,23 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 payload = json.loads(message)
             except (ValueError, TypeError):
                 payload = {}
+            is_editor = message.startswith("Repair this answer")
+            if is_editor:
+                self.editor_started.set()
+                await asyncio.sleep(self.editor_delay)
+                if self.editor_error:
+                    raise httpx.ConnectError("synthetic provider unavailable")
             result = {"ok": True}
             if "units" in payload:
+                self.audit_count += 1
                 span = payload["source_spans"][0]
-                result = {"assessments": [{"unit_id": unit["id"], "status": "supported",
+                result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_first_audit and self.audit_count == 1 else "supported",
                     "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
-                        "document_id": span["document_id"], "quote": QUOTE}]} for unit in payload["units"]]}
+                        "document_id": span["document_id"], "quote": self.quote}]} for unit in payload["units"]]}
             # Simulate a provider completion that exceeds the former 6,000-token
             # allowance. Genuine provider truncation must remain a failed audit.
-            truncated = self.force_length or bool(LIMIT_FIELDS.intersection(body))
-            content = '{"assessments":[' if truncated else json.dumps(result)
+            truncated = self.force_length or (is_editor and self.editor_truncated) or bool(LIMIT_FIELDS.intersection(body))
+            content = self.editor_text if is_editor else '{"assessments":[' if truncated else json.dumps(result)
             chunk = {"id": "synthetic-stream", "object": "chat.completion.chunk", "created": 0,
                 "model": body["model"], "choices": [{"index": 0,
                     "delta": {"role": "assistant", "content": content}, "finish_reason": None}]}
@@ -164,7 +179,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_helper_requests_omit_output_caps(self):
         calls = [(lambda: self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True}),
             (lambda: self.orchestrator.extract_timeline("Synthetic question?", "Synthetic evidence"), []),
-            (lambda: self.orchestrator.repair_answer("Synthetic question?", "Synthetic answer", "Synthetic evidence", {}), {"ok": True}),
+            (lambda: self.orchestrator.repair_answer("Synthetic question?", "Synthetic answer", "Synthetic evidence", {}), {"answer": QUOTE}),
             (lambda: self.orchestrator.review_entity_candidate({}, {}), {"ok": True})]
         for call, expected in calls:
             with self.subTest(helper=len(self.requests)):
@@ -201,3 +216,58 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(client.is_closed for client in self.clients))
         self.delay = 0
         self.assertEqual(await self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True})
+
+    async def test_editor_prose_is_fully_reaudited_through_real_adapter(self):
+        self.reject_first_audit = True
+        self.editor_text = self.quote = 'The label reads "Orchid" and the path is `A\\B`.'
+        source = {'items': [{**PACK['items'][0], 'content': self.quote, 'source_content': self.quote}]}
+        result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', source)
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertEqual(result['finalization']['attempts'], 2)
+        self.assertIn(self.editor_text, result['answer'])
+        self.assertEqual(len(self.requests), 3)  # audit, exactly one editor, replacement audit
+        self.assertEqual(self.audit_count, 2)
+        self.assertTrue(all(LIMIT_FIELDS.isdisjoint(r) for r in self.requests))
+
+    async def test_editor_empty_exception_timeout_and_truncation_are_unavailable(self):
+        for failure in ('empty', 'exception', 'timeout', 'truncation'):
+            with self.subTest(failure=failure):
+                self.editor_text = '' if failure == 'empty' else QUOTE
+                self.editor_error = failure == 'exception'
+                self.editor_delay = 2 if failure == 'timeout' else 0
+                self.editor_truncated = failure == 'truncation'
+                self.reject_first_audit = True
+                self.audit_count = 0
+                count = len(self.requests)
+                with patch.object(module.settings, 'strands_call_timeout_seconds', 1):
+                    result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK)
+                self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+                self.assertFalse(result['finalization']['answer_verified'])
+                self.assertEqual(self.audit_count, 1)
+                self.assertEqual(len(self.requests) - count, 2)
+                self.assertNotIn(QUOTE, result['answer'])
+
+    async def test_cancelled_editor_drains_transport_without_reaudit_or_cache(self):
+        self.reject_first_audit = True
+        self.editor_delay = 10
+        engine = RetrievedEngine()
+        invalidate_on_sync()
+        with patch('app.query.strands_orchestrator', self.orchestrator), \
+                patch.object(engine, '_build_evidence_pack', AsyncMock(return_value=PACK)), \
+                patch.object(engine, '_final_synthesis', AsyncMock(return_value={'answer': 'An unsupported draft.'})), \
+                patch('app.query.embeddings_store.get_incomplete_document_ids', AsyncMock(return_value=set())), \
+                patch('app.query.embeddings_store.get_open_feedback_document_ids', AsyncMock(return_value=set())), \
+                patch('app.query.cache_set', AsyncMock()) as cache:
+            task = asyncio.create_task(engine.query('Cancelled edited answer?', mode='strict'))
+            try:
+                await asyncio.wait_for(self.editor_started.wait(), 2)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            cache.assert_not_awaited()
+        self.assertEqual(self.audit_count, 1)
+        self.assertEqual(len(self.requests), 2)
+        self.assertTrue(all(client.is_closed for client in self.clients))

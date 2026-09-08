@@ -1,0 +1,47 @@
+"""Value rendering is symmetric without changing certified source references."""
+import unittest
+from app.answer_finalization import AnswerFinalizer, evidence_spans, validate_reference, values_match
+from tests.test_source_dates import ExactAuditor, pack
+
+
+class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_balanced_source_amounts_and_units_keep_raw_quotes(self):
+        cases = [('The charge is $500.', 'The charge is $**500.00**.'),
+                 ('The dose is 5 mg.', 'The dose is **5** **mg**.'),
+                 ('The charge is -500 USD.', 'The charge is **`-500.00`** USD.')]
+        for claim, source in cases:
+            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', claim, pack(source))
+            self.assertTrue(result['finalization']['answer_verified'], (claim, source))
+            reference = result['claim_ledger']['claims'][0]['references'][0]
+            self.assertEqual(reference['quote'], source)
+            self.assertEqual(source[reference['start']:reference['end']], source)
+
+    def test_rendering_never_changes_quantity_or_joins_reference_strings(self):
+        for claim, source in [('The charge is $500.', 'The charge is $**5000.00**.'),
+                              ('The charge is $500.', 'The charge is $**-500.00**.'),
+                              ('The charge is 500 USD.', 'The charge is **500.00** EUR.'),
+                              ('The dose is 5 mg.', 'The dose is **5** **g**.'),
+                              ('The charge is $500.', 'The charge is $**500.00.'),
+                              ('The charge is $500.', 'The charge is $**50** and **0**.')]:
+            self.assertFalse(values_match(claim, [{'quote': source}]), (claim, source))
+        self.assertFalse(values_match('The charge is $500.', [{'quote': '$**'}, {'quote': '500.00**'}]))
+
+    def test_wrapped_reference_cannot_chop_numeric_tokens_or_signs(self):
+        cases = [('$**500**0', '$**500**'), ('1**500** USD', '**500** USD'),
+                 ('-$**500** USD', '$**500** USD'), ('-$**500** USD', '**500** USD'),
+                 ('$**500**.01', '$**500**'), ('$**500**e2', '$**500**'),
+                 ('ID**500**A', '**500**'), ('**1.500** USD', '**500** USD')]
+        for source, quote in cases:
+            spans = evidence_spans(pack(source))
+            ref = {key: spans[0][key] for key in ('span_id', 'evidence_id', 'document_id')}
+            self.assertIsNone(validate_reference({**ref, 'quote': quote}, spans), (source, quote))
+        # The two raw context characters hide the preceding digit outside the window.
+        spans = evidence_spans(pack('1' + '*' * 3799 + '500 USD'))
+        span = spans[1]
+        ref = {key: span[key] for key in ('span_id', 'evidence_id', 'document_id')}
+        self.assertIsNone(validate_reference({**ref, 'quote': '500 USD'}, [span]))
+
+    def test_signed_currency_keeps_the_sign_on_both_comparison_copies(self):
+        self.assertTrue(values_match('Charge -$500.', [{'quote': 'Charge -$**500.00**.'}]))
+        self.assertFalse(values_match('Charge $500.', [{'quote': 'Charge -$**500.00**.'}]))
+        self.assertFalse(values_match('Charge -$500.', [{'quote': 'Charge $**500.00**.'}]))

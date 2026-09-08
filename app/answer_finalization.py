@@ -276,21 +276,31 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower())) - QUERY_STOPWORDS
         if not by_document:
             continue
-        doc_id = min(by_document, key=lambda doc_id: (
-            -math.fsum(weights[token] for token in unit_tokens & document_tokens[doc_id]),
-            by_document[doc_id][0][0]))
-        covered = set().union(*(span_tokens[index] for index, span in first_per_document + history
-                                if span["document_id"] == doc_id))
-        outstanding = unit_tokens - covered
-        for _ in range(2):
-            if not outstanding:
+        outstanding = unit_tokens.copy()
+        candidates = set(by_document)
+        while candidates:
+            # Start with the most discriminating uncovered assertion term. A
+            # comparison may need several documents; repeated generic wording
+            # must not beat their rare identifying fields in aggregate.
+            def document_rank(doc_id):
+                scores = [weights[token] for token in outstanding & document_tokens[doc_id]]
+                return (-max(scores, default=0), -math.fsum(scores), by_document[doc_id][0][0])
+            doc_id = min(candidates, key=document_rank)
+            candidates.remove(doc_id)
+            if not outstanding & document_tokens[doc_id]:
                 break
-            pair = min(by_document[doc_id], key=lambda pair: rank(pair, outstanding))
-            matched = outstanding & span_tokens[pair[0]]
-            if not matched:
-                break
-            per_unit.append(pair)
-            outstanding -= matched
+            covered = set().union(*(span_tokens[index] for index, span in first_per_document + history + per_unit
+                                    if span["document_id"] == doc_id))
+            needed = (unit_tokens & document_tokens[doc_id]) - covered
+            while needed:
+                pair = min(by_document[doc_id], key=lambda pair: rank(pair, needed))
+                matched = needed & span_tokens[pair[0]]
+                if not matched:
+                    break
+                per_unit.append(pair)
+                covered |= span_tokens[pair[0]]
+                needed -= matched
+            outstanding -= covered
     ranked = first_per_document + history + per_unit + remaining
     result, used, selected = [], 0, set()
     for index, span in ranked:

@@ -18,11 +18,11 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from markdown_it import MarkdownIt
-from app.source_text import certifying_text
+from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v14"
+POLICY_VERSION = "source-audit-v15"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -142,9 +142,52 @@ def parse_date(value: Any) -> tuple[str, str] | None:
     return None
 
 
+_SENTENCE_OPENERS = {'The', 'A', 'An', 'This', 'That', 'These', 'Those', 'It', 'Its', 'They', 'Their',
+                     'We', 'Our', 'You', 'Your', 'He', 'She', 'Another', 'However', 'Also'}
+
+
+def _abbreviation_continues(prefix: str, suffix: str) -> bool:
+    abbreviation = re.search(r"\b(No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd|approx|etc|vs|Fig|Eq|Vol|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$", prefix, re.I)
+    if not abbreviation:
+        return bool(re.search(r"(?:\b[A-Za-z]\.){2,}$", prefix))
+    if abbreviation[1].lower() in {'no', 'mr', 'mrs', 'ms', 'dr', 'prof', 'fig', 'eq', 'vol'}:
+        return True
+    following = re.match(r"\s+(\w+)", suffix)
+    return not following or following[1] not in _SENTENCE_OPENERS
+
+
+def _name_initial_continues(prefix: str, suffix: str) -> bool:
+    # Normalize an inspection copy only: persisted offsets refer to raw prose.
+    prefix, suffix = unicodedata.normalize('NFC', prefix), unicodedata.normalize('NFC', suffix)
+    initial = re.search(r"\b([^\W\d_])\.$", prefix)
+    following = re.match(r"[ \t]*(?:(?:\r\n?|\n)[ \t]*)?([^\W\d_][\w’'-]*)(\.)?", suffix)
+    if not initial or not initial[1].isupper() or not following:
+        return False
+    word = following[1]
+    if word in _SENTENCE_OPENERS:
+        return False
+    if not (word[0].isupper() or word in {'de', 'del', 'da', 'di', 'van', 'von'}):
+        return False
+    before = re.sub(r"^\s*(?:\d+[.)]|[-+*])\s+", "", prefix[:initial.start()])
+    prior = re.search(r"([^\W\d_][\w’'-]*)(\.)?\s+$", before)
+    if prior and prior[1].lower() == 'and':
+        prior = re.search(r"([^\W\d_][\w’'-]*)(\.)?\s+$", before[:prior.start()])
+    # Capitalization on the right alone also describes a new sentence after
+    # a letter value. Require name-shaped context on the left: a leading
+    # initial, another name/initial, or a name-introducing relation.
+    if prior is None:
+        return not re.search(r"\w", before)
+    return (prior[1][0].isupper() and (len(prior[1]) > 1 or bool(prior[2]))) or prior[1].lower() in {
+        'names', 'named', 'by', 'to', 'for', 'from', 'with',
+        'is', 'was', 'are', 'were', 'lists', 'listed', 'includes', 'included',
+        'identifies', 'identified', 'called', 'records', 'reports',
+    }
+
+
 def answer_units(answer: str) -> list[dict]:
     units = []
     pending_heading = None
+    pending_content_start = None
     pending_end = 0
 
     def append(start, end):
@@ -170,21 +213,33 @@ def answer_units(answer: str) -> list[dict]:
         start = first
         for boundary in re.finditer(r"[.!?](?=\s|$)", line):
             end = line_match.start() + boundary.end()
-            prefix = answer[start:end]
+            prefix = answer[pending_heading if pending_heading is not None else start:end]
+            name_prefix = answer[pending_content_start if pending_content_start is not None else start:end]
             if boundary.group() == "." and (
-                re.fullmatch(r"\s*\d+\.", prefix)
-                or re.search(r"\b(?:No|Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Inc|Corp|Co|Ltd)\.$", prefix, re.I)
-                or re.search(r"(?:\b[A-Z]\.){2,}$", prefix)
+                re.fullmatch(r"\s*\d+\.", answer[start:end])
+                or _abbreviation_continues(prefix, answer[end:])
+                or _name_initial_continues(name_prefix, answer[end:])
             ):
                 continue
             append(pending_heading if pending_heading is not None else start, end)
             pending_heading = None
+            pending_content_start = None
             start = end
             while start < last and answer[start].isspace():
                 start += 1
         if start < last:
+            prefix = answer[pending_heading if pending_heading is not None else start:last]
+            name_prefix = answer[pending_content_start if pending_content_start is not None else start:last]
+            continuation = re.match(r"[ \t]*(?:\r\n?|\n)[ \t]*(?![#>]|[-+*]\s|\d+[.)]\s)\S", answer[last:])
+            if continuation and (_name_initial_continues(name_prefix, answer[last:])
+                                 or _abbreviation_continues(prefix, answer[last:])):
+                pending_heading = start if pending_heading is None else pending_heading
+                pending_content_start = start if pending_content_start is None else pending_content_start
+                pending_end = last
+                continue
             append(pending_heading if pending_heading is not None else start, last)
             pending_heading = None
+            pending_content_start = None
     if pending_heading is not None:
         append(pending_heading, pending_end)  # A trailing factual heading is audited.
     return units
@@ -195,7 +250,7 @@ _MARKDOWN = MarkdownIt("commonmark")
 _CODE_SPANS = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
 
 
-def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+def _list_marker_ranges(text: str, *, known_start: bool = True, parsed=None) -> list[list[int]]:
     """Identify structural markers on the complete source, never a quote slice."""
     if not known_start:
         return []  # A continuation chunk cannot establish its enclosing block.
@@ -203,7 +258,7 @@ def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int
     starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", text))]
     protected = [match.span() for match in _CODE_SPANS.finditer(text)]
     ranges = set()
-    for token in _MARKDOWN.parse(text):
+    for token in _MARKDOWN.parse(text) if parsed is None else parsed:
         if token.type != "list_item_open" or token.markup not in {"-", "+", "*"} or not token.map:
             continue
         line = token.map[0]
@@ -218,7 +273,7 @@ def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int
     return [list(pair) for pair in sorted(ranges)]
 
 
-def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+def _field_leader_ranges(text: str, *, known_start: bool = True, parsed=None) -> list[list[int]]:
     """Recognize explicit display-field leaders only in ordinary source prose."""
     if not known_start:
         return []
@@ -227,7 +282,7 @@ def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[in
     # A bold uppercase multiword field label makes the presentation role
     # explicit. Ordinary arithmetic and free-form dashed text remain ambiguous.
     pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+:?\*\*:?[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
-    for token in _MARKDOWN.parse(text):
+    for token in _MARKDOWN.parse(text) if parsed is None else parsed:
         if (token.type != "inline" or not token.map
                 or any(child.type in {"code_inline", "html_inline"} for child in token.children or [])):
             continue
@@ -268,6 +323,7 @@ def _value_context(text: str, markers: list = ()) -> str:
 def evidence_spans(pack: dict) -> list[dict]:
     spans = []
     seen = {}
+    source_structures = {}
     # A history pack has more priority documents to compare. Use smaller whole
     # windows throughout so requested and historical sources can coexist.
     window = 1800 if any((item.get("history_reserved") or item.get("recent_reserved")) for item in pack.get("items", []) if isinstance(item, dict)) else 4000
@@ -281,18 +337,38 @@ def evidence_spans(pack: dict) -> list[dict]:
             continue
         if not isinstance(content, str):
             raise ValueError("Evidence source content must be text")
-        identity = (item["document_id"], item.get("chunk_index"), item.get("title"), content, bool(item.get("feedback_open")))
+        identity = (item["document_id"], item.get("chunk_index"), item.get("title"), content, bool(item.get("feedback_open")),
+                    item.get('source_context'), item.get('_source_document_content'))
         if item["id"] in seen:
             if seen[item["id"]] != identity:
                 raise ValueError("Evidence identity refers to conflicting source records")
             continue
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
-        list_markers = _list_marker_ranges(content, known_start=item.get("chunk_index", 0) == 0)
-        field_leaders = _field_leader_ranges(content, known_start=item.get("chunk_index", 0) == 0)
+        context = certified_document_context(item, content)
+        if context:
+            document_text, offset = context
+            key = (item['document_id'], item['source_context']['digest'])
+            if key not in source_structures:
+                parsed = _MARKDOWN.parse(document_text)
+                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed), _field_leader_ranges(document_text, parsed=parsed))
+            lists, fields = source_structures[key]
+            list_markers = _slice_markers(lists, offset, offset + len(content))
+            field_leaders = _slice_markers(fields, offset, offset + len(content))
+        else:
+            # A failed full-source binding never falls back to chunk-local
+            # authority. Unknown continuation context also stays conservative.
+            known_start = item.get('chunk_index', 0) == 0 and item.get('source_context') is None and '_source_document_content' not in item
+            list_markers = _list_marker_ranges(content, known_start=known_start)
+            field_leaders = _field_leader_ranges(content, known_start=known_start)
         presentation_ranges = sorted(list_markers + field_leaders)
+        guard_content, guard_offset, guard_ranges = content, 0, presentation_ranges
+        if context:
+            guard_content, guard_offset = context
+            guard_ranges = sorted(lists + fields)
         for start in range(0, len(content), window - 200):
             text = content[start:start + window]
+            guard_start, guard_end = guard_offset + start, guard_offset + start + len(text)
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
@@ -300,15 +376,16 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "chunk_index": item.get("chunk_index", 0),
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
-                          "boundary_before": content[max(0, start - 2):start],
-                          "date_context_before": date_context(content[:start]),
-                          "boundary_after": content[start + len(text):start + len(text) + 2],
+                          **({'source_context': item['source_context']} if context else {}),
+                          "boundary_before": guard_content[max(0, guard_start - 2):guard_start],
+                          "date_context_before": date_context(guard_content[:guard_start]),
+                          "boundary_after": guard_content[guard_end:guard_end + 2],
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
                           "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
-                          "value_boundary_before": _value_context(content[:start], _slice_markers(presentation_ranges, 0, start))[-16:],
-                          "value_boundary_after": _value_context(content[start + len(text):], _slice_markers(presentation_ranges, start + len(text), len(content)))[:2],
+                          "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
+                          "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
 
@@ -616,6 +693,7 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
             "source_field_leaders": source_field_leaders,
+            **({'source_context': span['source_context']} if span.get('source_context') else {}),
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
@@ -980,6 +1058,15 @@ class AnswerFinalizer:
                 async with asyncio.timeout(self._audit_timeout(subset)):
                     subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
                 subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
+                ledger['subset_audit'] = {
+                    'candidate_digest': subset_ledger['candidate_digest'],
+                    'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
+                    'rejection_reasons': subset_ledger.get('rejection_reasons', []),
+                    'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
+                    'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
+                    'selection_coverage': subset_ledger['selection_coverage'],
+                    'temporal_disposition': subset_status,
+                }
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
                         and subset_status in {"supported", "qualified"}):
                     omitted = [c for c in ledger["claims"] if c["status"] != "supported"]
@@ -989,6 +1076,8 @@ class AnswerFinalizer:
                                "omitted_units": [{"id": c["id"], "status": c["status"],
                                                   "rejection_reasons": c["rejection_reasons"]} for c in omitted]}
                     candidate, ledger, disposition = subset, subset_ledger, "partial"
+                elif not subset_ledger['complete']:
+                    disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
             except TimeoutError:
                 disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
             except Exception:
@@ -1024,7 +1113,9 @@ class AnswerFinalizer:
             verification["missing_evidence"] = ["Some claims were omitted because they could not be verified."]
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
-        ledger["spans"] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in ledger["spans"]]
+        for audit in (ledger, ledger.get('subset_audit', {})):
+            if 'spans' in audit:
+                audit['spans'] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in audit['spans']]
         return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,

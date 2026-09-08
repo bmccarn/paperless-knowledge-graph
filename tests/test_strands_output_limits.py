@@ -35,6 +35,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.editor_truncated = False
         self.editor_started = asyncio.Event()
         self.audit_count = 0
+        self.audit_override = None
         self.reject_first_audit = False
         self.reject_all_audits = False
         self.quote = QUOTE
@@ -78,7 +79,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             # Simulate a provider completion that exceeds the former 6,000-token
             # allowance. Genuine provider truncation must remain a failed audit.
             truncated = self.force_length or (is_editor and self.editor_truncated) or bool(LIMIT_FIELDS.intersection(body))
-            content = self.editor_text if is_editor else '{"assessments":[' if truncated else json.dumps(result)
+            content = self.editor_text if is_editor else self.audit_override if self.audit_override is not None and "units" in payload and self.audit_count == 1 else '{"assessments":[' if truncated else json.dumps(result)
             chunk = {"id": "synthetic-stream", "object": "chat.completion.chunk", "created": 0,
                 "model": body["model"], "choices": [{"index": 0,
                     "delta": {"role": "assistant", "content": content}, "finish_reason": None}]}
@@ -117,6 +118,15 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 patch("app.query.embeddings_store.get_incomplete_document_ids", AsyncMock(return_value=set())), \
                 patch("app.query.embeddings_store.get_open_feedback_document_ids", AsyncMock(return_value=set())):
             yield engine
+
+    async def test_nonempty_falsey_json_uses_existing_protocol_correction_through_real_sdk(self):
+        for raw in ('{}', '[]', 'null', 'false', '0', '""'):
+            self.audit_override, self.audit_count = raw, 0
+            result = await AnswerFinalizer(self.orchestrator).finalize('What is recorded?', QUOTE, PACK)
+            self.assertTrue(result['finalization']['answer_verified'], raw)
+            self.assertEqual(self.audit_count, 2)
+            self.assertEqual(result['claim_ledger']['audit_batches'][0]['status'], 'corrected')
+            self.assertTrue(all(LIMIT_FIELDS.isdisjoint(request) for request in self.requests))
 
     async def test_overlapping_public_queries_audit_all_units_through_real_sdk(self):
         with self.public_queries() as engine:

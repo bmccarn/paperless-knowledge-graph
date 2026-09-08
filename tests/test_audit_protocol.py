@@ -120,7 +120,8 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
                             "document_id": 101, "quote": ANSWER}]}]})
         class CompletedText(str):
             stop_reason = 'end_turn'
-        for raw, expected_calls in [(' {"assessments":', 2), ('private malformed model text', 2), ('', 1), ('{}', 1)]:
+        for raw, expected_calls in [(' {"assessments":', 2), ('private malformed model text', 2), ('', 1),
+                                    ('{}', 2), ('[]', 2), ('null', 2), ('false', 2), ('0', 2), ('""', 2)]:
             with patch.object(module, 'STRANDS_AVAILABLE', True), patch.object(module.settings, 'strands_enabled', True), \
                     patch.object(module, 'Agent') as agent, patch.object(module.StrandsQueryOrchestrator, '_model', return_value=object()):
                 agent.return_value.invoke_async = AsyncMock(side_effect=[CompletedText(raw), CompletedText(valid)])

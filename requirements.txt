@@ -12,3 +12,4 @@ python-dotenv
 numpy
 redis>=5.0.1
 strands-agents[litellm]>=1.11,<2
+markdown-it-py==4.2.0

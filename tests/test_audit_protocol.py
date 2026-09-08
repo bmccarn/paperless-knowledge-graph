@@ -118,10 +118,12 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
         valid = json.dumps({"assessments": [{"unit_id": "u1", "status": "supported", "temporal_scope": "historical",
             "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
                             "document_id": 101, "quote": ANSWER}]}]})
+        class CompletedText(str):
+            stop_reason = 'end_turn'
         for raw, expected_calls in [(' {"assessments":', 2), ('private malformed model text', 2), ('', 1), ('{}', 1)]:
             with patch.object(module, 'STRANDS_AVAILABLE', True), patch.object(module.settings, 'strands_enabled', True), \
                     patch.object(module, 'Agent') as agent, patch.object(module.StrandsQueryOrchestrator, '_model', return_value=object()):
-                agent.return_value.invoke_async = AsyncMock(side_effect=[raw, valid])
+                agent.return_value.invoke_async = AsyncMock(side_effect=[CompletedText(raw), CompletedText(valid)])
                 result = await AnswerFinalizer(module.StrandsQueryOrchestrator()).finalize('What charge?', ANSWER, pack(ANSWER))
                 self.assertEqual(agent.return_value.invoke_async.await_count, expected_calls)
                 self.assertEqual(result['finalization']['answer_verified'], expected_calls == 2)

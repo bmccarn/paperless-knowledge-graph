@@ -116,3 +116,6 @@ Independent review of H2/A3 found three additional gaps: full question wording c
 
 
 A second Spec review reproduced a combined-assertion gap: separate identity/date test units each received a slot, but a single assertion requiring both passages lost its later same-document source amid repeated notices. The regression now requires both exact references for invoice and laboratory claims under eight historical reservations and forty competing notices. Selection scores combined assertion coverage by document (excluding the existing query stopwords), then reserves up to two complementary whole windows, accounting for the already reserved opening. Existing serialized budgets remain unchanged; source matching remains selection only, never support proof.
+
+
+Standards review then extended the same reproducer to one comparison spanning two identified documents; selecting a single winning document lost both needed continuations. Complementary selection now follows the most discriminating uncovered assertion terms across documents and retains the relevant same-document windows. It stops when no additional assertion terms are covered, while the existing whole-window serialized budget remains authoritative. A combined two-document regression requires four exact references under the same competing-source load; it failed before this correction and passes afterward.

@@ -271,3 +271,31 @@ class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(seen, [{'opening-1', 'detail-1'}])
             self.assertTrue(result['finalization']['answer_verified'])
             self.assertEqual(len(result['claim_ledger']['claims'][0]['references']), 2)
+
+    async def test_one_comparison_retains_continuations_from_both_identified_documents(self):
+        from app.answer_finalization import AnswerFinalizer
+        claim = 'Invoice OLDX742 records $321 USD dated January 1, 2020, while invoice NEWY813 records $421 USD dated January 1, 2026.'
+        quotes = {'opening-1': 'Invoice identifier OLDX742.', 'opening-2': 'Invoice identifier NEWY813.',
+                  'detail-1': 'Recorded charge $321 USD. Dated January 1, 2020.',
+                  'detail-2': 'Recorded charge $421 USD. Dated January 1, 2026.'}
+        items = [{'id': f'opening-{i}', 'document_id': i, 'chunk_index': 0, 'source_kind': 'ocr', 'history_reserved': True,
+                  'content': quotes.get(f'opening-{i}', f'Invoice historical identifier RECORD{i}.') + ' Filing context.' * 120}
+                 for i in range(1, 9)]
+        items.extend({'id': f'detail-{i}', 'document_id': i, 'chunk_index': 3, 'source_kind': 'ocr', 'history_reserved': True,
+                      'content': quotes[f'detail-{i}'] + ' Filing context.' * 120} for i in (1, 2))
+        boiler = 'Invoice records $321 USD dated January 1, 2020, while invoice records $421 USD dated January 1, 2026.'
+        items.extend({'id': f'notice-{i}', 'document_id': i+100, 'chunk_index': 0, 'source_kind': 'ocr',
+                      'content': boiler + ' Filing context.' * 120} for i in range(40))
+        seen = []
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                refs = [{'span_id': s['span_id'], 'evidence_id': s['evidence_id'], 'document_id': s['document_id'],
+                         'quote': quotes[s['evidence_id']]} for s in spans
+                        if s['evidence_id'] in quotes and quotes[s['evidence_id']] in s['content']]
+                seen.append({ref['evidence_id'] for ref in refs})
+                return {'assessments': [{'unit_id': unit['id'], 'status': 'supported' if len(refs) == 4 else 'missing',
+                                        'temporal_scope': 'historical', 'references': refs} for unit in units]}
+        result = await AnswerFinalizer(Auditor()).finalize('How did recorded charges change?', claim, {'items': items})
+        self.assertEqual(seen, [set(quotes)])
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertEqual(len(result['claim_ledger']['claims'][0]['references']), 4)

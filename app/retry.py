@@ -12,11 +12,16 @@ logger = logging.getLogger(__name__)
 _TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def _is_transient(exc: Exception) -> bool:
-    """Check if an exception is transient and worth retrying."""
+def is_transient_provider_error(exc: Exception) -> bool:
+    """Classify typed provider failures without inspecting private exception text."""
     if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
         return True
-    if isinstance(exc, APIStatusError) and exc.status_code in _TRANSIENT_STATUS_CODES:
+    return isinstance(exc, APIStatusError) and exc.status_code in _TRANSIENT_STATUS_CODES
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Check if an exception is transient and worth retrying."""
+    if is_transient_provider_error(exc):
         return True
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True

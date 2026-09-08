@@ -177,3 +177,65 @@ class HistoricalCoverageTests(unittest.IsolatedAsyncioTestCase):
         choose_documents(rows, "Invoice history", limit=1, diagnostics=coverage)
         self.assertEqual(coverage["omitted_bucket_count"], 1)
         self.assertEqual(coverage["omitted_buckets"][0]["period"], "2020")
+
+    async def test_opening_identity_and_later_observations_reach_synthesis_and_audit(self):
+        for subject, doc_type, identifier in [('Invoice', 'financial', 'INVX742'), ('Contract', 'legal', 'CTRQ813'),
+                                               ('Laboratory', 'medical', 'LABK926')]:
+            with self.subTest(subject=subject):
+                invalidate_on_sync()
+                rows, chunks = fixtures(subject, doc_type)
+                facts = [f'{subject} record identifier {identifier}A.',
+                         f'{subject} observation dated January 1, 2022: recorded change $321 USD.',
+                         f'{subject} record identifier {identifier}B.',
+                         f'{subject} observation dated September 1, 2026: recorded change $421 USD.']
+                contextual = []
+                for doc_id, pair in [(101, facts[:2]), (269, facts[2:])]:
+                    template = next(c for c in chunks if c['document_id'] == doc_id)
+                    for index, fact in [(0, pair[0]), (3, pair[1])]:
+                        contextual.append({**template, 'chunk_index': index, 'content': fact + ' Filing context.' * 250,
+                                           'source_content': fact + ' Filing context.' * 250})
+                chunks = [c for c in chunks if c['document_id'] not in (101, 269)] + contextual
+                class Engine(HistoricalEngine):
+                    async def _llm_generate(self, prompt):
+                        self.prompt = prompt
+                        return '\n'.join(facts)
+                class Auditor(HistoryAuditor):
+                    async def audit_answer_units(self, question, units, spans, plan):
+                        self.delivered = spans
+                        return await super().audit_answer_units(question, units, spans, plan)
+                engine, auditor = Engine(subject, chunks), Auditor()
+                async def hydrate(ids, **kwargs):
+                    return [c for c in chunks if c['document_id'] in ids]
+                with ExitStack() as stack:
+                    stack.enter_context(patch('app.query.graph_store.get_document_dates', AsyncMock(return_value={})))
+                    stack.enter_context(patch('app.query.embeddings_store.historical_document_candidates', AsyncMock(return_value={
+                        'documents': rows, 'candidate_count': len(rows), 'truncated': False})))
+                    hydration = stack.enter_context(patch('app.query.embeddings_store.get_chunks_for_documents', side_effect=hydrate))
+                    stack.enter_context(patch.object(engine, '_expand_source_documents', AsyncMock(return_value=[])))
+                    stack.enter_context(patch('app.query.embeddings_store.get_open_feedback_document_ids', AsyncMock(return_value=set())))
+                    stack.enter_context(patch('app.query.embeddings_store.get_incomplete_document_ids', AsyncMock(return_value=set())))
+                    stack.enter_context(patch('app.query.strands_orchestrator', auditor))
+                    result = await engine.query(f'How has my {subject} changed over the years and what is most current?', mode='timeline')
+                self.assertTrue(any(call.kwargs.get('include_opening') for call in hydration.call_args_list))
+                payload, _ = json.JSONDecoder().raw_decode(engine.prompt.split('Canonical evidence pack used for this answer:\n', 1)[1])
+                for fact in facts:
+                    self.assertTrue(any(fact in s['content'] for s in payload['spans']), fact)
+                    self.assertTrue(any(fact in s['content'] for s in auditor.delivered), fact)
+                    self.assertIn(fact, result['answer'])
+                self.assertTrue(result['finalization']['answer_verified'])
+                self.assertLessEqual(len(json.dumps(payload, ensure_ascii=False)), 28000)
+
+    async def test_rare_latest_record_terms_survive_repetitive_notice_ranking(self):
+        from app.answer_finalization import AnswerFinalizer
+        for subject, identifier in [('Invoice', 'IVQ742'), ('Laboratory', 'LABR928')]:
+            fact = f'{subject} {identifier}: $421 USD.'
+            boilerplate = f'{subject} latest record $421 USD.'
+            items = [{'id': f'notice-{i}', 'document_id': i+1, 'chunk_index': 0, 'source_kind': 'ocr',
+                      'content': boilerplate + ' Repetitive filing language.' * 140} for i in range(40)]
+            items.append({'id': 'latest-source', 'document_id': 999, 'chunk_index': 0, 'source_kind': 'ocr',
+                          'content': fact + ' Supporting text.' * 220})
+            auditor = HistoryAuditor()
+            result = await AnswerFinalizer(auditor).finalize(f'What does the latest {subject} record show?', fact, {'items': items})
+            self.assertTrue(result['finalization']['answer_verified'])
+            self.assertIn(999, auditor.seen)
+            self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['document_id'], 999)

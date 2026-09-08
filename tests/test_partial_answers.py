@@ -124,7 +124,7 @@ class PartialAnswerTests(unittest.IsolatedAsyncioTestCase):
             class Auditor(MixedAuditor):
                 async def audit_answer_units(self, *args):
                     result = await super().audit_answer_units(*args)
-                    if len(self.contexts) == 2: result["assessments"] = []
+                    if len(self.contexts) >= 2: result["assessments"] = []
                     return result
                 async def repair_answer(self, *args):
                     return {"answer": "The invoice records a $321 USD service charge.\nAnother charge is $999 USD."}
@@ -133,7 +133,7 @@ class PartialAnswerTests(unittest.IsolatedAsyncioTestCase):
                 "The invoice records a $321 USD service charge.\nAn extra charge is $999 USD.", pack(SOURCE))
             self.assertNotEqual(result["finalization"]["disposition"], "partial")
             self.assertNotIn("321", result["answer"])
-            self.assertEqual(len(auditor.contexts), 2)
+            self.assertEqual(len(auditor.contexts), 3)
 
     async def test_invalid_repair_envelopes_never_use_the_prior_subset(self):
         for payload in ({}, {"answer": ""}, {"answer": 123}, None):

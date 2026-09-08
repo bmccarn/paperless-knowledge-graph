@@ -210,3 +210,16 @@ Use generic invoice and measurement examples through public finalization: audito
 
 
 A7 plan review passed both axes. The implementation uses full-answer CommonMark structure so code/HTML literal blocks cannot create label authority. Generic invoice/measurement finalizer regressions failed before the change and pass with exact label-plus-claim units and fresh subset verification. Review additionally covered sentence punctuation followed by closing quotation or bracket syntax; those emphasized sentences remain independent. Unpunctuated strong-only paragraphs are conservatively kept atomic with following prose, and all their factual meaning remains subject to source audit.
+
+
+## A8: preserve subject context when delivering a partial answer
+
+A supported scalar is not a useful or safe answer if filtering disconnects it from the record, subject or dated observation it describes. Model source support alone cannot certify that a renderer preserved these associations. Partial delivery must preserve the original Markdown structure and required context, rather than concatenating surviving unit strings into a new flat list.
+
+Derive conservative structural dependencies from the complete canonical candidate: nested list items depend on their governing parent item; section/list labels govern their following field units until a peer scope begins. Preserve original indentation and structural separators. If a governing unit is omitted, omit its dependent descendants as well; never move them under a different surviving heading or record. Independent, self-contained observations remain eligible. Do not copy any unsupported parent text back into the result or use a shared source document alone as proof of shared subject. Re-audit the exact resulting revision, including subject, dates and scope, through the existing subset pass. No additional model retry is introduced.
+
+Synthesis and the existing repair step should produce concise self-contained source-observation bullets, each naming its subject/record and relevant date or term. Avoid detached field inventories for broad record/history questions; this reduces dependence on a heading that may later be rejected. Keep source-backed identifying observations even when an ancillary field must be omitted. The auditor must explicitly reject scalar/field fragments whose subject or temporal association is unresolved after filtering.
+
+Retain diagnostic information for omitted units, including their exact candidate text, rejection/value mismatch reasons, and structural-dependency omissions. These remain explicitly omitted diagnostics, never verified answer facts. Preserve source privacy boundaries and exact candidate/answer digests.
+
+Public cross-domain controls must reproduce two-record answers where a rejected first record header leaves otherwise supported child amounts/names, and prove those children cannot inherit a different record's heading. Cover nested and flat section/field lists, multiple sections, supported ancestor chains, independent sentences/bullets, original indentation, source/temporal conflicts and invalid/unknown dependencies. Verify the final persisted answer and UI render retain the subject association. Repeat review, full validation, GitOps and real-corpus acceptance; exact-reference checks alone are insufficient without manual semantic coverage review.

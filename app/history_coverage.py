@@ -2,7 +2,7 @@
 from collections import defaultdict
 import re
 from app.evidence import query_terms, infer_source_quality
-from app.source_dates import source_dates
+from app.source_dates import source_dates, without_dates
 
 MAX_CANDIDATES = 500
 MAX_DOCUMENTS = 8
@@ -21,7 +21,22 @@ def subject_terms(question: str) -> list[str]:
     return sorted(term for term in terms if not term.isdigit())[:24]
 
 
-def choose_documents(candidates: list[dict], question: str, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics: dict | None = None) -> list[dict]:
+def _calendar_dates(text, date_order):
+    dates = []
+    for found in source_dates(text, date_order):
+        if not found.value:
+            continue
+        if found.precision == "year":
+            before, after = text[max(0, found.start-40):found.start], text[found.end:]
+            if not re.search(r"\b(?:calendar year|year|dated|date|period|term)\s*:?\s*$", before, re.I):
+                continue
+            if re.match(r"\s*(?:[$€£%]|USD|EUR|GBP|CAD|AUD|JPY|mg|kg|g|ml|mL|years?|months?|weeks?|days?|hours?|minutes?|seconds?)(?![A-Za-z])", after, re.I):
+                continue
+        dates.append(found)
+    return dates
+
+
+def _records(candidates, question, date_order):
     subjects = set(subject_terms(question))
     records = []
     for row in candidates:
@@ -30,12 +45,11 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
         terms = query_terms(title + " " + str(row.get("doc_type") or "") + " " + preview)
         if not (subjects & terms):
             continue
-        title_dates = [d for d in source_dates(title, date_order) if d.value]
-        source = [d for d in source_dates(preview, date_order) if d.value and (d.precision != "year" or
-                  re.search(r"\b(?:calendar year|year|dated|date|period|term)\s*:?\s*$", preview[max(0, d.start-30):d.start], re.I))]
+        title_dates = _calendar_dates(title, date_order)
+        source = _calendar_dates(preview, date_order)
         indexed = source_dates(str(row.get("indexed_date") or "")[:10], date_order)
         indexed = [d for d in indexed if d.value]
-        dates = [d for d in title_dates if d.precision != "year"] or source or indexed or title_dates[-1:]
+        dates = [d for d in title_dates if d.precision != "year"] or source or indexed or title_dates
         # First recorded metadata date is a diversity signal, not an assertion
         # of effective status; synthesis and audit must establish its meaning.
         period = dates[0].value if dates else ""
@@ -44,6 +58,45 @@ def choose_documents(candidates: list[dict], question: str, *, date_order="mdy",
                         "subjects": tuple(sorted(subjects & query_terms(title + " " + str(row.get("doc_type") or ""))) or sorted(subjects & terms)),
                         "quality": infer_source_quality(title, "", "")["score"],
                         "relevance": len(subjects & terms)})
+    return records
+
+
+def choose_recent_documents(candidates, question, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics=None):
+    """Reserve distinct recent records; recency and titles are only hints."""
+    records = _records(candidates, question, date_order)
+    # Month-level ordering puts day-specific and month-only records in the
+    # same recent cohort. Stable title families keep repeated notices from
+    # consuming every opportunity before another recent record appears.
+    groups = defaultdict(list)
+    for row in records:
+        title_text = str(row.get("title") or "")
+        title = tuple(sorted(query_terms(without_dates(title_text, _calendar_dates(title_text, date_order)))))
+        groups[(str(row.get("doc_type") or "unknown"), title or (row["document_id"],))].append(row)
+    def rank(row):
+        parts = row["period"][:7].split("-") if row["period"] else []
+        year, month = (int(parts[0]) if parts else 0), (int(parts[1]) if len(parts)>1 else 0)
+        return (-row["metadata_relevance"], -year, -month, -row["quality"], row["document_id"])
+    queues = []
+    for rows in groups.values():
+        ordered = sorted(rows, key=rank)
+        cohort = ordered[0]["period"][:7]
+        queues.append([row for row in ordered if row["period"][:7] == cohort])
+    queues.sort(key=lambda rows: rank(rows[0]))
+    chosen = []
+    while queues and len(chosen) < limit:
+        for queue in queues:
+            if queue and len(chosen) < limit:
+                chosen.append(queue.pop(0))
+        queues = [queue for queue in queues if queue]
+    if diagnostics is not None:
+        diagnostics.update(relevant_candidate_count=len(records), selected_document_count=len(chosen),
+                           omitted_document_count=len(records)-len(chosen))
+    return [{"document_id":row["document_id"], "period":row["period"],
+             "doc_type":row.get("doc_type") or "unknown"} for row in chosen]
+
+
+def choose_documents(candidates: list[dict], question: str, *, date_order="mdy", limit=MAX_DOCUMENTS, diagnostics: dict | None = None) -> list[dict]:
+    records = _records(candidates, question, date_order)
     # Reserve temporal/type strata before repeated revisions. Title vocabulary
     # never partitions source families: added issuer/form words must not strand
     # an older short-title record in a low-population singleton group.

@@ -122,6 +122,7 @@ def build_evidence_item(result: dict[str, Any], rank: int, question: str = "") -
         "doc_type": doc_type,
         "rank": rank,
         "history_reserved": result.get("history_reserved") is True,
+        "recent_reserved": result.get("recent_reserved") is True,
         "retrieval_score": float(result.get("combined_score", result.get("similarity", result.get("rank_score", 0))) or 0),
         "exact_term_hits": exact_terms,
         "source_quality": quality,

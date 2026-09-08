@@ -318,6 +318,45 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.json()["stale"])
         self.assertEqual(response.json()["drift"]["changed_since_index"][0]["id"], 1)
 
+    async def test_current_document_after_sync_checkpoint_needs_no_drift_repair(self):
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        await pipeline.sync_documents()
+        self.embeddings.last_sync = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.paperless.documents[1]["modified"] = "2026-09-08T12:00:00+00:00"
+        original_checkpoint = self.embeddings.last_sync
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", AsyncMock(return_value={1})), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": 1})), \
+             patch.object(main, "_freshness_cache", None), \
+             patch.object(main, "_tasks", {}), \
+             patch.object(main, "_cancel_events", {}), \
+             patch.object(main, "_start_background_worker", side_effect=lambda worker: worker.close()) as start_worker:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                response = await client.get("/freshness", params={"force": "true"})
+                self.assertEqual(response.status_code, 200)
+                snapshot = response.json()
+                self.assertEqual(snapshot["modified_after_last_sync_documents"], 1)
+                self.assertEqual(snapshot["changed_since_index_documents"], 0)
+                self.assertFalse(snapshot["stale"])
+                repair = await client.post("/freshness/repair")
+                self.assertEqual(repair.status_code, 200)
+                self.assertEqual(repair.json()["status"], "noop")
+                self.assertEqual(repair.json()["task_id"], "")
+                start_worker.assert_not_called()
+                # A real metadata change must still admit the affected source.
+                self.paperless.documents[1]["title"] = "Corrected after repair"
+                changed = await client.get("/freshness", params={"force": "true"})
+                self.assertTrue(changed.json()["stale"])
+                repair = await client.post("/freshness/repair")
+                self.assertEqual(repair.status_code, 200)
+                self.assertEqual(repair.json()["status"], "started")
+                self.assertEqual(main._tasks[repair.json()["task_id"]]["target_doc_ids"], [1])
+                start_worker.assert_called_once()
+        self.assertEqual(self.embeddings.last_sync, original_checkpoint)
+
     async def test_scan_watermark_retains_changes_made_during_processing(self):
         self.extractor.started, self.extractor.release = asyncio.Event(), asyncio.Event()
         running = asyncio.create_task(pipeline.sync_documents())

@@ -20,10 +20,9 @@ from typing import Any
 from markdown_it import MarkdownIt
 from app.source_text import certifying_text
 from app.evidence import QUERY_STOPWORDS
-from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context
+from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v13"
-VALUE_UNITS = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
+POLICY_VERSION = "source-audit-v14"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -219,11 +218,43 @@ def _list_marker_ranges(text: str, *, known_start: bool = True) -> list[list[int
     return [list(pair) for pair in sorted(ranges)]
 
 
+def _field_leader_ranges(text: str, *, known_start: bool = True) -> list[list[int]]:
+    """Recognize explicit display-field leaders only in ordinary source prose."""
+    if not known_start:
+        return []
+    starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", text))]
+    ranges = []
+    # A bold uppercase multiword field label makes the presentation role
+    # explicit. Ordinary arithmetic and free-form dashed text remain ambiguous.
+    pattern = r" {0,3}\*\*[A-Z]{2,}(?:[ \t]+[A-Z]{2,})+:?\*\*:?[ \t]+((?:-[ \t]+){3,})(?=(?:\*\*)?(?:[-+](?:[ \t]+)?)?(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?\d)"
+    for token in _MARKDOWN.parse(text):
+        if (token.type != "inline" or not token.map
+                or any(child.type in {"code_inline", "html_inline"} for child in token.children or [])):
+            continue
+        fields = []
+        for line in range(*token.map):
+            first, last = starts[line], starts[line+1] if line+1 < len(starts) else len(text)
+            match = re.match(pattern, text[first:last])
+            if not match:
+                break
+            tail = text[first+match.end(1):last].rstrip("\r\n")
+            visible = presentation_text(tail, list_markers=[], field_leaders=[])
+            scalar = r"(?:[$€£]|USD[ \t]+|EUR[ \t]+|GBP[ \t]+)?[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[ \t]+" + VALUE_UNITS + r")?[ \t]*\.?[ \t]*"
+            if not re.fullmatch(scalar, visible):
+                break
+            fields.append([first+match.start(1), first+match.end(1)])
+        else:
+            # Every line must be an independently complete display field.
+            # A wrapped equation/prose continuation invalidates the paragraph.
+            ranges.extend(fields)
+    return ranges
+
+
 def _slice_markers(markers: list, start: int, end: int) -> list[list[int]]:
     return [[first - start, last - start] for first, last in markers if start <= first < last <= end]
 
 
-def _without_list_markers(text: str, markers: list) -> str:
+def _without_presentation_ranges(text: str, markers: list) -> str:
     for first, last in reversed(markers):
         text = text[:first] + text[last:]
     return text
@@ -231,7 +262,7 @@ def _without_list_markers(text: str, markers: list) -> str:
 
 def _value_context(text: str, markers: list = ()) -> str:
     # Guard adjacency only; never use this copy as a matching quote or evidence.
-    return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_list_markers(text, markers)))
+    return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_presentation_ranges(text, markers)))
 
 
 def evidence_spans(pack: dict) -> list[dict]:
@@ -239,7 +270,7 @@ def evidence_spans(pack: dict) -> list[dict]:
     seen = {}
     # A history pack has more priority documents to compare. Use smaller whole
     # windows throughout so requested and historical sources can coexist.
-    window = 1800 if any(item.get("history_reserved") for item in pack.get("items", []) if isinstance(item, dict)) else 4000
+    window = 1800 if any((item.get("history_reserved") or item.get("recent_reserved")) for item in pack.get("items", []) if isinstance(item, dict)) else 4000
     for item in pack.get("items", []):
         if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
             continue
@@ -258,11 +289,14 @@ def evidence_spans(pack: dict) -> list[dict]:
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
         list_markers = _list_marker_ranges(content, known_start=item.get("chunk_index", 0) == 0)
+        field_leaders = _field_leader_ranges(content, known_start=item.get("chunk_index", 0) == 0)
+        presentation_ranges = sorted(list_markers + field_leaders)
         for start in range(0, len(content), window - 200):
             text = content[start:start + window]
             spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
+                          "recent_reserved": item.get("recent_reserved") is True,
                           "chunk_index": item.get("chunk_index", 0),
                           "title": item.get("title", ""), "start": start, "end": start + len(text),
                           "content": text, "content_digest": digest,
@@ -272,8 +306,9 @@ def evidence_spans(pack: dict) -> list[dict]:
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
-                          "value_boundary_before": _value_context(content[:start], _slice_markers(list_markers, 0, start))[-16:],
-                          "value_boundary_after": _value_context(content[start + len(text):], _slice_markers(list_markers, start + len(text), len(content)))[:2],
+                          "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
+                          "value_boundary_before": _value_context(content[:start], _slice_markers(presentation_ranges, 0, start))[-16:],
+                          "value_boundary_after": _value_context(content[start + len(text):], _slice_markers(presentation_ranges, start + len(text), len(content)))[:2],
                           "feedback_open": bool(item.get("feedback_open"))})
     return spans
 
@@ -309,12 +344,16 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
-    history, history_docs = [], set()
-    for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair))):
-        span = pair[1]
-        if not units and span.get("history_reserved") and not span.get("feedback_open") and span["document_id"] not in history_docs:
-            history.append(pair)
-            history_docs.add(span["document_id"])
+    priority_queues = []
+    for scope in ("recent", "history"):
+        priority, represented = [], set()
+        for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair) if scope == "history" else (pair[0],))):
+            span = pair[1]
+            if not units and span.get(f"{scope}_reserved") and not span.get("feedback_open") and span["document_id"] not in represented:
+                priority.append(pair)
+                represented.add(span["document_id"])
+        priority_queues.append(priority)
+    history = [pair for row in zip_longest(*priority_queues) for pair in row if pair is not None]
     # A combined assertion can need identity on the opening and a later dated
     # observation from that same document. Rank the document's combined unit
     # coverage, then reserve complementary windows within it before boilerplate.
@@ -364,13 +403,20 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
     per_unit = [pair for row in zip_longest(*queues) for pair in row if pair is not None]
     ranked = first_per_document + history + per_unit + remaining
-    result, used, selected = [], 0, set()
+    explicit_indices = {pair[0] for pair in first_per_document}
+    result, used, selected, contents = [], 0, set(), set()
     for index, span in ranked:
         if index in selected:
             continue
         if used + costs[index] > budget:
             continue
+        # Repeated recent windows need not consume the historical context budget.
+        # Preserve history reservations, canonical records and audit/explicit slots.
+        if (not units and span.get("recent_reserved") and not span.get("history_reserved")
+                and span["content"] in contents and index not in explicit_indices):
+            continue
         result.append(span)
+        contents.add(span["content"])
         selected.add(index)
         used += costs[index]
     return result
@@ -429,9 +475,7 @@ def _source_recency(span: dict, date_order: str) -> str:
             # ordering needs explicit calendar context rather than a magnitude.
             prefix = date_context(span.get("date_context_before", "") + text[:found.start])
             suffix = _value_context(text[found.end:])
-            if re.match(r"\s*(?:" + VALUE_UNITS + r"|years?|months?|weeks?|days?|hours?|minutes?|seconds?|ms)(?![A-Za-z])", suffix, re.I):
-                continue
-            if not re.search(r"\b(?:year|dated|date|during|in|since|until|effective|period|term)\s*:?\s*$", prefix, re.I):
+            if not calendar_year_context(prefix, suffix):
                 continue
         values.append(found.value)
     return max(values, default="")
@@ -443,8 +487,9 @@ def span_coverage(question: str, available: list[dict], selected: list[dict], *,
     requested |= {s["document_id"] for s in available if normalize_quote(str(s.get("title") or "")).casefold() in titles}
     historical = {s["document_id"] for s in available if reserve_history and s.get("history_reserved") and not s.get("feedback_open")}
     delivered = {s["document_id"] for s in selected}
-    priority = requested | historical
-    return {"requested_document_ids": sorted(requested), "reserved_document_ids": sorted(historical),
+    recent = {s["document_id"] for s in available if reserve_history and s.get("recent_reserved") and not s.get("feedback_open")}
+    priority = requested | historical | recent
+    return {"requested_document_ids": sorted(requested), "reserved_document_ids": sorted(historical), "recent_document_ids": sorted(recent),
             "selected_document_ids": sorted(delivered), "omitted_priority_document_ids": sorted(priority - delivered),
             "limited": bool(priority - delivered)}
 
@@ -537,9 +582,10 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         return None
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
         return None
-    markers = span.get("list_markers", [])
-    source_list_markers = _slice_markers(markers, start, end)
-    visible = presentation_text(source[start:end], list_markers=source_list_markers)
+    source_list_markers = _slice_markers(span.get("list_markers", []), start, end)
+    source_field_leaders = _slice_markers(span.get("field_leaders", []), start, end)
+    markers = sorted(span.get("list_markers", []) + span.get("field_leaders", []))
+    visible = presentation_text(source[start:end], list_markers=source_list_markers, field_leaders=source_field_leaders)
     before_visible = (span.get("value_boundary_before", _value_context(span.get("boundary_before", "")))
                       + _value_context(source[:start], _slice_markers(markers, 0, start)))
     after_visible = (_value_context(source[end:], _slice_markers(markers, end, len(source)))
@@ -569,13 +615,16 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
+            "source_field_leaders": source_field_leaders,
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
             "end": span["start"] + end, "content_digest": span["content_digest"]}
 
 
-def presentation_text(text: str, *, list_markers: list | None = None) -> str:
-    text = _without_list_markers(text, _list_marker_ranges(text) if list_markers is None else list_markers)
+def presentation_text(text: str, *, list_markers: list | None = None, field_leaders: list | None = None) -> str:
+    markers = (_list_marker_ranges(text) if list_markers is None else list_markers)
+    leaders = (_field_leader_ranges(text) if field_leaders is None else field_leaders)
+    text = _without_presentation_ranges(text, sorted(markers + leaders))
     # Peel nested delimiters; every successful pass strictly shortens the copy.
     while True:
         previous_length = len(text)
@@ -611,7 +660,7 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
     numeric_text = without_dates(text, dates)
-    numeric_sources = [presentation_text(source, list_markers=ref.get("source_list_markers", []))
+    numeric_sources = [presentation_text(source, list_markers=ref.get("source_list_markers", []), field_leaders=ref.get("source_field_leaders", []))
                        for source, ref in zip(sources, references)]
     mismatches = {}
     if missing_dates:
@@ -922,7 +971,7 @@ class AnswerFinalizer:
                 and summary.get("audited") == summary.get("total")
                 and 0 < summary.get("supported", 0) < summary.get("total", 0)
                 and not ledger.get("rejection_reasons")
-                and all(c["status"] in {"supported", "unsupported"}
+                and all(c["status"] in {"supported", "unsupported", "missing"}
                         and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
             subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")

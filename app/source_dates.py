@@ -3,6 +3,17 @@ from dataclasses import dataclass
 from datetime import date
 import re
 
+VALUE_UNITS = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
+
+def calendar_year_context(before: str, after: str) -> bool:
+    """A four-digit scalar needs calendar context and cannot carry a unit."""
+    before = date_context(before)
+    after = re.sub(r"[*_`\[\]]", "", after)
+    if re.match(r"\s*(?:" + VALUE_UNITS + r"|years?|yrs?|months?|mos?|weeks?|wks?|fortnights?|days?|hours?|hrs?|minutes?|mins?|(?:pico|nano|micro|milli)?seconds?|secs?|ms|us|µs|μs|ns|ps)(?![A-Za-z])", after, re.I):
+        return False
+    return bool(re.search(r"\b(?:year|dated|date|during|in|since|until|effective|period|term)\s*:?\s*$", before, re.I))
+
+
 MONTHS = {name.casefold(): index for index, name in enumerate(
     ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"), 1)}
 MONTHS.update({name[:3]: value for name, value in list(MONTHS.items())})

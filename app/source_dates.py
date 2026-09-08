@@ -19,7 +19,8 @@ _PATTERN = re.compile(
     r"(?!\w|[/.-]\d)", re.I)
 
 _IDENTIFIER_PREFIX = re.compile(
-    r"(?:\b(?:number|identifier|id|code|reference|ref|no)\.?\s*[:#]?\s*|#\s*)$", re.I)
+    r"(?:\b(?:number|identifier|id|code|reference|ref|no)\.?\s*[:#]?\s*"
+    r"|\b(?:record|document|policy|contract|invoice|account|order|claim)\s*#\s*)$", re.I)
 
 
 @dataclass(frozen=True)
@@ -32,14 +33,17 @@ class SourceDate:
     reason: str | None = None
 
 
-def source_dates(text: str, date_order: str = "mdy") -> list[SourceDate]:
+def source_dates(text: str, date_order: str = "mdy", *, context_before: str = "") -> list[SourceDate]:
     if date_order not in {"mdy", "dmy", "reject_ambiguous"}:
         raise ValueError("Unsupported numeric source date order")
     occurrences = []
     for match in _PATTERN.finditer(text):
         # Explicit identifier labels disambiguate calendar-shaped record IDs.
         # They retain scalar validation and cannot supply date authority.
-        if _IDENTIFIER_PREFIX.search(text[max(0, match.start() - 40):match.start()]):
+        prefix = (context_before + text[:match.start()])[-80:]
+        # Inspect label presentation on a copy; source offsets stay untouched.
+        prefix = re.sub(r"(\*\*|__|`)([^\n]+?)\1", r"\2", prefix)
+        if _IDENTIFIER_PREFIX.search(prefix):
             continue
         value, precision, reason = None, None, None
         try:
@@ -105,10 +109,10 @@ def date_supported(expected: SourceDate, actual: SourceDate) -> bool:
             and (actual.value == expected.value or actual.value.startswith(expected.value + "-")))
 
 
-def source_date_occurs(value: str, source: str, date_order: str = "mdy") -> bool:
+def source_date_occurs(value: str, source: str, date_order: str = "mdy", *, context_before: str = "") -> bool:
     expected = source_dates(value, date_order)
     return (len(expected) == 1 and expected[0].start == 0 and expected[0].end == len(value)
-            and any(date_supported(expected[0], found) for found in source_dates(source, date_order)))
+            and any(date_supported(expected[0], found) for found in source_dates(source, date_order, context_before=context_before)))
 
 
 def without_dates(text: str, occurrences: list[SourceDate]) -> str:

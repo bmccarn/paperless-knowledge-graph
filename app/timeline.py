@@ -43,7 +43,7 @@ async def validate_timeline(events: list, pack: dict, auditor, question: str, *,
         if not all(validated) or any(r["document_id"] != event.get("document_id") for r in validated):
             reject("invalid_reference")
             continue
-        if not any(date_occurs(parsed[0], r["quote"], date_order) for r in validated):
+        if not any(date_occurs(parsed[0], r["quote"], date_order, context_before=r.get("date_context_before", "")) for r in validated):
             reject("unsupported_date")
             continue
         text = f"{parsed[0]}: {event.get('title', '')}. {event.get('summary', '')}"
@@ -76,7 +76,7 @@ async def validate_timeline(events: list, pack: dict, auditor, question: str, *,
         if not audit_refs or not all(audit_refs) or any(r["document_id"] != event["document_id"] for r in audit_refs):
             reject("invalid_audit_reference")
             continue
-        if not any(date_occurs(parsed[0], r["quote"], date_order) for r in audit_refs):
+        if not any(date_occurs(parsed[0], r["quote"], date_order, context_before=r.get("date_context_before", "")) for r in audit_refs):
             reject("unsupported_audited_date")
             continue
         if not values_match(text, audit_refs, date_order=date_order):

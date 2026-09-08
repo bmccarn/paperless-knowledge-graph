@@ -20,10 +20,21 @@ STAGES = ("metadata", "entities", "entity_review", "relationships", "relationshi
 SOURCE = "Alice Example works at Tail Widgets. Premium: 125 USD."
 
 
+class RecoveryClock:
+    def __init__(self):
+        self.now = 0
+        self.waits = []
+
+    async def sleep(self, seconds):
+        self.waits.append(seconds)
+        self.now += seconds
+
+
 class SDKWire:
     """A request-keyed cache can replay bad output; corrections must change its key."""
 
-    def __init__(self, adapter=None, *, cached=False, faults=None, contents=None):
+    def __init__(self, adapter=None, *, cached=False, faults=None, contents=None,
+                 clock=None, unavailable_until=0):
         self.adapter = adapter or CompletionClient()
         self.requests = []
         self.timeouts = []
@@ -32,19 +43,30 @@ class SDKWire:
         self.cache_hits = 0
         self.faults = faults or {}
         self.contents = contents or {}
+        self.clock = clock
+        self.unavailable_until = unavailable_until
+        self.request_times = []
 
     async def handle(self, request):
         assert request.url.host == "127.0.0.1"
         payload = json.loads(request.content)
         self.requests.append(payload)
         self.timeouts.append(request.extensions["timeout"])
+        if self.clock is not None:
+            self.request_times.append(self.clock.now)
+            if self.clock.now < self.unavailable_until:
+                raise httpx.ConnectError("synthetic-private-provider-body", request=request)
         fault = self.faults.get(len(self.requests))
+        if fault == "connection":
+            raise httpx.ConnectError("synthetic-private-provider-body", request=request)
         if fault == "timeout":
             raise httpx.ReadTimeout("synthetic-private-provider-body", request=request)
         if fault == "cancel":
             raise asyncio.CancelledError()
         if fault == "http_error":
             return httpx.Response(500, json={"error": {"message": "synthetic-private-provider-body"}})
+        if type(fault) is int:
+            return httpx.Response(fault, json={"error": {"message": "synthetic-private-provider-body connection unavailable"}})
         key = json.dumps(payload, sort_keys=True)
         if self.cached and key in self.cache:
             self.cache_hits += 1
@@ -84,6 +106,12 @@ def transient_bad(stage, bad, attempts=1):
 
 
 class ExtractionRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.clock = RecoveryClock()
+        sleeper = patch("asyncio.sleep", new=self.clock.sleep)
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+
     async def extract(self, wire, source=SOURCE, **options):
         async with wire.client() as client:
             return await EntityExtractor(client, **options).extract("synthetic-private-title", source, "property_home")
@@ -218,16 +246,73 @@ class ExtractionRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_http_error_and_bad_shape_share_the_same_three_attempt_budget(self):
         for fault in ("timeout", "http_error"):
             with self.subTest(fault=fault):
+                self.clock.waits.clear()
                 wire = SDKWire(transient_bad("metadata", {}), faults={1: fault})
                 with self.assertLogs("app.extractor", level="INFO") as logs:
                     result = await self.extract(wire)
                 self.assertEqual(result["extraction_coverage"]["status"], "complete")
                 self.assertEqual(len(wire.requests), 7)  # 3 metadata + 4 later passes
+                self.assertEqual(self.clock.waits, [20])
                 self.assertNotIn("synthetic-private", "\n".join(logs.output))
+        self.clock.waits.clear()
         wire = SDKWire(faults={1: "timeout", 2: "timeout", 3: "timeout"})
         result = await self.extract(wire)
         self.assertEqual(len(wire.requests), 3)
         self.assertEqual(result["extraction_coverage"]["status"], "failed")
+        self.assertEqual(self.clock.waits, [20, 40])
+
+    async def test_proxy_recycle_recovers_within_existing_three_attempts(self):
+        wire = SDKWire(clock=self.clock, unavailable_until=55)
+        with self.assertLogs("app.extractor", level="INFO") as logs:
+            result = await self.extract(wire)
+        self.assertEqual(result["extraction_coverage"]["status"], "complete")
+        self.assertEqual(result["premium"], "125")
+        self.assertEqual(len(wire.requests), 7)  # Three metadata attempts, four later passes.
+        self.assertEqual(wire.request_times[:3], [0, 20, 60])
+        self.assertEqual(self.clock.waits, [20, 40])
+        self.assertNotIn("synthetic-private", "\n".join(logs.output))
+
+    async def test_transient_failure_budget_has_no_final_wait(self):
+        wire = SDKWire(clock=self.clock, unavailable_until=600)
+        result = await self.extract(wire)
+        self.assertEqual(result["extraction_coverage"]["status"], "failed")
+        self.assertEqual(result["all_entities"], [])
+        self.assertEqual(result["implied_relationships"], [])
+        self.assertEqual(wire.request_times, [0, 20, 60])
+        self.assertEqual(self.clock.waits, [20, 40])
+
+    async def test_transient_http_errors_wait_but_permanent_errors_do_not(self):
+        for status in (429, 500, 502, 503, 504, 400, 401, 403, 404):
+            with self.subTest(status=status):
+                self.clock.waits.clear()
+                wire = SDKWire(faults={1: status, 2: status, 3: status})
+                result = await self.extract(wire)
+                self.assertEqual(result["extraction_coverage"]["status"], "failed")
+                self.assertEqual(len(wire.requests), 3)
+                self.assertEqual(self.clock.waits, [20, 40] if status >= 429 else [])
+
+    async def test_cancellation_during_recovery_wait_prevents_more_requests(self):
+        started = asyncio.Event()
+
+        async def wait_for_cancellation(seconds):
+            self.clock.waits.append(seconds)
+            started.set()
+            await asyncio.Event().wait()
+
+        wire = SDKWire(faults={1: "connection"})
+        with patch("asyncio.sleep", new=wait_for_cancellation):
+            task = asyncio.create_task(self.extract(wire))
+            try:
+                await asyncio.wait_for(started.wait(), 1)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        self.assertEqual(len(wire.requests), 1)
+        self.assertEqual(self.clock.waits, [20])
 
     async def test_truncation_after_malformed_response_splits_immediately_without_parent_provenance(self):
         wire = SDKWire(transient_bad("relationship_review", {}))
@@ -247,6 +332,7 @@ class ExtractionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         coverage = result["extraction_coverage"]
         self.assertEqual(coverage["status"], "complete")
         self.assertEqual(coverage["adaptive_splits"], 1)
+        self.assertEqual(self.clock.waits, [])
         parent = Counter(stage for stage, text, _ in wire.adapter.calls if text == source)
         self.assertEqual(parent, Counter({**dict.fromkeys(STAGES, 1), "relationship_review": 2}))
         self.assertEqual(len(result["metadata_evidence"]), len(coverage["windows"]))

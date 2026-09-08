@@ -88,6 +88,8 @@ try {
   }
   assert.deepEqual(failures, []);
   // Select the visibly zoomed node through its canvas hit area.
+  await page.mouse.move(bounds.x + closeup.x, bounds.y + closeup.y);
+  await page.getByText('Alex Example · Person', { exact: true }).waitFor({ state: 'visible' });
   await page.mouse.click(bounds.x + closeup.x, bounds.y + closeup.y);
   await page.locator('summary').filter({ hasText: 'Evidence from document #101' }).waitFor({ state: 'visible' });
   const beforePan = await canvas.evaluate(element => ({ ...element.__zoom }));

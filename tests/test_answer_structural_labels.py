@@ -40,6 +40,23 @@ class StructuralLabelTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('Additional charge', result['answer'])
             self.assertEqual(result['claim_ledger']['summary']['total'], 1)
 
+    async def test_quoted_emphasized_facts_remain_independently_deliverable(self):
+        for first in ('**The invoice states “Paid.”**', '**The invoice states "Paid."**',
+                      '**The invoice records $20 (paid.)**'):
+            class Auditor:
+                async def audit_answer_units(self, question, units, spans, plan):
+                    span = spans[0]
+                    return {'assessments': [{
+                        'unit_id': u['id'], 'status': 'unsupported' if '$999' in u['text'] else 'supported',
+                        'temporal_scope': 'historical',
+                        'references': [{**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': first}],
+                    } for u in units]}
+            result = await AnswerFinalizer(Auditor()).finalize(
+                'What is recorded?', first + '\n\nThe extra fee is $999.', pack(first))
+            self.assertEqual(result['finalization']['disposition'], 'partial')
+            self.assertIn(first, result['answer'])
+            self.assertNotIn('$999', result['answer'])
+
     async def test_factual_label_values_are_audited_not_discarded(self):
         answer = '**Recorded charge $999**\n\nThe statement records $20.'
         class Auditor:
@@ -57,7 +74,9 @@ class StructuralLabelTests(unittest.IsolatedAsyncioTestCase):
 
     def test_emphasized_sentences_and_literal_blocks_are_not_labels(self):
         for first in ('**The statement records $20.**', '__The statement records $20.__',
-                      'The statement **records $20**.', '**First** and **second**'):
+                      'The statement **records $20**.', '**First** and **second**',
+                      '**The invoice states “Paid.”**', '**The invoice states "Paid."**',
+                      '**The invoice records $20 (paid.)**', '**The invoice states [Paid.]**'):
             answer = first + '\n\nThe next charge is $999.'
             self.assertEqual([u['text'] for u in answer_units(answer)], [first, 'The next charge is $999.'])
         for answer in ('```\n**Literal label**\n```\n\nThe next charge is $999.',

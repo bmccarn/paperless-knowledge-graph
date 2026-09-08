@@ -198,7 +198,7 @@ def _strong_label_offsets(answer: str) -> set[int]:
                 or any(child.level < 1 for child in children[1:-1])):
             continue
         text = ''.join(child.content for child in children).rstrip()
-        if text and not text.endswith(('.', '!', '?')):
+        if text and not re.search(r"[.!?]['\"’”)}\]]*$", text):
             labels.add(starts[token.map[0]])
     return labels
 

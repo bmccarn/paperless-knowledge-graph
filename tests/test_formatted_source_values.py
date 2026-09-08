@@ -19,6 +19,8 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
     def test_rendering_never_changes_quantity_or_joins_reference_strings(self):
         for claim, source in [('The charge is $500.', 'The charge is $**5000.00**.'),
                               ('The charge is $500.', 'The charge is $**-500.00**.'),
+                              ('The charge is $500.', 'The charge is - $**500**.'),
+                              ('The dose is 5 mg.', 'The dose is - **5** mg.'),
                               ('The charge is 500 USD.', 'The charge is **500.00** EUR.'),
                               ('The dose is 5 mg.', 'The dose is **5** **g**.'),
                               ('The charge is $500.', 'The charge is $**500.00.'),
@@ -29,6 +31,7 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
     def test_wrapped_reference_cannot_chop_numeric_tokens_or_signs(self):
         cases = [('$**500**0', '$**500**'), ('1**500** USD', '**500** USD'),
                  ('-$**500** USD', '$**500** USD'), ('-$**500** USD', '**500** USD'),
+                 ('- $**500** USD', '$**500** USD'), ('- **5** mg', '**5** mg'),
                  ('$**500**.01', '$**500**'), ('$**500**e2', '$**500**'),
                  ('ID**500**A', '**500**'), ('**1.500** USD', '**500** USD')]
         for source, quote in cases:
@@ -45,3 +48,26 @@ class FormattedSourceValueTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(values_match('Charge -$500.', [{'quote': 'Charge -$**500.00**.'}]))
         self.assertFalse(values_match('Charge $500.', [{'quote': 'Charge -$**500.00**.'}]))
         self.assertFalse(values_match('Charge -$500.', [{'quote': 'Charge $**500.00**.'}]))
+
+    async def test_full_formatted_negative_source_cannot_verify_positive_claim(self):
+        for claim, source in [('The charge is $500.', 'The charge is - $**500**.'),
+                              ('The dose is 5 mg.', 'The dose is - **5** mg.')]:
+            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', claim, pack(source))
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertNotIn(claim, result['answer'])
+            negative = claim.replace('$500', '-$500').replace('5 mg', '-5 mg')
+            result = await AnswerFinalizer(ExactAuditor()).finalize('What is recorded?', negative, pack(source))
+            self.assertTrue(result['finalization']['answer_verified'])
+
+    async def test_formatted_decimal_tail_beyond_window_cannot_be_trimmed(self):
+        quote = '$`500`'
+        source = ' ' * (4000 - len(quote)) + quote + '*.*01'
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                span = next(s for s in spans if s['start'] == 0)
+                ref = {**{k: span[k] for k in ('span_id', 'evidence_id', 'document_id')}, 'quote': quote}
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                                        'references': [ref]} for u in units]}
+        result = await AnswerFinalizer(Auditor()).finalize('What was charged?', 'The charge was $500.', pack(source))
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertNotIn('The charge was $500.', result['answer'])

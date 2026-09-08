@@ -205,13 +205,13 @@ export function ForceGraphClient({
         const width = ctx.measureText(label).width;
         ctx.fillStyle = "#101820e8";
         ctx.fillRect(
-          node.x - width / 2 - 3,
-          node.y + radius + 2,
-          width + 6,
-          fontSize + 4,
+          node.x - width / 2 - 3 / scale,
+          node.y + radius + 2 / scale,
+          width + 6 / scale,
+          fontSize + 4 / scale,
         );
         ctx.fillStyle = "#e2e8f0";
-        ctx.fillText(label, node.x, node.y + radius + 4);
+        ctx.fillText(label, node.x, node.y + radius + 4 / scale);
       }
       ctx.restore();
     },
@@ -310,7 +310,6 @@ export function ForceGraphClient({
           d3VelocityDecay={0.5}
           enableNodeDrag
           minZoom={0.1}
-          maxZoom={4}
         />
       )}
     </div>

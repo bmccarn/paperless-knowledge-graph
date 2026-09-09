@@ -3,7 +3,7 @@
 Spec: [evaluation before implementation](../specs/query-reliability-evaluation.md).
 Starting production revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`.
 Initial native baseline harness reviewed at `c682f58faf1e12dd61ed080f79dd20b68ab65be2`.
-Final captured-context harness reviewed at `54ee55a7f0f83b7fbfb45baaf9cdf2c104739973`.
+Latest evaluator and cache controls reviewed at `e358a0c039cbd0a94a269eb66af399edceabd1e4`.
 
 ## Status
 
@@ -38,8 +38,8 @@ harness is not a semantic reproduction or an accepted fix.
 ## Validation and baseline results
 
 `python -m unittest tests.test_eval_source_audit tests.test_eval_harness -v`:
-26 tests passed (including subsequent original-window and continuity validation).
-The full offline backend suite passed 579 tests in 22.0 seconds, with 48 expected
+28 tests passed at the latest reviewed evaluator revision.
+At `54ee55a7`, the full offline backend suite passed 579 tests in 22.0 seconds, with 48 expected
 disposable-datastore skips. These checks do not establish model or live UI accuracy. Controlled transports in capture tests measure instrumentation,
 not model semantics.
 
@@ -116,9 +116,11 @@ makes no shared-cache mutation. Upstream independence remains unproven.
 Initial hypotheses, ranked from this contrast: broad context interferes with
 source/field association; placement within that context changes source use; copied
 header windows contribute to the failure. These are hypotheses, not a diagnosis.
-A four-condition comparison is being prepared: full context, removal of only the
-invalid windows, identical full context with the four target documents last, and
-the four-document control. All use the same claims and existing source scope.
+A four-condition comparison is prepared: full context, removal of the nine
+noncontiguous source items, identical full context with the four target documents
+last, and the four-document control. Removing those items also removes their other
+spans (206 windows become 183); this is not a pure copied-header formatting test.
+All use the same claims and existing source scope.
 Further private calls require an extended bounded budget; none have run.
 
 ## Remaining G1 work

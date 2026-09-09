@@ -303,6 +303,9 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   assert.equal(assistant.finalization.complete, false);
   assert.equal(assistant.finalization.answer_verified, true);
   assert.equal(assistant.verification.partial.omitted_count, 1);
+  assert.equal(assistant.claim_ledger.unitization, 'observations_v1');
+  assert.equal(assistant.claim_ledger.claims.length, 1);
+  assert.match(assistant.claim_ledger.claims[0].claim, /\$25\. The amount is labeled as a premium\./);
   await page.reload();
   await page.getByRole("button", { name: saved.title, exact: true }).click();
   await notice.waitFor();

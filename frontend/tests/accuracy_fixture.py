@@ -328,6 +328,11 @@ class Handler(BaseHTTPRequestHandler):
             if result['mode'] == 'timeline':
                 result['timeline_events'] = [{'date': '2026-01-31', 'title': 'January premium statement', 'document_id': 101}]
             if 'partial' in question.lower():
+                claim = '- The January statement lists a premium of $25. The amount is labeled as a premium.'
+                result['answer'] = claim + ' [Document 101](/documents/101)'
+                result['claim_ledger']['unitization'] = 'observations_v1'
+                result['claim_ledger']['claims'][0].update(id='u1', claim=claim, start=0, end=len(claim))
+                result['verification']['supported_claims'] = [claim]
                 result['answer'] += '\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question.'
                 result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1},
                                                missing_evidence=['Some claims were omitted because they could not be verified.'])

@@ -20,11 +20,12 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
+from app.answer_observations import ObservationCandidate
 from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v18"
+POLICY_VERSION = "source-audit-v19"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -323,7 +324,7 @@ def _value_context(text: str, markers: list = ()) -> str:
     return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_presentation_ranges(text, markers)))
 
 
-def evidence_spans(pack: dict) -> list[dict]:
+def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict | None = None) -> list[dict]:
     spans = []
     seen = {}
     source_structures = {}
@@ -390,7 +391,53 @@ def evidence_spans(pack: dict) -> list[dict]:
                           "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
                           "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
                           "feedback_open": bool(item.get("feedback_open"))})
-    return spans
+    if not citation_safe:
+        return spans
+    safe = [candidate for span in spans if (candidate := citation_safe_span(span)) is not None]
+    if diagnostics is not None:
+        diagnostics['unavailable_citation_windows'] = len(spans) - len(safe)
+    return safe
+
+
+def citation_safe_span(span):
+    """Trim only rejected edge tokens; retain one bounded original interval."""
+    content = span['content']
+    tokens = list(re.finditer(r'\S+', content))
+    markers = sorted(span.get('list_markers', []) + span.get('field_leaders', []))
+    first, last = 0, len(tokens)
+    while first < last:
+        start = 0 if first == 0 else tokens[first].start()
+        end = len(content) if last == len(tokens) else tokens[last - 1].end()
+        failures = []
+        candidate = {**span,
+            'span_id': (span['span_id'] if start == 0 and end == len(content) else
+                        f"{span['span_id']}:safe:{start}:{end}"),
+            'content': content[start:end], 'start': span['start'] + start, 'end': span['start'] + end,
+            'list_markers': _slice_markers(span.get('list_markers', []), start, end),
+            'field_leaders': _slice_markers(span.get('field_leaders', []), start, end),
+            'date_context_before': date_context(span.get('date_context_before', '') + content[:start]),
+            'boundary_before': (span.get('boundary_before', '') + content[:start])[-2:],
+            'boundary_after': (content[end:] + span.get('boundary_after', ''))[:2],
+            'value_boundary_before': (span.get('value_boundary_before', '') +
+                _value_context(content[:start], _slice_markers(markers, 0, start)))[-16:],
+            'value_boundary_after': (_value_context(content[end:], _slice_markers(markers, end, len(content))) +
+                span.get('value_boundary_after', ''))[:2],
+        }
+        # Bind the exact proposed interval before validation. Searching a quote
+        # inside the old window could instead find an earlier repeated occurrence.
+        reference = validate_reference({
+            'span_id': candidate['span_id'], 'evidence_id': candidate['evidence_id'],
+            'document_id': candidate['document_id'], 'quote': candidate['content'],
+        }, [{**candidate, 'feedback_open': False}], diagnostics=failures)
+        if reference:
+            return candidate
+        if failures == ['boundary_start']:
+            first += 1
+        elif failures == ['boundary_end']:
+            last -= 1
+        else:
+            return None
+    return None
 
 
 def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy") -> list[dict]:
@@ -614,19 +661,28 @@ def _quote_range(source: str, quote: str):
     return None if found is None else (words[found].start(), words[found + len(wanted) - 1].end())
 
 
-def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
+def validate_reference(reference: Any, spans: list[dict], *, diagnostics: list | None = None) -> dict | None:
+    def reject(reason):
+        if diagnostics is not None:
+            diagnostics.append(reason)
+        return None
     if not isinstance(reference, dict):
-        return None
+        return reject('invalid_reference_shape')
     span = next((s for s in spans if s["span_id"] == reference.get("span_id")), None)
-    if not span or span["feedback_open"]:
-        return None
+    if not span:
+        return reject('unknown_or_unselected_span')
+    if span["feedback_open"]:
+        return reject('source_feedback_open')
+    if set(reference) == {'span_id'}:
+        reference = {**reference, 'evidence_id': span['evidence_id'],
+                     'document_id': span['document_id'], 'quote': span['content']}
     if reference.get("evidence_id") != span["evidence_id"] or type(reference.get("document_id")) is not int:
-        return None
+        return reject('identity_mismatch')
     if reference["document_id"] != span["document_id"]:
-        return None
+        return reject('identity_mismatch')
     quote = reference.get("quote")
     if not isinstance(quote, str) or not normalize_quote(quote):
-        return None
+        return reject('empty_quote')
     source = span["content"]
     bounds = _quote_range(source, quote)
     if bounds is None:
@@ -638,30 +694,30 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
         eligible = [i for i, (start, end) in enumerate(ranges)
                     if len(prefix) <= start < end <= len(prefix) + len(source)]
         if not eligible:
-            return None
+            return reject('quote_not_in_source')
         first, last = eligible[0], eligible[-1] + 1
         visible, ranges = visible[first:last], ranges[first:last]
         plain_quote, _ = _plain_field_labels(quote)
         visible_bounds = _quote_range(visible, plain_quote)
         if visible_bounds is None:
-            return None
+            return reject('quote_not_in_source')
         first, last = visible_bounds
         bounds = ranges[first][0] - len(prefix), ranges[last - 1][1] - len(prefix)
         if not 0 <= bounds[0] < bounds[1] <= len(source):
-            return None
+            return reject('quote_not_in_source')
     start, end = bounds
     before = (span.get("boundary_before", "") + source[:start])[-1:]
     after = (source[end:] + span.get("boundary_after", ""))[:2]
-    if (before and source[start].isalnum() and (before.isalnum() or before == "_")) or (
-        after and source[end - 1].isalnum() and (after[0].isalnum() or after[0] == "_")
-    ):
-        return None
+    if before and source[start].isalnum() and (before.isalnum() or before == "_"):
+        return reject('boundary_start')
+    if after and source[end - 1].isalnum() and (after[0].isalnum() or after[0] == "_"):
+        return reject('boundary_end')
     if source[start].isdigit() and before in {"+", "-", "−", ".", ","}:
-        return None
+        return reject('boundary_start')
     if source[end - 1].isdigit() and len(after) > 1 and after[0] in ".,/-" and after[1].isdigit():
-        return None
+        return reject('boundary_end')
     if source[end - 1] in ".," and end - start > 1 and source[end - 2].isdigit() and after[:1].isdigit():
-        return None
+        return reject('boundary_end')
     source_list_markers = _slice_markers(span.get("list_markers", []), start, end)
     source_field_leaders = _slice_markers(span.get("field_leaders", []), start, end)
     markers = sorted(span.get("list_markers", []) + span.get("field_leaders", []))
@@ -673,25 +729,25 @@ def validate_reference(reference: Any, spans: list[dict]) -> dict | None:
     if visible:
         first, last = visible[0], visible[-1]
         before, after = before_visible[-1:], after_visible[:2]
-        if (first.isalnum() and before and (before.isalnum() or before == "_")) or (
-            last.isalnum() and after and (after[0].isalnum() or after[0] == "_")
-        ):
-            return None
+        if first.isalnum() and before and (before.isalnum() or before == "_"):
+            return reject('boundary_start')
+        if last.isalnum() and after and (after[0].isalnum() or after[0] == "_"):
+            return reject('boundary_end')
         numeric_start = re.match(r"(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?\s*\d", visible)
         if numeric_start and (before in {"+", "-", "−", ".", ","}
                               or re.search(r"[+−-]\s*(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])?\s*$", before_visible)):
-            return None
+            return reject('boundary_start')
         if last.isdigit() and len(after) > 1 and after[0] in ".,/-" and after[1].isdigit():
-            return None
+            return reject('boundary_end')
         if last in ".," and len(visible) > 1 and visible[-2].isdigit() and after[:1].isdigit():
-            return None
+            return reject('boundary_end')
         # A truncated delimiter-only context cannot establish the token's edge.
         if numeric_start and "value_boundary_before" not in span and not before_visible and span["start"] > len(span.get("boundary_before", "")):
-            return None
+            return reject('boundary_start')
         if last.isdigit() and "value_boundary_after" not in span and span.get("boundary_after") and (
             not after_visible or after_visible in {".", ",", "/", "-"}
         ):
-            return None
+            return reject('boundary_end')
     return {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
@@ -777,10 +833,11 @@ def date_occurs(value: str, source: str, date_order: str = "mdy", *, context_bef
     return source_date_occurs(value, source, date_order, context_before=context_before)
 
 
-def empty_ledger(candidate: str) -> dict:
-    total = len(answer_units(candidate))
+def empty_ledger(candidate: str, observations: ObservationCandidate | None = None) -> dict:
+    total = len(observations.units() if observations else answer_units(candidate))
     return {"claims": [], "summary": {"total": total, "supported": 0, "audit_coverage": 0},
             "complete": False, "spans": [], "available_span_count": 0,
+            "unitization": observations.strategy if observations else 'prose_v1',
             "candidate_digest": hashlib.sha256(candidate.encode()).hexdigest()}
 
 
@@ -850,23 +907,28 @@ class AnswerFinalizer:
             raise ValueError("Audit timeout and concurrency must be positive")
         self.concurrency = concurrency
 
-    def _audit_timeout(self, candidate):
-        batches = math.ceil(min(len(answer_units(candidate)), self.max_units) / 4)
+    def _audit_timeout(self, candidate, observations=None):
+        units = observations.units() if observations else answer_units(candidate)
+        batches = math.ceil(min(len(units), self.max_units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
-    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None):
+    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None):
         diagnostics = diagnostics if diagnostics is not None else []
-        units = answer_units(answer)
-        spans = evidence_spans(pack)
+        if observations and observations.text != answer:
+            raise ValueError('Observation candidate text mismatch')
+        units = observations.units() if observations else answer_units(answer)
+        source_diagnostics = {}
+        spans = evidence_spans(pack, citation_safe=True, diagnostics=source_diagnostics)
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         results = []
-        context = audit_context(answer)
+        context = '' if observations else audit_context(answer)
         complete = bool(units) and len(units) <= self.max_units and len(context) <= self.max_units * 1200 and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
-            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context}
+            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
+                          "unitization": observations.strategy if observations else 'prose_v1'}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
             diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
                                for index in range(len(batches)))
@@ -916,17 +978,30 @@ class AnswerFinalizer:
                     assessment = matches[0] if len(matches) == 1 else {}
                     raw_refs = assessment.get("references", [])
                     raw_refs = raw_refs if isinstance(raw_refs, list) else []
-                    refs = [validate_reference(r, selected) for r in raw_refs]
+                    reference_diagnostics = []
+                    reference_diagnostic_counts = {}
+                    refs = []
+                    for index, reference in enumerate(raw_refs):
+                        failures = []
+                        refs.append(validate_reference(reference, selected, diagnostics=failures))
+                        for reason in failures:
+                            reference_diagnostic_counts[reason] = reference_diagnostic_counts.get(reason, 0) + 1
+                            if len(reference_diagnostics) < 8:
+                                reference_diagnostics.append({'index': index, 'reason': reason})
+                    if not raw_refs:
+                        reference_diagnostics.append({'reason': 'no_references'})
+                        reference_diagnostic_counts['no_references'] = 1
                     valid = bool(refs) and all(refs)
                     status = assessment.get("status", "unchecked")
                     if status not in {"supported", "unsupported", "conflicting", "missing"}:
                         status = "unchecked"
+                    model_status = status
                     if status != "unchecked":
                         checked += 1
                     claim_rejections = []
                     mismatch_details = {}
                     if not valid:
-                        claim_rejections.append("invalid_reference")
+                        claim_rejections.append("missing_evidence" if not raw_refs else "invalid_reference")
                     else:
                         mismatch_details = value_mismatches(unit["text"], refs, date_order=self.date_order)
                         if mismatch_details:
@@ -935,6 +1010,9 @@ class AnswerFinalizer:
                         status = "unsupported"
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
+                                   "model_status": model_status, "reference_diagnostics": reference_diagnostics,
+                                   "reference_diagnostic_counts": reference_diagnostic_counts,
+                                   "reference_diagnostics_omitted": sum(reference_diagnostic_counts.values()) - len(reference_diagnostics),
                                    "rejection_reasons": claim_rejections, "value_mismatches": mismatch_details,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
@@ -988,6 +1066,8 @@ class AnswerFinalizer:
         summary.update(total=len(units), audited=checked, audit_coverage=checked / len(units) if units else 0,
                        support_ratio=summary["supported"] / len(units) if units else 0)
         return {"claims": claims, "summary": summary, "complete": complete,
+                "unitization": observations.strategy if observations else 'prose_v1',
+                "source_diagnostics": source_diagnostics,
                 "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
@@ -1004,6 +1084,7 @@ class AnswerFinalizer:
         plan["evaluated_at"] = evaluated_at
         disposition, attempts, error = "incomplete", 0, None
         candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
+        observations = None
         ledger = empty_ledger(candidate)
         if mode == "quick":
             disposition = "unaudited"
@@ -1013,10 +1094,11 @@ class AnswerFinalizer:
                     attempts += 1
                     # A failed second audit must not attach the prior
                     # candidate's ledger to the replacement's digest.
-                    ledger = empty_ledger(candidate)
+                    ledger = empty_ledger(candidate, observations)
                     ledger["audit_batches"] = diagnostics = []
-                    async with asyncio.timeout(self._audit_timeout(candidate)):
-                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations, diagnostics=diagnostics)
+                    async with asyncio.timeout(self._audit_timeout(candidate, observations)):
+                        ledger = await self._audit(question, candidate, evidence_pack, plan, declarations,
+                                                   diagnostics=diagnostics, observations=observations)
                     summary = ledger["summary"]
                     if ledger["complete"] and summary["supported"] == summary["total"]:
                         disposition, _ = temporal_acceptance(
@@ -1031,14 +1113,20 @@ class AnswerFinalizer:
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
                                 {"status": disposition, "claims": ledger["claims"],
                                  "rejection_reasons": ledger.get("rejection_reasons", [])})
-                        replacement = repaired.get("answer") if isinstance(repaired, dict) else None
+                        revised_observations = (ObservationCandidate.from_response(repaired)
+                                                if isinstance(repaired, dict) and 'observations' in repaired else None)
+                        replacement = (revised_observations.text if revised_observations else
+                                       repaired.get("answer") if isinstance(repaired, dict) else None)
                         if not isinstance(replacement, str) or not replacement.strip():
                             disposition, error = "audit_failed", "The answer repair returned no valid candidate."
                             break
                         revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
-                        if (revised, revised_declarations) == (candidate, declarations):
+                        if revised_observations and (revised != replacement or revised_declarations):
+                            raise ValueError('Observation repair must not contain attribution syntax')
+                        if (revised, revised_declarations, revised_observations) == (candidate, declarations, observations):
                             break
                         candidate, declarations = revised, revised_declarations
+                        observations = revised_observations
                     else:
                         break
             except TimeoutError:
@@ -1056,22 +1144,34 @@ class AnswerFinalizer:
                 and all(c["status"] in {"supported", "unsupported", "missing"}
                         and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
-            selection = supported_revision(candidate, ledger["claims"], answer_units)
-            subset = selection.pop("candidate")
+            subset_observations = None
+            try:
+                if observations:
+                    subset_observations, selection = observations.supported_subset(ledger['claims'])
+                    subset = subset_observations.text if subset_observations else None
+                else:
+                    selection = supported_revision(candidate, ledger["claims"], answer_units)
+                    subset = selection.pop("candidate")
+            except (ValueError, TypeError, KeyError):
+                subset, selection = None, {'reason': 'invalid_candidate_units'}
+                disposition, error = 'audit_failed', 'The partial answer units did not match the audited candidate.'
             ledger["subset_selection"] = selection
             if subset:
                 ledger["subset_audit_batches"] = subset_diagnostics = []
                 try:
-                    async with asyncio.timeout(self._audit_timeout(subset)):
-                        subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
+                    async with asyncio.timeout(self._audit_timeout(subset, subset_observations)):
+                        subset_ledger = await self._audit(question, subset, evidence_pack, plan,
+                                                         diagnostics=subset_diagnostics, observations=subset_observations)
                     subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
                     ledger['subset_audit'] = {
                         'candidate_digest': subset_ledger['candidate_digest'],
+                        'unitization': subset_ledger['unitization'],
                         'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
                         'rejection_reasons': subset_ledger.get('rejection_reasons', []),
                         'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
                         'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
                         'selection_coverage': subset_ledger['selection_coverage'],
+                        'source_diagnostics': subset_ledger['source_diagnostics'],
                         'temporal_disposition': subset_status,
                     }
                     if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]

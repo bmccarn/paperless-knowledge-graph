@@ -122,6 +122,27 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type": "error"', response.text)
         self.assertEqual([message["role"] for message in self.saved.messages], ["user"])
 
+    async def test_atomic_observation_metadata_roundtrips_ordinary_and_stream(self):
+        from app.answer_finalization import AnswerFinalizer
+        from app.answer_observations import ObservationCandidate
+        from tests.test_observation_delivery import HandleAuditor, ObservationRepairer
+        from tests.test_source_dates import pack
+        good = 'Cedar invoice records $20. The recipient is Casey.'
+        result = await AnswerFinalizer(HandleAuditor(), ObservationRepairer(
+            {'observations': [good, 'Maple invoice is REJECT.']})).finalize(
+                'What is recorded?', 'REJECT.', pack(good))
+        payload = {**final_payload(), **result}
+        with patch(__name__ + '.final_payload', return_value=payload):
+            await self.test_ordinary_and_sse_persist_identical_complete_metadata()
+        expected = ObservationCandidate.from_text('- ' + good).units()
+        for row in self.saved.messages:
+            if row['role'] == 'assistant':
+                ledger = row['metadata']['claim_ledger']
+                self.assertEqual(ledger['unitization'], 'observations_v1')
+                self.assertEqual([{**{key: c[key] for key in ('id', 'start', 'end')}, 'text': c['claim']}
+                                  for c in ledger['claims']], expected)
+                self.assertEqual(row['metadata']['verification']['partial']['omitted_count'], 1)
+
     async def test_complete_without_answer_does_not_promote_accumulated_draft(self):
         self.engine.behavior = "missing_answer"
         await self.client.post("/query/stream", json={"question": "Synthetic question", "conversation_id": "missing-answer"})

@@ -591,7 +591,10 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
 
 def _comparison_words(text: str) -> set[str]:
     """Keep short, alphanumeric and Unicode identities; exclude bare numbers."""
-    return set(re.findall(r"\b[^\W\d_]\w*\b", text.casefold()))
+    # This copy is only a retrieval signal; source text and quote validation
+    # retain their original, stricter provenance and normalization contracts.
+    words = re.findall(r'\w+', unicodedata.normalize('NFKC', text).casefold())
+    return {word for word in words if any(character.isalpha() for character in word)}
 
 
 def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None, reserved: list | None = None) -> list:

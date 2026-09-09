@@ -224,11 +224,12 @@ class AuditEvidenceOpportunityTests(unittest.IsolatedAsyncioTestCase):
                     'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
                     'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
                     'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
-        for identity in ('AB', 'A2', '測定', ''):
+        for identity, alternative_identity in (('AB', 'AB'), ('A2', 'A2'), ('2A', '2A'), ('測定', '測定'), ('', ''),
+                                               ('José', 'Jose\u0301'), ('ＡＢ', 'AB')):
             for scenario in ('other_documents', 'own_continuation', 'explicit_reservation'):
                 with self.subTest(identity=identity, scenario=scenario):
                     old = f'{identity} Record date: 01/01/2025. Charge: 500 USD.'
-                    new = f'{identity} Record date: 01/01/2026. Charge: 600 USD.'
+                    new = f'{alternative_identity} Record date: 01/01/2026. Charge: 600 USD.'
                     if scenario == 'other_documents':
                         items = [item(1, 0, old)] + [item(doc, 0, new + f' Reference {doc}.') for doc in range(2, 37)]
                     else:
@@ -241,6 +242,24 @@ class AuditEvidenceOpportunityTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(opportunities[0]['omitted_document_ids'])
                     if scenario != 'other_documents':
                         self.assertIn(1, opportunities[0]['omitted_document_ids'])
+
+    async def test_digit_leading_identity_retains_opposite_state_alternatives(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        for identity in ('A2', '2A'):
+            with self.subTest(identity=identity):
+                items = [item(1, 0, f'{identity} record dated January 1, 2025 is open.')]
+                items += [item(doc, 0, f'{identity} record dated January 1, 2026 is closed. Reference {doc}.') for doc in range(2, 37)]
+                result = await AnswerFinalizer(Auditor()).finalize('What is the latest record?',
+                    f'The latest {identity} record dated January 1, 2025 is open.', {'items': items})
+                self.assertFalse(result['finalization']['answer_verified'])
+                opportunity = result['claim_ledger']['selection_coverage'][0]['comparison_opportunities'][0]
+                self.assertEqual(len(opportunity['eligible_document_ids']), 36)
+                self.assertTrue(opportunity['omitted_document_ids'])
 
     async def test_identical_openings_keep_their_own_distinct_continuation_context(self):
         opening = 'Cedar service record for account SHAREDREF.'

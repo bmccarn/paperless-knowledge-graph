@@ -7,9 +7,12 @@ Latest evaluator and cache controls reviewed at `e358a0c039cbd0a94a269eb66af399e
 
 ## Status
 
-G1 is in progress. No production behavior, model route, output cap, indexed data,
-review history or deployment has changed. G2–G6 remain unstarted. A working
-harness is not a semantic reproduction or an accepted fix.
+The controlled reproduction criteria are met; representative expansion and
+end-to-end qualification remain outstanding. The two G2 candidate approaches have
+been implemented and tested without establishing an accepted improvement. G3–G6
+remain unstarted. Production behavior, model route, output cap, indexed data,
+review history and deployment remain unchanged. The updated SDK/dependency lock
+is implemented and independently validated locally, not deployed.
 
 ## Completed work
 
@@ -170,7 +173,7 @@ fails. These are experiment proposals, not an accepted production architecture;
 G2 must freeze their interfaces, controls and resource budgets before execution.
 The four-document reduction is diagnostic only and is not a proposed production cap.
 
-## Remaining G1 work
+## Remaining evaluation work
 
 - The approved context comparison is complete. Retain its variable failure pattern
   and source-valid 183-window reproducer; do not reinterpret the four-document
@@ -182,3 +185,73 @@ The four-document reduction is diagnostic only and is not a proposed production 
   end-to-end question-aspect evaluation. Compact controls alone cannot pass G1.
 - Freeze G2 experiment counts, cache observations, cost/time bounds and decision
   criteria before comparing any candidate. No architecture has been selected.
+
+## Source-reading candidate comparison (G2)
+
+Candidate plan: [source reading](../specs/source-reading-experiment.md). The user
+explicitly requested implementation and evaluation, with accuracy over latency.
+The application now supports constructor-only `flat`, `grouped` and `source_first`
+strategies at the same native audit interface; production remains `flat`. The
+reader sees the original question and complete grouped sources before seeing any
+candidate. Notes remain untrusted, and the verifier/finalizer retain every original
+source window. Quick currently bypasses auditing and is explicitly outside this
+implementation's claimed benefit until a reviewed integration change.
+
+At SDK 1.54, the repeated source-valid retained case produced:
+
+| Implementation | Native invocations | False approvals / 3 negatives | False rejections / 9 positives | Result |
+| --- | ---: | ---: | ---: | --- |
+| Flat | 3 | 0 | 0 | This small sample passed; earlier unchanged baseline runs failed |
+| Grouped | 3 | 3 | 0 | Failed |
+| Source-first, final compatible schema | 6 | 3 | 0 | Failed |
+
+The final source-first run completed in 155.6 seconds, median 51.2 seconds per case,
+with 919,384 reported input and 33,849 output tokens. All six native stages completed
+and all three false approvals survived normalization and source finalization.
+Inspection found the same unsupported action inference in a reader note before
+the candidate was supplied. Candidate blindness alone therefore did not remove
+the source-interpretation failure. The three arms were launched with overlapping
+execution; timings are operational receipts, not an isolated latency benchmark.
+Upstream sampling independence remains unverified.
+
+Two preceding source-first manifests failed before returning any reading (three
+provider 400 errors each). The first wire schema used unsupported integer enums.
+After removing them, the large source-handle enum still failed. A six-call synthetic
+transport probe at 183 handles/36 documents held the prompt/sources fixed: three enum
+calls failed and three parser-bound calls returned valid readings. The final schema
+uses integer document IDs and string handles, with exact coverage and same-document
+reference ownership enforced locally. No source text, prompt or labels were changed
+to rescue a semantic result; failed manifests remain retained.
+
+On the 64-assertion four-domain development set, each strategy schedules 36 case runs
+(192 assertion observations,96 positive/96 negative). Flat used 48 native invocations
+and rejected 18 supported observations; grouped used 48 and rejected 16. Neither
+approved a negative in this compact set. The initial source-first wire version
+used 95 native invocations, rejected 18 positives, and left four assertions unavailable
+in one case. Missing required positives totalled 20. Its usage totals remain unknown
+because one native invocation lacked metrics. This result is retained separately
+from the final wire-schema experiment.
+
+The final compatible source-first run completed all 36 synthetic case runs using
+96 native invocations in 532.9 seconds. It falsely rejected 17 of 96 positive
+observations, with zero false approvals among 96 negatives and zero unavailable
+assertions. Reported usage was 160,530 input and 157,398 output tokens. The small
+positive-count difference from the baseline is not a passing result or established
+statistical improvement; the retained false approvals fail the critical gate.
+No candidate may advance merely by improving malformed-output counts or losing
+fewer facts. The final candidate was reviewed at `a589ff6`; the subsequent SDK1.55
+lock refresh has separate engineering checks and has not inherited these SDK1.54
+model results as release qualification.
+
+The latest SDK review also identified an instrumentation limit: native invocation
+counts are not proven upstream HTTP attempt counts, because Strands has a separate
+default retry strategy in addition to the OpenAI client. The manifest ceilings
+bounded native invocations and total elapsed time. Future strict transport-budget
+claims require explicit SDK retry configuration or HTTP attempt instrumentation;
+no retry behavior changed mid-experiment. See [SDK review](2026-09-09-strands-sdk-review.md).
+
+Both tested approaches fail the current release criteria. Return to source-level
+interpretation and context-isolation hypotheses before another candidate; do not
+append another prompt rule or deploy this extra stage. Preserve the known adapter
+false-rejection regressions for the eventual complete design. Holdout, end-to-end
+all-mode coverage and live browser/original-source qualification remain unconsumed.

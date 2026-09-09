@@ -1,6 +1,6 @@
 # Query reliability: evaluation before implementation
 
-Status: reviewed plan; G0 complete and G1 in progress. Production implementation and deployment remain unstarted and must satisfy the gates below.
+Status: G0 and controlled G1 reproduction complete; G2 candidates tested without a passing design. Production activation and deployment remain unstarted; representative expansion and qualification remain required.
 
 Requested September 9, 2026. Tracker: [issue #33](https://github.com/bmccarn/paperless-knowledge-graph/issues/33). Frozen starting revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`, answer policy `source-audit-v25`, delivered through GitOps PR164. This document replaces the execution sequence and stale status matrix in [the earlier reliability spec](evidence-query-reliability.md). That document remains a record of existing contracts, implementation history and failed experiments.
 
@@ -81,8 +81,8 @@ Score separately:
 | Gate | Work and deliverable | Exit criterion | Current state |
 | --- | --- | --- | --- |
 | G0 — plan | Review this spec on Standards and Spec axes; reconcile older execution instructions. | Material plan findings closed; planning request ends without starting implementation. | Complete; both reviews clear |
-| G1 — reproduce | Build the evaluation harness, frozen dataset/labels, raw private capture contract and baseline report. This is evaluation-only work. | Deterministic defects reproduce through production interfaces; the real semantic failure reproduces in a controlled native-model evaluation, or a measured nondeterministic failure rate is established. | In progress; [evaluation report](../audits/2026-09-09-query-evaluation.md) |
-| G2 — discriminate | Minimize the semantic reproducer while retaining its failure; preregister bounded, one-variable experiments against ranked hypotheses. | At least one candidate materially improves the reproduced failure without failing positive controls; all outcomes retained. | Not started |
+| G1 — reproduce | Build the evaluation harness, frozen dataset/labels, raw private capture contract and baseline report. This is evaluation-only work. | Deterministic defects reproduce through production interfaces; the real semantic failure reproduces in a controlled native-model evaluation, or a measured nondeterministic failure rate is established. | Controlled reproduction complete; representative expansion remains in [evaluation report](../audits/2026-09-09-query-evaluation.md) |
+| G2 — discriminate | Minimize the semantic reproducer while retaining its failure; preregister bounded, one-variable experiments against ranked hypotheses. | At least one candidate materially improves the reproduced failure without failing positive controls; all outcomes retained. | Two candidates tested; no passing design. Return to hypotheses |
 | G3 — choose design | Write a short architecture decision with measured alternatives, the chosen interface, call/data flow, failure behavior, cost/latency and implementation tasks. Independently review it. | Both review axes pass; every proposed production change maps to evidence and a regression. | Not started |
 | G4 — implement | Implement the complete selected design on one branch, including justified protocol fixes. Run meaningful regressions and required full checks. | Source-head review and CI pass; no production deployment has occurred. | Not started |
 | G5 — qualify candidate | Freeze code/config and run held-out real-model and end-to-end evaluations. | All release criteria below pass on that exact candidate. | Not started |
@@ -134,4 +134,4 @@ Keep all existing failed releases and test receipts. Update this document's gate
 
 Independent Standards and Spec reviews both passed at `d1b3734142e50b1b578584e63e6a5aba3e29de06` on September 9, 2026, with no remaining findings. Review identified and closed a holdout-isolation gap: an independent custodian owns hidden cases before qualification, and any evaluated set becomes regression evidence if its results influence subsequent candidate adaptation. This review record and the G0 status were added after those reviews; the reviewed requirements are unchanged.
 
-The planning deliverable is complete. G1 evaluation work is underway and recorded in the gate table and linked report. Complete its dataset, grader, evaluation-access and semantic-reproduction requirements before advancing. No architecture candidate has been selected yet.
+The controlled baseline and two candidate implementations have now been evaluated as recorded in the gate table and linked report. Neither candidate establishes a release-worthy improvement. Representative expansion, the eventual measured design and all qualification gates remain outstanding. No production architecture has been selected.

@@ -573,3 +573,23 @@ exact final SSE conservation. Review reproduced acceptance of an unterminated SS
 frame and bytes whose send failed; both now reject qualification while retaining
 diagnostic bytes. Both axes cleared the slice; five actual-route tests pass and all
 29 live utility tests pass. This still does not supply an executable live harness.
+
+The fresh v2 initial cases00–08 now pass both independent reviews, with zero raw or
+delivered false approvals, missing required facts, unsupported extras or false
+completeness. Credit conservatively under-reported one aspect, as did treatment;
+both completion calls returned no additions. Native omission recovery remains
+unproved. The latest helper-only commit `ee80a7a` passed backend/frontend CI.
+
+Live-browser session ownership and no-model/private-history adapters passed both
+review axes. Six additional actual-route tests cover normal delivery, disconnected
+requests, owner cancellation, explicit model selection, frozen follow-up history
+and saved metadata projection; all 35 live utility tests pass. The built frontend
+then submitted one retained-native-output replay through the actual HTTP/SSE route,
+with exact model/request and final payload conservation. Desktop/mobile answers,
+source drawer and saved private history were visually inspected; no page errors or
+horizontal overflow occurred. Artifacts: `/private/tmp/kg-live-browser-session-ui-20260909`.
+The first UI fixture used Uvicorn's signal re-raise and lost its teardown receipt;
+the fixture now owns SIGTERM shutdown, and a second no-model rendering run retained
+the successful conservation receipt. This is test-server wiring, not a production
+change or new native retrieval result. Full admitted live runtime integration is
+still pending; these helpers do not activate the candidate.

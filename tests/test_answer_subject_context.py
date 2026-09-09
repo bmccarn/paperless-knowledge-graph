@@ -228,14 +228,17 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(clock, result['answer'])
 
     async def test_time_valued_fields_still_require_their_record_context(self):
-        for field in ('Start time: 12:01 AM.', '**Start time:**08:30.',
+        fields = ['Start time: 12:01 AM.', '**Start time:**08:30.',
                       'Device1:20.', 'Device 1:20.', 'Item 1:20 kg.',
                       'Line 1:20.00 USD.', 'Item at 1:20 kg.', 'Line at 1:20.00 USD.',
-                      'Item at 1:20,000 USD.', 'Line at 1:20,50 EUR.',
-                      'Line at 1:20, 000 USD.',
                       '08:30: Released.',
                       '12:01 AM: Cancelled.', 'Departure at 08:30: Released.',
-                      'Ratio: 3:1.'):
+                      'Ratio: 3:1.']
+        fields.extend(f'Item at 1:20{before}{separator}{after}000 USD.'
+                      for separator in ('.', ',')
+                      for before in ('', ' ', '\u00a0')
+                      for after in ('', ' ', '\u00a0'))
+        for field in fields:
             answer = ('- The Cedar contract REJECT records delivery.\n'
                       f'- {field}\n- Recipient: Casey.\n\n'
                       '- The Maple notice records delivery at 23:59:00.')

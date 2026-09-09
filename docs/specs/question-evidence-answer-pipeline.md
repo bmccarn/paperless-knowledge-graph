@@ -230,3 +230,35 @@ architecture hypotheses, development and independent holdout results, all-mode
 end-to-end coverage, actual visual receipts, dependency versions and production
 revision. Report remaining gaps directly. A retained-case pass, SDK update or clean
 code review alone does not close issue #33.
+
+## Development selection after the original-table run
+
+The completed three-arm original-table experiment had no false approvals and no
+execution failures, but lost 10/12/11 positive observations. It does not pass the
+original development gate. Two independently reviewed implementation follow-ups
+preserve intact table rows and permit one scope-metadata protocol correction only
+when no row in the batch contains a negative factual decision. The latter cannot
+fix the mixed-label evaluation batches and is not represented as doing so.
+
+The remaining signed-credit paraphrase requires a different composition, not an
+absolute-value exception: a candidate may describe the adjustment using its printed
+negative amount. One separate synthetic balance/statement association was disputed
+by both source reviewers; retain its original gold and failed scores unchanged.
+Neither issue justifies retries until an approval appears or relaxing source roles.
+
+Proceed with the already-designed integrated pipeline as an inactive development
+candidate so the next evaluation can assess answers composed from originals, rather
+than continuing to optimize fixed paraphrases in isolation. This changes the order
+of engineering work, not release acceptance. Existing failed receipts remain failed.
+No default, cache policy or live model route changes until the complete candidate
+passes native end-to-end development and independent holdout gates. Initial tests
+must include printed signed adjustments, unchanged rejection of wrong-sign facts,
+and ambiguous associations reported as unresolved instead of forced into an answer.
+
+The first implementation slice adds a validated initial ObservationCandidate input
+to the finalizer. It preserves the exact canonical units/digest from the first audit,
+checks all structured candidates even in Quick mode, and retains the existing
+repair/subset re-audit and provenance gates. Legacy string callers keep their
+existing behavior until all-mode integration is separately reviewed. Directly
+constructed invalid candidates must be rejected before any model call. This slice
+alone is infrastructure, not a qualified answer improvement or production activation.

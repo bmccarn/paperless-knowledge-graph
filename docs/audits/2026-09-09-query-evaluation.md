@@ -340,3 +340,24 @@ issuance does not explicitly identify that balance as a statement field. Complet
 gold and scores remain unchanged. Record this as a disputed fixture association;
 any future corrected assertion must be independently reviewed and use a new dataset
 version/manifest, never retroactively turn these runs into a pass.
+
+## Reviewed follow-ups and graph release
+
+Scope correction at `577fed4` passed both reviews and 631 offline backend tests
+(48 disposable integration skips). The native original-table scores above are
+unchanged; this implementation has not received a new native accuracy measurement.
+
+The separate graph-only release in application PR #51 (`8ee3ed77`) is deployed
+through homelab GitOps PR #167 (`293105c9`). Flux apps is Ready at that revision.
+The frontend index digest is
+`sha256:6c890f73546ddc342bdf05aec885b281c90a5d7d9691b8c80a36041f5ff9df15`.
+API/worker images were unchanged. Real Chromium browser interaction against the
+live 630-node/980-relationship graph preserved initial wheel zoom
+(4.287878 -> 4.287878), accepted further wheel zoom to 39.403831, and preserved the
+entire early-pan transform after layout completion. Explicit Fit view worked;
+desktop and narrow inspector screenshots were visually inspected, with no horizontal
+overflow or page errors. The 2D/3D buttons returned to 2D successfully, but that does
+not establish a complete 3D interaction pass while the narrow inspector covers the
+canvas. Private screenshots/measurements remain outside the repository. Native CUA
+startup failed; this acceptance used actual Playwright browser control instead.
+These graph receipts do not qualify query answers or all application features.

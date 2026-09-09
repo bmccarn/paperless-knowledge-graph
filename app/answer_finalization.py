@@ -20,13 +20,14 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
+from app.source_audit import PROTOCOL_ERRORS
 from app.answer_observations import ObservationCandidate, ObservationValidationError
 from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v24"
+POLICY_VERSION = "source-audit-v25"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -790,6 +791,9 @@ def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
     """Structural errors only; semantic rejection never justifies another vote."""
     if not raw:
         return ["unavailable"]
+    if isinstance(raw, dict) and 'audit_protocol_error' in raw:
+        reason = raw['audit_protocol_error']
+        return ['semantic_protocol_' + reason] if isinstance(reason, str) and reason in PROTOCOL_ERRORS else ['invalid_assessments']
     if not isinstance(raw, dict) or not isinstance(raw.get("assessments"), list):
         return ["invalid_assessments"]
     expected = {unit["id"] for unit in units}
@@ -968,10 +972,11 @@ class AnswerFinalizer:
                     status = assessment.get("status", "unchecked")
                     if status not in {"supported", "unsupported", "conflicting", "missing"}:
                         status = "unchecked"
-                    model_status = status
+                    model_status = assessment.get("model_status", status)
                     if status != "unchecked":
                         checked += 1
-                    claim_rejections = []
+                    semantic = assessment.get('semantic_decision')
+                    claim_rejections = list(semantic['rejection_reasons']) if semantic else []
                     mismatch_details = {}
                     if not valid:
                         claim_rejections.append("missing_evidence" if not raw_refs else "invalid_reference")
@@ -991,6 +996,8 @@ class AnswerFinalizer:
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],
                                    "evidence_quote": refs[0]["quote"] if valid else "",
                                    "source_title": refs[0]["source_title"] if valid else ""})
+                    if semantic:
+                        claims[-1]['semantic_decision'] = semantic
                     assertion = assessment.get("temporal_assertion")
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "documented", "current", "none", "unknown"} else "unknown"
@@ -1216,6 +1223,10 @@ class AnswerFinalizer:
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
         for audit in (ledger, ledger.get('subset_audit', {})):
+            for claim in audit.get('claims', []):
+                if 'semantic_decision' in claim:
+                    claim['semantic_decision'] = {key: value for key, value in claim['semantic_decision'].items()
+                                                  if key not in {'source_basis', 'unresolved_assumptions'}}
             if 'spans' in audit:
                 audit['spans'] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in audit['spans']]
         result = {"answer": public_answer, "verification": verification, "claim_ledger": ledger,

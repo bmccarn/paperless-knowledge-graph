@@ -21,11 +21,13 @@ from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
 from app.answer_observations import ObservationCandidate, ObservationValidationError
+from app.timeline import project_timeline
+from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v21"
+POLICY_VERSION = "source-audit-v22"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -1320,14 +1322,8 @@ class AnswerFinalizer:
         refs = [r for claim in ledger["claims"] for r in claim["references"]] if supported else []
         doc_ids = list(dict.fromkeys(r["document_id"] for r in refs))
         if supported:
-            for claim in reversed(ledger["claims"]):
-                ids = list(dict.fromkeys(r["document_id"] for r in claim["references"]))
-                citations = " " + " ".join(f"[Document {i}](/documents/{i})" for i in ids)
-                public_answer = public_answer[:claim["end"]] + citations + public_answer[claim["end"]:]
-        if disposition == "partial":
-            public_answer += "\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question."
-        if supported and temporal_disposition == "qualified":
-            public_answer += f"\n\nThese are documented facts. Current status as of {evaluated_at} is not established by the retrieved evidence."
+            public_answer = render_verified_answer(candidate, ledger["claims"],
+                partial=disposition == "partial", qualified=temporal_disposition == "qualified", evaluated_at=evaluated_at)
         verification = {"status": "verified" if complete else disposition,
                         "supported_claims": [c["claim"] for c in ledger["claims"] if c["status"] == "supported"],
                         "unsupported_claims": [c["claim"] for c in ledger["claims"] if c["status"] == "unsupported"],
@@ -1342,12 +1338,13 @@ class AnswerFinalizer:
         for audit in (ledger, ledger.get('subset_audit', {})):
             if 'spans' in audit:
                 audit['spans'] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in audit['spans']]
-        return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
+        result = {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,
                                  **({'repair_diagnostic': repair_diagnostic} if repair_diagnostic else {}),
                                  "answer_digest": hashlib.sha256(public_answer.encode()).hexdigest(),
                                  "candidate_digest": revision, "evaluated_at": evaluated_at,
+                                 "documented_qualification": supported and temporal_disposition == "qualified",
                                  "attempts": attempts, "complete": complete, "answer_verified": supported, "cited_document_ids": doc_ids},
                 "evidence": {"score": 0.65 if disposition in {"qualified", "partial"} else 0.8 if supported else 0.25 if disposition == "unaudited" else 0.0,
                              "level": "medium" if disposition in {"qualified", "partial"} else "high" if supported else "low", "audit_status": disposition,
@@ -1359,6 +1356,15 @@ class AnswerFinalizer:
                              "penalties": [] if supported else verification["missing_evidence"],
                              "dimensions": {"claim_support": ledger["summary"].get("support_ratio", 0),
                                             "audit_coverage": ledger["summary"].get("audit_coverage", 0)}}}
+        result["timeline_events"] = []
+        if mode == "timeline":
+            if supported:
+                ledger["candidate_text"] = candidate
+            events, receipt = project_timeline(public_answer, ledger, result["finalization"], self.date_order)
+            result["timeline_events"] = events
+            result["finalization"]["timeline"] = receipt
+        return result
+
 
 
 def current_state(plan: dict, pack: dict, evaluated_at: str) -> dict:

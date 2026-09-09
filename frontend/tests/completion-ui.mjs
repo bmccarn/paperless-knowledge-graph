@@ -293,7 +293,7 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   await notice.waitFor();
   assert.ok((await notice.innerText()).includes("1 claim was omitted"));
   await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
-  await page.getByText("Timeline events (1)", { exact: true }).waitFor();
+  await page.getByText("Dates in verified observations (1)", { exact: true }).waitFor();
   assert.equal(await page.getByText("0%", { exact: true }).count(), 0);
   assert.equal(await page.getByText("$999", { exact: true }).count(), 0);
   await record(page, "verified-partial-history");
@@ -309,7 +309,7 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   await page.reload();
   await page.getByRole("button", { name: saved.title, exact: true }).click();
   await notice.waitFor();
-  await page.getByText("Timeline events (1)", { exact: true }).waitFor();
+  await page.getByText("Dates in verified observations (1)", { exact: true }).waitFor();
   await page.getByRole("button", { name: /January premium statement/ }).last().click();
   const source = page.getByRole("dialog");
   await source.waitFor();
@@ -321,4 +321,51 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   assert.equal(await notice.isVisible(), true);
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await record(page, "verified-partial-mobile");
+});
+
+
+test("all date observations stay accessible on mobile and in restored history", async t => {
+  const { context, page } = await fixturePage(t);
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  const input = page.getByPlaceholder("Ask a question...");
+  await input.fill("Show many dates"); await input.press("Enter");
+  const dates = page.getByRole("region", { name: "Dates in verified observations", exact: true });
+  await dates.waitFor();
+  assert.equal(await dates.getByRole("article").count(), 8);
+  const last = dates.getByRole("article", { name: "Date mention 8", exact: true });
+  await last.scrollIntoViewIfNeeded();
+  assert.match(await last.innerText(), /invoice 8.*January 8, 2026/);
+  assert.match(await last.innerText(), /request does not confirm completed service/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await last.scrollIntoViewIfNeeded();
+  assert.ok(await last.isVisible());
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await record(page, "all-date-observations-mobile");
+  await last.getByRole("button", { name: "January premium statement", exact: true }).click();
+  await page.getByRole("dialog").waitFor();
+  await page.keyboard.press("Escape");
+  await last.getByRole("link", { name: "Read in the full answer", exact: true }).click();
+  assert.ok(await page.locator("#answer-1").isVisible());
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const conversations = await (await context.request.get(`${base}/api/conversations`)).json();
+  await page.reload();
+  await page.getByRole("button", { name: conversations[0].title, exact: true }).click();
+  await dates.waitFor();
+  assert.equal(await dates.getByRole("article").count(), 8);
+  await record(page, "all-date-observations-restored");
+});
+
+test("legacy timeline prose is not displayed as verified dates", async t => {
+  const { context, page } = await fixturePage(t);
+  const saved = await (await context.request.post(`${base}/api/conversations`, { data: { title: "Legacy dated answer" } })).json();
+  await page.route(`**/api/conversations/${saved.id}`, route => route.fulfill({ json: {
+    ...saved, messages: [{ role: "assistant", content: "The source records a service request.",
+      timeline_events: [{ date: "2026-01-01", title: "Unsupported service completion" }] }],
+  } }));
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: saved.title, exact: true }).click();
+  await page.getByText("Timeline unavailable for this answer.", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Unsupported service completion", { exact: true }).count(), 0);
+  await record(page, "legacy-timeline-unavailable");
 });

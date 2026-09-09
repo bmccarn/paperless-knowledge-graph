@@ -431,7 +431,7 @@ def _strategy_for_mode(mode: str) -> str:
     return {
         "quick": "single-pass deterministic retrieval with no agent gap loop",
         "deep": "Strands-planned multi-query retrieval, graph expansion, evidence grading, verifier pass",
-        "timeline": "Strands-planned retrieval, timeline extraction, deterministic event sort, verifier pass",
+        "timeline": "Strands-planned retrieval, complete source audit, dates from final verified observations",
         "strict": "High-accuracy retrieval, source-quality evidence pack, claim ledger, verifier repair loop",
     }[normalize_mode(mode)]
 

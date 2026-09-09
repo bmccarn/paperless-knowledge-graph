@@ -1,6 +1,5 @@
 import unittest
 from app.answer_finalization import AnswerFinalizer, evidence_spans, parse_date
-from app.timeline import validate_timeline
 from app.query_quality import compute_evidence_grade, current_state_summary
 from tests.test_answer_finalization import PACK, SupportedAuditor
 
@@ -85,18 +84,6 @@ class TemporalTests(unittest.IsolatedAsyncioTestCase):
             rejected = await AnswerFinalizer(ContextAuditor()).finalize("Current premium?", unsafe, PACK)
             self.assertFalse(rejected["finalization"]["complete"])
 
-    async def test_timeline_accepts_sourced_event_and_rejects_unknown_source_and_invalid_date(self):
-        pack = {"items": [{"id": "move", "document_id": 88, "title": "Move record", "content": "Moved to Durham in 2024-02."}]}
-        span = evidence_spans(pack)[0]
-        ref = {"span_id": span["span_id"], "evidence_id": "move", "document_id": 88, "quote": span["content"]}
-        class Auditor:
-            async def audit_answer_units(self, *args):
-                return {"assessments": [{"unit_id": "event", "status": "supported", "references": [ref]}]}
-        event = {"date": "2024-02", "title": "Moved to Durham", "summary": "", "document_id": 88, "references": [ref]}
-        events = await validate_timeline([event, {**event, "date": "2024-02-30"}, {**event, "document_id": 999}], pack, Auditor(), "When did I move?")
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["precision"], "month")
-        self.assertEqual(events[0]["date"], "2024-02")
 
 
 if __name__ == "__main__":

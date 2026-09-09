@@ -2,7 +2,7 @@
 
 The query engine owns retrieval, ranking, and source handling. Strands is used
 only for bounded agent decisions where the model can improve quality: planning,
-timeline extraction, and evidence verification.
+and evidence verification.
 """
 
 from __future__ import annotations
@@ -163,50 +163,6 @@ Rules:
             ),
             prompt=prompt,
         )
-
-    async def extract_timeline(self, question: str, context: str) -> list[dict[str, Any]]:
-        if not self.enabled:
-            return []
-
-        prompt = f"""Extract a deterministic timeline from the retrieved document context.
-
-Question: {question}
-
-Context:
-{context}
-
-Return only JSON:
-{{
-  "events": [
-    {{
-      "date": "YYYY-MM-DD, YYYY-MM, or YYYY preserving source precision",
-      "title": "short event title",
-      "summary": "what changed or happened",
-      "document_id": 123,
-      "source_title": "document title",
-      "status": "historical",
-      "references": [{{"span_id": "exact supplied span id", "evidence_id": "exact supplied evidence id", "document_id": 123, "quote": "exact supporting source quote"}}]
-    }}
-  ]
-}}
-
-Rules:
-- Use document dates, effective dates, expiration dates, statement periods, and revision dates.
-- Numeric source dates use {settings.source_date_order}. Normalize explicit full-year calendar dates to ISO without changing precision. Do not expand two-digit years or compact digit identifiers to a full date.
-- Keep events tied to a source document.
-- Do not invent dates. Every event requires exact source quote and supplied span/evidence/document IDs.
-- The date and event meaning must both follow from that quote; a document date is not a life event.
-"""
-        result = await self._json_agent(
-            name="timeline_analyst",
-            system_prompt=(
-                "You extract sourced chronological events from document context. "
-                "You never infer dates not present in the context."
-            ),
-            prompt=prompt,
-        )
-        events = result.get("events", []) if isinstance(result, dict) else []
-        return [event for event in events if isinstance(event, dict)]
 
     async def repair_answer(
         self,

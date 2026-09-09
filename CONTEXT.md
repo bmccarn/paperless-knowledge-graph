@@ -38,4 +38,6 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Historical source reservation**: A bounded retrieval opportunity for older and newer relevant indexed documents that survives ranking into synthesis and audit context. It confers no factual authority.
 
+**Timeline date projection**: Chronologically sorted calendar mentions from the final accepted candidate. Independent observations retain their full text and sources; legacy prose date entries point back to the complete answer context. A mentioned date does not independently establish an event or active status.
+
 **Trust dimensions**: Reported quality signals about evidence, verification, coverage, and answer risk; these are computed signals, not guarantees of correctness.

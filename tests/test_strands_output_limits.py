@@ -193,7 +193,6 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_helper_requests_omit_output_caps(self):
         calls = [(lambda: self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True}),
-            (lambda: self.orchestrator.extract_timeline("Synthetic question?", "Synthetic evidence"), []),
             (lambda: self.orchestrator.repair_answer("Synthetic question?", "Synthetic answer", "Synthetic evidence", {}), {"observations": [QUOTE]}),
             (lambda: self.orchestrator.review_entity_candidate({}, {}), {"ok": True})]
         for call, expected in calls:

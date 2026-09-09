@@ -57,7 +57,6 @@ class HistoricalEngine(QueryEngine):
 
 class HistoryAuditor:
     def __init__(self): self.seen = set()
-    async def extract_timeline(self, *args): return []
     async def audit_answer_units(self, question, units, spans, plan):
         self.seen.update(s["document_id"] for s in spans)
         assessments = []

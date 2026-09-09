@@ -14,6 +14,9 @@ from typing import Any
 from urllib import request, error
 from datetime import date
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.timeline import restore_timeline
+
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as fh:
@@ -65,7 +68,7 @@ def score_case(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     for event in result.get("timeline_events") or []:
         if not isinstance(event, dict) or not _calendar_date(event.get("date")):
             errors.append("Invalid timeline calendar date")
-        elif suite == "factual" and event.get("document_id") not in {doc["document_id"] for doc in case.get("fixture_documents", [])}:
+        elif suite == "factual" and any(ref.get("document_id") not in {doc["document_id"] for doc in case.get("fixture_documents", [])} for ref in event.get("references", [])):
             errors.append("Timeline references an unknown fixture document")
     if suite == "smoke":
         if not actual_docs:
@@ -103,10 +106,12 @@ def score_case(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
             expected_events = case.get("expected_timeline_events", [])
             actual_events = result.get("timeline_events", [])
             if expected_events or actual_events:
-                expected_keys = {(event["date"], event["document_id"], event["title"], event["summary"], event["precision"]) for event in expected_events}
-                actual_keys = {(event.get("date"), event.get("document_id"), event.get("title"), event.get("summary"), event.get("precision")) for event in actual_events if isinstance(event, dict)}
+                expected_keys = {(event["date"], event["claim"], event["precision"]) for event in expected_events}
+                actual_keys = {(event.get("date"), event.get("claim"), event.get("precision")) for event in actual_events if isinstance(event, dict)}
                 if actual_keys != expected_keys:
-                    errors.append("Timeline differs from independent expected events")
+                    errors.append("Timeline differs from independent expected observations")
+                if restore_timeline(result)[1]['status'] != 'ready':
+                    errors.append("Timeline does not bind to the accepted answer")
                 for event in actual_events:
                     refs = event.get("references") if isinstance(event, dict) else None
                     if not isinstance(refs, list) or not refs or not all(_fixture_reference(ref, case.get("fixture_documents", [])) for ref in refs):

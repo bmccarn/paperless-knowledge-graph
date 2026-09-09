@@ -14,7 +14,6 @@ from app.answer_finalization import AnswerFinalizer, evidence_spans
 from app.evidence import build_evidence_pack
 from app.query import QueryEngine
 from app.cache import invalidate_on_sync
-from app.timeline import validate_timeline
 
 OCR = "Monthly premium: $321.00 USD."
 SUMMARY = {"document_id": 101, "chunk_index": 9999, "title": "January statement",
@@ -48,12 +47,8 @@ class SourceOriginTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(kind=kind):
                 pack = {"items": [{"id": "dated-source", "document_id": 101, "chunk_index": index,
                                    "source_kind": kind, "content": quote}]}
-                spans = evidence_spans(pack)
-                event = {"date": "2026-01-01", "title": "Premium", "summary": "Monthly premium: $999.00 USD.",
-                         "document_id": 101, "references": [{"span_id": spans[0]["span_id"] if spans else "rejected-origin",
-                         "evidence_id": "dated-source", "document_id": 101, "quote": quote}]}
-                result = await validate_timeline([event], pack, SourceAuditor(), "Premium timeline?")
-                self.assertEqual(len(result), 1 if kind == "ocr" else 0)
+                result = await AnswerFinalizer(SourceAuditor()).finalize("Premium timeline?", quote, pack, mode="timeline")
+                self.assertEqual(len(result['timeline_events']), 1 if kind == "ocr" else 0)
 
     async def test_generated_legacy_summary_cannot_certify_an_answer(self):
         pack = build_evidence_pack("Recorded premium?", {}, [SUMMARY], [])

@@ -27,7 +27,7 @@ from app.graph import graph_store
 from app.cache import (query_cache, vector_cache, graph_cache,
     cache_get, cache_set, get_corpus_generation_async)
 from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, select_spans, empty_ledger
-from app.timeline import validate_timeline
+from app.timeline import restore_timeline
 from app.query_quality import (
     current_state_summary,
     heuristic_plan,
@@ -378,28 +378,9 @@ class QueryEngine:
             trace.append(trace_step("graph_expansion", "skipped", "No entity candidates found for graph expansion"))
         return context, trace
 
-    async def _extract_timeline_events(self, question, context, sources, mode, broad=False, evidence_pack=None):
-        if normalize_mode(mode) != "timeline":
-            return [], []
-        pack = evidence_pack or {}
-        source_diagnostics = {}
-        spans = select_spans(question, [], evidence_spans(pack, citation_safe=True, diagnostics=source_diagnostics), serialized=True)
-        try:
-            async with asyncio.timeout(settings.answer_audit_timeout_seconds):
-                events = await strands_orchestrator.extract_timeline(question, json.dumps(spans, ensure_ascii=False))
-                rejections = {}
-                accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans,
-                                                   date_order=settings.source_date_order, diagnostics=rejections, citation_safe=True)
-            return accepted, [trace_step("timeline", "ok" if accepted else "needs_review",
-                                        f"{len(accepted)} source-validated events; {sum(rejections.values())} rejected",
-                                        {"accepted": len(accepted), "rejection_reasons": rejections,
-                                         "source_diagnostics": source_diagnostics})]
-        except (TimeoutError, Exception):
-            return [], [trace_step("timeline", "needs_review", "Timeline audit unavailable; no unverified events published")]
-
     async def _verify_repair_and_grade(
         self, question, answer, context, sources, plan, mode, broad=False, progress_callback=None,
-        evidence_pack=None, timeline_events=None,
+        evidence_pack=None,
     ):
         if evidence_pack is None:
             evidence_pack = await self._build_evidence_pack(question, context, sources, plan, mode, broad=broad)
@@ -407,8 +388,6 @@ class QueryEngine:
         flagged = await embeddings_store.get_open_feedback_document_ids(doc_ids)
         for item in evidence_pack.get("items", []):
             item["feedback_open"] = item.get("document_id") in flagged
-        if timeline_events is not None:
-            timeline_events[:] = [event for event in timeline_events if event.get("document_id") not in flagged]
         final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
                                       timeout_seconds=settings.answer_audit_timeout_seconds,
                                       concurrency=settings.strands_max_concurrent_calls,
@@ -418,22 +397,20 @@ class QueryEngine:
         verification["finalization"] = final["finalization"]
         verification["current_state"] = final["current_state"]
         references = [r for c in final["claim_ledger"]["claims"] for r in c["references"]]
-        references.extend(r for event in (timeline_events or []) for r in event.get("references", []))
         for item in evidence_pack.get("items", []):
             refs = [r for r in references if r["evidence_id"] == item["id"]]
             item["support_spans"] = refs
             if refs:
                 item["excerpt"] = "\n…\n".join(dict.fromkeys(r["quote"] for r in refs))
         # Keep source titles and excerpts tied to validated source membership.
-        cited = list(dict.fromkeys(final["finalization"]["cited_document_ids"] +
-                                  [event["document_id"] for event in (timeline_events or [])]))
+        cited = final["finalization"]["cited_document_ids"]
         if cited:
             sources = [{"document_id": doc_id, "title": next(r["source_title"] for r in references if r["document_id"] == doc_id),
                         "excerpt": "\n…\n".join(dict.fromkeys(r["quote"] for r in references if r["document_id"] == doc_id))}
                        for doc_id in cited]
         trace = [trace_step("source_audit", "ok" if final["finalization"]["complete"] else "needs_review",
                             final["finalization"]["disposition"], final["claim_ledger"]["summary"])]
-        return final["answer"], verification, final["evidence"], trace, final["claim_ledger"], evidence_pack, sources, context
+        return final["answer"], verification, final["evidence"], trace, final["claim_ledger"], evidence_pack, sources, context, final["timeline_events"]
 
     def _blend_confidence(self, llm_confidence, evidence, verification):
         # Provider self-confidence cannot raise a failed source-audit verdict.
@@ -523,8 +500,6 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         sources = self._build_sources(all_context, question=question)
         evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        timeline_events, timeline_trace = await self._extract_timeline_events(question, all_context, sources, mode, broad=is_broad, evidence_pack=evidence_pack)
-        trace.extend(timeline_trace)
         final = await self._final_synthesis(
             question,
             all_context,
@@ -533,10 +508,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             mode=mode,
             broad=is_broad,
             plan=plan,
-            timeline_events=timeline_events,
             evidence_pack=evidence_pack,
         )
-        answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context = await self._verify_repair_and_grade(
+        answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context, timeline_events = await self._verify_repair_and_grade(
             question,
             final.get("answer", ""),
             all_context,
@@ -545,9 +519,13 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             mode,
             broad=is_broad,
             evidence_pack=evidence_pack,
-            timeline_events=timeline_events,
         )
         trace.extend(verify_trace)
+        if mode == "timeline":
+            projection = verification["finalization"]["timeline"]
+            trace.append(trace_step("timeline", "ok" if projection["status"] in {"ready", "no_dates"} else "needs_review",
+                                    f"{len(timeline_events)} dates from final verified observations",
+                                    projection))
         confidence = self._blend_confidence(final.get("confidence", first_pass.get("confidence", 0.5)), evidence, verification)
         source_summary = self._build_source_summary(
             all_context,
@@ -556,9 +534,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             plan=plan,
             evidence=evidence,
             verification=verification,
-            timeline_events=timeline_events,
             evidence_pack=evidence_pack,
             claim_ledger=claim_ledger,
+            timeline_events=timeline_events,
         )
 
         result = {
@@ -599,6 +577,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         final = result.get("finalization")
         if not isinstance(final, dict):
             return False
+        if mode == "timeline" and restore_timeline(result)[1]["status"] not in {"ready", "no_dates"}:
+            return False
         return (final.get("complete") is True and final.get("disposition") in {"supported", "qualified"}) or (
             mode == "quick" and final.get("disposition") == "unaudited")
 
@@ -616,6 +596,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             result["answer"] = "The document index changed or is awaiting repair. Please retry after indexing finishes so the answer can be checked against a consistent set of sources."
             result["confidence"] = 0.0
             result["timeline_events"] = []
+            if result.get("mode") == "timeline":
+                result["finalization"]["timeline"] = {"status": "unavailable", "reason": "corpus_changed"}
             result["sources"] = []
             result["claim_ledger"] = empty_ledger("")
             claim_summary = result["claim_ledger"]["summary"]
@@ -1031,7 +1013,6 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         draft_answer: str,
         conversation_history: list = None,
         plan: dict | None = None,
-        timeline_events: list[dict] | None = None,
         evidence_pack: dict | None = None,
     ) -> str:
         draft_section = ""
@@ -1055,12 +1036,6 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         if plan:
             plan_section = f"""\n\nStructured query plan:
 {json.dumps(plan, indent=2, default=str)[:4000]}
-"""
-
-        timeline_section = ""
-        if timeline_events:
-            timeline_section = f"""\n\nDeterministically sorted timeline events:
-{json.dumps(timeline_events[:30], indent=2, default=str)[:7000]}
 """
 
         evidence_section = ""
@@ -1110,7 +1085,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - When multiple documents corroborate the same fact, preserve its meaning; the source audit supplies the validated references.
 
 	Question: {question}
-	{conv_section}{draft_section}{plan_section}{timeline_section}{evidence_section}
+	{conv_section}{draft_section}{plan_section}{evidence_section}
 	Document context (from {len(doc_context.split(chr(10)+chr(10)))} retrieval passes):
 	{doc_context}
 	{graph_text}
@@ -1126,7 +1101,6 @@ TEMPORAL AWARENESS — CRITICAL:
         mode: str = "deep",
         broad: bool = False,
         plan: dict | None = None,
-        timeline_events: list[dict] | None = None,
         evidence_pack: dict | None = None,
     ) -> dict:
         doc_context = self._format_doc_context(context, question=question, broad=broad)
@@ -1139,7 +1113,6 @@ TEMPORAL AWARENESS — CRITICAL:
             draft_answer,
             conversation_history,
             plan=plan,
-            timeline_events=timeline_events,
             evidence_pack=evidence_pack,
         )
 

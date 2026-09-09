@@ -1102,6 +1102,7 @@ TEMPORAL AWARENESS — CRITICAL:
 - Format monetary values ($1,234.56), dates (January 15, 2024), and percentages (100%) clearly
 - If relevant records conflict, describe the dated observations and the unresolved conflict. Do not choose an active record or invent supersession from chronology alone.
 - Reference knowledge graph relationships when they add context
+- Make each observation a self-contained sentence naming its subject or record and relevant date or term. Prefer concise source-observation bullets over detached key/value inventories; an amount, name or status must remain unambiguous if an adjacent observation is omitted.
 - Structure complex answers with unnumbered headings and bullet points. Do not add numeric section labels; reserve numbers for source-backed facts.
 - Describe a material limitation as a limitation of the retrieved evidence; do not claim that an item is absent from the entire archive.
 - When multiple documents corroborate the same fact, preserve its meaning; the source audit supplies the validated references.

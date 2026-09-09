@@ -21,7 +21,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-CODE_FILES = tuple(sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'app').glob('*.py'))) + ('scripts/eval_source_audit.py',)
+CODE_FILES = tuple(sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'app').glob('*.py'))) + ('scripts/eval_source_audit.py', 'requirements.lock')
 CURRENT_ATTEMPT = contextvars.ContextVar('evaluation_attempt', default=None)
 
 
@@ -37,7 +37,11 @@ def write_private(path: Path, data):
 
 
 def load_dataset(path: Path):
-    data = json.loads(path.read_bytes())
+    return parse_dataset(path.read_bytes())
+
+
+def parse_dataset(payload: bytes):
+    data = json.loads(payload)
     if data.get('version') != 1 or data.get('partition') not in {'development', 'holdout'}:
         raise ValueError('Unsupported dataset contract')
     if type(data.get('synthetic_only')) is not bool or not data.get('cases'):
@@ -73,18 +77,36 @@ def load_dataset(path: Path):
     return data
 
 
-def prepare(dataset_path, *, model, repetitions, max_attempts, seconds, estimated_tokens, cache_note):
-    data = load_dataset(dataset_path)
+def runtime_snapshot():
+    from importlib.metadata import version
+    from app.config import settings
+    return dict(model=settings.strands_model or settings.gemini_model,
+                destination=settings.litellm_url,
+                call_timeout_seconds=settings.strands_call_timeout_seconds,
+                audit_timeout_seconds=settings.answer_audit_timeout_seconds,
+                concurrency=settings.strands_max_concurrent_calls,
+                enabled=settings.strands_enabled,
+                packages={name: version(name) for name in ('strands-agents', 'openai', 'httpx', 'pydantic')})
+
+
+def prepare(dataset_path, **options):
+    return prepare_bytes(dataset_path.read_bytes(), **options)
+
+
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note):
+    data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
     if repetitions < 1 or max_attempts < 1 or not math.isfinite(seconds) or seconds <= 0 or estimated_tokens < 1:
         raise ValueError('Experiment limits must be positive')
+    if runtime.get('model') != model or set(runtime) != {'model', 'destination', 'call_timeout_seconds', 'audit_timeout_seconds', 'concurrency', 'enabled', 'packages'}:
+        raise ValueError('A captured matching runtime contract is required')
     if not model.strip() or not cache_note.strip():
         raise ValueError('Model route and cache disclosure are required')
     return dict(version=1, stage='native_audit_and_source_finalization',
-                dataset_sha256=digest(dataset_path.read_bytes()),
+                dataset_sha256=digest(payload),
                 code_sha256={name: digest((ROOT / name).read_bytes()) for name in CODE_FILES},
-                model=model, repetitions=repetitions, max_provider_attempts=max_attempts,
+                model=model, runtime=runtime, repetitions=repetitions, max_provider_attempts=max_attempts,
                 elapsed_seconds=seconds, estimated_total_tokens=estimated_tokens,
                 cache_note=cache_note, independent_repetitions=False,
                 conditions='exact case documents and ordering; four-unit production batches',
@@ -104,18 +126,19 @@ def score_case(case, ledger, audits):
         unit_id = expected['id']
         claim, assessment = claims.get(unit_id, {}), assessments.get(unit_id, {})
         available = bool(ledger.get('complete')) and assessment.get('status') in {'supported', 'unsupported', 'missing', 'conflicting'}
+        raw_accepts = assessment.get('model_status', assessment.get('status')) == 'supported'
         audit_accepts = assessment.get('status') == 'supported'
         source_accepts = claim.get('status') == 'supported'
         positive = expected['expected_supported']
         rows.append(dict(unit_id=unit_id, expected_supported=positive,
-                         available=available, auditor_supported=audit_accepts,
+                         available=available, model_supported=raw_accepts, auditor_supported=audit_accepts,
                          source_supported=source_accepts,
-                         false_acceptance=not positive and (audit_accepts or source_accepts),
+                         false_acceptance=not positive and (raw_accepts or audit_accepts or source_accepts),
                          false_rejection=positive and available and not source_accepts,
                          missing_required=expected['required'] and not source_accepts,
                          reasons=claim.get('rejection_reasons', []),
                          passed=available and ((positive and source_accepts) or
-                                               (not positive and not audit_accepts and not source_accepts))))
+                                               (not positive and not raw_accepts and not audit_accepts and not source_accepts))))
     return dict(case_id=case['id'], passed=all(r['passed'] for r in rows), assertions=rows)
 
 
@@ -131,8 +154,9 @@ class AttemptLog(logging.Handler):
 
 
 async def execute(dataset_path, manifest, output):
-    data = load_dataset(dataset_path)
-    expected = prepare(dataset_path, model=manifest['model'], repetitions=manifest['repetitions'],
+    payload = dataset_path.read_bytes()
+    data = parse_dataset(payload)
+    expected = prepare_bytes(payload, model=manifest['model'], runtime=manifest['runtime'], repetitions=manifest['repetitions'],
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
                        estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'])
     if manifest != expected:
@@ -141,8 +165,9 @@ async def execute(dataset_path, manifest, output):
     from app.answer_finalization import AnswerFinalizer
     from app.answer_observations import ObservationCandidate
     from app.strands_orchestrator import StrandsQueryOrchestrator
-    if (settings.strands_model or settings.gemini_model) != manifest['model']:
-        raise ValueError('Configured model differs from the frozen experiment')
+    from app import strands_orchestrator as native_module
+    if runtime_snapshot() != manifest['runtime']:
+        raise ValueError('Configured runtime differs from the frozen experiment')
     auditor = StrandsQueryOrchestrator()
     if not auditor.enabled:
         raise ValueError('Native model adapter is unavailable')
@@ -184,6 +209,20 @@ async def execute(dataset_path, manifest, output):
         case_audits.append(result)
         return result
 
+    native_agent = native_module.Agent
+
+    class CapturedAgent(native_agent):
+        async def invoke_async(self, *args, **kwargs):
+            result = await super().invoke_async(*args, **kwargs)
+            attempt = CURRENT_ATTEMPT.get()
+            if attempt is not None:
+                # Observe before the production adapter rejects nonterminal output.
+                attempt['native_result'] = dict(text=str(result), message=result.message,
+                                                stop_reason=result.stop_reason)
+            return result
+
+    # This runner owns an isolated process. Restore the SDK binding on every exit.
+    native_module.Agent = CapturedAgent
     auditor._text_agent, auditor.audit_answer_units = captured_text, captured_audit
     handler = AttemptLog()
     logger = logging.getLogger('app.strands_orchestrator')
@@ -207,17 +246,24 @@ async def execute(dataset_path, manifest, output):
                     first_attempt = len(attempts)
                     ledger = {}
                     error = None
+                    interrupted = None
                     try:
                         async with asyncio.timeout(finalizer._audit_timeout(candidate.text, candidate)):
                             ledger = await finalizer._audit(case['question'], candidate.text, pack,
                                                            {'evaluated_at': case['evaluated_at']}, observations=candidate)
+                    except asyncio.CancelledError as exc:
+                        error = type(exc).__name__
+                        interrupted = exc
                     except Exception as exc:
                         error = type(exc).__name__
                     scored = score_case(case, ledger, case_audits)
                     scored.update(repetition=repetition, elapsed_seconds=time.monotonic() - case_started,
-                                  first_attempt=first_attempt, attempts=len(attempts) - first_attempt, error=error)
+                                  first_attempt=first_attempt, attempts=len(attempts) - first_attempt, error=error,
+                                  completed=bool(ledger.get('complete')) and error is None)
                     write_private(output / f'case-{len(results):04d}.json', dict(score=scored, ledger=ledger, audits=list(case_audits)))
                     results.append(scored)
+                    if interrupted is not None:
+                        raise interrupted
                     if len(attempts) >= manifest['max_provider_attempts'] and len(results) < manifest['cases'] * manifest['repetitions']:
                         raise RuntimeError('Evaluation attempt budget exhausted')
     except (Exception, asyncio.CancelledError) as exc:
@@ -227,18 +273,30 @@ async def execute(dataset_path, manifest, output):
         logger.removeHandler(handler)
         logger.setLevel(prior_level)
         auditor._text_agent, auditor.audit_answer_units = native_text, native_audit
+        native_module.Agent = native_agent
     rows = [row for result in results for row in result['assertions']]
     durations = [r['elapsed_seconds'] for r in results]
+    scheduled = data['cases'] * manifest['repetitions']
+    not_started = scheduled[len(results):]
+    not_started_assertions = sum(len(case['claims']) for case in not_started)
     summary = dict(stage=manifest['stage'], manifest_sha256=digest(json.dumps(manifest, sort_keys=True).encode()),
-                   expected_runs=manifest['cases'] * manifest['repetitions'], completed_runs=len(results),
+                   expected_runs=len(scheduled), recorded_runs=len(results),
+                   completed_runs=sum(r['completed'] for r in results),
+                   incomplete_runs=sum(not r['completed'] for r in results),
+                   not_started_runs=len(not_started), not_started_assertions=not_started_assertions,
                    provider_attempts=len(attempts), failure=failure,
-                   usage={key: sum(a.get('usage', {}).get(key, 0) for a in attempts)
+                   usage={key: sum(a['usage'][key] for a in attempts)
+                          if attempts and all(key in a.get('usage', {}) for a in attempts) else None
                           for key in ('inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens')},
-                   usage_reporting_attempts=sum('usage' in a for a in attempts),
+                   usage_coverage={key: sum(key in a.get('usage', {}) for a in attempts)
+                                   for key in ('inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens')},
+                   usage_reporting_attempts=sum(bool(a.get('usage')) for a in attempts),
+                   usage_complete=bool(attempts) and all({'inputTokens', 'outputTokens'} <= a.get('usage', {}).keys() for a in attempts),
                    passed=failure is None and len(results) == manifest['cases'] * manifest['repetitions'] and all(r['passed'] for r in results),
                    false_acceptances=sum(r['false_acceptance'] for r in rows),
                    false_rejections=sum(r['false_rejection'] for r in rows),
-                   missing_required=sum(r['missing_required'] for r in rows), unavailable=sum(not r['available'] for r in rows),
+                   missing_required=sum(r['missing_required'] for r in rows) + sum(c['required'] for case in not_started for c in case['claims']),
+                   unavailable=sum(not r['available'] for r in rows) + not_started_assertions,
                    median_seconds=statistics.median(durations) if durations else None,
                    max_seconds=max(durations) if durations else None, elapsed_seconds=time.monotonic() - started,
                    independent_repetitions=False, cache_note=manifest['cache_note'],
@@ -254,6 +312,7 @@ def main():
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
+    parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
     parser.add_argument('--repetitions', type=int, default=3)
     parser.add_argument('--max-attempts', type=int, default=96)
     parser.add_argument('--seconds', type=float, default=1800)
@@ -266,7 +325,9 @@ def main():
         report = asyncio.run(execute(args.dataset, json.loads(args.manifest.read_bytes()), args.output))
         print(json.dumps(report))
         return 0 if report['passed'] else 1
-    manifest = prepare(args.dataset, model=args.model, repetitions=args.repetitions,
+    if args.runtime is None:
+        parser.error('Preparation requires --runtime with the captured execution configuration')
+    manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
                        estimated_tokens=args.estimated_tokens, cache_note=args.cache_note)
     write_private(args.manifest, manifest)

@@ -30,6 +30,12 @@ class SourceAuditEvaluationTests(unittest.TestCase):
         self.assertFalse(result['passed'])
         self.assertTrue(result['assertions'][1]['false_acceptance'])
 
+    def test_semantic_facet_guard_cannot_hide_raw_model_approval(self):
+        self.audits[0]['assessments'][1]['model_status'] = 'supported'
+        result = score_case(self.case, self.ledger, self.audits)
+        self.assertFalse(result['passed'])
+        self.assertTrue(result['assertions'][1]['false_acceptance'])
+
     def test_rejecting_everything_cannot_win(self):
         self.ledger['claims'][0]['status'] = 'unsupported'
         result = score_case(self.case, self.ledger, self.audits)
@@ -75,7 +81,7 @@ class SourceAuditEvaluationTests(unittest.TestCase):
                     load_dataset(path)
 
     def test_manifest_freezes_source_and_implementation_without_importing_clients(self):
-        manifest = prepare(DATASET, model='synthetic-route', repetitions=3, max_attempts=72,
+        manifest = prepare(DATASET, model='synthetic-route', runtime=dict(model='synthetic-route', destination='http://127.0.0.1:1', call_timeout_seconds=45, audit_timeout_seconds=60, concurrency=4, enabled=True, packages={}), repetitions=3, max_attempts=72,
                            seconds=1800, estimated_tokens=250000, cache_note='Unknown provider cache')
         self.assertEqual(len(manifest['dataset_sha256']), 64)
         self.assertIn('app/strands_orchestrator.py', manifest['code_sha256'])
@@ -90,6 +96,87 @@ class SourceAuditEvaluationTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 write_private(path, {'passed': True})
             self.assertFalse(json.loads(path.read_text())['passed'])
+
+
+class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
+    async def run_capture(self, directory, *, stalled=False):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from app import strands_orchestrator as native
+        from app.config import settings
+        from scripts.eval_source_audit import execute, runtime_snapshot
+
+        class Result:
+            stop_reason = 'max_tokens'
+            message = {'role': 'assistant', 'content': [{'text': 'NONTERMINAL SYNTHETIC BODY'}]}
+            metrics = SimpleNamespace(accumulated_usage={})
+            def __str__(self):
+                return 'NONTERMINAL SYNTHETIC BODY'
+
+        class Agent:
+            def __init__(self, **kwargs):
+                pass
+            async def invoke_async(self, prompt):
+                if stalled:
+                    await asyncio.sleep(10)
+                return Result()
+
+        data = load_dataset(DATASET)
+        data['cases'] = data['cases'][:2]
+        source = Path(directory) / 'dataset.json'
+        source.write_text(json.dumps(data))
+        output = Path(directory) / 'output'
+        with patch.object(settings, 'strands_enabled', True), patch.object(native, 'STRANDS_AVAILABLE', True), \
+             patch.object(native, 'Agent', Agent), patch.object(native.StrandsQueryOrchestrator, '_model', return_value=None):
+            manifest = prepare(source, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+                               repetitions=1, max_attempts=4, seconds=0.02 if stalled else 10,
+                               estimated_tokens=1000, cache_note='Controlled protocol transport; no model inference')
+            report = await execute(source, manifest, output)
+            self.assertIs(native.Agent, Agent)
+        return report, output
+
+    async def test_nonterminal_native_body_survives_adapter_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report, output = await self.run_capture(directory)
+            attempt = json.loads((output / 'attempt-0000-output.json').read_text())
+            self.assertIsNone(attempt['response'])
+            self.assertEqual(attempt['native_result']['text'], 'NONTERMINAL SYNTHETIC BODY')
+            self.assertEqual(attempt['native_result']['stop_reason'], 'max_tokens')
+            self.assertFalse(report['passed'])
+            self.assertEqual(report['usage_reporting_attempts'], 0)
+            self.assertFalse(report['usage_complete'])
+            self.assertIsNone(report['usage']['totalTokens'])
+            self.assertEqual(report['usage_coverage']['totalTokens'], 0)
+
+    async def test_global_timeout_keeps_active_case_and_missing_denominator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report, output = await self.run_capture(directory, stalled=True)
+            self.assertEqual(report['failure'], 'TimeoutError')
+            self.assertEqual(report['recorded_runs'], 1)
+            self.assertEqual(report['incomplete_runs'], 1)
+            self.assertEqual(report['not_started_runs'], 1)
+            self.assertEqual(report['unavailable'], 8)
+            self.assertEqual(report['missing_required'], 4)
+            self.assertTrue((output / 'case-0000.json').exists())
+            self.assertTrue((output / 'attempt-0000-output.json').exists())
+
+    async def test_runtime_drift_is_rejected_before_capture_or_inference(self):
+        from unittest.mock import patch
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from app.config import settings
+        from scripts.eval_source_audit import execute, runtime_snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'output'
+            manifest = prepare(DATASET, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+                               repetitions=1, max_attempts=4, seconds=10, estimated_tokens=1000, cache_note='Unverified')
+            with patch.object(settings, 'litellm_url', 'http://127.0.0.1:9999'):
+                with self.assertRaisesRegex(ValueError, 'runtime differs'):
+                    await execute(DATASET, manifest, output)
+            self.assertFalse(output.exists())
 
 
 if __name__ == '__main__':

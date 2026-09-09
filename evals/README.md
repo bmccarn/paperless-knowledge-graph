@@ -35,8 +35,15 @@ model calls:
 ```bash
 python scripts/eval_source_audit.py evals/reliability/development.json \
   --manifest /tmp/unique-baseline-manifest.json --model gemini-3.8-flash \
+  --runtime /tmp/reviewed-runtime.json \
   --repetitions 3 --max-attempts 96 --seconds 1800 --estimated-tokens 250000
 ```
+
+First capture `runtime_snapshot()` from the intended isolated execution environment
+into an owner-only JSON file and review its destination, timeouts, concurrency and
+installed package versions. Preparation does not infer these from local defaults;
+execution rejects any mismatch. This capture imports configuration but makes no
+model calls or datastore connections.
 
 The token number is a resource estimate, not an output cap. Review cost against
 the configured provider rates before execution. The manifest freezes dataset and
@@ -56,8 +63,10 @@ python scripts/eval_source_audit.py evals/reliability/development.json \
 This uses the actual `StrandsQueryOrchestrator.audit_answer_units` and
 `AnswerFinalizer._audit` path, including normal protocol corrections and original
 source validation. It does not invoke retrieval, repair, final delivery or stores.
-It instruments only its own adapter instance; no production files or configuration
-are modified. Each exact model input/output and normalized audit is written to
+It observes its own adapter and request-owned SDK results in an isolated process;
+no production files or configuration are modified. The process-local SDK binding is
+restored when evaluation ends, and nonterminal result text is retained before the
+production adapter discards it. Each exact model input/output and normalized audit is written to
 owner-only files in a new owner-only directory. Earlier artifacts cannot be
 overwritten. A timeout/cancellation retains the sent requests and available
 responses. Keep private artifacts out of GitHub; default console summaries contain

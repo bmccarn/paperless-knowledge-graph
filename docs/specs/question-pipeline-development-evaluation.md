@@ -87,3 +87,19 @@ This is an evaluation correction, not permission to change the production pipeli
 or turn completed failures into passes. A fresh frozen experiment starts at case00;
 prior result approvals cannot be reused. The same finite budget and per-case review
 stop apply. This development revision remains ineligible as an independent holdout.
+
+
+Pre-run alignment resolutions: R2 separates optional proof fields from required
+semantic conclusions; the hours answer must establish no approved hours change,
+not recite every blank field. Questions explicitly request posting/transaction or
+measurement dates and reference/target values where those remain mandatory.
+History requires chronology and correct date roles, not unrequested calendar-date
+verbosity. Credit direction/value must be conserved; a semantically equivalent
+credit-of-40 description can satisfy grading without literal negative typography.
+This changes neither deterministic sign guards nor old failed benchmark grades.
+
+Freeze all 12 R2 cases in this order: capacity-history, hours-history,
+balance-history, treatment-history, credit, refund, leave, sampling, calibration,
+capacity, handover, hours. Difficult reconciliation cases run first; every case
+still requires fresh independent approval under the same full-run budget. No
+completed result or approval from R1 is imported into this experiment.

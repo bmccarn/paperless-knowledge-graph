@@ -226,7 +226,7 @@ def format_evidence_pack_for_llm(pack: dict[str, Any], max_items: int = 42, max_
     available = evidence_spans(pack)
     payload = {"scope": "selected source windows, not the full archive", "available_span_count": len(available),
                "selected_span_count": 0, "spans": []}
-    ranked = select_spans(pack.get("question", ""), [], available,
+    ranked = select_spans(pack.get("question", ""), available,
                           budget=max_chars - len(json.dumps(payload, ensure_ascii=False)) - 20, serialized=True)
     for span in ranked[:max_items]:
         candidate = {**payload, "spans": payload["spans"] + [span], "selected_span_count": payload["selected_span_count"] + 1}

@@ -26,7 +26,7 @@ from app.paperless import paperless_client
 from app.graph import graph_store
 from app.cache import (query_cache, vector_cache, graph_cache,
     cache_get, cache_set, get_corpus_generation_async)
-from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, select_spans, empty_ledger
+from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, empty_ledger
 from app.timeline import restore_timeline
 from app.query_quality import (
     current_state_summary,

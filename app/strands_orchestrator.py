@@ -96,6 +96,12 @@ class StrandsQueryOrchestrator:
                 "Do not promote requested payment into settled payment, a deployment instruction into completed "
                 "deployment, or acknowledged receipt of a request into completion of the requested action. "
                 "Conversely, an acknowledgment explicitly confirming completed payment can support that completion. "
+                "Check the kind of record and the role of its fields. A form title, unchecked option or "
+                "existing-state field does not prove a selected change. A payroll form recording an existing "
+                "withholding amount while selecting an address update does not establish a new withholding election. "
+                "A document referring to another instrument is not that instrument and does not prove its obligations "
+                "were fulfilled: an equipment handover checklist referring to a purchase contract does not itself "
+                "prove purchase or delivery. Preserve explicitly selected changes and separately documented completions. "
                 "A source-observation label does not exempt a claim's action from this entailment check. "
                 "Preserve explicit historical completions when supported; distinguish them from present-world "
                 "status. Do not infer absence from retrieval or treat a derived summary as original proof. "
@@ -115,10 +121,9 @@ class StrandsQueryOrchestrator:
                 "Use temporal_scope=documented only for an explicit comparison among the retrieved documents, "
                 "such as the latest dated record for the same subject. Check all supplied relevant dated records "
                 "and conflicts. This scope never establishes current real-world validity or archive completeness. "
-                "Evidence selection reports known eligible comparison documents whose available passages could not be fully supplied. "
-                "Do not accept a documented comparison when its comparison opportunities include omitted passages, "
-                "even if an opening from each document is present or the answer names only some records. "
-                "Independently supported dated source observations remain eligible. Selection opportunities are retrieval diagnostics, not proof. "
+                "You receive all eligible original-source windows in this retrieved evidence pack. "
+                "That pack is not a complete archive. Inclusion and admission counts are not proof of "
+                "entailment, relevance, absence or current status. Independently assess all relevant alternatives. "
                 "Also set temporal_assertion to source_observation for historical descriptions (including quoted "
                 "active/current source language), retrieved_comparison for documented comparisons, present_world "
                 "for currently true assertions, or none for nontemporal assertions. Assess what the answer itself "
@@ -211,6 +216,7 @@ Rules:
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - A dated record does not itself prove a submission or other event occurred on that date. Use the exact event meaning the cited passage establishes.
 - Preserve the source's actor, action and modality. A request, authorization, plan, application, election, signature or acknowledgment of receipt does not itself prove the requested action was executed. Describe what the source requests or records unless it explicitly confirms completion. Do not convert a payment request into a settled payment or a deployment instruction into a completed deployment. An acknowledgment explicitly confirming completed payment may support that completion; assess the complete statement rather than its document label.
+- Preserve the kind of record and the role of its fields. A form title, unchecked option or existing-state field does not prove a selected change. A payroll form recording existing withholding while selecting an address update does not establish a new withholding election. A document referring to another instrument is not that instrument or proof its obligations were fulfilled: an equipment handover checklist referencing a purchase contract does not itself prove purchase or delivery. State what the source records or selects; retain explicitly selected changes and separately documented completions.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Keep dated source observations as the answer when real-world current status is not established. The acceptance layer appends its own current-status limitation; do not add a generic current-status disclaimer to the candidate. Add an evidence-limit note only for a different missing fact that materially limits the direct answer.
@@ -288,6 +294,12 @@ Rules:
         async with self._calls:
             started = time.monotonic()
             outcome = 'cancelled'
+            usage = {}
+            # Measure both complete input messages, including editor findings.
+            # Counts are not token estimates and never include source text in logs.
+            input_messages = [{'role': 'system', 'content': system_prompt},
+                              {'role': 'user', 'content': prompt}]
+            serialized_input = json.dumps(input_messages, ensure_ascii=False)
             try:
                 agent = Agent(
                     name=name,
@@ -297,6 +309,12 @@ Rules:
                 )
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
                 result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
+                reported_usage = getattr(getattr(result, 'metrics', None), 'accumulated_usage', {})
+                if isinstance(reported_usage, dict):
+                    usage = {key: value for key, value in reported_usage.items()
+                             if key in {'inputTokens', 'outputTokens', 'totalTokens',
+                                        'cacheReadInputTokens', 'cacheWriteInputTokens'}
+                             and type(value) is int and value >= 0}
                 if result.stop_reason != "end_turn":
                     outcome = 'non_terminal_stop'
                     logger.warning("Strands %s did not complete normally: %s", name, result.stop_reason)
@@ -313,8 +331,9 @@ Rules:
                 logger.warning("Strands %s failed: %s", name, type(exc).__name__)
                 return None
             finally:
-                logger.info('Strands stage=%s outcome=%s queue_ms=%d elapsed_ms=%d',
-                            name, outcome, (started - queued) * 1000, (time.monotonic() - started) * 1000)
+                logger.info('Strands stage=%s outcome=%s queue_ms=%d elapsed_ms=%d input_message_chars=%d input_message_bytes=%d usage=%s',
+                            name, outcome, (started - queued) * 1000, (time.monotonic() - started) * 1000,
+                            len(serialized_input), len(serialized_input.encode('utf-8')), json.dumps(usage, sort_keys=True))
 
     async def close(self):
         # The pinned Strands OpenAI transport owns/closes each invocation's

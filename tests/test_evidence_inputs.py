@@ -13,7 +13,7 @@ class EvidenceInputTests(unittest.TestCase):
         self.assertEqual(rendered["selected_span_count"], 1)
         self.assertFalse(pack["coverage"]["retrieval_is_exhaustive"])
 
-    def test_named_document_survives_lexical_distractors_in_synthesis_and_audit(self):
+    def test_named_document_survives_lexical_distractors_in_synthesis(self):
         from app.answer_finalization import evidence_spans, select_spans
         question = ('For the document titled "Parcel Invoice 7812" (Paperless ID 101), '
                     'describe its subject with an exact source quotation. Use only this document.')
@@ -25,7 +25,7 @@ class EvidenceInputTests(unittest.TestCase):
             pack = build_evidence_pack(scoped_question, {}, chunks, [])
             rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=5000))
             self.assertEqual(rendered["spans"][0]["document_id"], 101)
-            selected = select_spans(scoped_question, [{"text": "This is a postage invoice."}],
+            selected = select_spans(scoped_question,
                                     evidence_spans(pack), budget=4000)
             self.assertEqual(selected[0]["document_id"], 101)
             self.assertEqual(selected[0]["content"], target["content"])
@@ -41,7 +41,7 @@ class EvidenceInputTests(unittest.TestCase):
             pack = build_evidence_pack(question, {}, chunks, [])
             rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=5000))
             self.assertEqual(rendered["spans"][0]["document_id"], 101)
-            self.assertEqual(select_spans(question, [], evidence_spans(pack))[0]["document_id"], 101)
+            self.assertEqual(select_spans(question, evidence_spans(pack))[0]["document_id"], 101)
 
     def test_multiple_requested_documents_get_windows_before_repeated_long_source(self):
         from app.answer_finalization import evidence_spans, select_spans
@@ -55,7 +55,7 @@ class EvidenceInputTests(unittest.TestCase):
             pack = build_evidence_pack(question, {}, chunks, [])
             rendered = json.loads(format_evidence_pack_for_llm(pack, max_chars=6000))
             self.assertEqual({s["document_id"] for s in rendered["spans"]}, {101, 102})
-            selected = select_spans(question, [], evidence_spans(pack), budget=5000)
+            selected = select_spans(question, evidence_spans(pack), budget=5000)
             self.assertEqual({s["document_id"] for s in selected}, {101, 102})
             self.assertLessEqual(sum(len(s["content"]) for s in selected), 5000)
 
@@ -63,7 +63,7 @@ class EvidenceInputTests(unittest.TestCase):
         from app.answer_finalization import select_spans
         spans = [{"document_id": 101, "title": "Unrelated notice", "content": "unrelated"},
                  {"document_id": 202, "title": "Postage", "content": "Postage account number 101"}]
-        self.assertEqual(select_spans("Postage account number 101?", [], spans, budget=40)[0]["document_id"], 202)
+        self.assertEqual(select_spans("Postage account number 101?", spans, budget=40)[0]["document_id"], 202)
 
     def test_history_and_explicit_documents_share_serialized_budget(self):
         from app.answer_finalization import evidence_spans, select_spans, span_coverage
@@ -77,14 +77,8 @@ class EvidenceInputTests(unittest.TestCase):
         self.assertTrue(priority.issubset({s["document_id"] for s in selected}))
         self.assertLessEqual(len(payload), 28000)
         spans = evidence_spans(pack)
-        audit = select_spans(question, [{"text": "Recorded invoice."}], spans, serialized=True)
-        # Audits reserve explicitly requested documents; archive breadth belongs
-        # to synthesis unless an audited assertion actually needs those sources.
-        self.assertTrue({901, 902, 903}.issubset({s["document_id"] for s in audit}))
-        self.assertEqual(span_coverage(question, spans, audit, reserve_history=False)["reserved_document_ids"], [])
-        self.assertLessEqual(len(json.dumps(audit, ensure_ascii=False)), 28000)
         self.assertFalse(pack["coverage"]["synthesis"]["limited"])
-        limited = select_spans(question, [], spans, budget=4000, serialized=True)
+        limited = select_spans(question, spans, budget=4000, serialized=True)
         self.assertTrue(span_coverage(question, spans, limited)["limited"])
         self.assertTrue(span_coverage(question, spans, limited)["omitted_priority_document_ids"])
 

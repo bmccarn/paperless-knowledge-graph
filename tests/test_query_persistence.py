@@ -122,7 +122,7 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type": "error"', response.text)
         self.assertEqual([message["role"] for message in self.saved.messages], ["user"])
 
-    async def test_evidence_opportunity_diagnostics_roundtrip_ordinary_and_stream(self):
+    async def test_complete_manifest_diagnostics_roundtrip_ordinary_and_stream(self):
         from app.answer_finalization import AnswerFinalizer
         from tests.test_audit_evidence_opportunities import item
         source = 'Cedar service record dated January 1, 2026 lists an open account.'
@@ -136,10 +136,11 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
         result = await AnswerFinalizer(Auditor()).finalize('What is the latest documented service status?',
             'The latest Cedar service record dated January 1, 2026 lists an open account.',
             {'items': [item(doc, 0, source + f' Record {doc}.') for doc in range(1, 36)]})
-        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertTrue(result['finalization']['answer_verified'])
         coverage = result['claim_ledger']['selection_coverage']
-        self.assertTrue(coverage[0]['comparison_opportunities'][0]['omitted_document_ids'])
-        self.assertGreater(coverage[0]['date_opportunities'][0]['omitted'], 0)
+        self.assertEqual(coverage[0]['eligible_windows'], coverage[0]['supplied_windows'])
+        self.assertEqual(coverage[0]['supplied_documents'], 35)
+        self.assertGreater(coverage[0]['serialized_chars'], 28000)
         payload = {**final_payload(), **result}
         with patch(__name__ + '.final_payload', return_value=payload):
             await self.test_ordinary_and_sse_persist_identical_complete_metadata()

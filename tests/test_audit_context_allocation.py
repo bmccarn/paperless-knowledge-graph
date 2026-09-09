@@ -40,7 +40,7 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
                 '\n'.join([broad, *facts.values()]), {'items': items})
         first = calls[0]
         self.assertTrue(set(facts).issubset({s['document_id'] for s in first}))
-        self.assertLessEqual(len(json.dumps(first, ensure_ascii=False)), 28000)
+        self.assertEqual(first, evidence_spans({'items': items}, citation_safe=True))
         for fact in facts.values():
             self.assertIn(fact, result['answer'])
         self.assertNotIn(broad, result['answer'])
@@ -98,11 +98,5 @@ class AuditContextAllocationTests(unittest.IsolatedAsyncioTestCase):
         question = 'Compare document 901 with historical service invoices.'
         spans = evidence_spans({'items': [item(i, 'Invoice history.', reserved=True) for i in range(1, 9)]
                                         + [item(901, 'Invoice CHOSEN742.') ]})
-        audit = select_spans(question, [{'text': 'Invoice CHOSEN742.'}], spans, serialized=True)
-        self.assertEqual(audit[0]['document_id'], 901)
-        coverage = span_coverage(question, spans, audit, reserve_history=False)
-        self.assertEqual(coverage['requested_document_ids'], [901])
-        self.assertEqual(coverage['reserved_document_ids'], [])
-        self.assertFalse(coverage['limited'])
-        synthesis = select_spans(question, [], spans, serialized=True)
+        synthesis = select_spans(question, spans, serialized=True)
         self.assertTrue({*range(1, 9), 901}.issubset({s['document_id'] for s in synthesis}))

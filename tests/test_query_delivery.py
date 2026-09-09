@@ -218,7 +218,7 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["answer"], complete["answer"])
         self.assertNotIn("321", result["answer"])
         self.assertEqual(result["confidence"], 0)
-        self.assertEqual(result["finalization"]["disposition"], "audit_failed")
+        self.assertEqual(result["finalization"]["disposition"], "incomplete")
 
     async def test_retry_after_unavailable_audit_runs_again_then_caches_success(self):
         class Unavailable:

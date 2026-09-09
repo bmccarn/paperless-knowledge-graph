@@ -113,7 +113,8 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["finalization"]["disposition"], "supported")
             self.assertEqual(result["claim_ledger"]["summary"]["supported"], 4)
             self.assertEqual(set(result["finalization"]["cited_document_ids"]), {101, 202})
-            self.assertLessEqual(sum(len(s["content"]) for s in seen[-1]), 28000)
+            from app.answer_finalization import evidence_spans
+            self.assertEqual(seen[-1], evidence_spans(evidence, citation_safe=True))
             self.assertEqual(len({s["span_id"] for s in seen[-1]}), len(seen[-1]))
 
     async def test_plain_field_label_quote_maps_to_original_bold_ocr(self):
@@ -298,7 +299,7 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         pack = copy.deepcopy(PACK)
         pack["items"][0]["feedback_open"] = True
         result = await AnswerFinalizer(SupportedAuditor()).finalize("Premium?", "$321.00 USD.", pack)
-        self.assertEqual(result["finalization"]["disposition"], "unsupported")
+        self.assertEqual(result["finalization"]["disposition"], "incomplete")
 
 
 if __name__ == "__main__":

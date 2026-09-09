@@ -16,7 +16,7 @@ from typing import Any
 
 from app.config import settings
 from app.answer_observations import ObservationCandidate, ObservationValidationError
-from app import source_audit
+from app import source_audit, source_reading
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,10 @@ else:
 class StrandsQueryOrchestrator:
     """Small, stateless wrapper around Strands Agents."""
 
-    def __init__(self):
+    def __init__(self, *, audit_strategy='flat'):
+        if audit_strategy not in source_reading.STRATEGIES:
+            raise ValueError('Unknown audit strategy')
+        self.audit_strategy = audit_strategy
         self.enabled = bool(settings.strands_enabled and STRANDS_AVAILABLE)
         self._calls = asyncio.Semaphore(settings.strands_max_concurrent_calls)
 
@@ -66,6 +69,9 @@ class StrandsQueryOrchestrator:
                    "protocol_correction": plan.get("audit_protocol_recovery"),
                    "evidence_selection": plan.get('evidence_selection', {}),
                    "units": units, "source_spans": spans}
+        payload = await self._prepare_audit_payload(payload)
+        if payload is None:
+            return None
         text = await self._text_agent(
             name="source_auditor",
             system_prompt=(
@@ -137,7 +143,8 @@ class StrandsQueryOrchestrator:
                 "Include comparison_scope=retrieved_documents and comparison_document_ids listing the supplied "
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
-                "Return only the complete JSON object required by the response schema, with no extra prose."),
+                "Return only the complete JSON object required by the response schema, with no extra prose." +
+                (source_reading.VERIFIER_NOTE if self.audit_strategy == 'source_first' else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids']))
         if not text or not text.strip():
@@ -148,6 +155,27 @@ class StrandsQueryOrchestrator:
             logger.warning('Strands stage=source_auditor outcome=invalid_decisions reason=%s', exc.reason)
             return {'audit_protocol_error': exc.reason}
 
+
+    async def _prepare_audit_payload(self, payload):
+        if self.audit_strategy == 'flat':
+            return payload
+        try:
+            documents = source_reading.group_sources(payload['source_spans'])
+            grouped = {key: value for key, value in payload.items() if key != 'source_spans'}
+            grouped['source_documents'] = documents
+            if self.audit_strategy == 'source_first':
+                # Construct a whitelist; no candidate, prior answer or correction reaches the reader.
+                reader_input = {key: payload[key] for key in ('question', 'evaluated_at', 'source_date_order')}
+                reader_input['source_documents'] = documents
+                text = await self._text_agent(
+                    name='source_reader', system_prompt=source_reading.READER_PROMPT,
+                    prompt=json.dumps(reader_input, ensure_ascii=False),
+                    response_format=source_reading.response_format(documents))
+                grouped['source_reading'] = source_reading.parse_reading(text, documents)
+            return grouped
+        except source_reading.SourceReadingError as exc:
+            logger.warning('Strands stage=source_reader outcome=invalid_reading reason=%s', exc)
+            return None
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:
         if not self.enabled:

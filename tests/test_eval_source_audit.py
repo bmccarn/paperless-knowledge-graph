@@ -88,6 +88,22 @@ class SourceAuditEvaluationTests(unittest.TestCase):
         self.assertIn('app/answer_finalization.py', manifest['code_sha256'])
         self.assertFalse(manifest['independent_repetitions'])
 
+    def test_strategy_is_explicit_and_bound_to_the_manifest(self):
+        options = dict(model='synthetic-route', runtime=dict(model='synthetic-route',
+            destination='http://127.0.0.1:1', call_timeout_seconds=45,
+            audit_timeout_seconds=60, concurrency=4, enabled=True, packages={}),
+            repetitions=3, max_attempts=72, seconds=1800, estimated_tokens=250000,
+            cache_note='Controlled experiment')
+        baseline = prepare(DATASET, **options)
+        candidate = prepare(DATASET, **options, audit_strategy='source_first')
+        self.assertEqual(baseline['audit_strategy'], 'flat')
+        self.assertEqual(candidate.pop('audit_strategy'), 'source_first')
+        baseline.pop('audit_strategy')
+        self.assertEqual(candidate, baseline)
+        self.assertIn('app/source_reading.py', candidate['code_sha256'])
+        with self.assertRaises(ValueError):
+            prepare(DATASET, **options, audit_strategy='unknown')
+
     def test_private_artifacts_are_exclusive_and_owner_only(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'result.json'

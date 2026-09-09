@@ -95,10 +95,13 @@ def prepare(dataset_path, **options):
     return prepare_bytes(dataset_path.read_bytes(), **options)
 
 
-def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured'):
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured', audit_strategy='flat'):
     data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
+    from app.source_reading import STRATEGIES
+    if audit_strategy not in STRATEGIES:
+        raise ValueError('Unknown audit strategy')
     if proxy_cache_policy not in {'configured', 'bypass'}:
         raise ValueError('Unknown proxy cache policy')
     if type(allow_noncontiguous) is not bool:
@@ -118,7 +121,7 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
                 conditions='exact case documents and ordering; four-unit production batches',
                 cases=len(data['cases']), assertions=sum(len(c['claims']) for c in data['cases']),
                 synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous,
-                proxy_cache_policy=proxy_cache_policy)
+                proxy_cache_policy=proxy_cache_policy, audit_strategy=audit_strategy)
 
 
 def evidence_pack(case, *, allow_noncontiguous=False):
@@ -246,7 +249,7 @@ async def execute(dataset_path, manifest, output):
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
                        estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'],
                        allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'],
-                       proxy_cache_policy=manifest['proxy_cache_policy'])
+                       proxy_cache_policy=manifest['proxy_cache_policy'], audit_strategy=manifest['audit_strategy'])
     if manifest != expected:
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
     from app.config import settings
@@ -255,7 +258,7 @@ async def execute(dataset_path, manifest, output):
     from app import strands_orchestrator as native_module
     if runtime_snapshot() != manifest['runtime']:
         raise ValueError('Configured runtime differs from the frozen experiment')
-    auditor = StrandsQueryOrchestrator()
+    auditor = StrandsQueryOrchestrator(audit_strategy=manifest['audit_strategy'])
     if not auditor.enabled:
         raise ValueError('Native model adapter is unavailable')
     packs = {case['id']: evidence_pack(case, allow_noncontiguous=manifest['allow_noncontiguous_reconstruction']) for case in data['cases']}
@@ -411,6 +414,7 @@ def main():
                         help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
+    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first'], default='flat')
     parser.add_argument('--proxy-cache-policy', choices=['configured', 'bypass'], default='configured')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
     parser.add_argument('--repetitions', type=int, default=3)
@@ -430,7 +434,7 @@ def main():
     manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
                        estimated_tokens=args.estimated_tokens, cache_note=args.cache_note,
-                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy)
+                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy, audit_strategy=args.audit_strategy)
     write_private(args.manifest, manifest)
     print(json.dumps(manifest))
     return 0

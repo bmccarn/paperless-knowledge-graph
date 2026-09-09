@@ -115,3 +115,14 @@ No global cache is flushed, no prompt nonce is inserted, and messages, response
 schema, model route and output allowance stay unchanged. The chosen policy is
 captured in the manifest and each attempt. This requests proxy bypass; it does not
 prove upstream sampling independence or establish billed usage.
+
+### Source-reading experiment
+
+`eval_source_audit.py --audit-strategy flat|grouped|source_first` freezes the
+named application implementation in the manifest. The default stays `flat`.
+`source_first` adds a candidate-blind source-reading invocation before each
+verifier invocation; both calls, failures and any existing protocol corrections
+count toward the same declared attempt/time ceiling. All original evidence still
+reaches the verifier and finalizer. Reading notes cannot certify claims. See
+[the candidate plan](../docs/specs/source-reading-experiment.md). This does not
+activate a production setting or establish end-to-end query-mode coverage.

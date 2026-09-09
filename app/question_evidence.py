@@ -12,7 +12,7 @@ from app import source_reading
 from app.answer_finalization import evidence_spans
 from app.query_metrics import CURRENT_QUERY_METRICS
 
-PIPELINE_VERSION = 'question-evidence-v1'
+PIPELINE_VERSION = 'question-evidence-v2'
 
 class QuestionEvidenceError(ValueError):
     """Content-free planning/snapshot failures; source text is never an error."""

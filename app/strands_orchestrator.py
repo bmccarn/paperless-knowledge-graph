@@ -195,6 +195,16 @@ class StrandsQueryOrchestrator:
                                       response_format=response_format())
         return AnswerComposition.parse(text, evidence)
 
+    async def complete_question_answer(self, payload, snapshot_digest):
+        from app.answer_completion import COMPLETION_PROMPT, completion_format, parse_additions
+        from app.question_evidence import QuestionEvidenceError
+        if not self.enabled:
+            raise QuestionEvidenceError('completion_unavailable')
+        text = await self._text_agent(name='answer_completion', system_prompt=COMPLETION_PROMPT,
+                                      prompt=json.dumps(payload, ensure_ascii=False),
+                                      response_format=completion_format())
+        return parse_additions(text, payload, snapshot_digest)
+
     async def assess_question_coverage(self, evidence, final, *, planning_status='complete'):
         from app import answer_coverage
         if not self.enabled:

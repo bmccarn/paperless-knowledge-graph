@@ -471,9 +471,78 @@ new results bind their own raw input/output hash inventory. Scheduled request
 identities prevent mode relabeling. Timeline requires production projection
 restoration plus independent date-role/source grading. Both independent reviewers cleared these controls at harness SHA256
 `90bb0592903d1920a91a48eebd6744d3259d86587c3620fc2d75366fd6b6573d`.
-No all-mode native calls have run at this checkpoint.
+This review preceded the frozen native execution reported below.
 
 Eleven harness admission tests pass, including removal/alteration of raw files,
 failed initial review, different candidate/runtime/policies, initial budget excess,
 valid unavailable/coarse coverage, missing/swapped mode and invalid Timeline
 projection. The final focused harness, pipeline and Timeline check passed 47 tests.
+
+The all-mode experiment is frozen at commit `40ee9d3`, manifest
+`fba25f34992acae5fc4f2c48446b6a46d20652e754f0c001cab89880081dd545`.
+The first twelve case-runs passed both reviewers: capacity-history, hours-history
+and balance-history in all four modes. Timeline includes four, five and five
+independently checked date projections respectively. Balance history preserves both
+conflicting issuer balances without selecting a winner. These twelve cases used
+92 native calls, 327.305 active seconds and 209,104 reported tokens. All raw/delivered
+false approvals, missing required aspects and false-complete counts were zero.
+Backend and frontend CI passed at that commit.
+
+The run subsequently stopped at case17 (credit, Deep). Cases00–16 passed both
+independent reviews, including treatment history in all modes and credit in Quick.
+Case17 omitted the required original charge even though the original and reader
+output supplied it to composition. Both reviewers counted one missing required
+aspect, zero raw/delivered false approvals, zero unsupported extras and zero false
+completeness. Its coverage receipt honestly reported partial. Thirty later cases
+were not started. This is a failed candidate, not an incomplete passing run; it
+cannot qualify live retrieval or be resumed after application changes.
+Result SHA256: `6ec6b442326cd497d3915c6ed920d42c907df1c9877c47f07745f474349040df`.
+The proposed general completion recovery is specified separately in
+`docs/specs/question-coverage-recovery.md`; its effectiveness is unmeasured.
+The implementation adds one append-only source-grounded completion attempt for an
+unchanged first-audit-supported answer with named coverage gaps. Combined facts
+receive a fresh complete audit and coverage check; unsupported additions cannot
+be delivered, and newer rejection of a retained fact withholds the answer. Review
+reproduced a multi-batch timeout that lost an already returned negative verdict;
+the completion auditor now records completed negative batches before siblings can
+fail. Recovery failure retains content-free before/combined hashes. The full offline
+backend check passed 713 tests (48 opt-in integration skips), including nine new
+completion tests across four modes and two domains. These are controlled contract
+tests, not native accuracy evidence. A fresh candidate manifest and native run are
+required; no result from the stopped v1 experiment qualifies v2.
+
+Native computer control was retried and still failed native-pipe startup. A local
+Playwright fallback replayed retained native complete, conservative-partial and
+Timeline answers through the built frontend. Source excerpts, separate coverage
+and factual checks, saved-history replay and narrow layouts worked without page
+errors or horizontal overflow. Screenshots of actual native answers and source
+panels were inspected. This isolates rendering: the replay uses supplied originals
+and an in-memory history adapter, not live retrieval or database persistence.
+Its fixed-originals input lacks production pack summary metrics, and displayed
+latency measures only replay. Zero summary/replay values do not qualify production
+measurements.
+
+Two replay setup failures were corrected: the conversation-list query string was
+initially unmatched, and Timeline had two legitimate source controls with the same
+label requiring explicit selectors. Neither established an application defect.
+Private screenshots and results: `/private/tmp/kg-native-answer-ui-20260909`.
+
+
+## Live retrieval preparation (not a candidate result)
+
+A read-only Paperless inventory found 929 eligible documents. Live API freshness
+reported the same 925 indexed IDs across graph, embeddings and completion records,
+with four newer unindexed documents and no extra IDs. No ingestion, drift repair,
+reindex or schema initialization was triggered. Equal processed counts are not a
+claim that all 929 originals are indexed or that the archive is complete.
+
+Private rubric preparation captured 128 original documents, matching each selected
+inventory OCR hash and modification timestamp. These include insurance records from
+2022 onward, Starlink service history and a pair of utility bills. Candidate prompts
+will not receive the rubric or a preloaded source allowlist. A six-request live
+retrieval plan is drafted in `docs/specs/question-live-retrieval-evaluation.md`;
+its design passed both reviews. Isolated admission, model/stage capture and reader
+utilities have focused offline checks and independent slice reviews; full runtime
+and browser wiring remain incomplete. All-mode admission failed and is still required
+before native live-retrieval execution. Retained source copies establish preparation
+evidence only, not an immutable whole-corpus snapshot or a passing model result.

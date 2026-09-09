@@ -846,12 +846,13 @@ def subset_source_reservations(candidate, ledger, revised_units, retained_ids):
 
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
-                 concurrency: int = 4, date_order: str = "mdy"):
+                 concurrency: int = 4, date_order: str = "mdy", allow_subset: bool = True):
         self.date_order = date_order
         self.auditor = auditor
         self.repairer = repairer
         self.timeout_seconds = timeout_seconds
         self.max_units = max_units
+        self.allow_subset = allow_subset
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or type(concurrency) is not int or concurrency < 1:
             raise ValueError("Audit timeout and concurrency must be positive")
         self.concurrency = concurrency
@@ -1158,7 +1159,7 @@ class AnswerFinalizer:
         # Only the final completed, nonconflicting audit is eligible. Never reuse
         # an earlier ledger after a failed repair/audit, or slice within a unit.
         summary = ledger["summary"]
-        if (disposition == "unsupported" and ledger["complete"]
+        if (self.allow_subset and disposition == "unsupported" and ledger["complete"]
                 and summary.get("audited") == summary.get("total")
                 and 0 < summary.get("supported", 0) < summary.get("total", 0)
                 and not ledger.get("rejection_reasons")

@@ -69,20 +69,23 @@ def response_format():
 
 @dataclass(frozen=True)
 class AnswerComposition:
-    candidate: ObservationCandidate
+    candidate: ObservationCandidate | None
     snapshot_digest: str
     _mapping: str
     _references: str
 
     @classmethod
     def parse(cls, text, evidence):
-        raw = strict_object(text)
+        return cls.parse_response(strict_object(text), evidence.composition_input, evidence.digest)
+
+    @classmethod
+    def parse_response(cls, raw, source, snapshot_digest, *, allow_empty=False):
         if set(raw) != {'observations', 'requirement_mapping', 'source_references'}:
             raise QuestionEvidenceError('invalid_composition')
-        candidate = ObservationCandidate.from_response({'observations': raw['observations']})
-        source = evidence.composition_input
+        candidate = (None if allow_empty and raw['observations'] == [] else
+                     ObservationCandidate.from_response({'observations': raw['observations']}))
         requirement_ids = {r['id'] for r in source['requirements']}
-        unit_ids = {u['id'] for u in candidate.units()}
+        unit_ids = {u['id'] for u in candidate.units()} if candidate else set()
         span_ids = {w['span']['span_id'] for d in source['source_documents'] for w in d['windows']}
         seen_requirements, mapped_units = set(), set()
         mapping, references = raw['requirement_mapping'], raw['source_references']
@@ -109,7 +112,7 @@ class AnswerComposition:
             seen_units.add(row['observation_id'])
         if seen_units != unit_ids:
             raise QuestionEvidenceError('invalid_composition')
-        return cls(candidate, evidence.digest, canonical_json(mapping), canonical_json(references))
+        return cls(candidate, snapshot_digest, canonical_json(mapping), canonical_json(references))
 
 
 def valid_ids(values, allowed):

@@ -306,6 +306,29 @@ if __name__ == "__main__":
 
 
 class RepairDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_legacy_repair_has_safe_diagnostic(self):
+        for response, reason in ((None, 'transport_unavailable'), ({}, 'invalid_object'),
+                                 ({'answer': []}, 'invalid_object')):
+            with self.subTest(response=response):
+                class Repair:
+                    async def repair_answer(self, *args):
+                        return response
+                result = await AnswerFinalizer(SupportedAuditor(), Repair()).finalize(
+                    'Premium?', '$123.00 USD.', PACK)
+                self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+                self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': reason})
+                self.assertFalse(result['finalization']['answer_verified'])
+
+    async def test_editor_outer_timeout_has_safe_diagnostic(self):
+        class Repair:
+            async def repair_answer(self, *args):
+                await asyncio.sleep(10)
+        result = await AnswerFinalizer(SupportedAuditor(), Repair(), timeout_seconds=.01).finalize(
+            'Premium?', '$123.00 USD.', PACK)
+        self.assertEqual(result['finalization']['disposition'], 'timeout')
+        self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': 'transport_unavailable'})
+        self.assertFalse(result['finalization']['answer_verified'])
+
     async def test_repair_receives_independent_value_and_reference_rejection_reasons(self):
         for candidate, invalid_reference, expected in (
                 ("The premium is $999.00 USD.", False, "value_mismatch"),

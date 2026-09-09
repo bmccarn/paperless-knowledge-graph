@@ -1,6 +1,6 @@
 # Query reliability: evaluation before implementation
 
-Status: reviewed plan; G0 complete. Evaluation, implementation and deployment remain unstarted and must satisfy the gates below.
+Status: reviewed plan; G0 complete and G1 in progress. Production implementation and deployment remain unstarted and must satisfy the gates below.
 
 Requested September 9, 2026. Tracker: [issue #33](https://github.com/bmccarn/paperless-knowledge-graph/issues/33). Frozen starting revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`, answer policy `source-audit-v25`, delivered through GitOps PR164. This document replaces the execution sequence and stale status matrix in [the earlier reliability spec](evidence-query-reliability.md). That document remains a record of existing contracts, implementation history and failed experiments.
 
@@ -134,4 +134,4 @@ Keep all existing failed releases and test receipts. Update this document's gate
 
 Independent Standards and Spec reviews both passed at `d1b3734142e50b1b578584e63e6a5aba3e29de06` on September 9, 2026, with no remaining findings. Review identified and closed a holdout-isolation gap: an independent custodian owns hidden cases before qualification, and any evaluated set becomes regression evidence if its results influence subsequent candidate adaptation. This review record and the G0 status were added after those reviews; the reviewed requirements are unchanged.
 
-The planning deliverable is complete. The next execution phase, when resumed, is G1 dataset, grader, evaluation access and baseline reproduction—not application patches or another deployment. No architecture candidate has been selected yet.
+The planning deliverable is complete. G1 evaluation work is underway and recorded in the gate table and linked report. Complete its dataset, grader, evaluation-access and semantic-reproduction requirements before advancing. No architecture candidate has been selected yet.

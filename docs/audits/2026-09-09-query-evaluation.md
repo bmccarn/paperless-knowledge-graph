@@ -2,7 +2,8 @@
 
 Spec: [evaluation before implementation](../specs/query-reliability-evaluation.md).
 Starting production revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`.
-Evaluation harness reviewed at `c682f58faf1e12dd61ed080f79dd20b68ab65be2`.
+Initial native baseline harness reviewed at `c682f58faf1e12dd61ed080f79dd20b68ab65be2`.
+Final captured-context harness reviewed at `54ee55a7f0f83b7fbfb45baaf9cdf2c104739973`.
 
 ## Status
 
@@ -37,7 +38,9 @@ harness is not a semantic reproduction or an accepted fix.
 ## Validation and baseline results
 
 `python -m unittest tests.test_eval_source_audit tests.test_eval_harness -v`:
-26 tests passed (including subsequent original-window and continuity validation). Controlled transports in capture tests measure instrumentation,
+26 tests passed (including subsequent original-window and continuity validation).
+The full offline backend suite passed 579 tests in 22.0 seconds, with 48 expected
+disposable-datastore skips. These checks do not establish model or live UI accuracy. Controlled transports in capture tests measure instrumentation,
 not model semantics.
 
 `python scripts/reproduce_audit_protocol.py`: exit 1 on the production baseline.
@@ -77,7 +80,12 @@ passages. That captured input is classified as an invalid reconstruction; it can
 pass evaluation. A diagnostic admission can preserve it unchanged to reproduce the
 production failure, but cannot promote it to source-valid evidence. This is explicitly a
 reconstruction; the original raw native request was not retained. No standalone
-private replay has run.
+private replay has run. The concrete bounded request was submitted to automatic
+approval review and rejected: broader permission did not specifically authorize
+this sensitive payload to the configured model destination. The local approval
+artifact specifies cases, retrieved source scope, destination, retention, six-call
+and ten-minute bounds, cost estimate and exact command. Explicit user approval is
+required; no indirect execution or alternative tool may bypass the rejection.
 
 ## Remaining G1 work
 

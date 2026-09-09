@@ -233,25 +233,6 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claim['value_mismatches'], {})
         self.assertTrue(claim['references'])
 
-    async def test_timeline_uses_the_same_safe_source_handles_and_separate_window_diagnostics(self):
-        from tests.test_query_delivery import RetrievedEngine
-        source = 'x' * 4200 + ' Cedar invoice dated January 1, 2026 records $20.'
-        supplied = []
-        class TimelineAdapter(HandleAuditor):
-            async def extract_timeline(self, question, evidence):
-                spans = json.loads(evidence)
-                supplied.extend(spans)
-                return [{'date': '2026-01-01', 'title': 'Cedar invoice records $20',
-                         'summary': '', 'document_id': 101,
-                         'references': [{'span_id': spans[0]['span_id']}]}]
-        with patch('app.query.strands_orchestrator', TimelineAdapter()):
-            events, trace = await RetrievedEngine()._extract_timeline_events(
-                'What is the dated invoice history?', {}, [], 'timeline', evidence_pack=pack(source))
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]['references'][0]['span_id'], supplied[0]['span_id'])
-        self.assertEqual(events[0]['references'][0]['quote'], source[supplied[0]['start']:supplied[0]['end']])
-        self.assertEqual(trace[0]['data']['source_diagnostics']['unavailable_citation_windows'], 1)
-        self.assertEqual(trace[0]['data']['rejection_reasons'], {})
 
     async def test_handle_resolves_to_a_contiguous_safe_source_range(self):
         source = 'Invoice Cedar records $20. ' + 'Routine descriptive text repeats here. ' * 140

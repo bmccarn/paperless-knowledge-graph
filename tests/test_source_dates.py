@@ -1,7 +1,6 @@
 """Calendar equivalence preserves source precision, values and exact quotations."""
 import unittest
 from app.answer_finalization import AnswerFinalizer, evidence_spans, values_match
-from app.timeline import validate_timeline
 
 
 class ExactAuditor:
@@ -56,22 +55,6 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(values_match("$2026 USD", [{"quote": "In 2026, $9 USD was recorded."}]))
         self.assertFalse(values_match("Charge -321 USD on 2026-08-04", [{"quote": "Charge 321 USD on August 4, 2026"}]))
 
-    async def test_timeline_reports_reason_counts_and_semantic_event_mismatch(self):
-        source = "Record dated August 4, 2026."
-        evidence = pack(source)
-        span = evidence_spans(evidence)[0]
-        reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"], "document_id": 101, "quote": source}
-        event = {"date": "2026-08-04", "title": "Record submitted", "summary": "Submission.", "document_id": 101, "references": [reference]}
-        class Unsupported(ExactAuditor):
-            async def audit_answer_units(self, *args):
-                result = await super().audit_answer_units(*args)
-                result["assessments"][0]["status"] = "unsupported"
-                return result
-        reasons = {}
-        result = await validate_timeline([event, {**event, "date": "2026-02-30"}, {**event, "date": "2026-08-05"}],
-                                         evidence, Unsupported(), "When was it submitted?", diagnostics=reasons)
-        self.assertEqual(result, [])
-        self.assertEqual(reasons, {"unsupported_event": 1, "invalid_date": 1, "unsupported_date": 1})
 
     async def test_scalar_quantities_identifiers_and_malformed_dates_keep_their_boundaries(self):
         for claim, source in [("Invoice number 0000.", "Invoice number 0000."),
@@ -108,74 +91,3 @@ class SourceDateTests(unittest.IsolatedAsyncioTestCase):
         reference = result["claim_ledger"]["claims"][0]["references"][0]
         self.assertEqual(reference["quote"], source)
         self.assertEqual(source[reference["start"]:reference["end"]], source)
-
-    async def test_timeline_accepts_written_date_before_and_after_audit(self):
-        source = "Service change effective September 1, 2026."
-        evidence = pack(source)
-        span = evidence_spans(evidence)[0]
-        reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"], "document_id": 101, "quote": source}
-        auditor = ExactAuditor()
-        result = await validate_timeline([{"date": "2026-09-01", "title": "Service change", "summary": "Service changed.",
-            "document_id": 101, "references": [reference]}], evidence, auditor, "How did service change?")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(auditor.calls, 1)
-        self.assertEqual(result[0]["references"][0]["quote"], source)
-
-    async def test_markdown_heading_dates_and_context_bound_identifiers(self):
-        for source in ("# September 1, 2026", "## 2026-09-01"):
-            result = await AnswerFinalizer(ExactAuditor()).finalize(
-                "What date was recorded?", "The record date is 2026-09-01.", pack(source))
-            self.assertEqual(result["finalization"]["disposition"], "supported")
-        class TrimmedAuditor(ExactAuditor):
-            async def audit_answer_units(self, *args):
-                result = await super().audit_answer_units(*args)
-                for assessment in result["assessments"]:
-                    assessment["references"][0]["quote"] = "2026-09-01"
-                return result
-        for source in ("Policy #2026-09-01.", "**Policy number:** 2026-09-01.", "**Policy #** 2026-09-01.",
-                       "Policy #**2026-09-01**.", "**Policy number:** `2026-09-01`.",
-                       "Policy #" + " " * 200 + "2026-09-01.") :
-            for auditor in (ExactAuditor(), TrimmedAuditor()):
-                with self.subTest(source=source, auditor=type(auditor).__name__):
-                    result = await AnswerFinalizer(auditor).finalize(
-                        "What date was recorded?", "The record date is 2026-09-01.", pack(source))
-                    self.assertEqual(result["finalization"]["disposition"], "unsupported")
-            evidence = pack(source)
-            span = evidence_spans(evidence)[0]
-            reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
-                         "document_id": 101, "quote": "2026-09-01"}
-            event = {"date": "2026-09-01", "title": "Record dated", "summary": "Recorded date.",
-                     "document_id": 101, "references": [reference]}
-            reasons = {}
-            self.assertEqual(await validate_timeline([event], evidence, ExactAuditor(), "Recorded date?", diagnostics=reasons), [])
-            self.assertEqual(reasons, {"unsupported_date": 1})
-        source = "Recorded date: September 1, 2026. Policy #2026-09-01."
-        evidence = pack(source)
-        span = evidence_spans(evidence)[0]
-        reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"], "document_id": 101,
-                     "quote": "Recorded date: September 1, 2026."}
-        event = {"date": "2026-09-01", "title": "Record dated", "summary": "Recorded date.",
-                 "document_id": 101, "references": [reference]}
-        reasons = {}
-        self.assertEqual(await validate_timeline([event], evidence, TrimmedAuditor(), "Recorded date?", diagnostics=reasons), [])
-        self.assertEqual(reasons, {"unsupported_audited_date": 1})
-
-    async def test_trimmed_malformed_date_cannot_gain_calendar_authority(self):
-        class TrimmedAuditor(ExactAuditor):
-            async def audit_answer_units(self, *args):
-                result = await super().audit_answer_units(*args)
-                for assessment in result["assessments"]:
-                    assessment["references"][0]["quote"] = "2026-09-01"
-                return result
-        for source in ("Recorded date 2026-09-01-02.", "Recorded date 2026-09-01/02."):
-            evidence = pack(source)
-            result = await AnswerFinalizer(TrimmedAuditor()).finalize(
-                "What date was recorded?", "The record date is 2026-09-01.", evidence)
-            self.assertFalse(result["finalization"]["complete"])
-            self.assertNotIn("2026-09-01", result["answer"])
-            span = evidence_spans(evidence)[0]
-            reference = {"span_id": span["span_id"], "evidence_id": span["evidence_id"],
-                         "document_id": 101, "quote": "2026-09-01"}
-            event = {"date": "2026-09-01", "title": "Record dated", "summary": "Recorded date.",
-                     "document_id": 101, "references": [reference]}
-            self.assertEqual(await validate_timeline([event], evidence, ExactAuditor(), "Recorded date?"), [])

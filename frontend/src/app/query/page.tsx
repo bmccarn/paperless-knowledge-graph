@@ -1,5 +1,6 @@
 "use client";
 
+import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/timeline-dates";
 import { formatAnswerInline } from "@/lib/answer-format";
 
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
@@ -146,15 +147,6 @@ interface EvidencePack {
   }>;
 }
 
-interface TimelineEvent {
-  date?: string;
-  title?: string;
-  summary?: string;
-  document_id?: number;
-  source_title?: string;
-  status?: string;
-}
-
 interface Message {
   id?: string;
   role: "user" | "assistant";
@@ -173,6 +165,7 @@ interface Message {
   claim_ledger?: ClaimLedger;
   evidence_pack?: EvidencePack;
   timeline_events?: TimelineEvent[];
+  finalization?: { timeline?: TimelineReceipt };
 }
 
 interface Conversation {
@@ -401,6 +394,7 @@ function QueryContent() {
     let claimLedger: ClaimLedger | undefined;
     let evidencePack: EvidencePack | undefined;
     let timelineEvents: TimelineEvent[] = [];
+    let finalization: Message["finalization"];
     let draftAssistantShown = false;
 
     try {
@@ -425,6 +419,7 @@ function QueryContent() {
             claim_ledger: claimLedger,
             evidence_pack: evidencePack,
             timeline_events: timelineEvents,
+            finalization,
             ...overrides,
           },
         ]);
@@ -515,6 +510,7 @@ function QueryContent() {
             claimLedger = event.claim_ledger || undefined;
             evidencePack = event.evidence_pack || undefined;
             timelineEvents = event.timeline_events || [];
+            finalization = event.finalization;
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -541,6 +537,7 @@ function QueryContent() {
         claim_ledger: claimLedger,
         evidence_pack: evidencePack,
         timeline_events: timelineEvents,
+            finalization,
       };
 
       const allMessages = [...newMessages, assistantMsg];
@@ -850,7 +847,7 @@ function QueryContent() {
                       : "bg-card border rounded-bl-md"
                   }`}>
                     {msg.role === "assistant" ? (
-                      <div className="space-y-1">{renderMarkdownContent(msg.content)}</div>
+                      <div id={`answer-${i}`} tabIndex={-1} className="space-y-1 scroll-mt-4">{renderMarkdownContent(msg.content)}</div>
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                     )}
@@ -1041,19 +1038,8 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {msg.role === "assistant" && msg.timeline_events && msg.timeline_events.length > 0 && (
-                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
-                      <p className="font-medium flex items-center gap-1">
-                        <Clock className="h-3 w-3" /> Timeline events ({msg.timeline_events.length})
-                      </p>
-                      {msg.timeline_events.slice(0, 6).map((event, idx) => (
-                        <div key={idx} className="grid grid-cols-[84px_1fr] gap-2 text-[10px]">
-                          <span className="text-muted-foreground truncate">{event.date || "No date"}</span>
-                          <span className="truncate">{event.title || event.summary}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {msg.role === "assistant" && <TimelineDates events={msg.timeline_events}
+                    receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={setSelectedSource} />}
 
                   {msg.entities && msg.entities.length > 0 && (
                     <div className="space-y-1.5 px-1">

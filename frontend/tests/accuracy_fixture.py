@@ -5,6 +5,9 @@ Run: python3 frontend/tests/accuracy_fixture.py --port 8485
 This fixture validates frontend behavior, not backend factual correctness.
 """
 import argparse
+import hashlib
+from pathlib import Path
+import sys
 import copy
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +16,10 @@ import re
 import threading
 import time
 from urllib.parse import urlparse, parse_qs
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.answer_delivery import render_verified_answer
+from app.timeline import project_timeline
 
 from graph_fixture import NODES, RELS, identity
 
@@ -325,10 +332,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             result = final_answer(question)
             result['mode'] = body.get('mode', 'strict')
-            if result['mode'] == 'timeline':
-                result['timeline_events'] = [{'date': '2026-01-31', 'title': 'January premium statement', 'document_id': 101}]
             if 'partial' in question.lower():
-                claim = '- The January statement lists a premium of $25. The amount is labeled as a premium.'
+                claim = '- On January 31, 2026, the January statement lists a premium of $25. The amount is labeled as a premium.'
                 result['answer'] = claim + ' [Document 101](/documents/101)'
                 result['claim_ledger']['unitization'] = 'observations_v1'
                 result['claim_ledger']['claims'][0].update(id='u1', claim=claim, start=0, end=len(claim))
@@ -340,6 +345,36 @@ class Handler(BaseHTTPRequestHandler):
                 result['confidence'] = 0.65
                 result['source_summary'].update(trust_score=0.65, trust_level='medium', verification_status='partial', audit_status='partial')
                 result['evidence'].update(score=0.65, level='medium', audit_status='partial', coverage={'answer_complete': False})
+            if result['mode'] == 'timeline':
+                if 'many dates' in question.lower():
+                    observations = [f'- Cedar invoice {i} records a service request on January {i}, 2026. The request does not confirm completed service.' for i in range(1, 9)]
+                    result['claim_ledger']['unitization'] = 'observations_v1'
+                else:
+                    observations = [result['claim_ledger']['claims'][0]['claim']]
+                candidate = '\n\n'.join(observations)
+                claims = []
+                offset = 0
+                for index, claim in enumerate(observations):
+                    quote = claim.removeprefix('- ')
+                    ref = {'document_id':101, 'evidence_id':'ui-source', 'span_id':f'ui-span-{index}',
+                           'source_title':'January premium statement', 'quote':quote, 'start':0, 'end':len(quote),
+                           'content_digest':hashlib.sha256(quote.encode()).hexdigest()}
+                    claims.append({'id':f'u{index+1}', 'start':offset, 'end':offset+len(claim),
+                                   'claim':claim, 'status':'supported', 'references':[ref]})
+                    offset += len(claim)+2
+                ledger = result['claim_ledger']
+                ledger.update(candidate_text=candidate, candidate_digest=hashlib.sha256(candidate.encode()).hexdigest(),
+                              complete=True, claims=claims)
+                ledger.setdefault('unitization','prose_v1')
+                ledger['summary'].update(total=len(claims), audited=len(claims), supported=len(claims))
+                partial = result['verification']['status'] == 'partial'
+                result['answer'] = render_verified_answer(candidate, claims, partial=partial)
+                result['finalization'].update(answer_verified=True, disposition='partial' if partial else 'supported',
+                    answer_digest=hashlib.sha256(result['answer'].encode()).hexdigest(),
+                    candidate_digest=ledger['candidate_digest'], documented_qualification=False)
+                events, receipt = project_timeline(result['answer'], ledger, result['finalization'])
+                result['timeline_events'] = events
+                result['finalization']['timeline'] = receipt
             if 'markup' in question.lower():
                 result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
             with LOCK:

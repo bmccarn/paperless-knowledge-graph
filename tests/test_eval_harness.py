@@ -78,9 +78,17 @@ class EvaluationTests(unittest.TestCase):
         case = next(case for case in self.cases if case["mode"] == "timeline")
         answer = "The due date is 2026-01-31."
         ref = source_reference(quote="Due date: 2026-01-31.")
+        from app.timeline import project_timeline
+        from app.answer_delivery import render_verified_answer
         result = supported_response(answer)
-        result["claim_ledger"]["claims"][0]["references"] = [ref]
-        result["timeline_events"] = [{**case["expected_timeline_events"][0], "references": [ref], "status": "source_supported"}]
+        result['claim_ledger'].update(candidate_text=answer, candidate_digest=hashlib.sha256(answer.encode()).hexdigest(),
+            unitization='prose_v1', summary={'total':1,'audited':1,'supported':1})
+        result['claim_ledger']['claims'][0].update(id='u1',start=0,end=len(answer),references=[ref])
+        result['answer'] = render_verified_answer(answer,result['claim_ledger']['claims'])
+        result['finalization'].update(answer_verified=True, candidate_digest=result['claim_ledger']['candidate_digest'],
+            answer_digest=hashlib.sha256(result['answer'].encode()).hexdigest())
+        result['timeline_events'], result['finalization']['timeline'] = project_timeline(
+            result['answer'], result['claim_ledger'], result['finalization'])
         self.assertTrue(score_case(case, result)["passed"])
         result["timeline_events"][0]["title"] = "Coverage canceled"
         self.assertFalse(score_case(case, result)["passed"])

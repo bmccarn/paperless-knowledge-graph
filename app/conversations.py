@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 from app.config import settings
+from app.timeline import restore_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,10 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
         messages = []
         for m in msgs:
             metadata = json.loads(m["metadata"]) if m["metadata"] else {}
+            if metadata.get("mode") == "timeline" or metadata.get("timeline_events"):
+                events, receipt = restore_timeline({**metadata, "answer": m["content"]})
+                metadata["timeline_events"] = events
+                metadata["finalization"] = {**(metadata.get("finalization") or {}), "timeline": receipt}
             messages.append({
                 "id": str(m["id"]),
                 "role": m["role"],

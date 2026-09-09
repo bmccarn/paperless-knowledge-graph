@@ -218,6 +218,30 @@ def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800, *, incl
     return result
 
 
+def table_header_chunks(content: str, raw_chunks: list[str]) -> dict[int, int | None]:
+    """Locate a separate original header chunk for each table continuation.
+
+    Both locations must be unique original intervals. None records a required
+    header that cannot fit or be bound; callers must not invent its context.
+    """
+    starts = []
+    for chunk in raw_chunks:
+        start = content.find(chunk)
+        starts.append(start if start >= 0 and content.find(chunk, start+1) < 0 else None)
+    result = {}
+    for table_start, table_end, _ in _find_table_regions(content):
+        first_end = content.find('\n', table_start)
+        second_end = content.find('\n', first_end+1) if first_end >= 0 else -1
+        header_end = second_end+1 if second_end >= 0 else len(content)
+        candidates = [i for i, start in enumerate(starts) if start is not None
+                      and start <= table_start and start+len(raw_chunks[i]) >= header_end]
+        header = max(candidates, key=lambda i: starts[i]) if candidates else None
+        for index, start in enumerate(starts):
+            if start is not None and table_start < start < table_end:
+                result[index] = header
+    return result
+
+
 class EmbeddingsStore:
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None

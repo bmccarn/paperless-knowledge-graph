@@ -21,7 +21,7 @@ def _owner_name():
 def _owner_context():
     return settings.owner_context or ""
 from app.retry import retry_with_backoff
-from app.embeddings import chunk_text, embeddings_store
+from app.embeddings import chunk_text, embeddings_store, table_header_chunks
 from app.paperless import paperless_client
 from app.graph import graph_store
 from app.cache import (query_cache, vector_cache, graph_cache,
@@ -1304,14 +1304,20 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             source = document_contexts[doc_id]
             if key not in chunk_versions:
                 params = {'chunk_size':3600, 'overlap':500} if expanded else {'chunk_size':4000, 'overlap':800}
-                chunk_versions[key] = (chunk_text(source, **params),
-                                       chunk_text(source, **params, include_table_headers=False))
-            represented, raw = chunk_versions[key]
+                raw = chunk_text(source, **params, include_table_headers=False)
+                chunk_versions[key] = (chunk_text(source, **params), raw, table_header_chunks(source, raw))
+            represented, raw, headers = chunk_versions[key]
             if index >= len(raw) or text not in (represented[index], raw[index]):
                 continue
             start = source.find(raw[index])
             if start < 0 or source.find(raw[index], start+1) >= 0:
                 continue
+            if index in headers:
+                header_index = headers[index]
+                if header_index is None:
+                    continue
+                original.append({**chunk, 'chunk_index':header_index + (100000 if expanded else 0),
+                                 'content':raw[header_index], 'source_content':raw[header_index]})
             original.append({**chunk, 'content':raw[index], 'source_content':raw[index]})
         pack = build_evidence_pack(
             question=question,

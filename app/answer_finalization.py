@@ -496,7 +496,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         else:
             remaining.append(pair)
     required_ids = set(required_span_ids)
-    required = [(index, span) for index, span in enumerate(spans) if span['span_id'] in required_ids]
+    required = [(index, span) for index, span in enumerate(spans) if span.get('span_id') in required_ids]
     if (len(required) != len(required_ids) or any(span.get('feedback_open') for _, span in required)):
         raise EvidenceReservationError('invalid_reserved_source')
     mandatory = {index for index, _ in first_per_document + required}

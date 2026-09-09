@@ -15,7 +15,7 @@ import httpx
 from typing import Any
 
 from app.config import settings
-from app.answer_observations import ObservationCandidate
+from app.answer_observations import ObservationCandidate, ObservationValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -253,15 +253,19 @@ Rules:
             system_prompt=(
                 "You are a source-faithful answer editor. Rebuild a concise, complete answer to the user\'s "
                 "direct question. Remove unrequested details as well as unsupported claims; preserve the "
-                "specific source-backed facts needed to answer the question."
+                "specific source-backed facts needed to answer the question. Return the required JSON object only. "
+                "Every observation is self-contained, single-line plain prose without Markdown or citations."
             ),
             prompt=prompt,
+            response_format=ObservationCandidate.response_format(),
         )
 
         try:
             candidate = ObservationCandidate.from_json(text)
-        except ValueError:
-            return None
+        except ObservationValidationError as exc:
+            logger.warning('Strands stage=answer_editor outcome=invalid_observations reason=%s item_index=%s',
+                           exc.reason, exc.item_index)
+            raise
         return {'observations': list(candidate.observations)}
 
     async def review_entity_candidate(self, candidate: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any] | None:
@@ -308,7 +312,7 @@ Rules:
             return {"audit_protocol_error": "invalid_json_shape"}
         return result
 
-    async def _text_agent(self, name: str, system_prompt: str, prompt: str) -> str | None:
+    async def _text_agent(self, name: str, system_prompt: str, prompt: str, *, response_format=None) -> str | None:
         queued = time.monotonic()
         async with self._calls:
             started = time.monotonic()
@@ -316,7 +320,7 @@ Rules:
             try:
                 agent = Agent(
                     name=name,
-                    model=self._model(),
+                    model=self._model(response_format=response_format),
                     system_prompt=system_prompt,
                     callback_handler=None,
                 )
@@ -346,7 +350,7 @@ Rules:
         # client, including on cancellation. No process-global cache is mutated.
         pass
 
-    def _model(self):
+    def _model(self, *, response_format=None):
         model_id = settings.strands_model or settings.gemini_model
         return OpenAIModel(
             client_args={
@@ -356,6 +360,7 @@ Rules:
                 "timeout": httpx.Timeout(float(settings.strands_call_timeout_seconds), connect=5.0),
             },
             model_id=model_id,
+            **({'params': {'response_format': response_format}} if response_format is not None else {}),
         )
 
 

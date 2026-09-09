@@ -20,12 +20,12 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
-from app.answer_observations import ObservationCandidate
+from app.answer_observations import ObservationCandidate, ObservationValidationError
 from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v19"
+POLICY_VERSION = "source-audit-v20"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -1083,6 +1083,8 @@ class AnswerFinalizer:
             raise ValueError("evaluated_at must be a valid ISO calendar day")
         plan["evaluated_at"] = evaluated_at
         disposition, attempts, error = "incomplete", 0, None
+        repair_diagnostic = None
+        repair_in_progress = False
         candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
         observations = None
         ledger = empty_ledger(candidate)
@@ -1108,11 +1110,13 @@ class AnswerFinalizer:
                     else:
                         disposition = "unsupported" if ledger["complete"] else "incomplete"
                     if attempt == 0 and self.repairer and len(candidate) <= 96000:
+                        repair_in_progress = True
                         async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
                                 {"status": disposition, "claims": ledger["claims"],
                                  "rejection_reasons": ledger.get("rejection_reasons", [])})
+                        repair_in_progress = False
                         revised_observations = (ObservationCandidate.from_response(repaired)
                                                 if isinstance(repaired, dict) and 'observations' in repaired else None)
                         replacement = (revised_observations.text if revised_observations else
@@ -1122,17 +1126,24 @@ class AnswerFinalizer:
                             break
                         revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
                         if revised_observations and (revised != replacement or revised_declarations):
-                            raise ValueError('Observation repair must not contain attribution syntax')
+                            raise ObservationValidationError('invalid_attribution')
                         if (revised, revised_declarations, revised_observations) == (candidate, declarations, observations):
                             break
                         candidate, declarations = revised, revised_declarations
                         observations = revised_observations
                     else:
                         break
+            except ObservationValidationError as exc:
+                disposition, error = 'audit_failed', 'The answer repair did not satisfy the observation format.'
+                repair_diagnostic = exc.diagnostic
             except TimeoutError:
                 disposition, error = "timeout", "The source audit exceeded its time budget."
+                if repair_in_progress:
+                    repair_diagnostic = {'reason': 'transport_unavailable'}
             except Exception:
                 disposition, error = "audit_failed", "The source audit was unavailable or returned invalid data."
+                if repair_in_progress:
+                    repair_diagnostic = {'reason': 'transport_unavailable'}
         partial = None
         # Only the final completed, nonconflicting audit is eligible. Never reuse
         # an earlier ledger after a failed repair/audit, or slice within a unit.
@@ -1225,6 +1236,7 @@ class AnswerFinalizer:
         return {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,
+                                 **({'repair_diagnostic': repair_diagnostic} if repair_diagnostic else {}),
                                  "answer_digest": hashlib.sha256(public_answer.encode()).hexdigest(),
                                  "candidate_digest": revision, "evaluated_at": evaluated_at,
                                  "attempts": attempts, "complete": complete, "answer_verified": supported, "cited_document_ids": doc_ids},

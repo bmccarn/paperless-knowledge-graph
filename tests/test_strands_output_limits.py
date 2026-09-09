@@ -32,6 +32,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.editor_text = json.dumps({"observations": [QUOTE]})
         self.editor_delay = 0
         self.editor_error = False
+        self.editor_reject_schema = False
         self.editor_truncated = False
         self.editor_started = asyncio.Event()
         self.audit_count = 0
@@ -67,6 +68,9 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             if is_editor:
                 self.editor_started.set()
                 await asyncio.sleep(self.editor_delay)
+                if self.editor_reject_schema and 'response_format' in body:
+                    return httpx.Response(400, json={'error': {'message': 'Synthetic unsupported response format',
+                                                             'type': 'invalid_request_error'}})
                 if self.editor_error:
                     raise httpx.ConnectError("synthetic provider unavailable")
             result = {"ok": True}
@@ -271,6 +275,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.audit_count, 1)
                 self.assertEqual(len(self.requests) - count, 2)
                 self.assertNotIn(QUOTE, result['answer'])
+                self.assertEqual(result['finalization']['repair_diagnostic']['reason'], 'transport_unavailable')
 
     async def test_cancelled_editor_drains_transport_without_reaudit_or_cache(self):
         self.reject_first_audit = True
@@ -322,3 +327,54 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertEqual(self.audit_count, 1)
             self.assertEqual(len(self.requests) - before, 2)
+
+    async def test_editor_wire_schema_is_request_owned_and_other_helpers_stay_unchanged(self):
+        self.reject_first_audit = True
+        repaired, planned = await asyncio.gather(
+            AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK),
+            self.orchestrator.plan_query('Unrelated plan?', 'strict'))
+        self.assertTrue(repaired['finalization']['answer_verified'])
+        self.assertEqual(planned, {'ok': True})
+        structured = [r for r in self.requests if 'response_format' in r]
+        self.assertEqual(len(structured), 1)
+        format = structured[0]['response_format']
+        self.assertEqual(format['type'], 'json_schema')
+        self.assertTrue(format['json_schema']['strict'])
+        schema = format['json_schema']['schema']
+        self.assertEqual(schema['required'], ['observations'])
+        self.assertFalse(schema['additionalProperties'])
+        self.assertEqual(schema['properties']['observations']['items']['type'], 'string')
+        self.assertTrue(all(LIMIT_FIELDS.isdisjoint(r) for r in self.requests))
+
+    async def test_repair_format_diagnostics_are_typed_and_do_not_contain_response_text(self):
+        for raw, reason in (
+            ('PRIVATE PREFIX {}', 'invalid_json'),
+            ('{"observations":[],"observations":["PRIVATE"]}', 'duplicate_key'),
+            ('[]', 'invalid_object'),
+            ('{"observations":"PRIVATE"}', 'invalid_observations'),
+            ('{"observations":[]}', 'empty_observations'),
+            ('{"observations":[12]}', 'non_string_observation'),
+            ('{"observations":[""]}', 'empty_observation'),
+            ('{"observations":[" PRIVATE "]}', 'padded_observation'),
+            ('{"observations":["PRIVATE\\nSECOND"]}', 'multiline_observation'),
+            (json.dumps({'observations':[('PRIVATE ' * 200).strip()]}), 'oversized_observation'),
+            ('{"observations":["**PRIVATE**"]}', 'formatted_observation'),
+            ('', 'transport_unavailable'),
+        ):
+            self.editor_text, self.audit_count, self.reject_first_audit = raw, 0, True
+            result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
+                'What is recorded?', 'An unsupported draft.', PACK)
+            self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+            diagnostic = result['finalization']['repair_diagnostic']
+            self.assertEqual(diagnostic['reason'], reason)
+            self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+            self.assertEqual(self.audit_count, 1)
+
+    async def test_unsupported_provider_schema_does_not_retry_without_constraints(self):
+        self.editor_reject_schema = self.reject_first_audit = True
+        result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
+            'What is recorded?', 'An unsupported draft.', PACK)
+        self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+        self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': 'transport_unavailable'})
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.audit_count, 1)

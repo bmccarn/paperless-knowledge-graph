@@ -143,6 +143,22 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
                                   for c in ledger['claims']], expected)
                 self.assertEqual(row['metadata']['verification']['partial']['omitted_count'], 1)
 
+    async def test_repair_diagnostic_roundtrips_without_rejected_response_content(self):
+        from app.answer_finalization import AnswerFinalizer
+        from tests.test_observation_delivery import HandleAuditor, ObservationRepairer
+        from tests.test_source_dates import pack
+        result = await AnswerFinalizer(HandleAuditor(), ObservationRepairer(
+            {'observations': ['**PRIVATE REPAIR CONTENT**']})).finalize(
+                'What is recorded?', 'REJECT.', pack('Cedar invoice records $20.'))
+        payload = {**final_payload(), **result}
+        with patch(__name__ + '.final_payload', return_value=payload):
+            await self.test_ordinary_and_sse_persist_identical_complete_metadata()
+        for row in self.saved.messages:
+            if row['role'] == 'assistant':
+                self.assertEqual(row['metadata']['finalization']['repair_diagnostic'],
+                                 {'reason': 'formatted_observation', 'item_index': 0})
+                self.assertNotIn('PRIVATE REPAIR CONTENT', json.dumps(row))
+
     async def test_complete_without_answer_does_not_promote_accumulated_draft(self):
         self.engine.behavior = "missing_answer"
         await self.client.post("/query/stream", json={"question": "Synthetic question", "conversation_id": "missing-answer"})

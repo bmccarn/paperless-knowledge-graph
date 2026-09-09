@@ -1,6 +1,6 @@
 # Query reliability: evaluation before implementation
 
-Status: plan draft; implementation and deployment are not authorized by completion of this document alone.
+Status: reviewed plan; G0 complete. Evaluation, implementation and deployment remain unstarted and must satisfy the gates below.
 
 Requested September 9, 2026. Tracker: [issue #33](https://github.com/bmccarn/paperless-knowledge-graph/issues/33). Frozen starting revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`, answer policy `source-audit-v25`, delivered through GitOps PR164. This document replaces the execution sequence and stale status matrix in [the earlier reliability spec](evidence-query-reliability.md). That document remains a record of existing contracts, implementation history and failed experiments.
 
@@ -80,7 +80,7 @@ Score separately:
 
 | Gate | Work and deliverable | Exit criterion | Current state |
 | --- | --- | --- | --- |
-| G0 — plan | Review this spec on Standards and Spec axes; reconcile older execution instructions. | Material plan findings closed; planning request ends without starting implementation. | Draft for review |
+| G0 — plan | Review this spec on Standards and Spec axes; reconcile older execution instructions. | Material plan findings closed; planning request ends without starting implementation. | Complete; both reviews clear |
 | G1 — reproduce | Build the evaluation harness, frozen dataset/labels, raw private capture contract and baseline report. This is evaluation-only work. | Deterministic defects reproduce through production interfaces; the real semantic failure reproduces in a controlled native-model evaluation, or a measured nondeterministic failure rate is established. | Not started |
 | G2 — discriminate | Minimize the semantic reproducer while retaining its failure; preregister bounded, one-variable experiments against ranked hypotheses. | At least one candidate materially improves the reproduced failure without failing positive controls; all outcomes retained. | Not started |
 | G3 — choose design | Write a short architecture decision with measured alternatives, the chosen interface, call/data flow, failure behavior, cost/latency and implementation tasks. Independently review it. | Both review axes pass; every proposed production change maps to evidence and a regression. | Not started |
@@ -130,6 +130,8 @@ Standalone replay of private saved payloads previously received an automatic app
 
 Keep all existing failed releases and test receipts. Update this document's gate table and one evaluation report with revision-specific results; do not grow another sequence of fixes whose latest appendix contradicts the execution plan. Implementation PRs must link the selected G3 decision and G5 evidence. Close issue #33 only after G6, preservation and schedule disposition are complete.
 
-## Next authorized planning deliverable
+## Planning review and handoff
 
-Finish independent review of this document and present the reviewed plan. The next execution phase, when resumed, is G1 dataset, grader, evaluation access and baseline reproduction—not application patches or another deployment. No architecture candidate has been selected yet.
+Independent Standards and Spec reviews both passed at `d1b3734142e50b1b578584e63e6a5aba3e29de06` on September 9, 2026, with no remaining findings. Review identified and closed a holdout-isolation gap: an independent custodian owns hidden cases before qualification, and any evaluated set becomes regression evidence if its results influence subsequent candidate adaptation. This review record and the G0 status were added after those reviews; the reviewed requirements are unchanged.
+
+The planning deliverable is complete. The next execution phase, when resumed, is G1 dataset, grader, evaluation access and baseline reproduction—not application patches or another deployment. No architecture candidate has been selected yet.

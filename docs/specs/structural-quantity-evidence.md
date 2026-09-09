@@ -1,6 +1,6 @@
 # Original-table quantity evidence
 
-Status: review before implementation; separate from frozen reader experiments.
+Status: implemented and reviewed at `9953b89`; native qualification pending. Separate from prior frozen reader experiments.
 Parent: [document-local evidence](document-local-evidence.md). Reproductions:
 [value evidence findings](../audits/2026-09-09-value-evidence-findings.md).
 
@@ -63,3 +63,22 @@ false approvals regardless of deterministic rejection, compare the same code and
 runtime, and include swapped target/result and charge/credit roles. Engineering
 checks alone cannot qualify these quantity facts or the larger query architecture.
 No deployment or release before representative and end-to-end gates.
+
+## Post-review native qualification
+
+After both implementation reviews pass, freeze a fresh experiment containing this
+module and all reviewed reader/protocol changes. Repeat the unchanged development
+set with `source_first`, `document_local` and `document_local_corrected`, three
+repetitions per arm. Each arm retains the existing 960-native-invocation and
+1,800-second ceilings, estimated 1.5M tokens, one SDK attempt, concurrency four,
+90-second call and 120-second audit deadlines. Use the same measured SDK 1.54
+runtime and model for each arm; do not transfer results to SDK 1.55. Original
+source hashes, labels and claim encodings remain unchanged. The existing set
+includes swapped target/result and charge/credit negatives. Preserve interrupted
+prior manifests and report all scheduled assertions and raw approvals, even when
+a later guard rejects them. No native run begins before the proxy rollout and
+health gate; no independent holdout is consumed in this development experiment.
+
+These are development controls, not full-pipeline or release qualification. The
+signed-credit direction paraphrase remains a separate known failure; count it
+honestly rather than changing expected labels or silently weakening signs.

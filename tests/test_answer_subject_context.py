@@ -214,3 +214,36 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('20 kg', result['answer'])
         self.assertNotIn('Casey', result['answer'])
         self.assertIn('Maple records 30 kg', result['answer'])
+
+    async def test_clock_times_in_independent_observations_do_not_start_field_runs(self):
+        for cue in ('at', 'by', 'before', 'after', 'until', 'since', 'from', 'effective', 'around'):
+            for clock in ('12:01 AM', '08:30', '23:59:00'):
+                with self.subTest(cue=cue, clock=clock):
+                    answer = ('- The Cedar contract records delivery.\n'
+                              '- The earlier change is REJECT.\n'
+                              f'- The Maple notice records a change {cue} {clock} on September 1, 2026.')
+                    result, _ = await self.finalize(answer)
+                    self.assertEqual(result['finalization']['disposition'], 'partial')
+                    self.assertIn('Maple notice records a change', result['answer'])
+                    self.assertIn(clock, result['answer'])
+
+    async def test_time_valued_fields_still_require_their_record_context(self):
+        fields = ['Start time: 12:01 AM.', '**Start time:**08:30.',
+                      'Device1:20.', 'Device 1:20.', 'Item 1:20 kg.',
+                      'Line 1:20.00 USD.', 'Item at 1:20 kg.', 'Line at 1:20.00 USD.',
+                      '08:30: Released.',
+                      '12:01 AM: Cancelled.', 'Departure at 08:30: Released.',
+                      'Ratio: 3:1.']
+        fields.extend(f'Item at 1:20{before}{separator}{after}000 USD.'
+                      for separator in ('.', ',')
+                      for before in ('', ' ', '\u00a0')
+                      for after in ('', ' ', '\u00a0'))
+        for field in fields:
+            answer = ('- The Cedar contract REJECT records delivery.\n'
+                      f'- {field}\n- Recipient: Casey.\n\n'
+                      '- The Maple notice records delivery at 23:59:00.')
+            result, _ = await self.finalize(answer)
+            self.assertEqual(result['finalization']['disposition'], 'partial')
+            self.assertNotIn(field, result['answer'])
+            self.assertNotIn('Casey', result['answer'])
+            self.assertIn('Maple notice records delivery at 23:59:00', result['answer'])

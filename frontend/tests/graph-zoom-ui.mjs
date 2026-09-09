@@ -87,11 +87,56 @@ try {
     }
   }
   assert.deepEqual(failures, []);
+  // Place the selected node near the edge that the inspector will occupy.
+  // Real background gestures reproduce viewport clipping without camera APIs.
+  await page.mouse.move(bounds.x + 30, bounds.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 30 + bounds.width - 60 - closeup.x,
+                        bounds.y + 30 + bounds.height / 2 - closeup.y, { steps: 10 });
+  await page.mouse.up();
+  const edge = await page.evaluate(() => window.__graphPaint['Alex Example']);
+  assert.ok(edge.x > bounds.width - 90 && edge.x < bounds.width, 'Target is near the inspector edge');
   // Select the visibly zoomed node through its canvas hit area.
-  await page.mouse.move(bounds.x + closeup.x, bounds.y + closeup.y);
+  await page.mouse.move(bounds.x + edge.x, bounds.y + edge.y);
   await page.getByText('Alex Example · Person', { exact: true }).waitFor({ state: 'visible' });
-  await page.mouse.click(bounds.x + closeup.x, bounds.y + closeup.y);
+  await page.mouse.click(bounds.x + edge.x, bounds.y + edge.y);
   await page.locator('summary').filter({ hasText: 'Evidence from document #101' }).waitFor({ state: 'visible' });
+  await page.waitForFunction(width => document.querySelector('canvas').clientWidth < width, bounds.width);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(artifacts, 'graph-inspector-closeup.png'), fullPage: true });
+  async function assertSelectedVisible(phase) {
+    const box = await canvas.boundingBox();
+    const point = await page.evaluate(() => window.__graphPaint['Alex Example']);
+    assert.ok(point.x > 10 && point.x < box.width - 10 && point.y > 10 && point.y < box.height - 10,
+              `${phase}: selected node must remain visible: ${JSON.stringify({point,box})}`);
+    assert.ok(await canvas.evaluate((element, point) => {
+      const box = element.getBoundingClientRect();
+      return document.elementFromPoint(box.x + point.x, box.y + point.y) === element;
+    }, point), `${phase}: inspector must not cover the selected node`);
+    assert.ok(Math.abs(await canvas.evaluate(element => element.__zoom.k) - zoom) < 0.001,
+              `${phase}: keep the user's zoom`);
+  }
+  await assertSelectedVisible('Inspector open');
+  await page.setViewportSize({ width: 1200, height: 850 });
+  await page.waitForTimeout(300);
+  await assertSelectedVisible('Viewport resized');
+  await page.screenshot({ path: path.join(artifacts, 'graph-resized-closeup.png'), fullPage: true });
+  for (const width of [1000, 768, 640]) {
+    await page.setViewportSize({ width, height: 850 });
+    await page.waitForTimeout(300);
+    await assertSelectedVisible(`Viewport ${width}`);
+  }
+  await page.screenshot({ path: path.join(artifacts, 'graph-tablet-closeup.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 850 });
+  await page.waitForTimeout(300);
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
+  await page.screenshot({ path: path.join(artifacts, 'graph-phone-inspector.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Close node inspector', exact: true }).click();
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'hidden' });
+  await assertSelectedVisible('Phone inspector closed');
+  await page.screenshot({ path: path.join(artifacts, 'graph-phone-restored.png'), fullPage: true });
+  await page.setViewportSize({ width: 1200, height: 850 });
+  await page.waitForTimeout(300);
   const beforePan = await canvas.evaluate(element => ({ ...element.__zoom }));
   const resized = await canvas.boundingBox();
   await page.mouse.move(resized.x + 35, resized.y + 35);
@@ -108,7 +153,7 @@ try {
   assert.ok(fittedZoom < zoom / 2, `Fit view must leave close-up: ${fittedZoom} vs ${zoom}`);
   await page.screenshot({ path: path.join(artifacts, 'graph-fit.png'), fullPage: true });
   assert.deepEqual(errors, []);
-  console.log(`PASS graph_closeup_zoom (${zoom.toFixed(1)}x), constant label geometry, canvas selection, panning and Fit view`);
+  console.log(`PASS graph_closeup_zoom (${zoom.toFixed(1)}x), constant label geometry, visible selection after inspector/resize, panning and Fit view`);
 } finally {
   await browser.close();
 }

@@ -34,6 +34,12 @@ def audit_context(answer):
 
 def _field(text):
     text = re.sub(r'^\s*(?:[-+*]|\d+[.)])\s+', '', text)
+    # Ignore only clocks explicitly introduced as times. Bare numeric keys,
+    # time-keyed fields, quantities and later delimiters remain conservative.
+    clock = (r'\b(?:at|by|before|after|until|since|from|effective|around)\s+'
+             r'(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d|\s*[.,]\s*\d)'
+             r'(?:\s*[AP]M\b|(?=\s*(?:$|[.,;!?)]|\b(?:on|and|to|through)\b)))')
+    text = re.sub(clock, lambda match: match[0].replace(':', ' '), text, flags=re.I)
     return bool(re.match(r'^[^\r\n:]+:', text))
 
 

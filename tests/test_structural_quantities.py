@@ -60,6 +60,17 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
         conflict = '| Measurement | Result mg/L/min |\n| --- | --- |\n| Concentration mg/L | 12 |'
         self.assertFalse(values_match('Concentration: 12 mg/L.', references(conflict)))
 
+    def test_unrecognized_compound_is_retained_as_an_exact_requirement(self):
+        self.assertFalse(values_match('Concentration: 12 mg/L/min.', references('The value is 12 USD.')))
+        self.assertTrue(values_match('Concentration: 12 mg/L/min.', references('Concentration: 12 mg/L/min.')))
+
+    def test_multiple_unit_labels_are_ambiguous_and_normal_words_are_not_units(self):
+        ambiguous = '| Charge USD CAD |\n| --- |\n| 100 |'
+        self.assertFalse(values_match('Charge: 100 CAD.', references(ambiguous)))
+        for label in ('sample', 'mass', 'height'):
+            table = '| Item | Amount USD |\n| --- | --- |\n| ' + label + ' | 100 |'
+            self.assertTrue(values_match('Amount: 100 USD.', references(table)), label)
+
     def test_split_or_unknown_context_does_not_authorize_table_inheritance(self):
         header, row = TABLE.rsplit('\n', 1)
         self.assertFalse(values_match('Charge: 100 USD.', references(header) + references(row)))
@@ -82,6 +93,21 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(clipped)
             self.assertTrue(all(start.strip() not in ref['quote'] for ref in clipped))
             self.assertFalse(values_match('Charge: 100 USD.', clipped))
+
+    def test_unicode_separators_cannot_shift_certified_original_table_ranges(self):
+        literal = '| Charge USD |\n| --- |\n| 100 |'
+        actual = '| Value |\n| --- |\n| 500 |'
+        for separator in ('\u2028', '\x85', '\v', '\f', '\u2029'):
+            source = ('intro' + separator + separator.join(['x'] * 5)) + '\n```text\n' + literal + '\n```\n\n' + actual
+            self.assertFalse(values_match('Charge: 100 USD.', references(source)), repr(separator))
+        for newline in ('\r\n', '\r', '\n'):
+            source = TABLE.replace('\n', newline)
+            self.assertTrue(values_match('Charge: 100 USD.', references(source)))
+
+    def test_unicode_negative_table_value_preserves_sign(self):
+        source = '| Charge USD |\n| --- |\n| −100 |'
+        self.assertTrue(values_match('Charge: -100 USD.', references(source)))
+        self.assertFalse(values_match('Charge: 100 USD.', references(source)))
 
     async def test_table_quantities_cannot_override_semantic_role_rejection(self):
         auditor = StrandsQueryOrchestrator()

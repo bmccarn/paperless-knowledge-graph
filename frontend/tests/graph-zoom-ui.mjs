@@ -109,6 +109,10 @@ try {
     const point = await page.evaluate(() => window.__graphPaint['Alex Example']);
     assert.ok(point.x > 10 && point.x < box.width - 10 && point.y > 10 && point.y < box.height - 10,
               `${phase}: selected node must remain visible: ${JSON.stringify({point,box})}`);
+    assert.ok(await canvas.evaluate((element, point) => {
+      const box = element.getBoundingClientRect();
+      return document.elementFromPoint(box.x + point.x, box.y + point.y) === element;
+    }, point), `${phase}: inspector must not cover the selected node`);
     assert.ok(Math.abs(await canvas.evaluate(element => element.__zoom.k) - zoom) < 0.001,
               `${phase}: keep the user's zoom`);
   }
@@ -117,6 +121,22 @@ try {
   await page.waitForTimeout(300);
   await assertSelectedVisible('Viewport resized');
   await page.screenshot({ path: path.join(artifacts, 'graph-resized-closeup.png'), fullPage: true });
+  for (const width of [1000, 768, 640]) {
+    await page.setViewportSize({ width, height: 850 });
+    await page.waitForTimeout(300);
+    await assertSelectedVisible(`Viewport ${width}`);
+  }
+  await page.screenshot({ path: path.join(artifacts, 'graph-tablet-closeup.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 850 });
+  await page.waitForTimeout(300);
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
+  await page.screenshot({ path: path.join(artifacts, 'graph-phone-inspector.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Close node inspector', exact: true }).click();
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'hidden' });
+  await assertSelectedVisible('Phone inspector closed');
+  await page.screenshot({ path: path.join(artifacts, 'graph-phone-restored.png'), fullPage: true });
+  await page.setViewportSize({ width: 1200, height: 850 });
+  await page.waitForTimeout(300);
   const beforePan = await canvas.evaluate(element => ({ ...element.__zoom }));
   const resized = await canvas.boundingBox();
   await page.mouse.move(resized.x + 35, resized.y + 35);

@@ -535,7 +535,7 @@ function GraphContent() {
         {(selectedNode || selectedLink) && (
           <aside
             aria-label="Evidence inspector"
-            className="absolute inset-y-0 right-0 z-30 w-full overflow-y-auto border-l bg-card shadow-xl sm:w-96 xl:static xl:w-[380px] xl:shrink-0"
+            className="absolute inset-y-0 right-0 z-30 w-full overflow-y-auto border-l bg-card shadow-xl sm:static sm:w-80 sm:shrink-0 xl:w-[380px]"
           >
             {selectedNode && (
               <>

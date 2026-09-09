@@ -85,6 +85,8 @@ class QuestionEvidence:
         snapshot = json.loads(self._snapshot)
         documents = source_reading.group_sources(payload['source_spans'])
         if (any(payload.get(key) != snapshot[key] for key in ('question', 'evaluated_at', 'source_date_order'))
+                or any(key in payload and payload[key] != snapshot[key]
+                       for key in ('requirements', 'resolved_question'))
                 or documents != snapshot['source_documents']):
             raise QuestionEvidenceError('evidence_snapshot_mismatch')
         return {**{k: v for k, v in payload.items() if k != 'source_spans'},

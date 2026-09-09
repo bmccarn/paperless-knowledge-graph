@@ -70,6 +70,8 @@ class StrandsQueryOrchestrator:
                    "protocol_correction": plan.get("audit_protocol_recovery"),
                    "evidence_selection": plan.get('evidence_selection', {}),
                    "units": units, "source_spans": spans}
+        if prepared_evidence is not None:
+            payload.update({key: plan[key] for key in ('requirements', 'resolved_question') if key in plan})
         payload = (prepared_evidence.audit_payload(payload) if prepared_evidence is not None else
                    await self._prepare_audit_payload(payload))
         if payload is None:
@@ -180,6 +182,13 @@ class StrandsQueryOrchestrator:
             raise source_reading.SourceReadingError('unavailable_source_reading')
         return await self._read_source_documents(payload, payload['source_documents'],
                                                  strategy='document_local_corrected')
+
+    async def compose_question_answer(self, evidence):
+        from app.answer_composition import AnswerComposition, COMPOSER_PROMPT, response_format
+        text = await self._text_agent(name='answer_composer', system_prompt=COMPOSER_PROMPT,
+                                      prompt=json.dumps(evidence.composition_input, ensure_ascii=False),
+                                      response_format=response_format())
+        return AnswerComposition.parse(text, evidence)
 
     async def _read_source_documents(self, payload, documents, *, strategy=None):
         strategy = strategy or self.audit_strategy

@@ -72,6 +72,8 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
         base = {'question': 'What do the records establish?', 'evaluated_at': '2026-09-09',
                 'source_date_order': 'mdy', 'source_spans': self.spans}
         for key, value in (('question', 'Changed question'), ('evaluated_at', '2026-09-10'),
+                           ('resolved_question', 'Changed resolved question'),
+                           ('requirements', []),
                            ('source_date_order', 'dmy'), ('source_spans', self.spans[:1]),
                            ('source_spans', [{**s, 'content': 'Changed original'} for s in self.spans])):
             with self.assertRaisesRegex(QuestionEvidenceError, '^evidence_snapshot_mismatch$'):
@@ -82,6 +84,20 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(snapshot.digest, other.digest)
         other_requirements['requirements'].clear()
         self.assertEqual(len(other.composition_input['requirements']), 1)
+
+    async def test_prepared_adapter_rejects_changed_requirements_before_model_call(self):
+        class Reader:
+            async def read_question_sources(inner, payload): return self.reading
+        snapshot = await self.prepare(Reader())
+        auditor = StrandsQueryOrchestrator(); auditor.enabled = True
+        async def model(**kwargs): self.fail('Changed requirements reached verifier')
+        with patch.object(auditor, '_text_agent', side_effect=model):
+            for changes in ({'resolved_question': 'What requests remain uncompleted?'},
+                            {'requirements': [{**REQUIREMENTS['requirements'][0], 'aspect': 'Uncompleted requests'}]}):
+                with self.assertRaisesRegex(QuestionEvidenceError, '^evidence_snapshot_mismatch$'):
+                    await snapshot.auditor(auditor).audit_answer_units(
+                        'What do the records establish?', self.units, self.spans,
+                        {'evaluated_at': '2026-09-09', **changes})
 
     async def test_malformed_requirements_do_not_start_reading(self):
         class Reader:

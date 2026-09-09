@@ -55,7 +55,9 @@ class ObservationCandidate:
             raise ObservationValidationError('transport_unavailable')
         try:
             response = json.loads(text, object_pairs_hook=unique_object)
-        except (json.JSONDecodeError, RecursionError):
+        except ObservationValidationError:
+            raise
+        except (ValueError, RecursionError):
             raise ObservationValidationError('invalid_json') from None
         return cls.from_response(response)
 

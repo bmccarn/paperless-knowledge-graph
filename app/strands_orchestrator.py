@@ -211,7 +211,7 @@ Rules:
         verification: dict[str, Any],
     ) -> dict[str, Any] | None:
         if not self.enabled:
-            return None
+            raise ObservationValidationError('transport_unavailable')
 
         prompt = f"""Repair this answer so it is source-faithful.
 

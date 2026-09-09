@@ -1102,6 +1102,9 @@ class AnswerFinalizer:
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations,
                                                    diagnostics=diagnostics, observations=observations)
                     summary = ledger["summary"]
+                    if attempt > 0 and summary['total'] > self.max_units:
+                        repair_diagnostic = {'reason': 'audit_unit_limit',
+                                             'unit_count': summary['total'], 'unit_limit': self.max_units}
                     if ledger["complete"] and summary["supported"] == summary["total"]:
                         disposition, _ = temporal_acceptance(
                             question, candidate, ledger, plan, evidence_pack, evaluated_at)
@@ -1123,6 +1126,7 @@ class AnswerFinalizer:
                                        repaired.get("answer") if isinstance(repaired, dict) else None)
                         if not isinstance(replacement, str) or not replacement.strip():
                             disposition, error = "audit_failed", "The answer repair returned no valid candidate."
+                            repair_diagnostic = {'reason': 'transport_unavailable' if repaired is None else 'invalid_object'}
                             break
                         revised, revised_declarations = canonical_candidate(replacement, evidence_pack)
                         if revised_observations and (revised != replacement or revised_declarations):

@@ -349,6 +349,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_repair_format_diagnostics_are_typed_and_do_not_contain_response_text(self):
         for raw, reason in (
             ('PRIVATE PREFIX {}', 'invalid_json'),
+            ('{"observations":[' + '9' * 5000 + ']}', 'invalid_json'),
             ('{"observations":[],"observations":["PRIVATE"]}', 'duplicate_key'),
             ('[]', 'invalid_object'),
             ('{"observations":"PRIVATE"}', 'invalid_observations'),
@@ -369,6 +370,30 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(diagnostic['reason'], reason)
             self.assertNotIn('PRIVATE', json.dumps(diagnostic))
             self.assertEqual(self.audit_count, 1)
+
+    async def test_disabled_editor_has_unavailable_diagnostic_without_transport(self):
+        self.orchestrator.enabled = False
+        result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
+            'What is recorded?', 'An unsupported draft.', PACK)
+        self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+        self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': 'transport_unavailable'})
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(self.requests, [])
+
+    async def test_valid_editor_over_audit_capacity_is_diagnosed_without_truncation(self):
+        self.reject_first_audit = True
+        self.editor_text = json.dumps({'observations': [QUOTE] * 81})
+        result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
+            'What is recorded?', 'An unsupported draft.', PACK)
+        self.assertEqual(result['finalization']['disposition'], 'incomplete')
+        self.assertEqual(result['finalization']['repair_diagnostic'],
+                         {'reason': 'audit_unit_limit', 'unit_count': 81, 'unit_limit': 80})
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['claim_ledger']['summary']['total'], 81)
+        self.assertEqual(result['claim_ledger']['summary']['audited'], 0)
+        self.assertEqual(self.audit_count, 1)
+        self.assertEqual(len(self.requests), 2)
+        self.assertTrue(all(LIMIT_FIELDS.isdisjoint(r) for r in self.requests))
 
     async def test_unsupported_provider_schema_does_not_retry_without_constraints(self):
         self.editor_reject_schema = self.reject_first_audit = True

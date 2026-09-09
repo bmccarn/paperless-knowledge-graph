@@ -37,7 +37,7 @@ def _unit_tokens(text):
         if following and following.isalpha():
             continue
         base = match.group()
-        extend = bool(following and (following in '/^_·⋅×' or unicodedata.category(following)[0] == 'M' or following in _POWERS
+        extend = bool(following and ((not following.isalnum() and _unit_continuation(following)) or following in _POWERS
                                     or (base not in _CURRENCIES and following.isdigit())))
         if extend:
             while last < len(text) and _unit_continuation(text[last]):

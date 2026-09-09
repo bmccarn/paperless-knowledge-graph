@@ -256,3 +256,46 @@ interpretation and context-isolation hypotheses before another candidate; do not
 append another prompt rule or deploy this extra stage. Preserve the known adapter
 false-rejection regressions for the eventual complete design. Holdout, end-to-end
 all-mode coverage and live browser/original-source qualification remain unconsumed.
+
+## Document-local candidate and bounded reference recovery
+
+The subsequent experiment at `8632ebf` isolates each reader to one original
+document. The corrected variant permits one fresh, candidate-blind same-document
+call after a nonempty parser-invalid reading. It supplies a content-free protocol
+marker, never the failed generated notes. Provider failures and empty readings do
+not receive this correction. Auditor corrections reject foreign source handles;
+evaluation counts schema-valid raw approvals across every attempt even if later
+correction or deterministic validation rejects them.
+
+Matched retained-case results (three repetitions, one negative and three positive
+assertions per repetition; 35 eligible documents and 183 original windows):
+
+| Strategy | Complete runs | Native calls | False approvals | False rejections | Unavailable assertions |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Broad source-first | 2/3 | 5 | 2 | 0 | 4 |
+| Document-local | 2/3 | 83 | 1 | 0 | 4 |
+| Document-local with reference recovery | 3/3 | 109 | 0 | 0 | 0 |
+
+The corrected candidate passes this finite retained-case gate and preserves all
+nine required positive observations. Its 109 calls comprise 105 readers, three
+verifiers and one reader protocol correction. Usage was 980,486 input and 123,514
+output tokens; elapsed time 252.6 seconds, median case time 81.4 seconds. This is
+an audit-stage result, not retrieval, final-answer or browser acceptance. Runs
+overlapped; timings are not an isolated latency benchmark. Upstream sampling
+independence remains unverified. Runtime was SDK 1.54.0, OpenAI 2.54.0 and
+Gemini 3.8 Flash; SDK retries were explicitly disabled in the evaluator. The SDK
+1.55 dependency refresh has not inherited this live accuracy qualification.
+
+The three broader synthetic arms each completed only nine of 36 case runs before
+the proxy's request-count recycling caused connection failures. Each has 152
+unavailable assertions. Broad/local/corrected arms recorded 58/112/114 native calls,
+zero raw false approvals and 3/2/3 false rejections, respectively; incomplete usage
+is unknown. These are failed operational runs, not comparative accuracy results.
+All immutable manifests and raw receipts remain private and preserved. The proxy
+exited cleanly after its 10,000-request limit with a single worker; Kubernetes
+restarted it. A separate reviewed GitOps availability repair precedes fresh runs.
+
+The table-quantity changes after this experiment address independently reproduced
+lexical false rejections and boundary defects. They were not part of these model
+results. Full-pipeline integration, representative qualification, untouched holdout,
+all-mode delivery and actual interactive browser acceptance remain outstanding.

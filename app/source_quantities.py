@@ -34,11 +34,11 @@ def _unit_tokens(text):
         if first < consumed or (first and (text[first - 1].isalpha() or text[first - 1] in "_/'’")):
             continue
         following = text[last:last + 1]
-        if following and following.isalpha():
+        if following and following.isalpha() and unicodedata.category(following) != 'Lm':
             continue
         base = match.group()
-        extend = bool(following and ((not following.isalnum() and _unit_continuation(following)) or following in _POWERS
-                                    or (base not in _CURRENCIES and following.isdigit())))
+        extend = bool(following and ((not following.isalnum() and _unit_continuation(following)) or unicodedata.category(following) == 'Lm' or following in _POWERS
+                                    or (base not in _CURRENCIES and unicodedata.category(following)[0] == 'N')))
         if extend:
             while last < len(text) and _unit_continuation(text[last]):
                 last += 1

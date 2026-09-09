@@ -68,13 +68,14 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
         for claim in ('Concentration: 12 mg.', 'Concentration: 12 mg/dL.', 'Concentration: 0.012 g/L.'):
             self.assertFalse(values_match(claim, refs), claim)
         self.assertFalse(values_match('Concentration: 12 mg/L.', references('Concentration: 12 mg/L/min.')))
+        self.assertFalse(values_match('Value: 12 mgⁿ.', references('Value: 12 USD.')))
         conflict = '| Measurement | Result mg/L/min |\n| --- | --- |\n| Concentration mg/L | 12 |'
         self.assertFalse(values_match('Concentration: 12 mg/L.', references(conflict)))
 
     def test_unrecognized_compound_is_retained_as_an_exact_requirement(self):
         self.assertFalse(values_match('Concentration: 12 mg/L/min.', references('The value is 12 USD.')))
         self.assertTrue(values_match('Concentration: 12 mg/L/min.', references('Concentration: 12 mg/L/min.')))
-        for unit in ('mg/L²', 'mg/L^2', 'mg/L2', 'mg/L22X', 'mg/L²x', 'mg/Lé', 'mg/L\u0301', 'mg/Le\u0301', 'mg/L_foo', 'mg/L·s', 'mg/L⋅s', 'mg/L×s', 'mg_foo', 'mg\u0301', 'mg∙s', 'mg‿s'):
+        for unit in ('mg/L²', 'mg/L^2', 'mg/L2', 'mg/L22X', 'mg/L²x', 'mg/Lé', 'mg/L\u0301', 'mg/Le\u0301', 'mg/L_foo', 'mg/L·s', 'mg/L⋅s', 'mg/L×s', 'mg_foo', 'mg\u0301', 'mg∙s', 'mg‿s', 'mg½', 'mgⅣ', 'mgⁿ'):
             self.assertFalse(values_match('Concentration: 12 mg/L.', references('Concentration: 12 ' + unit + '.')))
             self.assertFalse(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 mg/L.')))
             self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 ' + unit + '.')))

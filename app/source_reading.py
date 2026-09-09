@@ -48,13 +48,13 @@ def group_sources(spans):
 
 def response_format(documents):
     doc_ids = [d['document_id'] for d in documents]
-    handles = [w['span']['span_id'] for d in documents for w in d['windows']]
+    # Large handle enums exceed provider schema complexity; parse_reading binds every reference.
     observation = {'type': 'object', 'additionalProperties': False,
         'required': ['text', 'references'], 'properties': {
             'text': {'type': 'string', 'minLength': 1},
             'references': {'type': 'array', 'minItems': 1, 'items': {
                 'type': 'object', 'additionalProperties': False, 'required': ['span_id'],
-                'properties': {'span_id': {'type': 'string', 'enum': handles}}}}}}
+                'properties': {'span_id': {'type': 'string'}}}}}}
     document = {'type': 'object', 'additionalProperties': False,
         'required': ['document_id', 'observations', 'limitations'], 'properties': {
             # Vertex structured output supports string enums only; ownership is validated below.

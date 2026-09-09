@@ -119,3 +119,11 @@ structured-output subset, which supports string enums only. Keep document IDs
 typed as integers and validate their exact request ownership in the parser; keep
 string source-handle enums. See [provider schema support](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/control-generated-output).
 This creates a new frozen code/manifest, preserving the failed experiment.
+
+A second retained run still failed before any reading. A six-call, synthetic-only
+transport probe held the sources and prompt fixed at 183 handles/36 documents:
+all three large-enum calls failed; all three parser-bound string-handle calls
+returned valid readings. Remove the large handle enum from the wire schema and
+retain exact, same-document handle validation in `parse_reading`. This establishes
+transport compatibility only. Preserve both earlier failures and freeze the next
+version before semantic execution.

@@ -5,6 +5,7 @@ replace original quotes. No arithmetic, scale conversion or currency inference.
 """
 from decimal import Decimal
 import re
+import unicodedata
 from markdown_it import MarkdownIt
 from app.source_dates import VALUE_UNIT_NAMES
 
@@ -20,6 +21,11 @@ _POWERS = frozenset('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻')
 _SCALE_WORDS = re.compile(r'\b(?:hundreds?|thousands?|millions?|billions?|trillions?|scaled?|scaling|factor|times|multiple|per|x|k|m|b|t|bn|mn|mm|tn|kilo|mega|giga)\b', re.I)
 
 
+def _unit_continuation(char):
+    category = unicodedata.category(char)
+    return category[0] in {'L', 'N', 'M'} or category in {'Pc', 'Sm'} or char in '/°^+−-·⋅×'
+
+
 def _unit_tokens(text):
     """Consume maximal unit-like tokens without regex suffix backtracking."""
     tokens, consumed = [], 0
@@ -28,13 +34,13 @@ def _unit_tokens(text):
         if first < consumed or (first and (text[first - 1].isalpha() or text[first - 1] in "_/'’")):
             continue
         following = text[last:last + 1]
-        if following and (following.isalpha() or following == '_'):
+        if following and following.isalpha():
             continue
         base = match.group()
-        extend = bool(following and (following in '/^' or following in _POWERS
+        extend = bool(following and (following in '/^_·⋅×' or unicodedata.category(following)[0] == 'M' or following in _POWERS
                                     or (base not in _CURRENCIES and following.isdigit())))
         if extend:
-            while last < len(text) and (text[last].isalnum() or text[last] in '/µμ°^+−-' or text[last] in _POWERS):
+            while last < len(text) and _unit_continuation(text[last]):
                 last += 1
         tokens.append((first, last, text[first:last]))
         consumed = last
@@ -159,20 +165,15 @@ def unit_names(text):
 def prose_quantities(text):
     tokens = _unit_tokens(text)
     starts = {first: unit for first, _, unit in tokens}
-    ends = {last: unit for _, last, unit in tokens}
     pairs = set()
     for match in _NUMBERS.finditer(text):
         first, last = match.span()
-        before, after = first, last
-        while before and text[before - 1].isspace():
-            before -= 1
+        after = last
         while after < len(text) and text[after].isspace():
             after += 1
         amount = Decimal(match.group().replace(',', ''))
         if after in starts:
             pairs.add((amount, starts[after]))
-        if ends.get(before) in _CURRENCIES:
-            pairs.add((amount, ends[before]))
     for _, last, unit in tokens:
         if unit not in _CURRENCIES:
             continue

@@ -74,13 +74,19 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
     def test_unrecognized_compound_is_retained_as_an_exact_requirement(self):
         self.assertFalse(values_match('Concentration: 12 mg/L/min.', references('The value is 12 USD.')))
         self.assertTrue(values_match('Concentration: 12 mg/L/min.', references('Concentration: 12 mg/L/min.')))
-        for unit in ('mg/L²', 'mg/L^2', 'mg/L2', 'mg/L22X', 'mg/L²x', 'mg/Lé'):
+        for unit in ('mg/L²', 'mg/L^2', 'mg/L2', 'mg/L22X', 'mg/L²x', 'mg/Lé', 'mg/L\u0301', 'mg/Le\u0301', 'mg/L_foo', 'mg/L·s', 'mg/L⋅s', 'mg/L×s', 'mg_foo', 'mg\u0301'):
             self.assertFalse(values_match('Concentration: 12 mg/L.', references('Concentration: 12 ' + unit + '.')))
             self.assertFalse(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 mg/L.')))
             self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 ' + unit + '.')))
             table = '| Concentration ' + unit + ' |\n| --- |\n| 12 |'
             if unit in {'mg/L²', 'mg/L^2', 'mg/L2'}:
                 self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references(table)))
+
+    def test_currency_identifiers_do_not_supply_amounts(self):
+        for unit in ('$', 'USD '):
+            for suffix in ('ABC', '_identifier'):
+                source = 'Identifier: ' + unit + '100' + suffix + '. Count: 100.'
+                self.assertFalse(values_match('Amount: ' + unit + '100.', references(source)), source)
 
     def test_multiple_unit_labels_are_ambiguous_and_normal_words_are_not_units(self):
         ambiguous = '| Charge USD CAD |\n| --- |\n| 100 |'

@@ -24,10 +24,9 @@ from app.answer_observations import ObservationCandidate, ObservationValidationE
 from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
-from app.evidence import QUERY_STOPWORDS
-from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
+from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v23"
+POLICY_VERSION = "source-audit-v24"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -462,8 +461,9 @@ class EvidenceReservationError(ValueError):
         super().__init__(reason)
 
 
-def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy", diagnostics: dict | None = None, required_span_ids: tuple[str, ...] = ()) -> list[dict]:
-    tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
+def select_spans(question: str, spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy") -> list[dict]:
+    """Bound synthesis context only; audits receive the complete eligible pack."""
+    tokens = set(re.findall(r"[\w$%]+", question.lower()))
     # Retrieval metadata identifies explicitly requested documents even when
     # their short OCR has fewer shared words than a long unrelated notice.
     # This affects relevance only; reference validation still requires OCR.
@@ -474,7 +474,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
     calendar_tokens = [_calendar_features(span['content'], date_order, span.get('date_context_before', '')) for span in spans]
     span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) | dates for span, dates in zip(spans, calendar_tokens)]
-    tokens |= _calendar_features(question + ' ' + ' '.join(u['text'] for u in units), date_order)
+    tokens |= _calendar_features(question, date_order)
     frequency = Counter(token for words in span_tokens for token in words)
     weights = {token: 1 + math.log((len(spans) + 1) / (count + 1)) for token, count in frequency.items()}
     def rank(pair, query_tokens=tokens):
@@ -486,7 +486,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         return (-requested, -overlap, index)
     ranked = sorted(enumerate(spans), key=rank)
     # A long requested document must not crowd out another explicitly named
-    # source before either synthesis or auditing gets a chance to compare them.
+    # source before synthesis gets a chance to compare them.
     first_per_document, remaining, represented = [], [], set()
     for pair in ranked:
         doc_id = pair[1].get("document_id")
@@ -495,77 +495,17 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
-    required_ids = set(required_span_ids)
-    required = [(index, span) for index, span in enumerate(spans) if span.get('span_id') in required_ids]
-    if (len(required) != len(required_ids) or any(span.get('feedback_open') for _, span in required)):
-        raise EvidenceReservationError('invalid_reserved_source')
-    mandatory = {index for index, _ in first_per_document + required}
-    if required and sum(costs[index] for index in mandatory) > budget:
-        raise EvidenceReservationError('reserved_sources_exceed_budget')
     priority_queues = []
     for scope in ("recent", "history"):
         priority, represented = [], set()
         for pair in sorted(enumerate(spans), key=lambda pair: (pair[1].get("chunk_index", 0), pair[1].get("start", 0), rank(pair) if scope == "history" else (pair[0],))):
             span = pair[1]
-            if not units and span.get(f"{scope}_reserved") and not span.get("feedback_open") and span["document_id"] not in represented:
+            if span.get(f"{scope}_reserved") and not span.get("feedback_open") and span["document_id"] not in represented:
                 priority.append(pair)
                 represented.add(span["document_id"])
         priority_queues.append(priority)
     history = [pair for row in zip_longest(*priority_queues) for pair in row if pair is not None]
-    # A combined assertion can need identity on the opening and a later dated
-    # observation from that same document. Rank the document's combined unit
-    # coverage, then reserve complementary windows within it before boilerplate.
-    by_document = {}
-    for pair in ranked:
-        if not pair[1].get("feedback_open"):
-            by_document.setdefault(pair[1]["document_id"], []).append(pair)
-    document_tokens = {doc_id: set().union(*(span_tokens[index] for index, _ in pairs))
-                       for doc_id, pairs in by_document.items()}
-    # A queue is independent: a later unit cannot assume that another unit's
-    # proposed window has actually survived budget admission.
-    queues, comparisons = [], []
-    for unit in units:
-        per_unit = []
-        queues.append(per_unit)
-        unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower())) - QUERY_STOPWORDS
-        unit_tokens |= _calendar_features(unit['text'], date_order)
-        if not by_document:
-            continue
-        outstanding = unit_tokens.copy()
-        candidates = set(by_document)
-        while candidates:
-            # Start with the most discriminating uncovered assertion term. A
-            # comparison may need several documents; repeated generic wording
-            # must not beat their rare identifying fields in aggregate.
-            def document_rank(doc_id):
-                scores = [weights[token] for token in outstanding & document_tokens[doc_id]]
-                return (-max(scores, default=0), -math.fsum(scores), by_document[doc_id][0][0])
-            doc_id = min(candidates, key=document_rank)
-            candidates.remove(doc_id)
-            if not outstanding & document_tokens[doc_id]:
-                break
-            covered = set().union(*(span_tokens[index] for index, span in first_per_document + history + per_unit
-                                    if span["document_id"] == doc_id))
-            needed = (unit_tokens & document_tokens[doc_id]) - covered
-            while needed:
-                pair = min(by_document[doc_id], key=lambda pair: rank(pair, needed))
-                matched = needed & span_tokens[pair[0]]
-                if not matched:
-                    break
-                per_unit.append(pair)
-                covered |= span_tokens[pair[0]]
-                needed -= matched
-            outstanding -= covered
-        comparison = {'unit_id': unit.get('id')}
-        alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order,
-                                            diagnostics=comparison, reserved=first_per_document + history)
-        if comparison.get('eligible_document_ids'):
-            comparisons.append(comparison)
-        # Share opportunities between supporting details and alternatives, then
-        # across units. A comparison cannot delay another unit's needed detail.
-        per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
-    per_unit = [pair for row in zip_longest(*queues) for pair in row if pair is not None]
-    ranked = first_per_document + required + history + per_unit + remaining
+    ranked = first_per_document + history + remaining
     explicit_indices = {pair[0] for pair in first_per_document}
     result, used, selected, contents = [], 0, set(), set()
     for index, span in ranked:
@@ -574,151 +514,16 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         if used + costs[index] > budget:
             continue
         # Repeated recent windows need not consume the historical context budget.
-        # Preserve history reservations, canonical records and audit/explicit slots.
-        if (not units and span.get("recent_reserved") and not span.get("history_reserved")
+        # Preserve history reservations, canonical records and explicitly requested slots.
+        if (span.get("recent_reserved") and not span.get("history_reserved")
                 and span["content"] in contents and index not in explicit_indices):
             continue
         result.append(span)
         contents.add(span["content"])
         selected.add(index)
         used += costs[index]
-    if diagnostics is not None:
-        for comparison in comparisons:
-            opportunities = comparison.pop('_window_indices')
-            delivered = {doc for doc, indices in opportunities.items() if set(indices) <= selected}
-            partial = {doc for doc, indices in opportunities.items() if set(indices) & selected} - delivered
-            comparison['selected_document_ids'] = sorted(delivered)
-            comparison['partially_selected_document_ids'] = sorted(partial)
-            comparison['omitted_document_ids'] = sorted(set(opportunities) - delivered)
-            available = {index for indices in opportunities.values() for index in indices}
-            comparison['available_windows'] = len(available)
-            comparison['selected_windows'] = len(available & selected)
-            comparison['omitted_windows'] = len(available - selected)
-        date_opportunities = []
-        for unit in units:
-            expected = _calendar_features(unit['text'], date_order)
-            available = {(span['document_id'], value) for span, values in zip(spans, calendar_tokens)
-                         if not span.get('feedback_open') for value in expected & values}
-            admitted = {(spans[index]['document_id'], value) for index in selected
-                        if not spans[index].get('feedback_open') for value in expected & calendar_tokens[index]}
-            date_opportunities.append({'unit_id': unit.get('id'), 'available': len(available),
-                                       'selected': len(admitted), 'omitted': len(available - admitted)})
-        diagnostics.update(comparison_opportunities=comparisons, date_opportunities=date_opportunities)
-        if required:
-            diagnostics['source_reservations'] = {
-                'required_windows': len(required), 'selected_windows': sum(index in selected for index, _ in required)}
     return result
 
-
-
-def _comparison_words(text: str) -> set[str]:
-    """Keep short, alphanumeric and Unicode identities; exclude bare numbers."""
-    # This copy is only a retrieval signal; source text and quote validation
-    # retain their original, stricter provenance and normalization contracts.
-    words = re.findall(r'\w+', unicodedata.normalize('NFKC', text).casefold())
-    return {word for word in words if any(character.isalpha() for character in word)}
-
-
-def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None, reserved: list | None = None) -> list:
-    """Reserve topical alternatives, never treating recency as factual proof."""
-    reserve = re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|highest|lowest|"
-                        r"earlier|later|newer|older|compared?|higher|lower)\b", text, re.I)
-    generic = set("current currently active today now still latest newest recent most earlier later newer older "
-                  "compare compared higher lower recorded records record dated date year years usd eur gbp cad aud jpy "
-                  "january february march april may june july august september october november december".split())
-    topic = _comparison_words(text) - QUERY_STOPWORDS - generic
-    anchor = supporting[0][1]["document_id"] if supporting else None
-    supporting_ids = {pair[1]['document_id'] for pair in supporting + (reserved or [])}
-    candidates = []
-    for doc_id, pairs in by_document.items():
-        title_words = _comparison_words(str(pairs[0][1].get("title", "")))
-        content_words = _comparison_words(" ".join(p[1]["content"] for p in pairs))
-        overlap = len(topic & title_words), len(topic & content_words)
-        if topic and not overlap[1] and doc_id not in supporting_ids:
-            continue
-        dated = [(len(topic & _comparison_words(span["content"])),
-                  _source_recency(span, date_order), index, span) for index, span in pairs]
-        relevant = [row for row in dated if row[0] >= max(1, math.ceil(max(row[0] for row in dated) / 2))]
-        if not relevant:
-            # No topic signal cannot certify completeness. Retain the available
-            # windows conservatively, including already-reserved support.
-            relevant = dated
-        # A printing date alone does not replace the subject-bearing passage.
-        topical = max(relevant, key=lambda row: (row[0], -row[3].get("chunk_index", 0), -row[3].get("start", 0), -row[2]))
-        latest = max(dated, key=lambda row: (row[1], -row[2]))
-        newest = max((row[1] for row in relevant), default="") or latest[1]
-        # Preserve continuation opportunities in source order. A fixed choice
-        # of just identity plus latest date can skip the actual middle record.
-        windows = [(topical[2], topical[3])]
-        windows.extend(pair for pair in sorted(pairs, key=lambda p: (p[1].get("chunk_index", 0), p[1].get("start", 0), p[0]))
-                       if pair[0] != topical[2])
-        recent = any(span.get('recent_reserved') for _, span in pairs)
-        candidates.append((overlap, newest, topical[2], windows, recent))
-    # OCR overlap admits the topical cohort. Within that cohort, a richer old
-    # title must not crowd out a newer alternative whose OCR matches the subject.
-    minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates
-                                          if row[3][0][1]['document_id'] != anchor), default=0) / 2))
-    candidates = [row for row in candidates if not topic or row[3][0][1]['document_id'] in supporting_ids or row[0][1] >= minimum_overlap
-                  or (row[4] and row[0][0] > 0)]
-    # Calendar values are ordering hints, not document issue dates. A future
-    # term cannot grant two old documents every reserved continuation slot.
-    candidates.sort(key=lambda row: (row[4], row[1], row[0], -row[2]), reverse=True)
-    if diagnostics is not None:
-        diagnostics['eligible_document_ids'] = sorted({row[3][0][1]['document_id'] for row in candidates})
-        # A selected identity/opening cannot stand in for omitted continuations,
-        # including those in the supporting document. Keep indices local until
-        # actual admission has produced content-free coverage diagnostics.
-        diagnostics['_window_indices'] = {row[3][0][1]['document_id']: [index for index, _ in row[3]]
-                                           for row in candidates}
-    # Wording only prioritizes retrieval. It never authorizes a smaller scope
-    # or suppresses omission accounting for the independent semantic audit.
-    if not reserve:
-        return []
-    candidates = [row for row in candidates if row[3][0][1]['document_id'] != anchor]
-    primary, continuation, deferred = [], [], []
-    represented, contents = set(), set()
-    openings = {row[3][0][1]['document_id']: row[3][0] for row in candidates}
-    for row in candidates:
-        pair = row[3][0]
-        if pair[1]['content'] in contents:
-            deferred.append(pair)
-        else:
-            primary.append(pair)
-            represented.add(pair[1]['document_id'])
-            contents.add(pair[1]['content'])
-    for pairs in zip_longest(*(row[3][1:] for row in candidates)):
-        for pair in pairs:
-            if pair is None:
-                continue
-            if pair[1]['content'] in contents:
-                deferred.append(pair)
-                continue
-            doc_id = pair[1]['document_id']
-            if doc_id not in represented:
-                # A different document's identical opening cannot supply this
-                # continuation's identity. Promote its own opening with it.
-                continuation.append(openings[doc_id])
-                represented.add(doc_id)
-            continuation.append(pair)
-            contents.add(pair[1]['content'])
-    return primary + continuation + deferred
-
-
-def _source_recency(span: dict, date_order: str) -> str:
-    text = span["content"]
-    values = []
-    for found in source_dates(text, date_order, context_before=span.get("date_context_before", "")):
-        if not found.value:
-            continue
-        if found.precision == "year":
-            # A bare four-digit amount/measurement is not recency. Year-only
-            # ordering needs explicit calendar context rather than a magnitude.
-            prefix = date_context(span.get("date_context_before", "") + text[:found.start])
-            suffix = _value_context(text[found.end:])
-            if not calendar_year_context(prefix, suffix):
-                continue
-        values.append(found.value)
-    return max(values, default="")
 
 def span_coverage(question: str, available: list[dict], selected: list[dict], *, reserve_history: bool = True) -> dict:
     requested = {int(value) for value in re.findall(
@@ -1044,13 +849,29 @@ class AnswerFinalizer:
         batches = math.ceil(min(len(units), self.max_units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
-    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None):
+    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None, progress=None):
         diagnostics = diagnostics if diagnostics is not None else []
         if observations and observations.text != answer:
             raise ValueError('Observation candidate text mismatch')
         units = observations.units() if observations else answer_units(answer)
+        progress = progress if progress is not None else {}
         source_diagnostics = {}
-        spans = evidence_spans(pack, citation_safe=True, diagnostics=source_diagnostics)
+        canonical = evidence_spans(pack, citation_safe=True, diagnostics=source_diagnostics)
+        spans = [span for span in canonical if not span.get('feedback_open')]
+        serialized = json.dumps(spans, ensure_ascii=False)
+        admission = {
+            'policy': 'complete_eligible_manifest_v1',
+            'canonical_windows': len(canonical),
+            'eligible_windows': len(spans), 'supplied_windows': len(spans),
+            'excluded_windows': len(canonical) - len(spans),
+            'canonical_documents': len({s['document_id'] for s in canonical}),
+            'eligible_documents': len({s['document_id'] for s in spans}),
+            'supplied_documents': len({s['document_id'] for s in spans}),
+            'excluded_documents': len({s['document_id'] for s in canonical} - {s['document_id'] for s in spans}),
+            'serialized_chars': len(serialized), 'serialized_bytes': len(serialized.encode('utf-8')),
+        }
+        progress.update(available_span_count=len(spans), source_diagnostics=source_diagnostics,
+                        selection_coverage=[])
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         results = []
@@ -1062,34 +883,38 @@ class AnswerFinalizer:
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
                           "unitization": observations.strategy if observations else 'prose_v1'}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
-            reservation_ids = {}
             for unit_id, references in (source_reservations or {}).items():
                 if unit_id not in {u['id'] for u in units} or not references:
                     raise EvidenceReservationError('invalid_reserved_candidate')
                 for ref in references:
                     if not isinstance(ref, dict) or not ref or validate_reference(ref, spans) != ref:
                         raise EvidenceReservationError('invalid_reserved_source')
-                reservation_ids[unit_id] = [ref['span_id'] for ref in references]
-            selections = [{} for _ in batches]
-            # Plan all admissions before invoking the auditor. An invalid or
-            # over-budget reservation never triggers a partial set of calls.
-            selected_batches = [select_spans(question, batch, spans, serialized=True, date_order=self.date_order,
-                diagnostics=selections[index], required_span_ids=tuple(
-                    span_id for unit in batch for span_id in reservation_ids.get(unit['id'], [])))
-                for index, batch in enumerate(batches)]
+            # Validate continuity before any calls. Every batch receives the same
+            # complete source opportunities; no prior verdict is supplied.
             diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
                                for index in range(len(batches)))
+            coverage = progress['selection_coverage']
+            coverage.extend({'batch': index, **span_coverage(question, spans, [], reserve_history=False),
+                             **admission, 'supplied_windows': 0, 'supplied_documents': 0,
+                             'dispatched': False}
+                            for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
-                    selected = selected_batches[index]
+                    selected = spans
                     protocol = diagnostics[index]
                     async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
+                        coverage[index].update(**span_coverage(question, spans, selected, reserve_history=False),
+                                               supplied_windows=len(selected),
+                                               supplied_documents=admission['eligible_documents'], dispatched=True)
+                        # Preserve sent-source identity and admission even when an
+                        # outer timeout prevents this coroutine from returning.
+                        progress['spans'] = selected
                         try:
                             return await self.auditor.audit_answer_units(
-                                question, batch, selected, {**audit_request_plan, 'evidence_selection': selections[index]})
+                                question, batch, selected, {**audit_request_plan, 'evidence_selection': admission})
                         except asyncio.CancelledError:
                             protocol.update(status="cancelled", final_errors=["cancelled"])
                             raise
@@ -1113,7 +938,7 @@ class AnswerFinalizer:
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())
-            for batch_index, (batch, (selected, raw, protocol)) in enumerate(zip(batches, results)):
+            for batch, (selected, raw, protocol) in zip(batches, results):
                 manifest.update({s["span_id"]: s for s in selected})
                 assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
@@ -1180,18 +1005,9 @@ class AnswerFinalizer:
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
-                        selected_ids = {span['span_id'] for span in selected}
-                        omitted_comparison = any(
-                            opportunity['unit_id'] == unit['id'] and opportunity['omitted_document_ids']
-                            for opportunity in selections[batch_index].get('comparison_opportunities', []))
                         if (assessment.get("comparison_scope") == "retrieved_documents"
-                                and not omitted_comparison
                                 and isinstance(compared, list) and compared
                                 and all(type(doc) is int and doc in available for doc in compared)
-                                # Claimed comparison documents must be complete
-                                # even if lexical cohort discovery missed them.
-                                and all(span['span_id'] in selected_ids for span in spans
-                                        if not span.get('feedback_open') and span['document_id'] in compared)
                                 and {r["document_id"] for r in refs if r}.issubset(set(compared))):
                             claims[-1].update(comparison_scope="retrieved_documents",
                                               comparison_document_ids=sorted(set(compared)))
@@ -1229,9 +1045,7 @@ class AnswerFinalizer:
                 "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
-                "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected, reserve_history=False),
-                                        **selections[index]}
-                                       for index, (selected, _, _) in enumerate(results)],
+                "selection_coverage": progress["selection_coverage"],
                 "audit_batches": diagnostics}
 
     async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
@@ -1259,7 +1073,7 @@ class AnswerFinalizer:
                     ledger["audit_batches"] = diagnostics = []
                     async with asyncio.timeout(self._audit_timeout(candidate, observations)):
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations,
-                                                   diagnostics=diagnostics, observations=observations)
+                                                   diagnostics=diagnostics, observations=observations, progress=ledger)
                     summary = ledger["summary"]
                     if attempt > 0 and summary['total'] > self.max_units:
                         repair_diagnostic = {'reason': 'audit_unit_limit',
@@ -1271,6 +1085,11 @@ class AnswerFinalizer:
                             break
                     else:
                         disposition = "unsupported" if ledger["complete"] else "incomplete"
+                    if not summary["total"] or summary["audited"] != summary["total"]:
+                        # Failed audit execution stops here. A fully audited
+                        # candidate with invalid attribution can still be repaired.
+                        error = "The source audit did not complete."
+                        break
                     if attempt == 0 and self.repairer and len(candidate) <= 96000:
                         repair_in_progress = True
                         async with asyncio.timeout(self.timeout_seconds):
@@ -1332,12 +1151,15 @@ class AnswerFinalizer:
             ledger["subset_selection"] = selection
             if subset:
                 ledger["subset_audit_batches"] = subset_diagnostics = []
+                ledger['subset_audit'] = subset_progress = empty_ledger(subset, subset_observations)
+                subset_progress['audit_batches'] = subset_diagnostics
                 try:
                     subset_units = subset_observations.units() if subset_observations else answer_units(subset)
                     reservations = subset_source_reservations(candidate, ledger, subset_units, selection['retained_ids'])
                     async with asyncio.timeout(self._audit_timeout(subset, subset_observations)):
                         subset_ledger = await self._audit(question, subset, evidence_pack, plan,
-                            diagnostics=subset_diagnostics, observations=subset_observations, source_reservations=reservations)
+                            diagnostics=subset_diagnostics, observations=subset_observations, source_reservations=reservations,
+                            progress=subset_progress)
                     subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
                     ledger['subset_audit'] = {
                         'candidate_digest': subset_ledger['candidate_digest'],
@@ -1362,7 +1184,7 @@ class AnswerFinalizer:
                         disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
                 except EvidenceReservationError as exc:
                     ledger['subset_evidence_diagnostic'] = {'reason': exc.reason}
-                    disposition = 'incomplete' if exc.reason == 'reserved_sources_exceed_budget' else 'audit_failed'
+                    disposition = 'audit_failed'
                     error = 'The partial answer could not retain its required source evidence.'
                 except TimeoutError:
                     disposition, error = "timeout", "The partial answer source audit exceeded its time budget."

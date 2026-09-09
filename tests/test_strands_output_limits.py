@@ -13,7 +13,7 @@ from strands import Agent
 from strands.models.openai import OpenAIModel
 from openai import AsyncOpenAI
 from app import strands_orchestrator as module
-from app.answer_finalization import AnswerFinalizer
+from app.answer_finalization import AnswerFinalizer, evidence_spans
 from app.cache import invalidate_on_sync
 from tests.test_query_delivery import RetrievedEngine
 
@@ -37,6 +37,8 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.editor_started = asyncio.Event()
         self.audit_count = 0
         self.audit_override = None
+        self.audit_responder = None
+        self.audit_context_error = False
         self.reject_first_audit = False
         self.reject_all_audits = False
         self.quote = QUOTE
@@ -76,9 +78,14 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             result = {"ok": True}
             if "units" in payload:
                 self.audit_count += 1
+                if self.audit_context_error:
+                    return httpx.Response(400, json={'error': {'message':'Synthetic context window exceeded',
+                        'type':'invalid_request_error', 'code':'context_length_exceeded'}})
                 span = payload["source_spans"][0]
                 result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_all_audits or (self.reject_first_audit and self.audit_count == 1) else "supported",
                     "references": [{"span_id": span["span_id"]}]} for unit in payload["units"]]}
+                if self.audit_responder:
+                    result = await self.audit_responder(payload)
             # Simulate a provider completion that exceeds the former 6,000-token
             # allowance. Genuine provider truncation must remain a failed audit.
             truncated = self.force_length or (is_editor and self.editor_truncated) or bool(LIMIT_FIELDS.intersection(body))
@@ -202,24 +209,72 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result, expected)
         self.assertEqual(len(self.requests), len(calls))
 
-    async def test_native_sdk_audit_receives_actual_selection_opportunities(self):
-        from tests.test_audit_evidence_opportunities import item
-        source = 'Cedar service record dated January 1, 2026 lists an open account.'
-        result = await AnswerFinalizer(self.orchestrator).finalize('What is the latest service record?',
-            'The latest Cedar service record dated January 1, 2026 lists an open account.',
-            {'items': [item(doc, 0, source + f' Record {doc}.') for doc in range(1, 36)]})
-        coverage = result['claim_ledger']['selection_coverage'][0]
-        self.assertTrue(coverage['comparison_opportunities'][0]['omitted_document_ids'])
+    async def test_complete_manifest_reaches_original_editor_repair_subset_and_protocol_correction_wire(self):
+        from tests.test_audit_evidence_continuity import continuity_fixture, ContinuityAuditor
+        evidence, facts, tails = continuity_fixture()
+        auditor = ContinuityAuditor(facts, tails)
+        async def respond(payload):
+            return await auditor.audit_answer_units(payload['question'], payload['units'],
+                                                    payload['source_spans'], payload)
+        self.audit_responder = respond
+        self.audit_override = '{}'
+        self.editor_text = json.dumps({'observations':facts})
+        with self.assertLogs(module.logger, level='INFO') as logs:
+            result = await AnswerFinalizer(self.orchestrator,self.orchestrator).finalize(
+                'What is recorded?', 'Original draft REJECT.', evidence)
+        self.assertEqual(result['finalization']['disposition'],'partial')
+        self.assertEqual(self.audit_count,7)  # original + correction, 3 repaired batches, 2 subset batches
+        self.assertEqual(len(self.requests),8)  # exactly one editor
+        expected = evidence_spans(evidence,citation_safe=True)
+        self.assertGreater(len(json.dumps(expected,ensure_ascii=False)),28000)
+        payloads, editor_seen = [], False
         for request in self.requests:
-            message = request['messages'][-1]['content']
-            if isinstance(message, list):
-                message = ''.join(block.get('text', '') for block in message)
-            payload = json.loads(message)
-            expected = {key: coverage[key] for key in ('comparison_opportunities', 'date_opportunities')}
-            self.assertEqual(payload['evidence_selection'], expected)
-            self.assertNotIn(source, json.dumps(payload['evidence_selection']))
-            self.assertLessEqual(len(json.dumps(payload['source_spans'], ensure_ascii=False)), 28000)
+            def message_text(message):
+                value = message['content']
+                return value if isinstance(value,str) else ''.join(block.get('text','') for block in value)
+            system, prompt = map(message_text, (request['messages'][0],request['messages'][-1]))
             self.assertTrue(LIMIT_FIELDS.isdisjoint(request))
+            if prompt.startswith('Repair this answer'):
+                editor_seen = True
+                context = prompt.split('Evidence context:\n',1)[1].split('\n\nVerifier findings:',1)[0]
+                self.assertEqual(json.loads(context),expected)
+            else:
+                payload = json.loads(prompt)
+                payloads.append(payload)
+                self.assertEqual(payload['source_spans'],expected)
+                coverage = payload['evidence_selection']
+                self.assertEqual(coverage['eligible_windows'],len(expected))
+                self.assertEqual(coverage['supplied_windows'],len(expected))
+                self.assertEqual(coverage['excluded_windows'],0)
+                self.assertNotIn(facts[0],json.dumps(coverage))
+            self.assertIn('unchecked option',system + prompt)
+            self.assertIn('existing-state field',system + prompt)
+            self.assertIn('purchase contract',system + prompt)
+        self.assertTrue(editor_seen)
+        self.assertIsNone(payloads[0]['protocol_correction'])
+        self.assertIsNotNone(payloads[1]['protocol_correction'])
+        self.assertEqual(payloads[0]['units'],payloads[1]['units'])
+        self.assertEqual(payloads[0]['source_spans'],payloads[1]['source_spans'])
+        log_text = '\n'.join(logs.output)
+        self.assertNotIn(facts[0],log_text)
+        self.assertIn('input_message_bytes=',log_text)
+        self.assertIn('"inputTokens": 100',log_text)
+        self.assertIn('"outputTokens": 6501',log_text)
+        self.assertIn('stage=answer_editor outcome=completed',log_text)
+
+    async def test_real_context_rejection_cannot_be_repaired_or_publish_a_partial_answer(self):
+        from tests.test_audit_evidence_continuity import continuity_fixture
+        evidence, facts, _ = continuity_fixture()
+        self.audit_context_error = True
+        self.editor_text = json.dumps({'observations':[facts[0]]})
+        result = await AnswerFinalizer(self.orchestrator,self.orchestrator).finalize(
+            'What is recorded?',facts[0],evidence)
+        self.assertEqual(self.audit_count,1)
+        self.assertEqual(len(self.requests),1)
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['finalization']['disposition'],'incomplete')
+        self.assertIn('source audit did not complete',result['verification']['missing_evidence'][0])
+        self.assertNotIn(facts[0],result['answer'])
 
     async def test_actual_provider_truncation_still_cannot_certify_an_answer(self):
         self.force_length = True
@@ -390,9 +445,10 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.audit_count, 1)
 
     async def test_disabled_editor_has_unavailable_diagnostic_without_transport(self):
+        from tests.test_observation_delivery import HandleAuditor
         self.orchestrator.enabled = False
-        result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
-            'What is recorded?', 'An unsupported draft.', PACK)
+        result = await AnswerFinalizer(HandleAuditor(), self.orchestrator).finalize(
+            'What is recorded?', 'Original draft REJECT.', PACK)
         self.assertEqual(result['finalization']['disposition'], 'audit_failed')
         self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': 'transport_unavailable'})
         self.assertFalse(result['finalization']['answer_verified'])
@@ -416,7 +472,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_unsupported_provider_schema_does_not_retry_without_constraints(self):
         self.editor_reject_schema = self.reject_first_audit = True
         result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
-            'What is recorded?', 'An unsupported draft.', PACK)
+            'What is recorded?', 'Original draft REJECT.', PACK)
         self.assertEqual(result['finalization']['disposition'], 'audit_failed')
         self.assertEqual(result['finalization']['repair_diagnostic'], {'reason': 'transport_unavailable'})
         self.assertEqual(len(self.requests), 2)

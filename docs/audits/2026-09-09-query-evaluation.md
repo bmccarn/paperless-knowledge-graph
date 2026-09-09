@@ -593,3 +593,21 @@ the fixture now owns SIGTERM shutdown, and a second no-model rendering run retai
 the successful conservation receipt. This is test-server wiring, not a production
 change or new native retrieval result. Full admitted live runtime integration is
 still pending; these helpers do not activate the candidate.
+
+The fresh v2 initial gate is now complete: all twelve Strict cases passed both
+independent reviewers, with zero raw/delivered false approvals, missing required
+facts, unsupported extras or false completeness. Conservative under-reporting was
+one aspect each for treatment and credit. The run used 72 native calls, 298.050
+active seconds and 155,384 reported tokens. Neither completion attempt added facts;
+a native recovery of a known omission is still unproved. The separate 48-case run
+is frozen as `523ace74cbe68d923e2ec7f8787945fd245bf433cf65ec79aba6ea7027d79bb8`,
+binding all 192 initial result/review/attempt artifacts. It has not passed yet.
+
+The private live-manifest builder passed both review axes after correcting a
+reproduced aliasing defect: caller mutations could previously change an already
+built configuration/corpus snapshot and conceal drift. Strict JSON snapshots now
+preserve the earlier bytes, and five regressions pass. Live input preparation
+retains the previously reviewed six questions/history and 128 original documents,
+with explicit `gemini-3.8-flash` selection. This is preparation, not fresh corpus
+admission or an executable live harness. Browser-session helper commit `2d156c3`
+passed backend/frontend CI.

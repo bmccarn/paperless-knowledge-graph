@@ -10,6 +10,7 @@ from typing import Optional
 import httpx
 from app.config import settings
 from app.timeline import restore_timeline
+from app.answer_coverage import restore_pipeline_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,7 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
         messages = []
         for m in msgs:
             metadata = json.loads(m["metadata"]) if m["metadata"] else {}
+            metadata = restore_pipeline_metadata(metadata, m['content'])
             if metadata.get("mode") == "timeline" or metadata.get("timeline_events"):
                 events, receipt = restore_timeline({**metadata, "answer": m["content"]})
                 metadata["timeline_events"] = events
@@ -180,7 +182,8 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                 "content": m["content"],
                 "sources": json.loads(m["sources"]) if m["sources"] else None,
                 "entities": json.loads(m["entities"]) if m["entities"] else None,
-                "confidence": m["confidence"],
+                "confidence": (0.0 if isinstance(metadata.get('finalization'), dict) and
+                               metadata['finalization'].get('disposition') == 'stored_binding_unavailable' else m["confidence"]),
                 "query_time_ms": m["query_time_ms"],
                 "cached": m["cached"],
                 "follow_ups": json.loads(m["follow_ups"]) if m["follow_ups"] else None,

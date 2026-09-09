@@ -372,3 +372,32 @@ test("legacy timeline prose is not displayed as verified dates", async t => {
   assert.equal(await page.getByText("Unsupported service completion", { exact: true }).count(), 0);
   await record(page, "legacy-timeline-unavailable");
 });
+
+for (const [question, status, count] of [
+  ["Show complete coverage", "Requested aspects answered", "2 of 2 requested aspects answered"],
+  ["Show partial coverage", "Partly answered", "1 of 2 requested aspects answered"],
+  ["Show unavailable coverage", "Coverage unavailable", "no complete coverage assessment"],
+]) {
+  test(`question coverage stays separate from source support: ${status}`, async t => {
+    const { context, page } = await fixturePage(t);
+    await page.goto(`${base}/query`);
+    const input = page.getByPlaceholder("Ask a question...");
+    await input.fill(question); await input.press("Enter");
+    const coverage = page.getByRole("region", { name: "Question coverage" });
+    await coverage.waitFor();
+    assert.ok((await coverage.innerText()).includes(status));
+    assert.ok((await coverage.innerText()).includes(count));
+    await page.getByText("Source checks", { exact: true }).waitFor();
+    assert.equal(await page.getByText(/medium trust.*65%/).count(), 0);
+    const conversations = await (await context.request.get(`${base}/api/conversations`)).json();
+    const saved = await (await context.request.get(`${base}/api/conversations/${conversations[0].id}`)).json();
+    await page.reload();
+    await page.getByRole("button", { name: saved.title, exact: true }).click();
+    await coverage.waitFor();
+    assert.ok((await coverage.innerText()).includes(count));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await coverage.scrollIntoViewIfNeeded();
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    await record(page, question.toLowerCase().replaceAll(" ", "-"));
+  });
+}

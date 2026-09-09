@@ -109,6 +109,13 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(QuestionEvidenceError):
                 await QuestionEvidence.prepare(Reader(), 'Question', invalid, self.pack, evaluated_at='2026-09-09')
 
+    async def test_conservative_configured_date_order_is_preserved(self):
+        class Reader:
+            async def read_question_sources(inner, payload): return self.reading
+        evidence = await QuestionEvidence.prepare(Reader(), 'Question', REQUIREMENTS, self.pack,
+            evaluated_at='2026-09-09', source_date_order='reject_ambiguous')
+        self.assertEqual(evidence.composition_input['source_date_order'], 'reject_ambiguous')
+
     async def test_cancellation_drains_document_readers(self):
         auditor = StrandsQueryOrchestrator(); auditor.enabled = True
         started = asyncio.Event(); active = 0

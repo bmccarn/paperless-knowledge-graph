@@ -5,7 +5,7 @@ from app.answer_composition import object_schema, strict_object, valid_ids
 from app.answer_observations import ObservationCandidate
 from app.answer_delivery import validate_verified_delivery
 from app.answer_finalization import validate_reference
-from app.question_evidence import PIPELINE_VERSION, QuestionEvidenceError, canonical_json
+from app.question_evidence import PIPELINE_VERSION, QuestionEvidenceError, canonical_json, validate_requirements
 
 COVERAGE_PROMPT = (
     'Assess whether the final independently supported observations answer the original user question '
@@ -73,20 +73,32 @@ def coverage_input(evidence, final):
 def binding(evidence, final):
     source = evidence.composition_input
     return {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(source['question']),
+            'evaluated_at': source['evaluated_at'], 'source_date_order': source['source_date_order'],
             'resolved_question_digest': digest(source['resolved_question']),
             'requirements_digest': digest(source['requirements']), 'snapshot_digest': evidence.digest,
             'candidate_digest': final['finalization']['candidate_digest'],
-            'answer_digest': final['finalization']['answer_digest']}
+            'answer_digest': final['finalization']['answer_digest'],
+            'ledger_digest': ledger_digest(final['claim_ledger']),
+            'source_manifest_digest': digest(final['claim_ledger']['spans'])}
+
+
+def ledger_digest(ledger):
+    return digest({key: ledger[key] for key in ('claims', 'summary', 'complete', 'unitization', 'candidate_digest')})
 
 
 def parse_coverage(text, evidence, final, *, planning_status='complete'):
     payload = coverage_input(evidence, final)
     raw = strict_object(text)
+    assessment = coverage_assessment(raw, payload['requirements'], payload['observations'], planning_status)
+    return {**assessment, 'binding': binding(evidence, final)}
+
+
+def coverage_assessment(raw, requirements, observations, planning_status):
     if (set(raw) != {'requirements', 'omitted_requested_aspects'}
             or type(raw['omitted_requested_aspects']) is not bool or not isinstance(raw['requirements'], list)):
         raise QuestionEvidenceError('invalid_coverage')
-    required = {r['id']: r for r in payload['requirements']}
-    unit_ids = {u['id'] for u in payload['observations']}
+    required = {r['id']: r for r in requirements}
+    unit_ids = {u['id'] for u in observations}
     seen, rows = set(), []
     for row in raw['requirements']:
         if (not isinstance(row, dict) or set(row) != {'requirement_id', 'status', 'observation_ids'}
@@ -108,7 +120,7 @@ def parse_coverage(text, evidence, final, *, planning_status='complete'):
                 and all(r['status'] == 'answered' for r in rows))
     return {'status': 'complete' if complete else 'partial', 'complete': complete,
             'requirements': rows, 'omitted_requested_aspects': raw['omitted_requested_aspects'],
-            'planning_status': planning_status, 'binding': binding(evidence, final)}
+            'planning_status': planning_status}
 
 
 def unavailable_coverage(evidence, final, *, planning_status='complete'):
@@ -118,3 +130,80 @@ def unavailable_coverage(evidence, final, *, planning_status='complete'):
                 for r in evidence.composition_input['requirements']],
             'omitted_requested_aspects': None, 'planning_status': planning_status,
             'binding': binding(evidence, final)}
+
+
+def restore_question_coverage(result):
+    """Validate a persisted historical receipt; never re-certify source semantics."""
+    try:
+        final, plan = result['finalization'], result['query_plan']
+        if final.get('pipeline_version') != PIPELINE_VERSION or plan.get('pipeline_version') != PIPELINE_VERSION:
+            return None
+        candidate = final_candidate(result)
+        requested = validate_requirements({key: plan[key] for key in ('resolved_question', 'requirements')})
+        question = plan['original_question']
+        if (not isinstance(question, str) or not question.strip()
+                or ('question' in result and result['question'] != question)
+                or plan['evaluated_at'] != final['evaluated_at']):
+            return None
+        snapshot = final['evidence_snapshot_digest']
+        if not isinstance(snapshot, str) or len(snapshot) != 64 or any(c not in '0123456789abcdef' for c in snapshot):
+            return None
+        receipt = result['finalization']['question_coverage']
+        if not isinstance(receipt, dict) or set(receipt) != {
+                'status', 'complete', 'requirements', 'omitted_requested_aspects', 'planning_status', 'binding'}:
+            return None
+        expected_binding = {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(question),
+            'evaluated_at': plan['evaluated_at'], 'source_date_order': plan['source_date_order'],
+            'resolved_question_digest': digest(requested['resolved_question']),
+            'requirements_digest': digest(requested['requirements']), 'snapshot_digest': snapshot,
+            'candidate_digest': final['candidate_digest'], 'answer_digest': final['answer_digest'],
+            'ledger_digest': ledger_digest(result['claim_ledger']),
+            'source_manifest_digest': digest(result['claim_ledger']['spans'])}
+        if receipt['binding'] != expected_binding or receipt['planning_status'] != plan['requirements_status']:
+            return None
+        if receipt['status'] == 'unavailable':
+            expected = {'status': 'unavailable', 'complete': False,
+                'requirements': [{'requirement_id': r['id'], 'aspect': r['aspect'], 'status': 'unavailable',
+                    'observation_ids': [], 'gap_reason': 'coverage_unavailable'} for r in requested['requirements']],
+                'omitted_requested_aspects': None, 'planning_status': plan['requirements_status'],
+                'binding': expected_binding}
+        else:
+            raw = {'omitted_requested_aspects': receipt['omitted_requested_aspects'],
+                   'requirements': [{key: row[key] for key in ('requirement_id', 'status', 'observation_ids')}
+                                    for row in receipt['requirements']]}
+            expected = {**coverage_assessment(raw, requested['requirements'], candidate.units(), plan['requirements_status']),
+                        'binding': expected_binding}
+        return expected if expected == receipt else None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def restore_pipeline_metadata(metadata, answer):
+    """Keep saved text, but never display an invalid new-pipeline receipt as verified."""
+    final = metadata.get('finalization')
+    if not isinstance(final, dict) or final.get('pipeline_version') != PIPELINE_VERSION:
+        return metadata
+    receipt = restore_question_coverage({**metadata, 'answer': answer})
+    if receipt is not None:
+        return metadata
+    import copy
+    restored = copy.deepcopy(metadata)
+    final = restored['finalization']
+    final['question_coverage'] = {'status': 'unavailable', 'complete': False,
+                                  'requirements': [], 'reason': 'stored_binding_unavailable'}
+    if final.get('answer_verified') is not True:
+        return restored  # Retain the original failed execution state.
+    final.update(answer_verified=False, complete=False, disposition='stored_binding_unavailable')
+    verification = restored.get('verification')
+    if isinstance(verification, dict):
+        verification.update(status='unavailable', finalization=final,
+            missing_evidence=['Saved verification could not be validated.'])
+    evidence = restored.get('evidence')
+    if isinstance(evidence, dict):
+        evidence.update(score=0.0, level='low', audit_status='unavailable')
+        evidence['coverage'] = {**(evidence.get('coverage') or {}), 'requested_aspects_complete': False,
+                                'answer_complete': False}
+    summary = restored.get('source_summary')
+    if isinstance(summary, dict):
+        summary.update(trust_score=0.0, trust_level='low', verification_status='unavailable', audit_status='unavailable')
+    return restored

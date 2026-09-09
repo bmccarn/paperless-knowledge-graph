@@ -59,7 +59,7 @@ class QuestionEvidence:
                 raise ValueError()
         except (TypeError, ValueError):
             raise QuestionEvidenceError('invalid_evaluated_at') from None
-        if not isinstance(source_date_order, str) or source_date_order not in {'mdy', 'dmy', 'ymd'}:
+        if not isinstance(source_date_order, str) or source_date_order not in {'mdy', 'dmy', 'reject_ambiguous'}:
             raise QuestionEvidenceError('invalid_date_order')
         requested = validate_requirements(requirements)
         spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]

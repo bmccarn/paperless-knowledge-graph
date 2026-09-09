@@ -51,6 +51,7 @@ from app.strands_orchestrator import strands_orchestrator
 from app.question_evidence import PIPELINE_VERSION, validate_requirements, coarse_requirements, QuestionEvidenceError
 from app.question_pipeline import finalize_question
 from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
+from app.answer_coverage import restore_question_coverage
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
@@ -176,13 +177,13 @@ class QueryEngine:
         if self.question_pipeline:
             agent_plan = await strands_orchestrator.plan_query(question, mode,
                 conversation_context=self._conversation_context(conversation_history), include_requirements=True)
-            plan = merge_agent_plan(question, mode, agent_plan)
             try:
-                aspects = validate_requirements({key: (agent_plan or {}).get(key)
+                aspects = validate_requirements({key: (agent_plan if isinstance(agent_plan, dict) else {}).get(key)
                                                  for key in ('resolved_question', 'requirements')})
                 planning_status = 'complete'
             except QuestionEvidenceError:
                 aspects, planning_status = coarse_requirements(question), 'coarse'
+            plan = merge_agent_plan(aspects['resolved_question'], mode, agent_plan)
             plan.update(aspects, original_question=question, requirements_status=planning_status,
                         pipeline_version=PIPELINE_VERSION)
             trace.append(trace_step('planner', 'ok' if planning_status == 'complete' else 'fallback',
@@ -486,8 +487,6 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         try:
             result = await self._query(question, conversation_history, mode)
             await self._check_delivery_snapshot(result)
-            if metrics is not None and not result.get('cached'):
-                result['finalization']['pipeline_execution'] = metrics.report()
             return result
         finally:
             CURRENT_QUERY_METRICS.reset(metrics_token)
@@ -512,6 +511,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         is_broad = mode != "quick" and self._is_broad_query(question)
         plan, trace = await self._build_query_plan(question, mode, conversation_history)
         plan["evaluated_at"] = evaluated_at
+        if self.question_pipeline:
+            plan['source_date_order'] = settings.source_date_order
         plan["conversation_context"] = self._conversation_context(conversation_history)
         if is_broad:
             plan["broad_query"] = True
@@ -597,6 +598,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "cached": False,
         }
 
+        metrics = CURRENT_QUERY_METRICS.get()
+        if metrics is not None:
+            result['finalization']['pipeline_execution'] = metrics.report()
         if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode):
             await cache_set(query_cache, cache_key, result)
         return result
@@ -608,9 +612,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         if not isinstance(final, dict):
             return False
         if self.question_pipeline:
-            # Until persisted coverage admission is implemented, the inactive
-            # candidate never accepts or publishes cache entries.
-            return False
+            receipt = restore_question_coverage(result)
+            if receipt is None or receipt['complete'] is not True:
+                return False
         if mode == "timeline" and restore_timeline(result)[1]["status"] not in {"ready", "no_dates"}:
             return False
         return (final.get("complete") is True and final.get("disposition") in {"supported", "qualified"}) or (

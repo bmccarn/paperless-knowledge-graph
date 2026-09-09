@@ -377,6 +377,17 @@ class Handler(BaseHTTPRequestHandler):
                 result['finalization']['timeline'] = receipt
             if 'markup' in question.lower():
                 result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
+            if 'coverage' in question.lower():
+                unavailable = 'unavailable' in question.lower()
+                partial_coverage = 'partial' in question.lower()
+                result['finalization'].update(pipeline_version='question-evidence-v1',
+                    question_coverage={'status': 'unavailable' if unavailable else 'partial' if partial_coverage else 'complete',
+                        'complete': not unavailable and not partial_coverage, 'planning_status': 'complete',
+                        'omitted_requested_aspects': None if unavailable else False,
+                        'requirements': [
+                            {'requirement_id': 'r1', 'aspect': 'The documented earlier amount', 'status': 'unavailable' if unavailable else 'answered'},
+                            {'requirement_id': 'r2', 'aspect': 'The latest documented amount',
+                             'status': 'unavailable' if unavailable else 'unresolved' if partial_coverage else 'answered'}]})
             with LOCK:
                 if conv:
                     conv['messages'].append({'role': 'assistant', 'content': result['answer'],

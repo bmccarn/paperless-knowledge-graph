@@ -185,7 +185,7 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
                           'Amount:\u2009$20.', 'Amount:\n  $20.'):
                 answer = (marker + 'Invoice Cedar REJECT records delivery.\n\n'
                           + marker + field + '\n\n' + marker + 'Recipient:Casey.\n\n'
-                          + marker + 'Invoice Maple records $30.')
+                          + ('# Independent record\n' if not marker else '') + marker + 'Invoice Maple records $30.')
                 result, _ = await self.finalize(answer)
                 self.assertEqual(result['finalization']['disposition'], 'partial')
                 self.assertNotIn('$20', result['answer'])

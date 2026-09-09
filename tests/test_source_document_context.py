@@ -138,6 +138,25 @@ class SourceDocumentContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(row in i['content'] for i in evidence['items']))
         self.assertTrue(all(i['content'] in source for i in evidence['items']))
 
+    async def test_inserted_but_uncertifiable_table_header_withholds_its_continuation(self):
+        from app.query import QueryEngine
+        from app.embeddings import chunk_text
+        source = '| Record | Invoiced | Refunded |\n| --- | --- |\n' + ''.join(
+            f'| Orion record {i} | ${i+100} | $25 |\n' for i in range(1600))
+        row = '| Orion record 1000 | $1100 | $25 |'
+        chunks = chunk_text(source)
+        index = next(i for i,c in enumerate(chunks) if row in c)
+        self.assertNotIn(chunks[index], source)  # Legacy retrieval inserted a header.
+        records = [{'document_id':101,'chunk_index':index,'source_kind':'ocr','content':chunks[index],
+                    'title':'Service ledger','doc_type':'invoice','similarity':1.0}]
+        with patch('app.query.paperless_client.get_document', AsyncMock(return_value={'content':source,'title':'Service ledger'})), \
+                patch('app.query.embeddings_store.get_chunks_for_documents', AsyncMock(return_value=records)), \
+                patch('app.query.embeddings_store.get_open_feedback_document_ids', AsyncMock(return_value=set())):
+            evidence = await QueryEngine()._build_evidence_pack('What was invoiced for Orion record 1000?',
+                {'vector_results':records}, [{'document_id':101}], {}, 'strict')
+        self.assertFalse(any(row in i['content'] for i in evidence['items']))
+        self.assertEqual(chunk_text(source), chunks)
+
     def test_full_document_structure_is_parsed_once_for_multiple_chunks(self):
         from app import answer_finalization as module
         fields = [f'**RECORDED DOSE** - - - **{i} mg**' for i in range(1, 21)]

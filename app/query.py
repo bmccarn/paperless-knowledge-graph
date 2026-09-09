@@ -1309,6 +1309,8 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             represented, raw, headers = chunk_versions[key]
             if index >= len(raw) or text not in (represented[index], raw[index]):
                 continue
+            if represented[index] != raw[index] and index not in headers:
+                continue  # Inserted header has no independently certified table.
             start = source.find(raw[index])
             if start < 0 or source.find(raw[index], start+1) >= 0:
                 continue

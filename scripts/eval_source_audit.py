@@ -52,6 +52,8 @@ def parse_dataset(payload: bytes):
         if not isinstance(case.get('id'), str) or case['id'] in ids:
             raise ValueError('Duplicate or missing case identity')
         ids.add(case['id'])
+        if case.get('candidate_encoding', 'plain_observations') not in {'plain_observations', 'rendered_observation_units'}:
+            raise ValueError('Unsupported candidate encoding')
         if not all(isinstance(case.get(k), str) and case[k] for k in
                    ('family', 'domain', 'question', 'evaluated_at', 'source_date_order')):
             raise ValueError('Missing case metadata')
@@ -169,6 +171,17 @@ def source_continuity(case, pack):
                 classification='diagnosed_invalid_reconstruction' if invalid else 'original_contiguous')
 
 
+def observation_candidate(case):
+    from app.answer_observations import ObservationCandidate
+    texts = [claim['text'] for claim in case['claims']]
+    if case.get('candidate_encoding') == 'rendered_observation_units':
+        candidate = ObservationCandidate.from_text('\n\n'.join(texts))
+        if [unit['text'] for unit in candidate.units()] != texts:
+            raise ValueError('Saved audit units changed during reconstruction')
+        return candidate
+    return ObservationCandidate.from_response({'observations': texts})
+
+
 def score_case(case, ledger, audits):
     claims = {c['id']: c for c in ledger.get('claims', [])}
     # Corrections replace malformed attempts only; every attempt stays in artifacts.
@@ -219,7 +232,6 @@ async def execute(dataset_path, manifest, output):
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
     from app.config import settings
     from app.answer_finalization import AnswerFinalizer
-    from app.answer_observations import ObservationCandidate
     from app.strands_orchestrator import StrandsQueryOrchestrator
     from app import strands_orchestrator as native_module
     if runtime_snapshot() != manifest['runtime']:
@@ -296,7 +308,7 @@ async def execute(dataset_path, manifest, output):
             for repetition in range(manifest['repetitions']):
                 for case in data['cases']:
                     case_audits.clear()
-                    candidate = ObservationCandidate.from_response({'observations': [c['text'] for c in case['claims']]})
+                    candidate = observation_candidate(case)
                     pack = packs[case['id']]
                     finalizer = AnswerFinalizer(auditor, timeout_seconds=settings.answer_audit_timeout_seconds,
                                                 concurrency=settings.strands_max_concurrent_calls, date_order=case['source_date_order'])

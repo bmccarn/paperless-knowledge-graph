@@ -97,6 +97,18 @@ class SourceAuditEvaluationTests(unittest.TestCase):
                 write_private(path, {'passed': True})
             self.assertFalse(json.loads(path.read_text())['passed'])
 
+    def test_saved_ledger_units_roundtrip_without_adding_list_markers(self):
+        from app.answer_observations import ObservationCandidate
+        from scripts.eval_source_audit import observation_candidate
+        original = ObservationCandidate.from_response({'observations': ['The form records capacity of 480 units.', 'The receipt records completed delivery.']})
+        units = original.units()
+        case = dict(candidate_encoding='rendered_observation_units',
+                    claims=[dict(id=u['id'], text=u['text']) for u in units])
+        restored = observation_candidate(case)
+        self.assertEqual(restored.text, original.text)
+        self.assertEqual(restored.units(), units)
+        self.assertEqual(observation_candidate({'claims': [{'text': 'The form records capacity of 480 units.'}]}).units()[0]['text'], units[0]['text'])
+
     def test_captured_windows_keep_original_boundaries_and_reject_tampering(self):
         from tests.runtime import configure_test_environment
         configure_test_environment()

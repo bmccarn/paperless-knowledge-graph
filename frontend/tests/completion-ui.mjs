@@ -173,6 +173,9 @@ for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex r
   await page.getByText("151 matching indexed documents", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Next page", exact: true }).first().click();
   await page.getByText("2 / 7", { exact: true }).waitFor();
+  // The cursor renders before the page request commits its rows. Capture the
+  // actual second page, not the previous rows while its effect is still pending.
+  await page.getByRole("row").filter({ hasText: "Synthetic archive 050" }).waitFor();
   const before = await page.getByRole("row").allTextContents();
   const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/documents");
   held.resolve();

@@ -1,4 +1,4 @@
-# Query reliability evaluation: G1
+# Query reliability evaluation: G1 and G2
 
 Spec: [evaluation before implementation](../specs/query-reliability-evaluation.md).
 Starting production revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`.
@@ -175,16 +175,17 @@ The four-document reduction is diagnostic only and is not a proposed production 
 
 ## Remaining evaluation work
 
-- The approved context comparison is complete. Retain its variable failure pattern
-  and source-valid 183-window reproducer; do not reinterpret the four-document
-  control as an accepted source-selection policy.
-- Continue minimizing the now-reproduced semantic failure while preserving failure. Original native
-  inputs were not retained for the live failure, so reconstructed inputs must be
-  labelled as reconstructed, not asserted byte-identical.
+- Retain the variable baseline failure pattern and source-valid 183-window
+  reproducer. Reconstructed inputs are not byte-identical captures of the live
+  native request; the four-document control is not a source-selection policy.
+- Review source-interpretation and context-isolation hypotheses against the failed
+  G2 results below before proposing another candidate. No architecture has passed.
 - Add representative large-context/disjoint-window/source-order conditions and
-  end-to-end question-aspect evaluation. Compact controls alone cannot pass G1.
-- Freeze G2 experiment counts, cache observations, cost/time bounds and decision
-  criteria before comparing any candidate. No architecture has been selected.
+  end-to-end question-aspect evaluation. Controlled reproduction does not complete
+  representative qualification.
+- Freeze fresh experiment counts, explicit retry accounting, cache observations,
+  cost/time bounds and decision criteria before testing another design. Keep the
+  holdout unconsumed until a candidate passes development gates.
 
 ## Source-reading candidate comparison (G2)
 
@@ -224,7 +225,7 @@ reference ownership enforced locally. No source text, prompt or labels were chan
 to rescue a semantic result; failed manifests remain retained.
 
 On the 64-assertion four-domain development set, each strategy schedules 36 case runs
-(192 assertion observations,96 positive/96 negative). Flat used 48 native invocations
+(192 assertion observations, 96 positive/96 negative). Flat used 48 native invocations
 and rejected 18 supported observations; grouped used 48 and rejected 16. Neither
 approved a negative in this compact set. The initial source-first wire version
 used 95 native invocations, rejected 18 positives, and left four assertions unavailable
@@ -239,8 +240,8 @@ assertions. Reported usage was 160,530 input and 157,398 output tokens. The smal
 positive-count difference from the baseline is not a passing result or established
 statistical improvement; the retained false approvals fail the critical gate.
 No candidate may advance merely by improving malformed-output counts or losing
-fewer facts. The final candidate was reviewed at `a589ff6`; the subsequent SDK1.55
-lock refresh has separate engineering checks and has not inherited these SDK1.54
+fewer facts. The final candidate was reviewed at `a589ff6`; the subsequent SDK 1.55
+lock refresh has separate engineering checks and has not inherited these SDK 1.54
 model results as release qualification.
 
 The latest SDK review also identified an instrumentation limit: native invocation

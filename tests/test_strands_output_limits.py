@@ -176,6 +176,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_sdk_audit_payload_carries_ordered_answer_context(self):
         expected_context = "\n".join([QUOTE] * 8)
         answer = expected_context.replace("\n", "\n" * 10000, 1)
+        expected_context = expected_context.replace("\n", "\n\n", 1)
         result = await AnswerFinalizer(self.orchestrator).finalize("Recorded coverage?", answer, PACK)
         self.assertTrue(result["finalization"]["complete"])
         self.assertEqual(len(self.requests), 2)

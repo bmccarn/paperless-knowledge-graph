@@ -224,15 +224,23 @@ def table_header_chunks(content: str, raw_chunks: list[str]) -> dict[int, int | 
     Both locations must be unique original intervals. None records a required
     header that cannot fit or be bound; callers must not invent its context.
     """
+    from markdown_it import MarkdownIt
+
     starts = []
     for chunk in raw_chunks:
         start = content.find(chunk)
         starts.append(start if start >= 0 and content.find(chunk, start+1) < 0 else None)
     result = {}
-    for table_start, table_end, _ in _find_table_regions(content):
-        first_end = content.find('\n', table_start)
-        second_end = content.find('\n', first_end+1) if first_end >= 0 else -1
-        header_end = second_end+1 if second_end >= 0 else len(content)
+    # Certification uses actual table boundaries, including adjacent tables
+    # separated only by a blank line. The legacy retrieval chunker stays stable.
+    line_offsets = [0] + [match.end() for match in re.finditer(r'\r\n|\r|\n', content)]
+    def offset(line):
+        return line_offsets[line] if line < len(line_offsets) else len(content)
+    for token in MarkdownIt('commonmark').enable('table').parse(content):
+        if token.type != 'table_open' or token.map is None:
+            continue
+        table_start, table_end = (offset(line) for line in token.map)
+        header_end = offset(token.map[0]+2)
         candidates = [i for i, start in enumerate(starts) if start is not None
                       and start <= table_start and start+len(raw_chunks[i]) >= header_end]
         header = max(candidates, key=lambda i: starts[i]) if candidates else None

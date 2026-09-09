@@ -110,6 +110,34 @@ class SourceDocumentContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len({r['span_id'] for r in refs}), 2)
         self.assertTrue(all(r['quote'] in source for r in refs))
 
+    async def test_adjacent_tables_keep_the_correct_column_order_in_the_public_pack(self):
+        from app.query import QueryEngine
+        from app.embeddings import chunk_text, table_header_chunks
+        first = '| Record | Debit | Credit |\n| --- | --- | --- |\n'
+        second = '| Record | Credit | Debit |\n| --- | --- | --- |\n'
+        source = first + ''.join(f'| Aster {i} | ${i+10} | $2 |\n' for i in range(350)) + '\n'
+        second_start = len(source)
+        source += second + ''.join(f'| Orion revised balance {i} | ${i+20} | $3 |\n' for i in range(1600))
+        row = '| Orion revised balance 1250 | $1270 | $3 |'
+        for params in ({'chunk_size':4000,'overlap':800}, {'chunk_size':3600,'overlap':500}):
+            raw = chunk_text(source, **params, include_table_headers=False)
+            target = next(i for i,text in enumerate(raw) if row in text)
+            companion = raw[table_header_chunks(source, raw)[target]]
+            self.assertIn(second, companion)
+            self.assertTrue(source.index(companion) <= second_start < source.index(companion)+len(companion))
+        chunks = chunk_text(source)
+        index = next(i for i,c in enumerate(chunks) if row in c)
+        records = [{'document_id':101,'chunk_index':index,'source_kind':'ocr','content':chunks[index],
+                    'title':'Ledger','doc_type':'invoice','similarity':1.0}]
+        with patch('app.query.paperless_client.get_document', AsyncMock(return_value={'content':source,'title':'Ledger'})), \
+                patch('app.query.embeddings_store.get_chunks_for_documents', AsyncMock(return_value=records)), \
+                patch('app.query.embeddings_store.get_open_feedback_document_ids', AsyncMock(return_value=set())):
+            evidence = await QueryEngine()._build_evidence_pack('What is the Orion revised balance 1250?',
+                {'vector_results':records}, [{'document_id':101}], {}, 'strict')
+        self.assertTrue(any(second in i['content'] for i in evidence['items']))
+        self.assertTrue(any(row in i['content'] for i in evidence['items']))
+        self.assertTrue(all(i['content'] in source for i in evidence['items']))
+
     def test_full_document_structure_is_parsed_once_for_multiple_chunks(self):
         from app import answer_finalization as module
         fields = [f'**RECORDED DOSE** - - - **{i} mg**' for i in range(1, 21)]

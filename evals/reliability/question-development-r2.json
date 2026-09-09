@@ -219,15 +219,16 @@
       "question": "What leave did Sage request, was it approved, and what does payroll record?",
       "required_aspects": [
         "August 12 through 16, 2024 is the requested leave period.",
-        "Approval is not established (manager review is pending).",
-        "August 31 payroll records a leave balance of 18 days and zero leave taken this period."
+        "Approval is not established.",
+        "The payroll record shows a leave balance of 18 days and zero leave taken this period."
       ],
       "forbidden_inferences": [
         "Leave approved or taken.",
         "Payroll balance describes present-day balance."
       ],
       "optional_evidence_details": [
-        "Five requested days restates the complete date range; unchecked approval and denial boxes support unestablished approval."
+        "Five requested days restates the complete date range; unchecked approval and denial boxes support unestablished approval.",
+        "Manager review pending and the payroll record date of August 31, 2024 are supporting context, not separately mandatory."
       ]
     },
     {

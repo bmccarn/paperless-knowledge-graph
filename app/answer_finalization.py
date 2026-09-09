@@ -22,6 +22,7 @@ from markdown_it import MarkdownIt
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
 from app.source_audit import PROTOCOL_ERRORS
 from app.answer_observations import ObservationCandidate, ObservationValidationError
+from app.query_metrics import CURRENT_QUERY_METRICS
 from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
@@ -894,6 +895,9 @@ class AnswerFinalizer:
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
                           "unitization": observations.strategy if observations else 'prose_v1'}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            metrics = CURRENT_QUERY_METRICS.get()
+            if metrics is not None:
+                metrics.audit_batches += len(batches)
             for unit_id, references in (source_reservations or {}).items():
                 if unit_id not in {u['id'] for u in units} or not references:
                     raise EvidenceReservationError('invalid_reserved_candidate')

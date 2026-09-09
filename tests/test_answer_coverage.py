@@ -117,3 +117,21 @@ class AnswerCoverageTests(unittest.IsolatedAsyncioTestCase):
             task = asyncio.create_task(auditor.assess_question_coverage(evidence, final))
             await asyncio.wait_for(started.wait(), 1); task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
+
+    async def test_changed_final_during_coverage_call_cannot_rebind_the_old_assessment(self):
+        evidence, final = await self.prepared()
+        replacement = await AnswerFinalizer(HandleAuditor()).finalize(
+            'What do the records establish?', ObservationCandidate((
+                'Vendor completed a refund of $125.', 'Vendor completed a refund of $125.')),
+            self.pack, evaluated_at='2026-09-09')
+        auditor = StrandsQueryOrchestrator(); auditor.enabled = True
+        async def model(**kwargs):
+            payload = json.loads(kwargs['prompt'])
+            self.assertEqual(len(payload['observations']), 1)
+            final.clear(); final.update(copy.deepcopy(replacement))
+            return json.dumps(self.response())
+        with patch.object(auditor, '_text_agent', side_effect=model):
+            receipt = await auditor.assess_question_coverage(evidence, final)
+        self.assertEqual(receipt['status'], 'unavailable')
+        self.assertFalse(receipt['complete'])
+        self.assertEqual(final, replacement)

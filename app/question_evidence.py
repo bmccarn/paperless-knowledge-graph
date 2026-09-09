@@ -10,6 +10,7 @@ import json
 
 from app import source_reading
 from app.answer_finalization import evidence_spans
+from app.query_metrics import CURRENT_QUERY_METRICS
 
 PIPELINE_VERSION = 'question-evidence-v1'
 
@@ -63,6 +64,9 @@ class QuestionEvidence:
         requested = validate_requirements(requirements)
         spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]
         documents = source_reading.group_sources(spans)
+        metrics = CURRENT_QUERY_METRICS.get()
+        if metrics is not None:
+            metrics.reader_documents = len(documents)
         snapshot = canonical_json({'pipeline_version': PIPELINE_VERSION,
                                    'question': question, **requested, 'evaluated_at': evaluated_at,
                                    'source_date_order': source_date_order, 'source_documents': documents})
@@ -106,3 +110,29 @@ class PreparedQuestionAuditor:
     async def audit_answer_units(self, question, units, spans, plan):
         return await self.orchestrator.audit_answer_units(question, units, spans, plan,
                                                         prepared_evidence=self.evidence)
+
+
+def planning_response_format():
+    string = {'type': 'string'}
+    properties = {
+        'intent': string, 'domain': string, 'requires_current': {'type': 'boolean'},
+        'needs_timeline': {'type': 'boolean'}, 'must_answer_current_vs_historical': {'type': 'boolean'},
+        'required_doc_types': {'type': 'array', 'items': string},
+        'subqueries': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+            'required': ['role', 'query'], 'properties': {'role': string, 'query': string}}},
+        'reasoning': string, 'resolved_question': string,
+        'requirements': {'type': 'array', 'minItems': 1, 'items': {
+            'type': 'object', 'additionalProperties': False,
+            'required': ['id', 'aspect', 'temporal_scope', 'comparison_scope'],
+            'properties': {'id': string, 'aspect': string,
+                'temporal_scope': {'type': 'string', 'enum': ['none', 'historical', 'current', 'unknown']},
+                'comparison_scope': {'type': 'string', 'enum': ['none', 'retrieved_documents', 'unknown']}}}},
+    }
+    return {'type': 'json_schema', 'json_schema': {'name': 'question_requirements_plan', 'strict': True,
+        'schema': {'type': 'object', 'additionalProperties': False, 'required': list(properties),
+                   'properties': properties}}}
+
+
+def coarse_requirements(question):
+    return {'resolved_question': question, 'requirements': [{
+        'id': 'r1', 'aspect': question, 'temporal_scope': 'unknown', 'comparison_scope': 'unknown'}]}

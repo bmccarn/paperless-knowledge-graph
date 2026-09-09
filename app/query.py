@@ -48,6 +48,9 @@ from app.evidence import (
     structured_fact_count,
 )
 from app.strands_orchestrator import strands_orchestrator
+from app.question_evidence import PIPELINE_VERSION, validate_requirements, coarse_requirements, QuestionEvidenceError
+from app.question_pipeline import finalize_question
+from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
@@ -57,7 +60,10 @@ _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 
 
 class QueryEngine:
-    def __init__(self):
+    question_pipeline = False
+
+    def __init__(self, *, question_pipeline=False):
+        self.question_pipeline = question_pipeline
         self.client = AsyncOpenAI(
             base_url=settings.litellm_url,
             api_key=settings.litellm_api_key,
@@ -166,6 +172,22 @@ class QueryEngine:
     async def _build_query_plan(self, question: str, mode: str, conversation_history: list = None) -> tuple[dict, list[dict]]:
         mode = normalize_mode(mode)
         trace = [trace_step("mode", "ok", f"{mode} query strategy selected", {"mode": mode})]
+
+        if self.question_pipeline:
+            agent_plan = await strands_orchestrator.plan_query(question, mode,
+                conversation_context=self._conversation_context(conversation_history), include_requirements=True)
+            plan = merge_agent_plan(question, mode, agent_plan)
+            try:
+                aspects = validate_requirements({key: (agent_plan or {}).get(key)
+                                                 for key in ('resolved_question', 'requirements')})
+                planning_status = 'complete'
+            except QuestionEvidenceError:
+                aspects, planning_status = coarse_requirements(question), 'coarse'
+            plan.update(aspects, original_question=question, requirements_status=planning_status,
+                        pipeline_version=PIPELINE_VERSION)
+            trace.append(trace_step('planner', 'ok' if planning_status == 'complete' else 'fallback',
+                                   'Requested-aspect planning', {'requirements_status': planning_status}))
+            return plan, trace
 
         if mode == "quick":
             plan = heuristic_plan(question, mode)
@@ -388,11 +410,14 @@ class QueryEngine:
         flagged = await embeddings_store.get_open_feedback_document_ids(doc_ids)
         for item in evidence_pack.get("items", []):
             item["feedback_open"] = item.get("document_id") in flagged
-        final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
-                                      timeout_seconds=settings.answer_audit_timeout_seconds,
-                                      concurrency=settings.strands_max_concurrent_calls,
-                                      date_order=settings.source_date_order).finalize(
-            question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
+        if self.question_pipeline:
+            final = await finalize_question(strands_orchestrator, question, evidence_pack, plan, mode)
+        else:
+            final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
+                                          timeout_seconds=settings.answer_audit_timeout_seconds,
+                                          concurrency=settings.strands_max_concurrent_calls,
+                                          date_order=settings.source_date_order).finalize(
+                question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
         verification = final["verification"]
         verification["finalization"] = final["finalization"]
         verification["current_state"] = final["current_state"]
@@ -456,18 +481,24 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         token = _REQUEST_MODEL.set(model_override or self.model)
         generation = await get_corpus_generation_async()
         generation_token = _REQUEST_GENERATION.set(generation)
+        metrics = QueryMetrics() if self.question_pipeline else None
+        metrics_token = CURRENT_QUERY_METRICS.set(metrics)
         try:
             result = await self._query(question, conversation_history, mode)
             await self._check_delivery_snapshot(result)
+            if metrics is not None and not result.get('cached'):
+                result['finalization']['pipeline_execution'] = metrics.report()
             return result
         finally:
+            CURRENT_QUERY_METRICS.reset(metrics_token)
             _REQUEST_MODEL.reset(token)
             _REQUEST_GENERATION.reset(generation_token)
 
     async def _query(self, question, conversation_history, mode):
         mode = self._normalize_mode(mode)
         evaluated_at = datetime.now(timezone.utc).date().isoformat()
-        identity = {"policy": QUERY_CACHE_VERSION, "mode": mode, "question": question,
+        identity = {"policy": f'{QUERY_CACHE_VERSION}:{PIPELINE_VERSION}' if self.question_pipeline else QUERY_CACHE_VERSION,
+                    "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
                     "strands_model": settings.strands_model or settings.gemini_model,
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at,
@@ -500,7 +531,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         sources = self._build_sources(all_context, question=question)
         evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        final = await self._final_synthesis(
+        final = {} if self.question_pipeline else await self._final_synthesis(
             question,
             all_context,
             first_pass.get("draft_answer", ""),
@@ -570,12 +601,15 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             await cache_set(query_cache, cache_key, result)
         return result
 
-    @staticmethod
-    def _cacheable_answer(result, mode):
+    def _cacheable_answer(self, result, mode):
         if not isinstance(result, dict):
             return False
         final = result.get("finalization")
         if not isinstance(final, dict):
+            return False
+        if self.question_pipeline:
+            # Until persisted coverage admission is implemented, the inactive
+            # candidate never accepts or publishes cache entries.
             return False
         if mode == "timeline" and restore_timeline(result)[1]["status"] not in {"ready", "no_dates"}:
             return False
@@ -609,6 +643,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                 item["support_spans"] = []
             result["finalization"].update(disposition="corpus_changed", complete=False, answer_verified=False, cited_document_ids=[],
                 answer_digest=hashlib.sha256(result["answer"].encode()).hexdigest())
+            if result['finalization'].get('pipeline_version'):
+                result['finalization']['question_coverage'] = {
+                    'status': 'unavailable', 'complete': False, 'requirements': [], 'reason': 'corpus_changed'}
             result["verification"].pop("partial", None)
             current.pop("comparison_scope", None)
             current.pop("comparison_document_ids", None)

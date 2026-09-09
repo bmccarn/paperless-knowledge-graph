@@ -163,8 +163,7 @@
           "date": "2026-01-31",
           "precision": "day",
           "document_id": 9101,
-          "title": "Utility payment due",
-          "summary": "Due date: 2026-01-31."
+          "claim": "The due date is 2026-01-31."
         }
       ]
     }

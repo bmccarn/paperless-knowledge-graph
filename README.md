@@ -14,7 +14,7 @@ When a complete audit and bounded repair leave unsupported claims, the system ca
 - **Graph-aware retrieval** — Multi-hop subgraph expansion from discovered entities (2-3 hops)
 - **Strands-planned query pipeline** — Query planning → retrieval → synthesis → complete source audit → bounded repair or evidence-limited response
 - **Evidence-backed strict mode** — Builds canonical evidence packs, claim ledgers, trust dimensions, and answer repair notes for high-stakes queries
-- **Timeline mode** — Extracts dated events and sorts them chronologically for change-over-time questions
+- **Timeline mode** — Answers change-over-time questions and sorts supported date mentions from the final verified answer, preserving observation wording and source links
 - **Entity steward** — Conservative merge/split/review suggestions after manual merges and on a periodic schedule
 - **Concurrent processing** — Configurable parallel document processing with semaphore control
 - **Retry with backoff** — Exponential backoff + jitter on all LLM and database calls for transient error resilience
@@ -24,7 +24,7 @@ When a complete audit and bounded repair leave unsupported claims, the system ca
 
 Saved conversations retain their complete messages for display. Model prompts use only the latest 10 messages within a shared 12,000-character conversation budget across planning, synthesis, and source auditing. When that budget is exceeded, older context is omitted first; an oversized retained message keeps its ending with an explicit truncation marker. Query-cache versioning prevents reuse of answers generated under the previous unbounded-context policy.
 
-Strands planning, source auditing, answer repair, timeline extraction and entity review omit application-imposed output-token limits and use the provider's normal output allowance. Helpers use request-owned HTTP clients to the same LiteLLM proxy. Source audits process four-unit batches with bounded concurrency and a deadline proportional to the required waves; each model call and repair attempt still has a finite deadline. Incomplete or truncated audits cannot certify an answer.
+Strands planning, source auditing, answer repair and entity review omit application-imposed output-token limits and use the provider's normal output allowance. Helpers use request-owned HTTP clients to the same LiteLLM proxy. Source audits process four-unit batches with bounded concurrency and a deadline proportional to the required waves; each model call and repair attempt still has a finite deadline. Incomplete or truncated audits cannot certify an answer.
 
 Source attributions are checked against supplied OCR evidence and each claim's validated references before final document links are rendered. Entity review preserves the proposed identity through case and whitespace changes; unsupported type changes still require separate source evidence. The processing fingerprint includes this reconciliation version, so ordinary sync refreshes older results.
 
@@ -53,7 +53,8 @@ Paperless-ngx → LiteLLM (model routing) → Document Classification → Type-S
 | `app/evidence.py` | Evidence pack, source quality, date signal, claim ledger, and verifier repair helpers |
 | `app/query.py` | Iterative hybrid query pipeline with modes, evidence packs, verification, and LLM synthesis |
 | `app/query_quality.py` | Query planning fallbacks, timeline sorting, and trust-score dimensions |
-| `app/strands_orchestrator.py` | Bounded Strands planner, verifier, answer editor, timeline extractor, and entity-review reviewer |
+| `app/strands_orchestrator.py` | Bounded Strands planner, verifier, answer editor and entity-review reviewer |
+| `app/timeline.py` | Final-answer date projection, source-date binding and saved-timeline compatibility |
 | `app/cache.py` | TTL-based caching for queries, vectors, graph, entities (Redis or in-memory) |
 | `app/retry.py` | Shared retry utilities — exponential backoff for LLM, shorter retry for DB |
 | `app/config.py` | Pydantic settings (env-based configuration) |

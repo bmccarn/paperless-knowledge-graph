@@ -5,7 +5,6 @@ import hashlib
 import unittest
 
 from app.answer_finalization import AnswerFinalizer, evidence_spans
-from app.timeline import validate_timeline
 
 
 def pack(content):
@@ -186,55 +185,6 @@ class AnswerHardeningTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["finalization"]["complete"])
         self.assertNotIn("999", result["answer"])
         self.assertNotIn("[Document", result["answer"])
-
-
-class TimelineHardeningTests(unittest.IsolatedAsyncioTestCase):
-    def event(self, evidence, date="2024-02-29", quote=None):
-        span = evidence_spans(evidence)[0]
-        return {"date": date, "document_id": 101, "title": "Meeting", "summary": "Recorded meeting date.",
-                "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"], "document_id": 101,
-                                "quote": quote or span["content"]}]}
-
-    async def test_partial_date_cannot_hide_invalid_full_source_date(self):
-        evidence = pack("Meeting: 2024-02-30.")
-        event = self.event(evidence, date="2024-02")
-        result = await validate_timeline([event], evidence, QuoteAuditor(evidence["items"][0]["content"]), "Meeting?")
-        self.assertEqual(result, [])
-
-    async def test_malformed_assessment_records_fail_without_raising(self):
-        class Malformed:
-            async def audit_answer_units(self, *args):
-                return {"assessments": [None]}
-        evidence = pack("Meeting: 2024-02-29.")
-        result = await validate_timeline([self.event(evidence)], evidence, Malformed(), "Meeting?")
-        self.assertEqual(result, [])
-
-    async def test_timeline_references_are_limited_to_extraction_manifest(self):
-        evidence = pack("Meeting: 2024-02-29.")
-        event = self.event(evidence)
-        result = await validate_timeline([event], evidence, QuoteAuditor(evidence["items"][0]["content"]), "Meeting?", manifest=[])
-        self.assertEqual(result, [])
-
-    async def test_published_quote_is_the_one_independent_auditor_used(self):
-        source = "Meeting: 2024-02-29. Additional source footer."
-        evidence = pack(source)
-        event = self.event(evidence)
-        result = await validate_timeline([event], evidence, QuoteAuditor("Meeting: 2024-02-29."), "Meeting?")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["references"][0]["quote"], "Meeting: 2024-02-29.")
-
-    async def test_other_supplied_source_is_available_for_contradiction_review(self):
-        evidence = pack("Meeting: 2024-02-29.")
-        evidence["items"].append({"id": "cancellation", "document_id": 102, "title": "Correction", "content": "The meeting of 2024-02-29 was canceled and never occurred."})
-        event = self.event(evidence)
-        class ContradictionAuditor(QuoteAuditor):
-            async def audit_answer_units(self, question, units, spans, plan):
-                result = await super().audit_answer_units(question, units, spans, plan)
-                if any("canceled" in span["content"] for span in spans):
-                    result["assessments"][0]["status"] = "conflicting"
-                return result
-        result = await validate_timeline([event], evidence, ContradictionAuditor("Meeting: 2024-02-29."), "When was the meeting?")
-        self.assertEqual(result, [])
 
 
 if __name__ == "__main__":

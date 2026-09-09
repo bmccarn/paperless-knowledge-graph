@@ -286,3 +286,58 @@ class DocumentLocalReadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(active, 0)
         self.assertEqual(stages.count('source_reader'), 16)
         self.assertEqual(stages.count('source_auditor'), 2)
+
+
+class ReaderReferenceRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    setUp = SourceReadingTests.setUp
+    auditor = SourceReadingTests.auditor
+
+    async def test_local_recovery_preserves_sources_and_does_not_replay_bad_notes(self):
+        auditor = self.auditor('document_local_corrected')
+        valid = {'documents': [self.reading['documents'][0]]}
+        wrong = copy.deepcopy(valid)
+        wrong['documents'][0]['observations'][0] = {'text': 'FAILED-NOTE-DO-NOT-REPLAY',
+                                                  'references': [{'span_id': 'foreign'}]}
+        with patch.object(auditor, '_text_agent', AsyncMock(side_effect=[json.dumps(wrong), json.dumps(valid), self.verdict])) as calls:
+            result = await auditor.audit_answer_units('Question', self.units, self.spans[:1], self.plan)
+        self.assertEqual(result['assessments'][0]['status'], 'supported')
+        self.assertEqual(calls.await_count, 3)
+        initial, corrected, verifier = [json.loads(c.kwargs['prompt']) for c in calls.await_args_list]
+        marker = corrected.pop('reading_protocol_correction')
+        self.assertTrue(marker)
+        self.assertEqual(initial, corrected)
+        self.assertNotIn('FAILED-NOTE-DO-NOT-REPLAY', json.dumps([corrected, verifier]))
+        self.assertNotIn('CANDIDATE-ONLY', json.dumps(corrected))
+
+    async def test_reader_retry_bound_and_absent_output_do_not_fall_back(self):
+        for responses, expected in ((['not json', 'not json'], 2), ([None], 1), ([''], 1), (['   '], 1)):
+            with self.subTest(responses=responses):
+                auditor = self.auditor('document_local_corrected')
+                with patch.object(auditor, '_text_agent', AsyncMock(side_effect=responses)) as calls:
+                    result = await auditor.audit_answer_units('Question', self.units, self.spans[:1], {})
+                self.assertIsNone(result)
+                self.assertEqual(calls.await_count, expected)
+
+    async def test_cancellation_is_not_a_protocol_retry(self):
+        auditor = self.auditor('document_local_corrected')
+        with patch.object(auditor, '_text_agent', AsyncMock(side_effect=asyncio.CancelledError)) as calls:
+            with self.assertRaises(asyncio.CancelledError):
+                await auditor.audit_answer_units('Question', self.units, self.spans[:1], {})
+        self.assertEqual(calls.await_count, 1)
+
+    async def test_nested_reader_and_auditor_corrections_are_each_bounded(self):
+        auditor = self.auditor('document_local_corrected')
+        valid_reading = json.dumps({'documents': [self.reading['documents'][0]]})
+        wrong_verdict = json.dumps({'assessments': [decision(references=[{'span_id': 'foreign'}])]})
+        responses = ['invalid', valid_reading, wrong_verdict, 'invalid', valid_reading, self.verdict]
+        pack = {'items': self.pack['items'][:1]}
+        with patch.object(auditor, '_text_agent', AsyncMock(side_effect=responses)) as calls:
+            result = await AnswerFinalizer(auditor).finalize('What was refunded?',
+                'Vendor completed a refund of $125.', pack)
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertEqual(calls.await_count, 6)
+        payloads = [json.loads(c.kwargs['prompt']) for c in calls.await_args_list]
+        readers = [p for c, p in zip(calls.await_args_list, payloads) if c.kwargs['name'] == 'source_reader']
+        self.assertEqual(len(readers), 4)
+        self.assertEqual(readers[0], readers[2])
+        self.assertEqual(readers[1], readers[3])

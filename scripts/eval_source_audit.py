@@ -435,7 +435,7 @@ def main():
                         help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
-    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first', 'document_local'], default='flat')
+    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first', 'document_local', 'document_local_corrected'], default='flat')
     parser.add_argument('--sdk-retry-policy', choices=['configured', 'single_attempt'], default='configured')
     parser.add_argument('--proxy-cache-policy', choices=['configured', 'bypass'], default='configured')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')

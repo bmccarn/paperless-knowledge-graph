@@ -144,7 +144,7 @@ class StrandsQueryOrchestrator:
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
                 "Return only the complete JSON object required by the response schema, with no extra prose." +
-                (source_reading.VERIFIER_NOTE if self.audit_strategy in {'source_first', 'document_local'} else '')),
+                (source_reading.VERIFIER_NOTE if self.audit_strategy in {'source_first', 'document_local', 'document_local_corrected'} else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids']))
         if not text or not text.strip():
@@ -164,7 +164,7 @@ class StrandsQueryOrchestrator:
             documents = source_reading.group_sources(payload['source_spans'])
             grouped = {key: value for key, value in payload.items() if key != 'source_spans'}
             grouped['source_documents'] = documents
-            if self.audit_strategy in {'source_first', 'document_local'}:
+            if self.audit_strategy in {'source_first', 'document_local', 'document_local_corrected'}:
                 grouped['source_reading'] = await self._read_source_documents(payload, documents)
             return grouped
         except source_reading.SourceReadingError as exc:
@@ -172,7 +172,7 @@ class StrandsQueryOrchestrator:
             return None
 
     async def _read_source_documents(self, payload, documents):
-        partitions = [[document] for document in documents] if self.audit_strategy == 'document_local' else [documents]
+        partitions = [[document] for document in documents] if self.audit_strategy in {'document_local', 'document_local_corrected'} else [documents]
         readings = [None] * len(partitions)
         pending = iter(enumerate(partitions))
 
@@ -181,11 +181,26 @@ class StrandsQueryOrchestrator:
                 # No candidate, correction, other document or sibling reading reaches this call.
                 reader_input = {key: payload[key] for key in ('question', 'evaluated_at', 'source_date_order')}
                 reader_input['source_documents'] = partition
-                text = await self._text_agent(
-                    name='source_reader', system_prompt=source_reading.READER_PROMPT,
-                    prompt=json.dumps(reader_input, ensure_ascii=False),
-                    response_format=source_reading.response_format(partition))
-                readings[index] = source_reading.parse_reading(text, partition)['documents']
+                limit = 2 if self.audit_strategy == 'document_local_corrected' else 1
+                for attempt in range(limit):
+                    text = await self._text_agent(
+                        name='source_reader', system_prompt=source_reading.READER_PROMPT,
+                        prompt=json.dumps(reader_input, ensure_ascii=False),
+                        response_format=source_reading.response_format(partition))
+                    if not isinstance(text, str) or not text.strip():
+                        raise source_reading.SourceReadingError('unavailable_source_reading')
+                    try:
+                        readings[index] = source_reading.parse_reading(text, partition)['documents']
+                        break
+                    except source_reading.SourceReadingError:
+                        if attempt + 1 == limit:
+                            raise
+                        reader_input['reading_protocol_correction'] = {
+                            'error': 'invalid_source_reading',
+                            'instruction': 'Re-read these unchanged originals and return the required structure '
+                                           'using only this document ID and its exact supplied span_id references. '
+                                           'This corrects the response protocol, not a requested factual verdict.'}
+
 
         tasks = [asyncio.create_task(worker()) for _ in range(
             min(len(partitions), max(1, settings.strands_max_concurrent_calls)))]

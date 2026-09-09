@@ -498,7 +498,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
     # coverage, then reserve complementary windows within it before boilerplate.
     by_document = {}
     for pair in ranked:
-        if costs[pair[0]] <= budget and not pair[1].get("feedback_open"):
+        if not pair[1].get("feedback_open"):
             by_document.setdefault(pair[1]["document_id"], []).append(pair)
     document_tokens = {doc_id: set().union(*(span_tokens[index] for index, _ in pairs))
                        for doc_id, pairs in by_document.items()}
@@ -563,11 +563,17 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         selected.add(index)
         used += costs[index]
     if diagnostics is not None:
-        delivered = {s['document_id'] for s in result}
         for comparison in comparisons:
-            eligible = set(comparison['eligible_document_ids'])
-            comparison['selected_document_ids'] = sorted(eligible & delivered)
-            comparison['omitted_document_ids'] = sorted(eligible - delivered)
+            opportunities = comparison.pop('_window_indices')
+            delivered = {doc for doc, indices in opportunities.items() if set(indices) <= selected}
+            partial = {doc for doc, indices in opportunities.items() if set(indices) & selected} - delivered
+            comparison['selected_document_ids'] = sorted(delivered)
+            comparison['partially_selected_document_ids'] = sorted(partial)
+            comparison['omitted_document_ids'] = sorted(set(opportunities) - delivered)
+            available = {index for indices in opportunities.values() for index in indices}
+            comparison['available_windows'] = len(available)
+            comparison['selected_windows'] = len(available & selected)
+            comparison['omitted_windows'] = len(available - selected)
         date_opportunities = []
         for unit in units:
             expected = _calendar_features(unit['text'], date_order)
@@ -584,9 +590,8 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
 
 def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None) -> list:
     """Reserve topical alternatives, never treating recency as factual proof."""
-    if not re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|highest|lowest|"
-                     r"earlier|later|newer|older|compared?|higher|lower)\b", text, re.I):
-        return []
+    reserve = re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|highest|lowest|"
+                        r"earlier|later|newer|older|compared?|higher|lower)\b", text, re.I)
     generic = set("current currently active today now still latest newest recent most earlier later newer older "
                   "compare compared higher lower recorded records record dated date year years usd eur gbp cad aud jpy "
                   "january february march april may june july august september october november december".split())
@@ -594,8 +599,6 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
     anchor = supporting[0][1]["document_id"] if supporting else None
     candidates = []
     for doc_id, pairs in by_document.items():
-        if doc_id == anchor:
-            continue
         title_words = set(re.findall(r"\b[a-z]{3,}\b", str(pairs[0][1].get("title", "")).lower()))
         content_words = set(re.findall(r"\b[a-z]{3,}\b", " ".join(p[1]["content"] for p in pairs).lower()))
         overlap = len(topic & title_words), len(topic & content_words)
@@ -617,20 +620,25 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
         candidates.append((overlap, newest, topical[2], windows, recent))
     # OCR overlap admits the topical cohort. Within that cohort, a richer old
     # title must not crowd out a newer alternative whose OCR matches the subject.
-    minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates), default=0) / 2))
-    candidates = [row for row in candidates if row[0][1] >= minimum_overlap
+    minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates
+                                          if row[3][0][1]['document_id'] != anchor), default=0) / 2))
+    candidates = [row for row in candidates if row[3][0][1]['document_id'] == anchor or row[0][1] >= minimum_overlap
                   or (row[4] and row[0][0] > 0)]
     # Calendar values are ordering hints, not document issue dates. A future
     # term cannot grant two old documents every reserved continuation slot.
     candidates.sort(key=lambda row: (row[4], row[1], row[0], -row[2]), reverse=True)
     if diagnostics is not None:
         diagnostics['eligible_document_ids'] = sorted({row[3][0][1]['document_id'] for row in candidates})
-        superlative = re.search(r'\b(?:latest|newest|most (?:recent|current)|highest|lowest)\b', text, re.I)
-        pairwise = re.search(r'\b(?:compared (?:with|to)|versus|vs\.?|(?:higher|lower) than)\b', text, re.I)
-        current = re.search(r'\b(?:current(?:ly)?|active|today|now|still)\b', text, re.I)
-        # This routes an omission safeguard, never proves semantic scope. The
-        # independent auditor still checks every stated comparison and source.
-        diagnostics['cohort_wide'] = bool(superlative or (current and not pairwise))
+        # A selected identity/opening cannot stand in for omitted continuations,
+        # including those in the supporting document. Keep indices local until
+        # actual admission has produced content-free coverage diagnostics.
+        diagnostics['_window_indices'] = {row[3][0][1]['document_id']: [index for index, _ in row[3]]
+                                           for row in candidates}
+    # Wording only prioritizes retrieval. It never authorizes a smaller scope
+    # or suppresses omission accounting for the independent semantic audit.
+    if not reserve:
+        return []
+    candidates = [row for row in candidates if row[3][0][1]['document_id'] != anchor]
     primary, continuation, deferred = [], [], []
     represented, contents = set(), set()
     openings = {row[3][0][1]['document_id']: row[3][0] for row in candidates}
@@ -1104,12 +1112,11 @@ class AnswerFinalizer:
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
-                        omitted_cohort = any(
-                            opportunity['unit_id'] == unit['id'] and opportunity['cohort_wide']
-                            and opportunity['omitted_document_ids']
+                        omitted_comparison = any(
+                            opportunity['unit_id'] == unit['id'] and opportunity['omitted_document_ids']
                             for opportunity in selections[batch_index].get('comparison_opportunities', []))
                         if (assessment.get("comparison_scope") == "retrieved_documents"
-                                and not omitted_cohort
+                                and not omitted_comparison
                                 and isinstance(compared, list) and compared
                                 and all(type(doc) is int and doc in available for doc in compared)
                                 and {r["document_id"] for r in refs if r}.issubset(set(compared))):

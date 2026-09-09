@@ -72,28 +72,30 @@ class AuditEvidenceOpportunityTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(any(s['document_id'] == doc and '01/01/2026' in s['content'] for s in supplied[0]))
                 self.assertLessEqual(len(json.dumps(supplied[0], ensure_ascii=False)), 28000)
 
-    async def test_known_omissions_constrain_cohort_comparisons_but_not_pairwise_or_source_observations(self):
+    async def test_known_omissions_constrain_comparisons_but_not_source_observations(self):
         first = 'Cedar service record dated January 1, 2025 describes the account as current.'
         second = 'Cedar service record dated January 1, 2026 describes the account as closed.'
         items = [item(1, 0, first), item(2, 0, second, recent=True)]
         items += [item(d, 0, f'Cedar service record dated January 1, 2024 describes an account review. Record {d}.') for d in range(10, 45)]
         for kind, claim in (
             ('cohort', 'The latest Cedar service record dated January 1, 2025 describes the account as current.'),
-            ('pairwise', 'The Cedar service record dated January 1, 2026 describes a closed account compared with the current account described in the Cedar service record dated January 1, 2025.'),
+            ('pairwise_omitted', 'The Cedar service record dated January 1, 2026 describes a closed account compared with the current account described in the Cedar service record dated January 1, 2025.'),
+            ('pairwise_complete', 'The Cedar service record dated January 1, 2026 describes a closed account compared with the current account described in the Cedar service record dated January 1, 2025.'),
             ('observation', first)):
             with self.subTest(kind=kind):
                 seen = []
                 class Auditor:
                     async def audit_answer_units(self, question, units, spans, plan):
                         seen.append(plan['evidence_selection'])
-                        refs = [{'span_id': s['span_id']} for s in spans if s['document_id'] in ({1, 2} if kind == 'pairwise' else {1})]
+                        refs = [{'span_id': s['span_id']} for s in spans if s['document_id'] in ({1, 2} if kind.startswith('pairwise') else {1})]
                         return {'assessments': [{'unit_id': u['id'], 'status': 'supported', 'references': refs,
                             'temporal_scope': 'historical' if kind == 'observation' else 'documented',
                             'temporal_assertion': 'source_observation' if kind == 'observation' else 'retrieved_comparison',
-                            'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1, 2] if kind == 'pairwise' else [1]} for u in units]}
-                result = await AnswerFinalizer(Auditor()).finalize('What do the dated records say?', claim, {'items': items})
-                self.assertTrue(any(o['omitted_document_ids'] for s in seen for o in s['comparison_opportunities']))
-                if kind == 'cohort':
+                            'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1, 2] if kind.startswith('pairwise') else [1]} for u in units]}
+                result = await AnswerFinalizer(Auditor()).finalize('What do the dated records say?', claim,
+                    {'items': items[:2] if kind == 'pairwise_complete' else items})
+                self.assertEqual(any(o['omitted_document_ids'] for s in seen for o in s['comparison_opportunities']), kind != 'pairwise_complete')
+                if kind in {'cohort', 'pairwise_omitted'}:
                     self.assertFalse(result['finalization']['answer_verified'])
                     self.assertIn('invalid_comparison_scope', result['claim_ledger']['claims'][0]['rejection_reasons'])
                 else:
@@ -124,6 +126,96 @@ class AuditEvidenceOpportunityTests(unittest.IsolatedAsyncioTestCase):
                     ref = result['claim_ledger']['claims'][0]['references'][0]
                     self.assertEqual(ref['document_id'], 1)
                     self.assertEqual(ref['quote'], source + ' ' + ('Administrative detail. ' * 100)[:1750-len(source)-1])
+
+    async def test_unrelated_selected_opening_does_not_cover_an_omitted_comparison_passage(self):
+        def raw_item(doc, index, text):
+            return {'id': f'passage-{doc}-{index}', 'document_id': doc, 'chunk_index': index,
+                    'title': 'Record', 'source_kind': 'ocr', 'source_content': text, 'content': text}
+        old = 'The Cedar service record dated January 1, 2025 lists an open account.'
+        new = 'The Cedar service record dated January 1, 2026 lists a closed account.'
+        padding = 'Administrative material. '
+        keywords = 'shipping logistics tracking addresses contacts transport package weight distance office map diagram recipient telephone fax mail department floor room receipt delivery departure arrival signature destination origin customer counter agent carrier freight'
+        unrelated = (keywords + ' ' + padding * 180)[:3600]
+        items = [raw_item(1, 0, old + ' ' + padding * 130), raw_item(2, 0, unrelated),
+                 raw_item(2, 1, new + ' ' + padding * 130)]
+        items += [raw_item(doc, 0, unrelated) for doc in range(3, 7)]
+        seen = []
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                seen.append(spans)
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        question = 'Review ' + ', '.join(f'document {doc}' for doc in range(1, 7)) + '. ' + keywords + '.'
+        result = await AnswerFinalizer(Auditor()).finalize(question,
+            'The latest Cedar service record dated January 1, 2025 lists an open account.', {'items': items})
+        self.assertTrue(any(s['document_id'] == 2 for s in seen[0]))
+        self.assertFalse(any(new in s['content'] for s in seen[0]))
+        self.assertFalse(result['finalization']['answer_verified'])
+        opportunities = result['claim_ledger']['selection_coverage'][0]['comparison_opportunities']
+        self.assertIn(2, opportunities[0]['omitted_document_ids'])
+
+    async def test_presentation_whitespace_cannot_bypass_comparison_omissions(self):
+        source = 'Cedar service record dated January 1, 2025 describes an open account.'
+        items = [item(doc, 0, source + f' Record {doc}.') for doc in range(1, 36)]
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        for expression in ('most recent', 'most  recent', 'most\trecent', 'most\u00a0recent',
+                           'most **recent**', '**most** recent', 'most *recent*'):
+            with self.subTest(expression=expression):
+                result = await AnswerFinalizer(Auditor()).finalize('What do the dated records say?',
+                    f'The {expression} Cedar service record dated January 1, 2025 describes an open account.', {'items': items})
+                self.assertFalse(result['finalization']['answer_verified'])
+                self.assertIn('invalid_comparison_scope', result['claim_ledger']['claims'][0]['rejection_reasons'])
+
+    async def test_unrecognized_comparison_wording_cannot_prove_closed_scope(self):
+        source = 'Cedar service record dated January 1, 2025 describes the account as current.'
+        items = [item(1, 0, source)] + [item(doc, 0,
+            f'Cedar service record dated January 1, 2026 describes an account review. Record {doc}.') for doc in range(10, 45)]
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        for claim in (
+            'The Cedar service record dated January 1, 2025 is newer than every other retrieved Cedar service record.',
+            'The current Cedar service record dated January 1, 2025 describes the account as current compared with earlier Cedar service records.',
+            'The Cedar service record dated January 1, 2025 supersedes every other Cedar service record.'):
+            with self.subTest(claim=claim):
+                result = await AnswerFinalizer(Auditor()).finalize('What do the dated records say?', claim, {'items': items})
+                self.assertFalse(result['finalization']['answer_verified'])
+                self.assertIn('invalid_comparison_scope', result['claim_ledger']['claims'][0]['rejection_reasons'])
+
+    async def test_selected_identity_cannot_hide_an_omitted_status_continuation(self):
+        old = 'Cedar service record for account SHAREDREF dated January 1, 2025 lists an open account.'
+        closure = 'The account was closed on January 1, 2026.'
+        items = [item(1, 0, old),
+                 item(2, 0, 'Cedar service record for account SHAREDREF. Identity and contact record.', recent=True),
+                 item(2, 1, 'Delivery administrative instructions for this document.', recent=True),
+                 item(2, 2, closure, recent=True)]
+        items += [item(doc, 0, f'Cedar service record for account SHAREDREF dated January 1, 2024 describes an account review. Record {doc}.') for doc in range(3, 12)]
+        seen = []
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                seen.append(spans)
+                return {'assessments': [{'unit_id': u['id'],
+                    'status': 'conflicting' if any(closure in s['content'] for s in spans) else 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        result = await AnswerFinalizer(Auditor()).finalize('What is the latest documented service status?',
+            'The latest Cedar service record for account SHAREDREF dated January 1, 2025 lists an open account.', {'items': items})
+        self.assertFalse(result['finalization']['answer_verified'])
+        if not any(closure in s['content'] for s in seen[0]):
+            opportunity = result['claim_ledger']['selection_coverage'][0]['comparison_opportunities'][0]
+            self.assertIn(2, opportunity['omitted_document_ids'])
+            self.assertIn(2, opportunity['partially_selected_document_ids'])
 
     async def test_identical_openings_keep_their_own_distinct_continuation_context(self):
         opening = 'Cedar service record for account SHAREDREF.'

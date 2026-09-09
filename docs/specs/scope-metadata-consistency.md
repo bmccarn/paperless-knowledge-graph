@@ -26,8 +26,16 @@ mismatches, or otherwise consistent unsupported verdicts.
 Eligible inconsistency: a not_applicable temporal check with non-none temporal
 scope/assertion, or a not_applicable comparison check with declared comparison scope
 or compared documents that survived the existing inert-metadata normalization.
+Semantic-negative precedence applies to the entire batch: if any row has a raw
+unsupported/missing/conflicting verdict, a not_established/contradicted facet, or
+unresolved assumptions, decline this new correction trigger and retain the
+conservative parsed decisions. A scope inconsistency cannot reroll that row or its
+rejected siblings. This deliberately cannot repair mixed-positive/negative
+development batches; their existing failed scores remain. It can repair an
+otherwise supported candidate whose only defect is inconsistent metadata.
 Native tests must cover correction to a consistent supported undated observation,
 repeated inconsistency, correction to unsupported, unchanged real semantic rejection,
-source/candidate conservation, and raw false approval retention across correction.
+source/candidate conservation, mixed-signal and mixed-batch negative precedence,
+and raw false approval retention across correction.
 Run all existing protocol, date/temporal and evaluator controls. Review before a
 fresh native measurement; do not change the completed frozen scores or fixtures.

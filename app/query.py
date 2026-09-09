@@ -51,7 +51,7 @@ from app.strands_orchestrator import strands_orchestrator
 from app.question_evidence import PIPELINE_VERSION, validate_requirements, coarse_requirements, QuestionEvidenceError
 from app.question_pipeline import finalize_question
 from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
-from app.answer_coverage import restore_question_coverage
+from app.answer_coverage import restore_question_coverage, restored_sources
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
@@ -505,6 +505,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)
         if self._cacheable_answer(cached, mode, request_identity=cache_key):
+            if self.question_pipeline:
+                cached['sources'] = restored_sources(cached)
             cached["cached"] = True
             return cached
 
@@ -628,6 +630,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         """One snapshot check for cached and newly audited public results."""
         source_ids = [i["document_id"] for i in result.get("evidence_pack", {}).get("items", [])
                       if type(i.get("document_id")) is int]
+        if self.question_pipeline and restore_question_coverage(result) is not None:
+            source_ids = list(dict.fromkeys(s['document_id'] for s in result['claim_ledger']['spans']))
         incomplete = await embeddings_store.get_incomplete_document_ids(source_ids)
         # Check generation after the datastore read, which may itself overlap a
         # mutation. No await separates this last observation and the verdict.

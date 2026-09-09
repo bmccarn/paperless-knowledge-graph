@@ -4,7 +4,7 @@ import hashlib
 from app.answer_composition import object_schema, strict_object, valid_ids
 from app.answer_observations import ObservationCandidate
 from app.answer_delivery import validate_verified_delivery
-from app.answer_finalization import validate_reference
+from app.answer_finalization import validate_reference, empty_ledger
 from app.question_evidence import PIPELINE_VERSION, QuestionEvidenceError, canonical_json, validate_requirements
 
 COVERAGE_PROMPT = (
@@ -208,6 +208,15 @@ def restore_pipeline_metadata(metadata, answer):
     final = metadata.get('finalization')
     if not has_question_pipeline_metadata(metadata):
         return metadata
+    # Preserve an identifiable, consistently unverified execution failure.
+    if (isinstance(final, dict) and final.get('pipeline_version') == PIPELINE_VERSION
+            and final.get('answer_verified') is False and final.get('complete') is False
+            and final.get('disposition') in {'incomplete', 'audit_failed', 'corpus_changed'}
+            and final.get('answer_digest') == hashlib.sha256(answer.encode()).hexdigest()
+            and isinstance(metadata.get('evidence'), dict) and metadata['evidence'].get('score') == 0
+            and not (isinstance(final.get('question_coverage'), dict)
+                     and final['question_coverage'].get('complete') is True)):
+        return metadata
     receipt = restore_question_coverage({**metadata, 'answer': answer})
     if receipt is not None:
         return metadata
@@ -217,18 +226,27 @@ def restore_pipeline_metadata(metadata, answer):
     final['pipeline_version'] = PIPELINE_VERSION
     final['question_coverage'] = {'status': 'unavailable', 'complete': False,
                                   'requirements': [], 'reason': 'stored_binding_unavailable'}
-    final.update(answer_verified=False, complete=False, disposition='stored_binding_unavailable')
+    final.update(answer_verified=False, complete=False, disposition='stored_binding_unavailable', cited_document_ids=[])
+    restored['claim_ledger'] = empty_ledger('')
+    restored['timeline_events'] = []
+    restored['evidence_pack'] = {'items': []}
+    restored['current_state'] = {'status': 'needs_review', 'note': 'Saved verification could not be validated.'}
     verification = restored.get('verification')
     if isinstance(verification, dict):
         verification.update(status='unavailable', finalization=final,
+            supported_claims=[], unsupported_claims=[], stale_or_conflicting_claims=[],
+            current_state=restored['current_state'],
             missing_evidence=['Saved verification could not be validated.'])
     evidence = restored.get('evidence')
     if isinstance(evidence, dict):
-        evidence.update(score=0.0, level='low', audit_status='unavailable')
+        evidence.update(score=0.0, level='low', audit_status='unavailable',
+            claim_summary={}, dimensions={}, reasons=[], source_count=0)
         coverage = evidence.get('coverage')
         evidence['coverage'] = {**(coverage if isinstance(coverage, dict) else {}), 'requested_aspects_complete': False,
                                 'answer_complete': False}
     summary = restored.get('source_summary')
     if isinstance(summary, dict):
-        summary.update(trust_score=0.0, trust_level='low', verification_status='unavailable', audit_status='unavailable')
+        summary.update(trust_score=0.0, trust_level='low', verification_status='unavailable', audit_status='unavailable',
+            claim_summary={}, trust_dimensions={}, trust_reasons=[], evidence_coverage={}, source_count=0,
+            current_state=restored['current_state'])
     return restored

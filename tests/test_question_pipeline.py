@@ -229,4 +229,31 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(restored['finalization']['question_coverage']['complete'])
             self.assertEqual(restored['verification']['status'], 'unavailable')
             self.assertEqual(restored['evidence']['score'], 0)
+            self.assertEqual(restored['claim_ledger']['claims'], [])
+            self.assertFalse(restored['source_summary']['claim_summary'])
+            self.assertFalse(restored['source_summary']['trust_dimensions'])
+            self.assertFalse(restored['source_summary']['trust_reasons'])
             self.assertEqual(restored['answer'], result['answer'])
+
+    async def test_cache_sources_and_freshness_use_bound_references(self):
+        prior = await self.engine.query('What monthly premium is recorded?', mode='quick')
+        prior['sources'] = [{'document_id': 999, 'excerpt': '$999'}]
+        prior['evidence_pack']['items'] = []
+        with patch('app.query.cache_get', AsyncMock(return_value=copy.deepcopy(prior))):
+            result = await self.engine.query('What monthly premium is recorded?', mode='quick')
+        self.assertEqual([s['document_id'] for s in result['sources']], [101])
+        self.assertIn('$321', result['sources'][0]['excerpt'])
+        async def incomplete(ids): return {101} if 101 in ids else set()
+        with patch('app.query.cache_get', AsyncMock(return_value=copy.deepcopy(prior))), patch(
+                'app.query.embeddings_store.get_incomplete_document_ids', side_effect=incomplete):
+            result = await self.engine.query('What monthly premium is recorded?', mode='quick')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['finalization']['disposition'], 'corpus_changed')
+
+    async def test_failed_execution_remains_identifiable_when_restored(self):
+        for stage in ('source_reader', 'answer_composer'):
+            self.fail_stage = stage
+            result = await self.engine.query('What monthly premium is recorded?', mode='quick')
+            restored = restore_pipeline_metadata(result, result['answer'])
+            self.assertEqual(restored, result)
+            self.assertEqual(restored['finalization']['pipeline_failure'], stage)

@@ -30,3 +30,11 @@ Node 24 lint, all 12 unit regressions, type checking, production build and the f
 ## Final live result
 
 On the deployed 624-node/980-relationship graph, actual wheel gestures reached 265.7x with stable screen-size label geometry. Visually inspected the close-up, populated source inspector, Fit return, 3D orbit/zoom and 2D return; no uncaught page errors occurred. Normal schedules were restored only after this and the other [closure gates](issue16-acceptance-closure.md) passed. This is functional verification, not a dense-graph performance benchmark.
+
+## Follow-up: keep selected nodes visible when the viewport changes
+
+At a deep 2D zoom, opening the source inspector narrows the canvas and can leave the selected node outside its visible bounds. Preserve the selected node's visibility across selection and viewport-size changes without resetting the user's zoom. This applies to inspector and responsive-layout resizing, not a particular node or graph dataset.
+
+After the renderer applies valid dimensions, center the selected visible node using its finite renderer-owned coordinates. Do not alter zoom, graph data, pinned coordinates or evidence. An absent/filtered node, missing renderer, invalid coordinates or zero-sized viewport must not move the camera. Leave ordinary background panning and explicit Fit view effective; do not continuously recenter during force ticks or 3D orbit. Preserve existing 3D behavior.
+
+Extend the real-browser regression: pan a deeply zoomed node near the canvas edge, open its inspector, verify the same node remains visible and zoom is unchanged, resize the viewport and repeat, then prove background panning and Fit view still work. Retain a failing baseline, review plan and code independently, run frontend checks and exact-head CI, and verify the deployed interaction visually. Deploy immutable frontend artifacts through GitOps after the live query finishes; preserve the query acceptance results and all data/runtime gates.

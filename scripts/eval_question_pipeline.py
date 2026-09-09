@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import sys
@@ -20,8 +21,8 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def load_data(path):
-    data = json.loads(path.read_bytes())
+def load_data(payload):
+    data = json.loads(payload)
     if (data.get('version') != 1 or data.get('partition') != 'development'
             or data.get('synthetic_only') is not True or len(data.get('cases', [])) != 12):
         raise ValueError('Reviewed synthetic development dataset required')
@@ -34,8 +35,9 @@ def load_data(path):
     return data
 
 
-def manifest_for(dataset):
-    load_data(dataset)
+def manifest_for(dataset, *, payload=None):
+    payload = dataset.read_bytes() if payload is None else payload
+    load_data(payload)
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
         'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
         'docs/specs/question-pipeline-development-evaluation.md')]
@@ -43,7 +45,7 @@ def manifest_for(dataset):
     if runtime['packages']['strands-agents'] != '1.55.0':
         raise ValueError('Qualification requires locked Strands 1.55.0 runtime')
     return {'version': 1, 'stage': 'fixed_originals_question_pipeline_development',
-        'dataset_sha256': digest(dataset.read_bytes()),
+        'dataset_sha256': digest(payload),
         'code_sha256': {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths},
         'runtime': runtime, 'mode': 'strict', 'cases': 12, 'max_native_calls': 300,
         'elapsed_seconds': 1800, 'estimated_total_tokens': 2000000,
@@ -52,14 +54,24 @@ def manifest_for(dataset):
         'grading': 'independent original-source review of each case before continuing'}
 
 
-def previous_runs(output, case_index):
+def previous_runs(output, case_index, manifest, cases):
+    from app.answer_coverage import restore_question_coverage
     calls, elapsed = 0, 0.0
     for index in range(case_index):
         directory = output / f'case-{index:02d}'
         result_bytes = (directory / 'result.json').read_bytes()
         result = json.loads(result_bytes)
         review = json.loads((directory / 'review.json').read_bytes())
-        if (review.get('result_sha256') != digest(result_bytes)
+        if (json.loads((directory / 'manifest.json').read_bytes()) != manifest
+                or json.loads((directory / 'case.json').read_bytes()) != cases[index]
+                or result.get('manifest_sha256') != digest(json.dumps(manifest, sort_keys=True).encode())
+                or type(result.get('native_call_count')) is not int or result['native_call_count'] < 1
+                or type(result.get('elapsed_seconds')) not in (int, float)
+                or not math.isfinite(result['elapsed_seconds']) or result['elapsed_seconds'] < 0
+                or result.get('case_index') != index or result.get('case_id') != cases[index]['id']
+                or not isinstance(result.get('final'), dict)
+                or restore_question_coverage(result['final']) is None
+                or review.get('result_sha256') != digest(result_bytes)
                 or review.get('spec') != 'pass' or review.get('standards') != 'pass'
                 or result['error'] is not None):
             raise ValueError('Prior case lacks passing independent review')
@@ -69,12 +81,13 @@ def previous_runs(output, case_index):
 
 
 async def execute(dataset, manifest, output, case_index):
-    if manifest != manifest_for(dataset):
+    payload = dataset.read_bytes()
+    if manifest != manifest_for(dataset, payload=payload):
         raise ValueError('Frozen code, dataset or runtime changed')
-    data = load_data(dataset)
+    data = load_data(payload)
     if type(case_index) is not int or not 0 <= case_index < len(data['cases']):
         raise ValueError('Invalid case index')
-    prior_calls, prior_elapsed = previous_runs(output, case_index)
+    prior_calls, prior_elapsed = previous_runs(output, case_index, manifest, data['cases'])
     remaining_calls = manifest['max_native_calls'] - prior_calls
     remaining_seconds = manifest['elapsed_seconds'] - prior_elapsed
     if remaining_calls <= 0 or remaining_seconds <= 0:
@@ -163,7 +176,8 @@ async def execute(dataset, manifest, output, case_index):
         CURRENT_QUERY_METRICS.reset(metrics_token)
         native_module.Agent = native_agent
         logger.removeHandler(handler); logger.setLevel(prior_level)
-    result = {'case_id': case['id'], 'case_index': case_index, 'final': final, 'error': error,
+    result = {'manifest_sha256': digest(json.dumps(manifest, sort_keys=True).encode()),
+        'case_id': case['id'], 'case_index': case_index, 'final': final, 'error': error,
         'elapsed_seconds': elapsed, 'native_call_count': len(attempts), 'execution': metrics.report(),
         'usage': {key: sum(a['usage'][key] for a in attempts)
             if attempts and all(key in a.get('usage', {}) for a in attempts) else None

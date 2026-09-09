@@ -190,7 +190,7 @@ def observation_candidate(case):
     return ObservationCandidate.from_response({'observations': texts})
 
 
-def score_case(case, ledger, audits):
+def score_case(case, ledger, audits, *, raw_audits=()):
     claims = {c['id']: c for c in ledger.get('claims', [])}
     # Corrections replace malformed attempts only; every attempt stays in artifacts.
     assessments = {}
@@ -202,7 +202,9 @@ def score_case(case, ledger, audits):
         unit_id = expected['id']
         claim, assessment = claims.get(unit_id, {}), assessments.get(unit_id, {})
         available = bool(ledger.get('complete')) and assessment.get('status') in {'supported', 'unsupported', 'missing', 'conflicting'}
-        raw_accepts = assessment.get('model_status', assessment.get('status')) == 'supported'
+        raw_accepts = any(row.get('model_status', row.get('status')) == 'supported'
+                          for audit in [*audits, *raw_audits] if isinstance(audit, dict)
+                          for row in audit.get('assessments', []) if row.get('unit_id') == unit_id)
         audit_accepts = assessment.get('status') == 'supported'
         source_accepts = claim.get('status') == 'supported'
         positive = expected['expected_supported']
@@ -329,6 +331,15 @@ async def execute(dataset_path, manifest, output):
                 # Observe before the production adapter rejects nonterminal output.
                 attempt['native_result'] = dict(text=str(result), message=result.message,
                                                 stop_reason=result.stop_reason)
+                if attempt['name'] == 'source_auditor':
+                    from app import source_audit
+                    try:
+                        # Observe schema-valid model verdicts before request-owned handle guards.
+                        # These records affect failure scoring only, never availability or evidence.
+                        attempt['raw_audit'] = source_audit.parse_decisions(
+                            str(result), json.loads(attempt['prompt'])['expected_unit_ids'])
+                    except source_audit.SourceAuditProtocolError:
+                        pass
             return result
 
     # This runner owns an isolated process. Restore the SDK binding on every exit.
@@ -364,11 +375,12 @@ async def execute(dataset_path, manifest, output):
                         interrupted = exc
                     except Exception as exc:
                         error = type(exc).__name__
-                    scored = score_case(case, ledger, case_audits)
+                    raw_audits = [a['raw_audit'] for a in attempts[first_attempt:] if 'raw_audit' in a]
+                    scored = score_case(case, ledger, case_audits, raw_audits=raw_audits)
                     scored.update(repetition=repetition, elapsed_seconds=time.monotonic() - case_started,
                                   first_attempt=first_attempt, attempts=len(attempts) - first_attempt, error=error,
                                   completed=bool(ledger.get('complete')) and error is None)
-                    write_private(output / f'case-{len(results):04d}.json', dict(score=scored, ledger=ledger, audits=list(case_audits)))
+                    write_private(output / f'case-{len(results):04d}.json', dict(score=scored, ledger=ledger, audits=list(case_audits), raw_audits=raw_audits))
                     results.append(scored)
                     if interrupted is not None:
                         raise interrupted

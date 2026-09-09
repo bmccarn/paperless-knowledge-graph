@@ -330,3 +330,56 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    async def test_corrected_foreign_handle_cannot_erase_raw_false_approval(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from app import strands_orchestrator as native
+        from app.config import settings
+        from scripts.eval_source_audit import execute, runtime_snapshot
+        from tests.source_audit_fixtures import decision
+        configs = []
+
+        class Result:
+            stop_reason = 'end_turn'
+            message = {'role': 'assistant', 'content': []}
+            metrics = SimpleNamespace(accumulated_usage={})
+            def __init__(self, row):
+                self.text = json.dumps({'assessments': [row]})
+            def __str__(self):
+                return self.text
+
+        class Agent:
+            def __init__(self, **kwargs):
+                configs.append(kwargs)
+            async def invoke_async(self, prompt):
+                payload = json.loads(prompt)
+                corrected = 'protocol_correction' in payload
+                handle = payload['source_spans'][0]['span_id'] if corrected else 'foreign'
+                return Result(decision(status='unsupported' if corrected else 'supported',
+                                       references=[{'span_id': handle}]))
+
+        case = dict(id='raw-approval', family='capacity', domain='operations',
+            question='What capacity is documented?', evaluated_at='2026-09-09', source_date_order='mdy',
+            documents=[dict(document_id=1, title='Register', content='The register records capacity of 480 units.')],
+            claims=[dict(id='u1', text='The register records capacity of 999 units.', expected_supported=False,
+                         required=False, reason='The original amount is 480, not 999.')])
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'dataset.json'
+            source.write_text(json.dumps(dict(version=1, partition='development', synthetic_only=True, cases=[case])))
+            output = Path(directory) / 'output'
+            with patch.object(settings, 'strands_enabled', True), patch.object(native, 'STRANDS_AVAILABLE', True), \
+                 patch.object(native, 'Agent', Agent), patch.object(native.StrandsQueryOrchestrator, '_model', return_value=None):
+                manifest = prepare(source, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+                    repetitions=1, max_attempts=2, seconds=10, estimated_tokens=1000,
+                    sdk_retry_policy='single_attempt', cache_note='Controlled native protocol, no provider')
+                report = await execute(source, manifest, output)
+            self.assertFalse(report['passed'])
+            self.assertEqual(report['false_acceptances'], 1)
+            self.assertEqual(report['provider_attempts'], 2)
+            self.assertEqual(report['unavailable'], 0)
+            captured = json.loads((output / 'case-0000.json').read_text())
+            self.assertTrue(captured['score']['assertions'][0]['model_supported'])
+            self.assertFalse(captured['score']['assertions'][0]['source_supported'])
+            self.assertEqual(len(captured['raw_audits']), 2)
+            self.assertTrue(all(c['retry_strategy'] is None for c in configs))

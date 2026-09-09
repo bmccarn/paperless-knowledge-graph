@@ -29,7 +29,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
         self.force_length = False
-        self.editor_text = QUOTE
+        self.editor_text = json.dumps({"observations": [QUOTE]})
         self.editor_delay = 0
         self.editor_error = False
         self.editor_truncated = False
@@ -74,8 +74,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 self.audit_count += 1
                 span = payload["source_spans"][0]
                 result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_all_audits or (self.reject_first_audit and self.audit_count == 1) else "supported",
-                    "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
-                        "document_id": span["document_id"], "quote": self.quote}]} for unit in payload["units"]]}
+                    "references": [{"span_id": span["span_id"]}]} for unit in payload["units"]]}
             # Simulate a provider completion that exceeds the former 6,000-token
             # allowance. Genuine provider truncation must remain a failed audit.
             truncated = self.force_length or (is_editor and self.editor_truncated) or bool(LIMIT_FIELDS.intersection(body))
@@ -191,7 +190,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_helper_requests_omit_output_caps(self):
         calls = [(lambda: self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True}),
             (lambda: self.orchestrator.extract_timeline("Synthetic question?", "Synthetic evidence"), []),
-            (lambda: self.orchestrator.repair_answer("Synthetic question?", "Synthetic answer", "Synthetic evidence", {}), {"answer": QUOTE}),
+            (lambda: self.orchestrator.repair_answer("Synthetic question?", "Synthetic answer", "Synthetic evidence", {}), {"observations": [QUOTE]}),
             (lambda: self.orchestrator.review_entity_candidate({}, {}), {"ok": True})]
         for call, expected in calls:
             with self.subTest(helper=len(self.requests)):
@@ -229,22 +228,36 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.delay = 0
         self.assertEqual(await self.orchestrator.plan_query("Synthetic question?", "strict"), {"ok": True})
 
-    async def test_editor_prose_is_fully_reaudited_through_real_adapter(self):
+    async def test_editor_observations_are_fully_reaudited_through_real_adapter(self):
         self.reject_first_audit = True
-        self.editor_text = self.quote = 'The label reads "Orchid" and the path is `A\\B`.'
+        self.quote = 'The label reads "Orchid" and the path is A/B.'
+        self.editor_text = json.dumps({'observations': [self.quote]})
         source = {'items': [{**PACK['items'][0], 'content': self.quote, 'source_content': self.quote}]}
         result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', source)
         self.assertTrue(result['finalization']['answer_verified'])
         self.assertEqual(result['finalization']['attempts'], 2)
-        self.assertIn(self.editor_text, result['answer'])
+        self.assertIn(self.quote, result['answer'])
+        self.assertEqual(result['claim_ledger']['unitization'], 'observations_v1')
         self.assertEqual(len(self.requests), 3)  # audit, exactly one editor, replacement audit
         self.assertEqual(self.audit_count, 2)
         self.assertTrue(all(LIMIT_FIELDS.isdisjoint(r) for r in self.requests))
+        request = self.requests[-1]
+        messages = request['messages']
+        def text(message):
+            content = message['content']
+            return content if isinstance(content, str) else ''.join(block.get('text', '') for block in content)
+        payload = json.loads(text(messages[-1]))
+        self.assertEqual(payload['unitization'], 'observations_v1')
+        self.assertEqual(payload['answer_context'], '')
+        self.assertEqual(len(payload['units']), 1)
+        self.assertIn('Do not use any sibling unit', text(messages[0]))
+        self.assertNotIn('Answer context preserves surrounding headings', text(messages[0]))
+        self.assertIn('references:[{span_id}]', text(messages[0]))
 
     async def test_editor_empty_exception_timeout_and_truncation_are_unavailable(self):
         for failure in ('empty', 'exception', 'timeout', 'truncation'):
             with self.subTest(failure=failure):
-                self.editor_text = '' if failure == 'empty' else QUOTE
+                self.editor_text = '' if failure == 'empty' else json.dumps({'observations': [QUOTE]})
                 self.editor_error = failure == 'exception'
                 self.editor_delay = 2 if failure == 'timeout' else 0
                 self.editor_truncated = failure == 'truncation'
@@ -286,10 +299,11 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unexpected_editor_format_and_refusal_still_require_source_audit(self):
         self.reject_all_audits = True
-        for text in ('I cannot provide that answer.', '{"answer": "An unsupported fact."}'):
+        for text in ('I cannot provide that answer.', '{"answer": "An unsupported fact."}',
+                     '{"observations": []}', '{"observations": ["# Heading"]}'):
             self.editor_text = text
             count = self.audit_count
             result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK)
-            self.assertEqual(self.audit_count - count, 2)
+            self.assertEqual(self.audit_count - count, 1)
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertNotIn(text, result['answer'])

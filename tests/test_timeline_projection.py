@@ -230,3 +230,21 @@ class TimelineProjectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([e['date'] for e in result['timeline_events']],['2024','2025'],claim)
             for event in result['timeline_events']:
                 self.assertEqual(claim[event['date_start']:event['date_end']],event['date_text'])
+
+    async def test_range_endpoints_keep_attached_units_and_complete_numeric_tokens(self):
+        for separator in ['–',' – ','—',' to ']:
+            for tail in ['2025USD','2025mg','2025days','2025.00 USD','2025.5 days','2025,50 EUR','20250 USD',
+                         '+2025 USD','-2025 days','.5 days','2.025e3 USD']:
+                claim=f'The service term is 2024{separator}{tail}.'
+                result=await self.result(claim)
+                self.assertTrue(result['finalization']['answer_verified'],claim)
+                self.assertEqual(result['timeline_events'],[],claim)
+                self.assertEqual(result['finalization']['timeline']['status'],'no_dates',claim)
+
+    async def test_range_inspection_cannot_consume_another_paragraph_or_list_item(self):
+        claim='The service operated during 2024.'
+        for boundary in ['\n\n- ', '\n- ', '\r\n\r\n- ']:
+            source='The service operated during 2024'+boundary+'2025 days is the equipment lifespan.'
+            result=await self.result(claim,source)
+            self.assertTrue(result['finalization']['answer_verified'])
+            self.assertEqual([e['date'] for e in result['timeline_events']],['2024'],source)

@@ -12,7 +12,9 @@ from app.answer_delivery import render_verified_answer
 from app.source_dates import calendar_year_context, date_context, date_supported, source_dates
 
 VERSION = 'verified-dates-v1'
-_YEAR_RANGE = re.compile(r'(?<!\w)(\d{4})[\s*_`]*(?:[-–—]|to|through|until)[\s*_`]*(\d{4})(?!\w)', re.I)
+_YEAR_RANGE = re.compile(r'(?<!\w)(\d{4})(?:[^\S\r\n]|[*_`])*'
+                         r'(?:[-–—]|to|through|until)(?:[^\S\r\n]|[*_`])*'
+                         r'([+−-]?(?:\d+(?:[.,]\d+)?|[.,]\d+))', re.I)
 
 
 def _digest(value):
@@ -29,6 +31,9 @@ def _mentions(text, date_order, context_before=''):
             enclosing = next((match for match in ranges if found.start in {match.start(1), match.start(2)}), None)
             if enclosing:
                 start, end = enclosing.start(), enclosing.end()
+                if (not re.fullmatch(r'\d{4}', enclosing[2])
+                        or (end < len(text) and (text[end].isalnum() or text[end] == '_'))):
+                    continue  # A year-shaped prefix of a quantity is not a date.
             # Inspect the complete numeric range. A unit after its second
             # endpoint governs both values, not just the nearest endpoint.
             before, after = date_context(context_before + text[:start]), text[end:]

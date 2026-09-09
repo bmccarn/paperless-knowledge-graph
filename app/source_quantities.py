@@ -85,7 +85,8 @@ def _rows(text):
         value = line.strip()
         return [cell.strip() for cell in value.removeprefix('|').removesuffix('|').split('|')]
 
-    if len(lines) < 3:
+    # Skipped markup can open a literal region spanning otherwise complete rows.
+    if len(lines) < 3 or any(any(char in line for char in ('`', '<', '>')) for line in lines):
         return None
     headings, separator = cells(lines[0]), cells(lines[1])
     if (not headings or separator is None or len(separator) != len(headings)

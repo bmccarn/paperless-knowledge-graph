@@ -108,7 +108,7 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
     def test_complete_table_rows_survive_adjacent_unstructured_rows(self):
         source = MEASURE + '\nTreatment plan: target is not an observed result.'
         self.assertTrue(values_match('Concentration: 12 mg/L.', references(source)))
-        for invalid in ('| Missing row | 99 |', 'Unstructured 99 mg/L', '| `99` | 99 | 99 |'):
+        for invalid in ('| Missing row | 99 |', 'Unstructured 99 mg/L'):
             table = MEASURE + '\n' + invalid
             self.assertTrue(values_match('Concentration: 12 mg/L.', references(table)), invalid)
             # Explicit prose quantities remain existing prose evidence; incomplete
@@ -118,6 +118,13 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
         heading, row = MEASURE.rsplit('\n', 1)
         for rows in (['| Incomplete | 99 |', row], [row, '| Incomplete | 99 |', row]):
             self.assertTrue(values_match('Concentration: 12 mg/L.', references(heading + '\n' + '\n'.join(rows))))
+
+    def test_skipped_markup_cannot_make_literal_rows_into_quantities(self):
+        for tag in ('script', 'style', 'textarea', 'pre'):
+            table = '| Amount USD |\n| --- |\n| 100 |\n| <' + tag + '> |\n| 999 |\n| </' + tag + '> |'
+            self.assertFalse(values_match('Amount: 999 USD.', references(table)), tag)
+        table = '| Amount USD |\n| --- |\n| ` |\n| 999 |\n| ` |'
+        self.assertFalse(values_match('Amount: 999 USD.', references(table)))
 
     def test_split_or_unknown_context_does_not_authorize_table_inheritance(self):
         header, row = TABLE.rsplit('\n', 1)

@@ -13,8 +13,9 @@ but all three corrected-local repetitions were rejected by this structural guard
 Keep whole-table certification against raw original text before slicing. Require
 a complete, unambiguous header and separator. For quantity derivation, accept only
 individual rows with the exact header column count and supported plain cell syntax.
-An incomplete, pipe-free, escaped/code/HTML-containing or otherwise unsupported data
-row supplies no quantity; it must not erase independent complete rows. Never repair,
+An incomplete, pipe-free or escaped plain data row supplies no quantity; it must
+not erase independent complete rows. Code/HTML markers reject the entire table
+conservatively because skipped openers can make later rows part of a literal region. Never repair,
 pad, join or inherit cells from the skipped row. If no complete data row remains,
 return no quantities. Invalid header/separator or code/HTML context still rejects
 certification of the table. Preserve all original quotes and offsets unchanged.

@@ -163,3 +163,56 @@ class TimelineProjectionTests(unittest.IsolatedAsyncioTestCase):
         ref=result['timeline_events'][0]['references'][0]
         self.assertEqual(ref['quote'],source[ref['start']:ref['end']])
         self.assertEqual(result['claim_ledger']['source_diagnostics']['unavailable_citation_windows'],1)
+
+    async def test_year_fields_and_whole_range_quantities_are_not_calendar_dates(self):
+        for claim in ["The vehicle's model year is 2023.", 'The recorded year is 2023.',
+                      'The recorded term is 2024-2025 days.', 'The recorded term is 2024–2025 USD.',
+                      'The recorded period is 2024-2025 mg.', 'The recorded period is 2024-2025 years.']:
+            result=await self.result(claim)
+            self.assertTrue(result['finalization']['answer_verified'],claim)
+            self.assertEqual(result['timeline_events'],[],claim)
+            self.assertEqual(result['finalization']['timeline']['status'],'no_dates',claim)
+        for claim in ['The service operated during 2023.', 'The service operated during year 2023.',
+                      'The service term is 2024-2025.', 'The vehicle was manufactured January 3, 2024.']:
+            result=await self.result(claim)
+            self.assertEqual(result['finalization']['timeline']['status'],'ready',claim)
+
+    async def test_heading_dates_and_trimmed_identifier_or_malformed_source_dates(self):
+        class Trimmed(ExactAuditor):
+            async def audit_answer_units(self,*args):
+                result=await super().audit_answer_units(*args)
+                for assessment in result['assessments']:
+                    assessment['references'][0]['quote']='2026-09-01'
+                return result
+        for source in ['# September 1, 2026','## 2026-09-01']:
+            result=await self.result('The record date is 2026-09-01.',source)
+            self.assertEqual(len(result['timeline_events']),1,source)
+        for source in ['Policy #2026-09-01.','**Policy number:** 2026-09-01.', '**Policy #** 2026-09-01.',
+                       'Policy #**2026-09-01**.', '**Policy number:** `2026-09-01`.',
+                       'Policy #'+' '*200+'2026-09-01.',
+                       'Recorded date 2026-09-01-02.', 'Recorded date 2026-09-01/02.',
+                       'Recorded date: September 1, 2026. Policy #2026-09-01.']:
+            result=await AnswerFinalizer(Trimmed()).finalize('What date was recorded?',
+                'The record date is 2026-09-01.',pack(source),mode='timeline')
+            self.assertFalse(result['finalization']['answer_verified'],source)
+            self.assertEqual(result['timeline_events'],[],source)
+
+    async def test_malformed_stored_envelopes_and_inconsistent_complete_flag_fail_locally(self):
+        original=await self.result('Service requested January 3, 2024.')
+        for value in [[], {}, True, 1, None, '']:
+            result=copy.deepcopy(original);result['finalization']['disposition']=value
+            self.assertEqual(restore_timeline(result)[1]['status'],'unavailable')
+            result=copy.deepcopy(original);result['finalization']=value
+            self.assertEqual(restore_timeline(result)[1]['status'],'unavailable')
+        result=copy.deepcopy(original);result['finalization']['complete']=False
+        self.assertEqual(restore_timeline(result)[1]['status'],'unavailable')
+
+    async def test_identifier_copulas_do_not_create_calendar_authority(self):
+        for source in ['Serial number is 2024-01-03.', 'Invoice number was 2024-01-03.',
+                       'Reference: is 2024-01-03.', 'Account identifier is 2024-01-03.']:
+            result=await self.result(source)
+            self.assertTrue(result['finalization']['answer_verified'],source)
+            self.assertEqual(result['finalization']['timeline']['status'],'no_dates',source)
+            result=await self.result('The record date is 2024-01-03.',source)
+            self.assertFalse(result['finalization']['answer_verified'],source)
+            self.assertEqual(result['timeline_events'],[],source)

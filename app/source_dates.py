@@ -31,7 +31,8 @@ _PATTERN = re.compile(
 
 _IDENTIFIER_PREFIX = re.compile(
     r"(?:\b(?:number|identifier|id|code|reference|ref|no)\.?\s*[:#]?\s*"
-    r"|\b(?:record|document|policy|contract|invoice|account|order|claim)\s*#\s*)$", re.I)
+    r"|\b(?:record|document|policy|contract|invoice|account|order|claim)\s*#\s*)"
+    r"(?:(?:is|was|are|were)\s+)?$", re.I)
 
 
 @dataclass(frozen=True)

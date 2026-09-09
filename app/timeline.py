@@ -9,7 +9,7 @@ import json
 import re
 
 from app.answer_delivery import render_verified_answer
-from app.source_dates import calendar_year_context, date_supported, source_dates
+from app.source_dates import calendar_year_context, date_context, date_supported, source_dates
 
 VERSION = 'verified-dates-v1'
 
@@ -23,11 +23,20 @@ def _mentions(text, date_order, context_before=''):
         if not found.value:
             continue
         if found.precision == 'year':
-            before, after = context_before + text[:found.start], text[found.end:]
-            # Both endpoints of an explicit calendar year range retain their
-            # context. Numeric ranges without calendar context are not dates.
-            before = re.sub(r'\d{4}[-–]$', '', before)
+            start, end = found.start, found.end
+            following = re.match(r'[-–]\d{4}(?!\d)', text[end:])
+            preceding = re.search(r'\d{4}[-–]$', text[:start])
+            if following:
+                end += following.end()
+            elif preceding:
+                start = preceding.start()
+            # Inspect the complete numeric range. A unit after its second
+            # endpoint governs both values, not just the nearest endpoint.
+            before, after = date_context(context_before + text[:start]), text[end:]
             before = re.sub(r'\b(?:is|was|are|were|from)\s+$', '', before, flags=re.I)
+            # A bare year field can be a product attribute. Require stronger
+            # calendar context rather than classifying product/domain names.
+            before = re.sub(r'\byear\s*:?\s*$', '', before, flags=re.I)
             if not calendar_year_context(before, after):
                 continue
         yield found
@@ -44,14 +53,17 @@ def project_timeline(answer, ledger, finalization, date_order='mdy'):
 
     if (not isinstance(finalization, dict) or not isinstance(ledger, dict)
             or finalization.get('answer_verified') is not True
-            or finalization.get('disposition') not in {'supported', 'qualified', 'partial'}):
+            or not isinstance(finalization.get('disposition'), str)
+            or finalization['disposition'] not in {'supported', 'qualified', 'partial'}
+            or finalization.get('complete') is not (finalization['disposition'] != 'partial')):
         return unavailable('answer_not_verified')
     try:
         candidate = ledger['candidate_text']
         claims = ledger['claims']
         if (not isinstance(candidate, str) or not candidate or not isinstance(claims, list) or not claims
                 or ledger.get('complete') is not True
-                or ledger.get('unitization') not in {'observations_v1', 'prose_v1'}
+                or not isinstance(ledger.get('unitization'), str)
+                or ledger['unitization'] not in {'observations_v1', 'prose_v1'}
                 or ledger['summary']['total'] != len(claims)
                 or ledger['summary']['audited'] != len(claims)
                 or ledger['summary']['supported'] != len(claims)

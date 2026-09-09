@@ -45,6 +45,8 @@ class TimelineRestoreTests(unittest.IsolatedAsyncioTestCase):
         rows=[{**base,'metadata':json.dumps({**result,'mode':'timeline'})},
               {**base,'id':uuid.uuid4(),'metadata':json.dumps({'mode':'timeline','timeline_events':[
                   {'date':'2024-01-03','title':'Service completed','document_id':101}]})}]
+        rows.append({**base,'id':uuid.uuid4(),'metadata':json.dumps({'mode':'timeline','finalization':['invalid'],
+                    'timeline_events':[{'date':'2024-01-03'}]})})
         original=copy.deepcopy(rows)
         connection=SimpleNamespace(fetchrow=AsyncMock(return_value={'id':uuid.uuid4(),'title':'History','created_at':now,'updated_at':now}),
                                    fetch=AsyncMock(return_value=rows))
@@ -55,4 +57,6 @@ class TimelineRestoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['messages'][0]['timeline_events'],result['timeline_events'])
         self.assertEqual(saved['messages'][1]['timeline_events'],[])
         self.assertEqual(saved['messages'][1]['finalization']['timeline']['status'],'unavailable')
+        self.assertEqual(saved['messages'][2]['timeline_events'],[])
+        self.assertEqual(saved['messages'][2]['finalization']['timeline']['status'],'unavailable')
         self.assertEqual(rows,original)

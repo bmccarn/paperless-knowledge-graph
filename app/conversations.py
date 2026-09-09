@@ -172,7 +172,8 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
             if metadata.get("mode") == "timeline" or metadata.get("timeline_events"):
                 events, receipt = restore_timeline({**metadata, "answer": m["content"]})
                 metadata["timeline_events"] = events
-                metadata["finalization"] = {**(metadata.get("finalization") or {}), "timeline": receipt}
+                finalization = metadata.get("finalization")
+                metadata["finalization"] = {**(finalization if isinstance(finalization, dict) else {}), "timeline": receipt}
             messages.append({
                 "id": str(m["id"]),
                 "role": m["role"],

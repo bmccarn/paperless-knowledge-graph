@@ -1,5 +1,7 @@
 # Reliable evidence-backed queries over historical and current records
 
+Execution notice (September 9, 2026): further work follows [Query reliability: evaluation before implementation](query-reliability-evaluation.md). Its gates replace this document's execution sequence and status matrix. Keep the contracts and prior failed runs below as historical evidence; they do not authorize another patch-and-deploy cycle.
+
 Status: generalized plan reviewed at `5d70734`; implementation in progress. Owner: Codex, sole live-data and deployment operator. Baseline: `9d84bd3c0db95fbfa6412ecde609ff25e4de795e` (application tree deployed as `cbdc610`). Requested September 8, 2026: write and review the plan, then implement it and verify the exact reported question through the UI.
 
 ## Problem and intended outcome

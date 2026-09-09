@@ -1,6 +1,6 @@
 # Correct contradictory scope metadata without retrying factual judgments
 
-Status: proposed from the completed original-table native experiment.
+Status: reviewed and implemented at `577fed4`; fresh native qualification remains pending.
 
 The auditor sometimes declares an undated source observation historical while
 marking its temporal check not_applicable. The parser downgrades the self-inconsistent

@@ -356,8 +356,43 @@ live 630-node/980-relationship graph preserved initial wheel zoom
 (4.287878 -> 4.287878), accepted further wheel zoom to 39.403831, and preserved the
 entire early-pan transform after layout completion. Explicit Fit view worked;
 desktop and narrow inspector screenshots were visually inspected, with no horizontal
-overflow or page errors. The 2D/3D buttons returned to 2D successfully, but that does
-not establish a complete 3D interaction pass while the narrow inspector covers the
-canvas. Private screenshots/measurements remain outside the repository. Native CUA
+overflow or page errors. A subsequent uncovered 3D canvas rendered successfully
+and was visually inspected; returning to 2D worked. This does not establish every
+possible 3D interaction or performance characteristic. Private screenshots/measurements remain outside the repository. Native CUA
 startup failed; this acceptance used actual Playwright browser control instead.
 These graph receipts do not qualify query answers or all application features.
+
+
+## Inactive integrated question pipeline
+
+The implementation now runs explicit requested-aspect planning, immutable original
+reading, source-led composition, initial structured-observation audit and final
+coverage in all four modes when the constructor-only development flag is enabled.
+The default remains disabled. Coverage describes answered aspects independently
+of factual support. HTTP/SSE and saved history preserve receipts; cache admission
+requires the current question/history/mode/model/corpus/date identity. Saved source
+panels derive from validated references. Invalid restored receipts retain answer
+text but clear positive certification panels; legitimate execution failures retain
+their original states. Cache freshness checks use the bound source manifest.
+
+At `d3c340c`, 671 backend tests passed with 48 disposable integration skips. The
+production-build browser runner passed all five suites, including 19 completion UI
+checks, complete/partial/unavailable coverage, saved-history reload and invalid saved
+receipts. The invalid-receipt screenshot was visually inspected: saved text remains,
+coverage/source checks are unavailable, and no supported-claim badges or quotes
+remain. Browser artifacts are local synthetic acceptance, not native source accuracy.
+
+The separately reviewed question-development corpus retains all original source
+text while asking explicit questions across 12 synthetic cases. Its rubric is
+independent of the prior fixed-assertion benchmark; the old failures remain failures.
+The runner freezes code, source data, runtime and prior review identities. It runs
+one case per invocation and cannot continue without both independent reviews of the
+exact prior result. This isolates post-retrieval answer production; live retrieval,
+all-mode native stress and sealed holdout remain later gates.
+
+An isolated temporary environment in the API pod installed the hash-locked SDK
+1.55.0 dependencies successfully, alongside OpenAI 2.54.0, HTTPX 0.28.1 and Pydantic
+2.13.5. The serving application remains on its prior runtime. The captured route is
+Gemini 3.8 Flash via the existing proxy, with 90-second native call and 120-second
+audit deadlines, concurrency four. No output-token cap is introduced. At this record,
+preparation made no native model calls and the new pipeline is not quality-qualified.

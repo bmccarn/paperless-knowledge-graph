@@ -1,7 +1,7 @@
 # Question requirements, original evidence and verified answers
 
-Status: proposed complete design; implementation waits for review and the current
-native development gate. Parent: [document-local evidence](document-local-evidence.md).
+Status: reviewed design, implemented as an inactive development candidate. Native
+quality and release gates remain open. Parent: [document-local evidence](document-local-evidence.md).
 Tracker: issue #33. No production activation is implied by this document.
 
 ## Outcome

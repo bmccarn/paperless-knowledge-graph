@@ -150,7 +150,8 @@ class StrandsQueryOrchestrator:
         if not text or not text.strip():
             return None
         try:
-            return source_audit.parse_decisions(text, payload['expected_unit_ids'])
+            return source_audit.parse_decisions(text, payload['expected_unit_ids'],
+                                                allowed_span_ids={span['span_id'] for span in spans})
         except source_audit.SourceAuditProtocolError as exc:
             logger.warning('Strands stage=source_auditor outcome=invalid_decisions reason=%s', exc.reason)
             return {'audit_protocol_error': exc.reason}

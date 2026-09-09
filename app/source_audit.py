@@ -19,7 +19,7 @@ PROTOCOL_ERRORS = frozenset({
     'invalid_json', 'duplicate_key', 'invalid_object', 'invalid_assessments',
     'invalid_assessment', 'invalid_unit_ids', 'invalid_source_basis',
     'invalid_checks', 'invalid_assumptions', 'invalid_references',
-    'invalid_temporal_metadata', 'invalid_status',
+    'invalid_temporal_metadata', 'invalid_status', 'unknown_source_handle',
 })
 
 
@@ -68,7 +68,7 @@ def _bounded_text(value, limit):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
 
 
-def parse_decisions(text, unit_ids):
+def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
     """Reject malformed protocols; downgrade semantic inconsistency without retry."""
     def unique_object(pairs):
         result = {}
@@ -105,12 +105,19 @@ def parse_decisions(text, unit_ids):
         refs = row['references']
         _require(isinstance(refs, list) and all(isinstance(ref, dict) and set(ref) == {'span_id'}
                  and isinstance(ref['span_id'], str) and bool(ref['span_id']) for ref in refs), 'invalid_references')
+        if allowed_span_ids is not None:
+            _require(all(ref['span_id'] in allowed_span_ids for ref in refs), 'unknown_source_handle')
         _require(isinstance(row['temporal_scope'], str) and row['temporal_scope'] in SCOPES
                  and isinstance(row['temporal_assertion'], str) and row['temporal_assertion'] in ASSERTIONS
                  and row['comparison_scope'] in ('retrieved_documents', None)
                  and isinstance(row['comparison_document_ids'], list)
                  and all(type(doc) is int for doc in row['comparison_document_ids']), 'invalid_temporal_metadata')
         _require(isinstance(row['status'], str) and row['status'] in VERDICTS, 'invalid_status')
+        if (checks['comparison'] == 'not_applicable' and row['comparison_scope'] is None
+                and row['temporal_scope'] == 'historical'
+                and row['temporal_assertion'] == 'source_observation'):
+            # Inert metadata cannot turn a historical observation into a comparison.
+            row['comparison_document_ids'] = []
         reasons = ['semantic_' + facet for facet in FACETS
                    if checks[facet] in ('not_established', 'contradicted')]
         if assumptions:

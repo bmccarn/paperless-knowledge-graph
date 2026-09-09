@@ -100,7 +100,7 @@ class SourceAuditContractTests(unittest.IsolatedAsyncioTestCase):
             row.update(change)
             result, count = await self.run_finalizer(row, claim=claim)
             self.assertFalse(result['finalization']['answer_verified'], (change, claim))
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 2 if 'references' in change else 1)
 
     async def test_completed_and_existing_state_observations_remain_eligible(self):
         for text in (CLAIM, 'The equipment record states current capacity of 400 units and selects a custodian update.'):

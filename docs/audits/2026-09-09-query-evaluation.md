@@ -299,3 +299,44 @@ The table-quantity changes after this experiment address independently reproduce
 lexical false rejections and boundary defects. They were not part of these model
 results. Full-pipeline integration, representative qualification, untouched holdout,
 all-mode delivery and actual interactive browser acceptance remain outstanding.
+
+## Original-table development results after proxy recovery
+
+GitOps PR #166 merged as `398ba41` and Flux applied it before execution. The proxy
+removed only the count-triggered exit threshold, retained the pinned image and
+single-worker configuration, returned 200 on both health endpoints and had zero
+restarts throughout the recorded run. Working set rose from 1249 MiB to 1309 MiB during
+qualification; this finite observation does not rule out slow memory growth.
+
+All three fresh arms completed 36/36 case runs (96 positive and 96 negative observations
+per arm) with no unavailable assertions and no raw false approvals:
+
+| Strategy | Native calls | False rejections / missing positives | Input tokens | Output tokens | Elapsed seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Broad source-first | 96 | 10 | 161489 | 193673 | 626.0 |
+| Document-local | 150 | 12 | 177746 | 172467 | 547.6 |
+| Document-local with reference recovery | 150 | 11 | 178006 | 141827 | 469.3 |
+
+These results fail the frozen acceptance gate. They do not establish superiority
+on the compact set; timing overlaps and upstream independence remain unverified.
+Code was frozen at `6026052` (application `9953b89`), SDK 1.54.0. No full answer pipeline,
+holdout or SDK 1.55 qualification is implied.
+
+The corrected-local 11 rejected observations comprise three signed-credit magnitude
+paraphrases, three table measurements, two temporal-metadata inconsistencies and
+three statement/balance associations disputed during subsequent independent review.
+The table's complete original quote was present, but Markdown's table parser treats
+a following pipe-free prose line as a table row. The strict structural adapter then
+rejects the entire block, losing an otherwise complete numeric row. This is a
+reproduced lexical false rejection, not evidence the reader misunderstood the value.
+Temporal failures used `not_applicable` alongside historical/source-observation
+metadata for an undated selected-form action; the adapter downgraded the inconsistent
+metadata. Keep semantic contradictions separate from protocol consistency.
+
+Both independent reviewers, given the original synthetic text and assertion without
+the expected label/model output, found the statement-specific balance association
+ambiguous: the balance accompanies an earlier credit adjustment; the later statement
+issuance does not explicitly identify that balance as a statement field. Completed
+gold and scores remain unchanged. Record this as a disputed fixture association;
+any future corrected assertion must be independently reviewed and use a new dataset
+version/manifest, never retroactively turn these runs into a pass.

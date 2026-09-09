@@ -114,6 +114,20 @@ class SourceReadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PRIVATE NOTE', json.dumps(result))
         self.assertIn('value_mismatch', result['claim_ledger']['claims'][0]['rejection_reasons'])
 
+    def test_vertex_schema_has_no_non_string_enums(self):
+        from app.source_reading import group_sources, response_format
+        def check(value):
+            if isinstance(value, dict):
+                if 'enum' in value:
+                    self.assertEqual(value['type'], 'string')
+                    self.assertTrue(all(isinstance(v, str) for v in value['enum']))
+                for child in value.values():
+                    check(child)
+            elif isinstance(value, list):
+                for child in value:
+                    check(child)
+        check(response_format(group_sources(self.spans)))
+
     def test_unknown_strategy_is_rejected(self):
         with self.assertRaises(ValueError):
             self.auditor('silently-enable-something')

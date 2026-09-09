@@ -57,7 +57,8 @@ def response_format(documents):
                 'properties': {'span_id': {'type': 'string', 'enum': handles}}}}}}
     document = {'type': 'object', 'additionalProperties': False,
         'required': ['document_id', 'observations', 'limitations'], 'properties': {
-            'document_id': {'type': 'integer', 'enum': doc_ids},
+            # Vertex structured output supports string enums only; ownership is validated below.
+            'document_id': {'type': 'integer'},
             'observations': {'type': 'array', 'items': observation},
             'limitations': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}}}}
     return {'type': 'json_schema', 'json_schema': {'name': 'source_reading', 'strict': True,

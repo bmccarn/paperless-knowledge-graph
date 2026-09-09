@@ -109,3 +109,13 @@ a third architecture candidate, and needs its own frozen case/call budget.
 This experiment evaluates the audit stage used by non-Quick query methods.
 Passing it alone does not establish retrieval completeness or end-to-end mode
 behavior. No claim of holistic improvement precedes those later measurements.
+
+## Provider schema correction before semantic measurement
+
+The first source-first retained experiment made three calls; all failed with
+provider `INVALID_ARGUMENT` before returning any reading. No semantic result is
+claimed. The initial document-ID integer enum is outside the documented Vertex
+structured-output subset, which supports string enums only. Keep document IDs
+typed as integers and validate their exact request ownership in the parser; keep
+string source-handle enums. See [provider schema support](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/control-generated-output).
+This creates a new frozen code/manifest, preserving the failed experiment.

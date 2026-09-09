@@ -39,6 +39,8 @@ def _unit_tokens(text):
         base = match.group()
         extend = bool(following and ((not following.isalnum() and _unit_continuation(following)) or unicodedata.category(following) == 'Lm' or following in _POWERS
                                     or (base not in _CURRENCIES and unicodedata.category(following)[0] == 'N')))
+        if base in _CURRENCIES and following in {'+', '-'}:
+            extend = False  # A signed currency amount is not a physical-unit suffix.
         if extend:
             while last < len(text) and _unit_continuation(text[last]):
                 last += 1

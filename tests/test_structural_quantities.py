@@ -83,6 +83,15 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
             if unit in {'mg/L²', 'mg/L^2', 'mg/L2'}:
                 self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references(table)))
 
+    def test_currency_prefix_signs_remain_amounts(self):
+        for sign in ('-', '+'):
+            source = 'Amount: ' + sign + '100 USD.'
+            claim = 'Amount: ' + sign + '$100 USD.'
+            self.assertTrue(values_match(claim, references(source)), claim)
+            table = '| Amount USD |\n| --- |\n| ' + sign + '100 |'
+            self.assertTrue(values_match(claim, references(table)), table)
+        self.assertFalse(values_match('Amount: -$100 USD.', references('Amount: 100 USD.')))
+
     def test_currency_identifiers_do_not_supply_amounts(self):
         for unit in ('$', 'USD '):
             for suffix in ('ABC', '_identifier'):

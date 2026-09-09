@@ -8,12 +8,16 @@ import re
 from markdown_it import MarkdownIt
 from app.source_dates import VALUE_UNITS
 
-UNIT = r'(?:' + VALUE_UNITS + r')(?:/[A-Za-zµμ°][A-Za-z0-9µμ°^+²³⁻-]*)*'
+_CURRENCY = r'(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])'
+_UNIT_SUFFIX = r'(?:/[A-Za-zµμ°][A-Za-z0-9µμ°^+²³⁻-]*|[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+|\^[+-]?\d+)'
+# Digits after a currency prefix are the amount, not an exponent on its unit.
+UNIT = (r'(?:' + _CURRENCY + _UNIT_SUFFIX + r'*|(?!(?:' + _CURRENCY + r'))'
+        + VALUE_UNITS + r'(?:' + _UNIT_SUFFIX + r'|\d+)*)')
 _UNIT_PATTERN = re.compile(r"(?<![A-Za-z'’/])" + UNIT + r'(?![A-Za-z/])')
 NUMBER = r'[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?'
 _TABLE_MARKDOWN = MarkdownIt('commonmark').enable('table')
 _CURRENCY_SYMBOL = {'USD': '$', 'CAD': '$', 'AUD': '$', 'EUR': '€', 'GBP': '£'}
-_SCALE_WORDS = re.compile(r'\b(?:hundreds?|thousands?|millions?|billions?|trillions?|scaled?|scaling|factor|times|multiple|per|x)\b', re.I)
+_SCALE_WORDS = re.compile(r'\b(?:hundreds?|thousands?|millions?|billions?|trillions?|scaled?|scaling|factor|times|multiple|per|x|k|m|b|t|bn|mn|mm|tn|kilo|mega|giga)\b', re.I)
 _LABEL = re.compile(r"^(?:[A-Za-z][A-Za-z '\-]*?\s+)?(?:\((" + UNIT + r")\)|(" + UNIT + r"))$")
 
 
@@ -60,11 +64,15 @@ def table_ranges(original):
 
 
 def _label_unit(label):
-    if (any(char.isdigit() for char in label) or _SCALE_WORDS.search(label)
-            or len(list(_UNIT_PATTERN.finditer(label))) != 1):
+    label = label.strip()
+    match = _LABEL.fullmatch(label)
+    if match is None or len(list(_UNIT_PATTERN.finditer(label))) != 1:
         return None
-    match = _LABEL.fullmatch(label.strip())
-    return next((unit for unit in match.groups() if unit is not None), None) if match else None
+    group = 1 if match.group(1) is not None else 2
+    prefix = label[:match.start(group)]
+    if any(char.isdigit() for char in prefix) or _SCALE_WORDS.search(prefix):
+        return None
+    return match.group(group)
 
 
 def _has_unit_annotation(label):

@@ -50,6 +50,7 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(values_match(claim, refs))
         self.assertFalse(values_match('Charge: 100 USD.', references(TABLE.replace('USD', '$'))))
         self.assertTrue(values_match('Charge: $100.', references(TABLE)))
+        self.assertTrue(values_match('Length: 12 m.', references('| Length m |\n| --- |\n| 12 |')))
 
     def test_compound_units_are_not_prefixes_or_conversions(self):
         refs = references(MEASURE)
@@ -63,6 +64,12 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
     def test_unrecognized_compound_is_retained_as_an_exact_requirement(self):
         self.assertFalse(values_match('Concentration: 12 mg/L/min.', references('The value is 12 USD.')))
         self.assertTrue(values_match('Concentration: 12 mg/L/min.', references('Concentration: 12 mg/L/min.')))
+        for unit in ('mg/L²', 'mg/L^2', 'mg/L2'):
+            self.assertFalse(values_match('Concentration: 12 mg/L.', references('Concentration: 12 ' + unit + '.')))
+            self.assertFalse(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 mg/L.')))
+            self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 ' + unit + '.')))
+            table = '| Concentration ' + unit + ' |\n| --- |\n| 12 |'
+            self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references(table)))
 
     def test_multiple_unit_labels_are_ambiguous_and_normal_words_are_not_units(self):
         ambiguous = '| Charge USD CAD |\n| --- |\n| 100 |'
@@ -79,7 +86,7 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
 
     def test_scaled_conflicting_and_ragged_tables_remain_unavailable(self):
         invalid = [TABLE.replace('Charge USD', label) for label in
-                   ('Charge USD (thousands)', 'Charge thousands USD', 'Charge USD ×10³')]
+                   ('Charge USD (thousands)', 'Charge thousands USD', 'Charge USD ×10³', 'Charge K USD', 'Charge M USD')]
         invalid += ['| Measurement USD | Amount CAD |\n| --- | --- |\n| Balance USD | 100 |',
                     '| Charge USD | Balance USD |\n| --- | --- |\n| 100 |']
         for source in invalid:

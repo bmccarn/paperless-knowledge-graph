@@ -98,3 +98,11 @@ source-context digests, and preserves the supplied ordering and boundaries.
 This supports representative reconstructed contexts without replacing them with
 whole-document concatenation. It confers no authorization to replay private data;
 the concrete private experiment requires its separately scoped approval.
+
+Copied table headers can make a production-reconstructed window noncontiguous in
+its original. Default admission rejects that case. The explicit preparation flag
+`--allow-noncontiguous-reconstruction` retains it unchanged only as diagnosed
+invalid baseline input, writes per-case continuity diagnostics, and forces the
+experiment to fail regardless of model scores. Never use this option to qualify a
+candidate or silently replace original-window boundaries. Certifying overrides,
+changed source titles, and invalid document-context offsets always fail admission.

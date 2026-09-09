@@ -93,10 +93,12 @@ def prepare(dataset_path, **options):
     return prepare_bytes(dataset_path.read_bytes(), **options)
 
 
-def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note):
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False):
     data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
+    if type(allow_noncontiguous) is not bool:
+        raise ValueError('Invalid reconstruction admission must be explicit')
     if repetitions < 1 or max_attempts < 1 or not math.isfinite(seconds) or seconds <= 0 or estimated_tokens < 1:
         raise ValueError('Experiment limits must be positive')
     if runtime.get('model') != model or set(runtime) != {'model', 'destination', 'call_timeout_seconds', 'audit_timeout_seconds', 'concurrency', 'enabled', 'packages'}:
@@ -111,10 +113,10 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
                 cache_note=cache_note, independent_repetitions=False,
                 conditions='exact case documents and ordering; four-unit production batches',
                 cases=len(data['cases']), assertions=sum(len(c['claims']) for c in data['cases']),
-                synthetic_only=data['synthetic_only'])
+                synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous)
 
 
-def evidence_pack(case):
+def evidence_pack(case, *, allow_noncontiguous=False):
     """Keep captured production window boundaries; verify them against originals."""
     if 'evidence_pack' not in case:
         return {'items': [dict(id=f"document-{doc['document_id']}", document_id=doc['document_id'],
@@ -122,28 +124,46 @@ def evidence_pack(case):
                               content=doc['content'], source_content=doc['content']) for doc in case['documents']]}
     from app.embeddings import chunk_text
     from app.evidence import evidence_item_id
+    from app.source_text import certifying_text, certified_document_context
     pack = json.loads(json.dumps(case['evidence_pack']))
-    documents = {doc['document_id']: doc['content'] for doc in case['documents']}
+    documents = {doc['document_id']: doc for doc in case['documents']}
     if not case.get('source_capture') or not isinstance(pack, dict) or not pack.get('items'):
         raise ValueError('Captured windows require declared provenance and sources')
     for item in pack['items']:
         doc_id, index = item.get('document_id'), item.get('chunk_index')
         if item.get('source_kind') != 'ocr' or doc_id not in documents or type(index) is not int or index < 0:
             raise ValueError('Invalid captured source identity')
-        original = documents[doc_id]
+        document = documents[doc_id]
+        original = document['content']
+        if item.get('title', '') != document.get('title', ''):
+            raise ValueError('Captured title differs from original document metadata')
         expanded = index >= 100000
         chunks = chunk_text(original, chunk_size=3600 if expanded else 4000,
                             overlap=500 if expanded else 800, include_table_headers=not bool(item.get('source_context')))
         offset = index - 100000 if expanded else index
-        if offset >= len(chunks) or chunks[offset] != item.get('content') or evidence_item_id(item) != item.get('id'):
+        if (offset >= len(chunks) or chunks[offset] != item.get('content')
+                or chunks[offset] != certifying_text(item) or evidence_item_id(item) != item.get('id')):
             raise ValueError('Captured window no longer matches original-source chunking')
         if item.get('source_context'):
             if item['source_context'].get('digest') != digest(original.encode()):
                 raise ValueError('Captured source context has a mismatched digest')
             item['_source_document_content'] = original
+            if certified_document_context(item, chunks[offset]) is None:
+                raise ValueError('Captured source context has invalid original offsets')
         elif item.get('_source_document_content'):
             raise ValueError('Unexpected source context')
+    if source_continuity(case, pack)['noncontiguous_items'] and not allow_noncontiguous:
+        raise ValueError('Noncontiguous reconstructed input requires explicit diagnostic admission')
     return pack
+
+
+def source_continuity(case, pack):
+    from app.source_text import certifying_text
+    originals = {d['document_id']: d['content'] for d in case['documents']}
+    invalid = [index for index, item in enumerate(pack['items'])
+               if certifying_text(item) not in originals[item['document_id']]]
+    return dict(original_contiguous=not invalid, noncontiguous_items=invalid,
+                classification='diagnosed_invalid_reconstruction' if invalid else 'original_contiguous')
 
 
 def score_case(case, ledger, audits):
@@ -190,7 +210,8 @@ async def execute(dataset_path, manifest, output):
     data = parse_dataset(payload)
     expected = prepare_bytes(payload, model=manifest['model'], runtime=manifest['runtime'], repetitions=manifest['repetitions'],
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
-                       estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'])
+                       estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'],
+                       allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'])
     if manifest != expected:
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
     from app.config import settings
@@ -203,10 +224,13 @@ async def execute(dataset_path, manifest, output):
     auditor = StrandsQueryOrchestrator()
     if not auditor.enabled:
         raise ValueError('Native model adapter is unavailable')
-    packs = {case['id']: evidence_pack(case) for case in data['cases']}
+    packs = {case['id']: evidence_pack(case, allow_noncontiguous=manifest['allow_noncontiguous_reconstruction']) for case in data['cases']}
+    input_diagnostics = {case['id']: source_continuity(case, packs[case['id']]) for case in data['cases']}
+    inputs_valid = all(d['original_contiguous'] for d in input_diagnostics.values())
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     write_private(output / 'manifest.json', manifest)
     write_private(output / 'dataset.json', data)
+    write_private(output / 'source_input_diagnostics.json', input_diagnostics)
     write_private(output / 'runtime.json', dict(model=manifest['model'],
                   call_timeout_seconds=settings.strands_call_timeout_seconds,
                   audit_timeout_seconds=settings.answer_audit_timeout_seconds,
@@ -323,7 +347,8 @@ async def execute(dataset_path, manifest, output):
                                    for key in ('inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens')},
                    usage_reporting_attempts=sum(bool(a.get('usage')) for a in attempts),
                    usage_complete=bool(attempts) and all({'inputTokens', 'outputTokens'} <= a.get('usage', {}).keys() for a in attempts),
-                   passed=failure is None and len(results) == manifest['cases'] * manifest['repetitions'] and all(r['passed'] for r in results),
+                   inputs_valid=inputs_valid, noncontiguous_input_count=sum(len(d['noncontiguous_items']) for d in input_diagnostics.values()),
+                   passed=inputs_valid and failure is None and len(results) == manifest['cases'] * manifest['repetitions'] and all(r['passed'] for r in results),
                    false_acceptances=sum(r['false_acceptance'] for r in rows),
                    false_rejections=sum(r['false_rejection'] for r in rows),
                    missing_required=sum(r['missing_required'] for r in rows) + sum(c['required'] for case in not_started for c in case['claims']),
@@ -341,6 +366,8 @@ def main():
     parser.add_argument('dataset', type=Path)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--allow-noncontiguous-reconstruction', action='store_true',
+                        help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
@@ -360,7 +387,8 @@ def main():
         parser.error('Preparation requires --runtime with the captured execution configuration')
     manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
-                       estimated_tokens=args.estimated_tokens, cache_note=args.cache_note)
+                       estimated_tokens=args.estimated_tokens, cache_note=args.cache_note,
+                       allow_noncontiguous=args.allow_noncontiguous_reconstruction)
     write_private(args.manifest, manifest)
     print(json.dumps(manifest))
     return 0

@@ -107,11 +107,21 @@ class SourceAuditEvaluationTests(unittest.TestCase):
         documents = [{'document_id': 17, 'title': 'Synthetic record', 'content': text}]
         items = []
         for index, chunk in enumerate(chunk_text(text)):
-            item = dict(document_id=17, chunk_index=index, content=chunk, source_kind='ocr')
+            item = dict(document_id=17, title='Synthetic record', chunk_index=index, content=chunk, source_kind='ocr')
             item['id'] = evidence_item_id(item)
             items.append(item)
         case = dict(documents=documents, evidence_pack={'items': items}, source_capture='Synthetic original-window fixture')
         self.assertEqual(evidence_pack(case), case['evidence_pack'])
+        changed = copy.deepcopy(case)
+        changed['evidence_pack']['items'][0]['source_content'] = text.replace('480', '960')
+        with self.assertRaisesRegex(ValueError, 'original-source chunking'):
+            evidence_pack(changed)
+        changed = copy.deepcopy(case)
+        changed['evidence_pack']['items'][0]['title'] = 'Invented title'
+        changed['evidence_pack']['items'][0]['id'] = evidence_item_id(changed['evidence_pack']['items'][0])
+        with self.assertRaisesRegex(ValueError, 'title differs'):
+            evidence_pack(changed)
+
         changed = copy.deepcopy(case)
         changed['evidence_pack']['items'][0]['content'] += ' A fabricated completion.'
         with self.assertRaisesRegex(ValueError, 'original-source chunking'):
@@ -120,6 +130,44 @@ class SourceAuditEvaluationTests(unittest.TestCase):
         changed['documents'][0]['content'] = text.replace('480', '960')
         with self.assertRaisesRegex(ValueError, 'original-source chunking'):
             evidence_pack(changed)
+
+    def test_captured_context_requires_exact_unique_original_offsets(self):
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from app.source_text import bind_document_context
+        from app.evidence import evidence_item_id
+        from app.answer_finalization import evidence_spans
+        from scripts.eval_source_audit import evidence_pack
+        text = 'Synthetic record: the approved capacity is 480 units.'
+        item = dict(document_id=17, title='Synthetic record', chunk_index=0, content=text, source_kind='ocr')
+        bind_document_context(item, text)
+        item['id'] = evidence_item_id(item)
+        case = dict(documents=[dict(document_id=17, title='Synthetic record', content=text)],
+                    evidence_pack={'items': [item]}, source_capture='Synthetic original context')
+        self.assertIn(text, [span['content'] for span in evidence_spans(evidence_pack(case), citation_safe=True)])
+        changed = copy.deepcopy(case)
+        changed['evidence_pack']['items'][0]['source_context']['start'] = 1
+        with self.assertRaisesRegex(ValueError, 'invalid original offsets'):
+            evidence_pack(changed)
+
+    def test_copied_table_headers_require_explicit_invalid_input_admission(self):
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from app.embeddings import chunk_text
+        from app.evidence import evidence_item_id
+        from scripts.eval_source_audit import evidence_pack, source_continuity
+        text = '| Record | Capacity |\n| --- | --- |\n' + ''.join(f'| UNIT-{i:04d} | {i + 100} units |\n' for i in range(300))
+        chunk = chunk_text(text)[1]
+        self.assertNotIn(chunk, text)
+        item = dict(document_id=17, title='Synthetic table', chunk_index=1, content=chunk, source_kind='ocr')
+        item['id'] = evidence_item_id(item)
+        case = dict(documents=[dict(document_id=17, title='Synthetic table', content=text)],
+                    evidence_pack={'items': [item]}, source_capture='Copied-header reconstruction')
+        with self.assertRaisesRegex(ValueError, 'Noncontiguous reconstructed input'):
+            evidence_pack(case)
+        retained = evidence_pack(case, allow_noncontiguous=True)
+        self.assertEqual(retained, case['evidence_pack'])
+        self.assertFalse(source_continuity(case, retained)['original_contiguous'])
 
 
 class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):

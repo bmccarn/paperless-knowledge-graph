@@ -37,7 +37,7 @@ harness is not a semantic reproduction or an accepted fix.
 ## Validation and baseline results
 
 `python -m unittest tests.test_eval_source_audit tests.test_eval_harness -v`:
-24 tests passed (including subsequent original-window validation). Controlled transports in capture tests measure instrumentation,
+26 tests passed (including subsequent original-window and continuity validation). Controlled transports in capture tests measure instrumentation,
 not model semantics.
 
 `python scripts/reproduce_audit_protocol.py`: exit 1 on the production baseline.
@@ -71,7 +71,11 @@ An independent source review also labelled the retained first batch: one
 unsupported assertion and three supported assertions, all high confidence. A
 local-only reconstruction preserves its four atomic units and all 83 retrieved
 items (206 canonical windows from 36 originals). Production chunking and evidence
-identities validate against the captured originals. This is explicitly a
+identities reproduce from the captured originals. A subsequent continuity check
+identified nine windows with copied table headers that are not contiguous original
+passages. That captured input is classified as an invalid reconstruction; it cannot
+pass evaluation. A diagnostic admission can preserve it unchanged to reproduce the
+production failure, but cannot promote it to source-valid evidence. This is explicitly a
 reconstruction; the original raw native request was not retained. No standalone
 private replay has run.
 

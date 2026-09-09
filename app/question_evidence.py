@@ -1,0 +1,106 @@
+"""Request-local original reading for the inactive question-to-answer pipeline.
+
+The immutable serialized snapshot prevents one request, candidate or mutable caller
+from changing another request's original evidence or prior reading interpretations.
+"""
+from dataclasses import dataclass
+from datetime import date
+import hashlib
+import json
+
+from app import source_reading
+from app.answer_finalization import evidence_spans
+
+PIPELINE_VERSION = 'question-evidence-v1'
+
+class QuestionEvidenceError(ValueError):
+    """Content-free planning/snapshot failures; source text is never an error."""
+
+
+def canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+
+
+def validate_requirements(value):
+    if not isinstance(value, dict) or set(value) != {'resolved_question', 'requirements'}:
+        raise QuestionEvidenceError('invalid_requirements')
+    rows = value['requirements']
+    if (not isinstance(value['resolved_question'], str) or not value['resolved_question'].strip()
+            or not isinstance(rows, list) or not rows):
+        raise QuestionEvidenceError('invalid_requirements')
+    ids = set()
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {'id', 'aspect', 'temporal_scope', 'comparison_scope'}
+                or not isinstance(row['id'], str) or not row['id'].strip() or row['id'] in ids
+                or not isinstance(row['aspect'], str) or not row['aspect'].strip()
+                or not isinstance(row['temporal_scope'], str)
+                or row['temporal_scope'] not in {'none', 'historical', 'current', 'unknown'}
+                or not isinstance(row['comparison_scope'], str)
+                or row['comparison_scope'] not in {'none', 'retrieved_documents', 'unknown'}):
+            raise QuestionEvidenceError('invalid_requirements')
+        ids.add(row['id'])
+    return json.loads(canonical_json(value))
+
+
+@dataclass(frozen=True)
+class QuestionEvidence:
+    """An immutable question/requirements/originals/reading snapshot, never truth."""
+    _snapshot: str
+    _reading: str
+
+    @classmethod
+    async def prepare(cls, orchestrator, question, requirements, evidence_pack, *,
+                      evaluated_at, source_date_order='mdy'):
+        if not isinstance(question, str) or not question.strip():
+            raise QuestionEvidenceError('invalid_question')
+        try:
+            if date.fromisoformat(evaluated_at).isoformat() != evaluated_at:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise QuestionEvidenceError('invalid_evaluated_at') from None
+        if not isinstance(source_date_order, str) or source_date_order not in {'mdy', 'dmy', 'ymd'}:
+            raise QuestionEvidenceError('invalid_date_order')
+        requested = validate_requirements(requirements)
+        spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]
+        documents = source_reading.group_sources(spans)
+        snapshot = canonical_json({'pipeline_version': PIPELINE_VERSION,
+                                   'question': question, **requested, 'evaluated_at': evaluated_at,
+                                   'source_date_order': source_date_order, 'source_documents': documents})
+        # The reader gets copies, before there is a candidate to anchor its reading.
+        payload = json.loads(snapshot)
+        reading = await orchestrator.read_question_sources(payload)
+        validated = source_reading.parse_reading(canonical_json(reading), documents)
+        return cls(snapshot, canonical_json(validated))
+
+    @property
+    def digest(self):
+        return hashlib.sha256(self._snapshot.encode()).hexdigest()
+
+    @property
+    def composition_input(self):
+        return {**json.loads(self._snapshot), 'source_reading': json.loads(self._reading)}
+
+    def audit_payload(self, payload):
+        """Only an exact source/question/date match can reuse the prior reading."""
+        snapshot = json.loads(self._snapshot)
+        documents = source_reading.group_sources(payload['source_spans'])
+        if (any(payload.get(key) != snapshot[key] for key in ('question', 'evaluated_at', 'source_date_order'))
+                or documents != snapshot['source_documents']):
+            raise QuestionEvidenceError('evidence_snapshot_mismatch')
+        return {**{k: v for k, v in payload.items() if k != 'source_spans'},
+                'resolved_question': snapshot['resolved_question'],
+                'requirements': snapshot['requirements'], 'source_documents': documents,
+                'source_reading': json.loads(self._reading)}
+
+    def auditor(self, orchestrator):
+        return PreparedQuestionAuditor(orchestrator, self)
+
+
+@dataclass(frozen=True)
+class PreparedQuestionAuditor:
+    orchestrator: object
+    evidence: QuestionEvidence
+
+    async def audit_answer_units(self, question, units, spans, plan):
+        return await self.orchestrator.audit_answer_units(question, units, spans, plan,
+                                                        prepared_evidence=self.evidence)

@@ -57,7 +57,8 @@ class StrandsQueryOrchestrator:
             "reason": "disabled" if not settings.strands_enabled else _STRANDS_IMPORT_ERROR or "unavailable",
         }
 
-    async def audit_answer_units(self, question: str, units: list[dict], spans: list[dict], plan: dict) -> dict | None:
+    async def audit_answer_units(self, question: str, units: list[dict], spans: list[dict], plan: dict,
+                                 *, prepared_evidence=None) -> dict | None:
         if not self.enabled:
             return None
         payload = {"question": question, "evaluated_at": plan.get("evaluated_at"),
@@ -69,7 +70,8 @@ class StrandsQueryOrchestrator:
                    "protocol_correction": plan.get("audit_protocol_recovery"),
                    "evidence_selection": plan.get('evidence_selection', {}),
                    "units": units, "source_spans": spans}
-        payload = await self._prepare_audit_payload(payload)
+        payload = (prepared_evidence.audit_payload(payload) if prepared_evidence is not None else
+                   await self._prepare_audit_payload(payload))
         if payload is None:
             return None
         text = await self._text_agent(
@@ -144,7 +146,7 @@ class StrandsQueryOrchestrator:
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
                 "Return only the complete JSON object required by the response schema, with no extra prose." +
-                (source_reading.VERIFIER_NOTE if self.audit_strategy in {'source_first', 'document_local', 'document_local_corrected'} else '')),
+                (source_reading.VERIFIER_NOTE if 'source_reading' in payload else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids']))
         if not text or not text.strip():
@@ -173,8 +175,15 @@ class StrandsQueryOrchestrator:
             logger.warning('Strands stage=source_reader outcome=invalid_reading reason=%s', exc)
             return None
 
-    async def _read_source_documents(self, payload, documents):
-        partitions = [[document] for document in documents] if self.audit_strategy in {'document_local', 'document_local_corrected'} else [documents]
+    async def read_question_sources(self, payload):
+        if not self.enabled:
+            raise source_reading.SourceReadingError('unavailable_source_reading')
+        return await self._read_source_documents(payload, payload['source_documents'],
+                                                 strategy='document_local_corrected')
+
+    async def _read_source_documents(self, payload, documents, *, strategy=None):
+        strategy = strategy or self.audit_strategy
+        partitions = [[document] for document in documents] if strategy in {'document_local', 'document_local_corrected'} else [documents]
         readings = [None] * len(partitions)
         pending = iter(enumerate(partitions))
 
@@ -182,8 +191,11 @@ class StrandsQueryOrchestrator:
             for index, partition in pending:
                 # No candidate, correction, other document or sibling reading reaches this call.
                 reader_input = {key: payload[key] for key in ('question', 'evaluated_at', 'source_date_order')}
+                for key in ('resolved_question', 'requirements'):
+                    if key in payload:
+                        reader_input[key] = payload[key]
                 reader_input['source_documents'] = partition
-                limit = 2 if self.audit_strategy == 'document_local_corrected' else 1
+                limit = 2 if strategy == 'document_local_corrected' else 1
                 for attempt in range(limit):
                     text = await self._text_agent(
                         name='source_reader', system_prompt=source_reading.READER_PROMPT,

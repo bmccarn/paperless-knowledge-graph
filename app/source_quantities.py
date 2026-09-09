@@ -6,19 +6,61 @@ replace original quotes. No arithmetic, scale conversion or currency inference.
 from decimal import Decimal
 import re
 from markdown_it import MarkdownIt
-from app.source_dates import VALUE_UNITS
+from app.source_dates import VALUE_UNIT_NAMES
 
-_CURRENCY = r'(?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])'
-_UNIT_SUFFIX = r'(?:/[A-Za-zµμ°][A-Za-z0-9µμ°^+²³⁻-]*|[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+|\^[+-]?\d+)'
-# Digits after a currency prefix are the amount, not an exponent on its unit.
-UNIT = (r'(?:' + _CURRENCY + _UNIT_SUFFIX + r'*|(?!(?:' + _CURRENCY + r'))'
-        + VALUE_UNITS + r'(?:' + _UNIT_SUFFIX + r'|\d+)*)')
-_UNIT_PATTERN = re.compile(r"(?<![A-Za-z'’/])" + UNIT + r'(?![A-Za-z/])')
 NUMBER = r'[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?'
+_NUMBERS = re.compile(r'(?<![\w.,])' + NUMBER + r'(?!\d|[.,]\d)')
+_CURRENCY_AMOUNT = re.compile(NUMBER + r'(?!\w|[.,]\d)')
 _TABLE_MARKDOWN = MarkdownIt('commonmark').enable('table')
 _CURRENCY_SYMBOL = {'USD': '$', 'CAD': '$', 'AUD': '$', 'EUR': '€', 'GBP': '£'}
+_CURRENCIES = {'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', '$', '€', '£'}
+_BASES = sorted({unit.split('/')[0] for unit in VALUE_UNIT_NAMES}, key=lambda unit: (-len(unit), unit))
+_BASE_PATTERN = re.compile('|'.join(re.escape(unit) for unit in _BASES))
+_POWERS = frozenset('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻')
 _SCALE_WORDS = re.compile(r'\b(?:hundreds?|thousands?|millions?|billions?|trillions?|scaled?|scaling|factor|times|multiple|per|x|k|m|b|t|bn|mn|mm|tn|kilo|mega|giga)\b', re.I)
-_LABEL = re.compile(r"^(?:[A-Za-z][A-Za-z '\-]*?\s+)?(?:\((" + UNIT + r")\)|(" + UNIT + r"))$")
+
+
+def _unit_tokens(text):
+    """Consume maximal unit-like tokens without regex suffix backtracking."""
+    tokens, consumed = [], 0
+    for match in _BASE_PATTERN.finditer(text):
+        first, last = match.span()
+        if first < consumed or (first and (text[first - 1].isalpha() or text[first - 1] in "_/'’")):
+            continue
+        following = text[last:last + 1]
+        if following and (following.isalpha() or following == '_'):
+            continue
+        base = match.group()
+        extend = bool(following and (following in '/^' or following in _POWERS
+                                    or (base not in _CURRENCIES and following.isdigit())))
+        if extend:
+            while last < len(text) and (text[last].isalnum() or text[last] in '/µμ°^+−-' or text[last] in _POWERS):
+                last += 1
+        tokens.append((first, last, text[first:last]))
+        consumed = last
+    return tokens
+
+
+def _power_suffix(text):
+    if not text or text.isdecimal() or all(char in _POWERS for char in text):
+        return True
+    return text.startswith('^') and text[1:].lstrip('+-').isdecimal() and not text[1:].startswith(('++', '--', '+-', '-+'))
+
+
+def _label_identity(unit):
+    parts = unit.split('/')
+    base = _BASE_PATTERN.match(parts[0])
+    if base is None or not _power_suffix(parts[0][base.end():]):
+        return False
+    if base.group() in _CURRENCIES and parts[0] != base.group():
+        return False
+    for part in parts[1:]:
+        index = 0
+        while index < len(part) and (part[index].isalpha() or part[index] == '°'):
+            index += 1
+        if not index or not _power_suffix(part[index:]):
+            return False
+    return True
 
 
 def _physical_lines(text):
@@ -65,19 +107,22 @@ def table_ranges(original):
 
 def _label_unit(label):
     label = label.strip()
-    match = _LABEL.fullmatch(label)
-    if match is None or len(list(_UNIT_PATTERN.finditer(label))) != 1:
+    tokens = _unit_tokens(label)
+    if len(tokens) != 1:
         return None
-    group = 1 if match.group(1) is not None else 2
-    prefix = label[:match.start(group)]
-    if any(char.isdigit() for char in prefix) or _SCALE_WORDS.search(prefix):
+    first, last, unit = tokens[0]
+    prefix, suffix = label[:first], label[last:]
+    if suffix == ')' and prefix.endswith('('):
+        prefix, suffix = prefix[:-1], ''
+    if suffix or (prefix and not re.fullmatch(r"[A-Za-z][A-Za-z '\-]*\s+", prefix)):
         return None
-    return match.group(group)
+    if _SCALE_WORDS.search(prefix) or not _label_identity(unit):
+        return None
+    return unit
 
 
 def _has_unit_annotation(label):
-    return bool(_UNIT_PATTERN.search(label)
-                or re.search(r'USD|EUR|GBP|CAD|AUD|JPY', label))
+    return any(_label_identity(unit) or '/' in unit or '^' in unit for _, _, unit in _unit_tokens(label)) or any(code in label for code in _CURRENCIES if code.isalpha())
 
 
 def table_quantities(original_quote, certified_ranges):
@@ -108,14 +153,34 @@ def table_quantities(original_quote, certified_ranges):
 
 
 def unit_names(text):
-    return {match.group() for match in _UNIT_PATTERN.finditer(text)}
+    return {unit for _, _, unit in _unit_tokens(text)}
 
 
 def prose_quantities(text):
-    pairs = {(Decimal(amount.replace(',', '')), unit) for amount, unit in re.findall(
-        r'(?<![\w.,])(' + NUMBER + r')\s*(' + UNIT + r')(?![A-Za-z/])', text)}
-    for unit, amount in re.findall(r'(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*(' + NUMBER + r')(?!\w|[.,]\d)', text):
-        pairs.add((Decimal(amount.replace(',', '')), unit))
+    tokens = _unit_tokens(text)
+    starts = {first: unit for first, _, unit in tokens}
+    ends = {last: unit for _, last, unit in tokens}
+    pairs = set()
+    for match in _NUMBERS.finditer(text):
+        first, last = match.span()
+        before, after = first, last
+        while before and text[before - 1].isspace():
+            before -= 1
+        while after < len(text) and text[after].isspace():
+            after += 1
+        amount = Decimal(match.group().replace(',', ''))
+        if after in starts:
+            pairs.add((amount, starts[after]))
+        if ends.get(before) in _CURRENCIES:
+            pairs.add((amount, ends[before]))
+    for _, last, unit in tokens:
+        if unit not in _CURRENCIES:
+            continue
+        while last < len(text) and text[last].isspace():
+            last += 1
+        amount = _CURRENCY_AMOUNT.match(text, last)
+        if amount is not None:
+            pairs.add((Decimal(amount.group().replace(',', '')), unit))
     return pairs
 
 

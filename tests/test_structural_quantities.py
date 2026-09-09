@@ -52,6 +52,16 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(values_match('Charge: $100.', references(TABLE)))
         self.assertTrue(values_match('Length: 12 m.', references('| Length m |\n| --- |\n| 12 |')))
 
+    def test_compact_prose_quantities_keep_unit_obligations(self):
+        for claim, source in (('Dose: 12mg.', 'Dose: 12 mg.'), ('Rate: 12%.', 'Rate: 12 percent.'),
+                              ('Amount: 100 USD.', 'Amount: USD 100.')):
+            if '%' in claim:
+                # No percent-symbol/name conversion was introduced.
+                self.assertFalse(values_match(claim, references(source)))
+            else:
+                self.assertTrue(values_match(claim, references(source)), (claim, source))
+        self.assertFalse(values_match('Dose: 12mg.', references('Amount: 12 USD.')))
+
     def test_compound_units_are_not_prefixes_or_conversions(self):
         refs = references(MEASURE)
         self.assertTrue(values_match('Concentration: 12 mg/L.', refs))
@@ -64,12 +74,13 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
     def test_unrecognized_compound_is_retained_as_an_exact_requirement(self):
         self.assertFalse(values_match('Concentration: 12 mg/L/min.', references('The value is 12 USD.')))
         self.assertTrue(values_match('Concentration: 12 mg/L/min.', references('Concentration: 12 mg/L/min.')))
-        for unit in ('mg/L²', 'mg/L^2', 'mg/L2'):
+        for unit in ('mg/L²', 'mg/L^2', 'mg/L2', 'mg/L22X', 'mg/L²x', 'mg/Lé'):
             self.assertFalse(values_match('Concentration: 12 mg/L.', references('Concentration: 12 ' + unit + '.')))
             self.assertFalse(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 mg/L.')))
             self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references('Concentration: 12 ' + unit + '.')))
             table = '| Concentration ' + unit + ' |\n| --- |\n| 12 |'
-            self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references(table)))
+            if unit in {'mg/L²', 'mg/L^2', 'mg/L2'}:
+                self.assertTrue(values_match('Concentration: 12 ' + unit + '.', references(table)))
 
     def test_multiple_unit_labels_are_ambiguous_and_normal_words_are_not_units(self):
         ambiguous = '| Charge USD CAD |\n| --- |\n| 100 |'
@@ -110,6 +121,17 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
         for newline in ('\r\n', '\r', '\n'):
             source = TABLE.replace('\n', newline)
             self.assertTrue(values_match('Charge: 100 USD.', references(source)))
+
+    def test_long_unit_like_identifiers_have_bounded_parsing(self):
+        import subprocess
+        import sys
+        script = "from app.source_quantities import _label_unit, table_quantities; " \
+                 "labels=['Concentration mg'+'1'*10000+'X', 'm'+'²'*10000+'x']; " \
+                 "assert all(_label_unit(label) is None for label in labels); " \
+                 "table='| Item | Amount USD |\\n| --- | --- |\\n| '+labels[0]+' | 100 |'; " \
+                 "table_quantities(table, [[0,len(table)]])"
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_unicode_negative_table_value_preserves_sign(self):
         source = '| Charge USD |\n| --- |\n| −100 |'

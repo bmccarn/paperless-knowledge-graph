@@ -3,7 +3,11 @@ from dataclasses import dataclass
 from datetime import date
 import re
 
-VALUE_UNITS = r"(?:mmol/L|mg/dL|mg/L|g/dL|g/L|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|mg|kg|ng|kWh|ppm|lbs|lb|oz|km|cm|mm|ft|mi|°C|°F|percent|L|g|m|s|h|[$€£%])"
+VALUE_UNIT_NAMES = ('mmol/L', 'mg/dL', 'mg/L', 'g/dL', 'g/L', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY',
+                    'mL', 'ml', 'mcg', 'µg', 'μg', 'mg', 'kg', 'ng', 'kWh', 'ppm', 'lbs', 'lb', 'oz',
+                    'km', 'cm', 'mm', 'ft', 'mi', '°C', '°F', 'percent', 'L', 'g', 'm', 's', 'h', '$', '€', '£', '%')
+VALUE_UNITS = '(?:' + '|'.join(re.escape(unit) for unit in VALUE_UNIT_NAMES) + ')'
+
 
 def calendar_year_context(before: str, after: str) -> bool:
     """A four-digit scalar needs calendar context and cannot carry a unit."""

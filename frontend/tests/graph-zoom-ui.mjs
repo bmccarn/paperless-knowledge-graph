@@ -52,6 +52,50 @@ try {
       return fillText.call(this, text, x, y, ...rest);
     };
   });
+  // Interact before simulation cooldown: automatic initial fitting must yield.
+  await page.goto(`${base}/graph`);
+  const earlyCanvas = page.locator('canvas').first();
+  await earlyCanvas.waitFor({ state: 'visible' });
+  const earlyBounds = await earlyCanvas.boundingBox();
+  await page.mouse.move(earlyBounds.x + earlyBounds.width / 2, earlyBounds.y + earlyBounds.height / 2);
+  await page.mouse.wheel(0, -1600);
+  await page.waitForTimeout(250);
+  const earlyZoom = await earlyCanvas.evaluate(element => element.__zoom.k);
+  await page.waitForTimeout(2200);
+  const settledEarlyZoom = await earlyCanvas.evaluate(element => element.__zoom.k);
+  await page.screenshot({ path: path.join(artifacts, 'graph-early-zoom.png'), fullPage: true });
+  assert.ok(earlyZoom > 1, 'Early wheel gesture must actually zoom');
+  assert.ok(Math.abs(settledEarlyZoom - earlyZoom) < 0.001,
+            `Initial fit must not overwrite early user zoom: ${earlyZoom} -> ${settledEarlyZoom}`);
+  // Pointer-driven pan also takes ownership before simulation cooldown.
+  await page.goto(`${base}/graph`);
+  const panCanvas = page.locator('canvas').first();
+  await panCanvas.waitFor({ state: 'visible' });
+  const panBounds = await panCanvas.boundingBox();
+  await page.mouse.move(panBounds.x + 20, panBounds.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(panBounds.x + 100, panBounds.y + 60, { steps: 5 });
+  await page.mouse.up();
+  const earlyPan = await panCanvas.evaluate(element => ({ ...element.__zoom }));
+  await page.waitForTimeout(2400);
+  const settledPan = await panCanvas.evaluate(element => ({ ...element.__zoom }));
+  assert.deepEqual(settledPan, earlyPan, 'Initial fit must not overwrite an early pan');
+
+  // A gesture as automatic fitting starts must not fight a queued fit animation.
+  await page.goto(`${base}/graph`);
+  const boundaryCanvas = page.locator('canvas').first();
+  await boundaryCanvas.waitFor({ state: 'visible' });
+  const boundaryInitial = await boundaryCanvas.evaluate(element => element.__zoom.k);
+  await page.waitForFunction(initial => document.querySelector('canvas')?.__zoom.k !== initial, boundaryInitial);
+  const boundaryBounds = await boundaryCanvas.boundingBox();
+  await page.mouse.move(boundaryBounds.x + boundaryBounds.width / 2, boundaryBounds.y + boundaryBounds.height / 2);
+  await page.mouse.wheel(0, -800);
+  await page.waitForTimeout(250);
+  const boundaryZoom = await boundaryCanvas.evaluate(element => element.__zoom.k);
+  await page.waitForTimeout(1000);
+  assert.ok(Math.abs(await boundaryCanvas.evaluate(element => element.__zoom.k) - boundaryZoom) < 0.001,
+            'Automatic fit must not continue animating over a boundary gesture');
+  // A fresh untouched renderer still gets its automatic fit (checked below).
   await page.goto(`${base}/graph`);
   const canvas = page.locator('canvas').first();
   await canvas.waitFor({ state: 'visible' });

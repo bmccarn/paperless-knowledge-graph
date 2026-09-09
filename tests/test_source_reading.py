@@ -131,3 +131,158 @@ class SourceReadingTests(unittest.IsolatedAsyncioTestCase):
     def test_unknown_strategy_is_rejected(self):
         with self.assertRaises(ValueError):
             self.auditor('silently-enable-something')
+
+
+class DocumentLocalReadingTests(unittest.IsolatedAsyncioTestCase):
+    setUp = SourceReadingTests.setUp
+    auditor = SourceReadingTests.auditor
+
+    async def test_each_reader_is_isolated_and_completion_order_does_not_reorder_notes(self):
+        auditor = self.auditor('document_local')
+        second_done = asyncio.Event()
+        readers, verifiers = [], []
+
+        async def transport(name, system_prompt, prompt, **kwargs):
+            payload = json.loads(prompt)
+            if name == 'source_auditor':
+                verifiers.append(payload)
+                return self.verdict
+            readers.append(payload)
+            documents = payload['source_documents']
+            self.assertEqual(len(documents), 1)
+            doc_id = documents[0]['document_id']
+            if doc_id == 17:
+                await second_done.wait()
+            else:
+                second_done.set()
+            return json.dumps({'documents': [r for r in self.reading['documents'] if r['document_id'] == doc_id]})
+
+        with patch.object(auditor, '_text_agent', side_effect=transport):
+            result = await auditor.audit_answer_units('Question', self.units, self.spans, self.plan)
+        self.assertEqual(result['assessments'][0]['status'], 'supported')
+        self.assertEqual(len(readers), 2)
+        for reader in readers:
+            self.assertEqual(set(reader), {'question', 'evaluated_at', 'source_date_order', 'source_documents'})
+            for marker in ('CANDIDATE-ONLY', 'ANSWER-CONTEXT', 'OLD-VERDICT', 'CORRECTION-ONLY'):
+                self.assertNotIn(marker, json.dumps(reader))
+        verifier = verifiers[0]
+        self.assertEqual(verifier['source_reading'], self.reading)
+        windows = [w for d in verifier['source_documents'] for w in d['windows']]
+        self.assertEqual([w['span'] for w in sorted(windows, key=lambda w: w['ordinal'])], self.spans)
+
+    async def test_failure_cancels_and_drains_other_readers_before_return(self):
+        auditor = self.auditor('document_local')
+        started, drained = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def transport(name, system_prompt, prompt, **kwargs):
+            calls.append(name)
+            doc_id = json.loads(prompt)['source_documents'][0]['document_id']
+            if doc_id == 17:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    drained.set()
+            await started.wait()
+            # This other document's valid handle must fail local ownership.
+            return json.dumps({'documents': [self.reading['documents'][0]]})
+
+        with patch.object(auditor, '_text_agent', side_effect=transport):
+            result = await auditor.audit_answer_units('Question', self.units, self.spans, {})
+        self.assertIsNone(result)
+        self.assertTrue(drained.is_set())
+        self.assertNotIn('source_auditor', calls)
+
+    async def test_parent_cancellation_drains_reader_tasks(self):
+        auditor = self.auditor('document_local')
+        ready = asyncio.Event()
+        active = set()
+
+        async def transport(name, system_prompt, prompt, **kwargs):
+            task = asyncio.current_task()
+            active.add(task)
+            if len(active) == 2:
+                ready.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active.remove(task)
+
+        with patch.object(auditor, '_text_agent', side_effect=transport):
+            task = asyncio.create_task(auditor.audit_answer_units('Question', self.units, self.spans, {}))
+            await ready.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertFalse(active)
+
+    async def test_reader_task_count_is_bounded_and_all_documents_are_read(self):
+        from app.config import settings
+        spans = [{**self.spans[0], 'document_id': i + 100, 'span_id': f'span-{i}'} for i in range(20)]
+        active, maximum, seen = 0, 0, []
+
+        async def transport(name, system_prompt, prompt, **kwargs):
+            nonlocal active, maximum
+            if name == 'source_auditor':
+                return self.verdict
+            active += 1
+            maximum = max(maximum, active)
+            doc_id = json.loads(prompt)['source_documents'][0]['document_id']
+            seen.append(doc_id)
+            try:
+                await asyncio.sleep(0)
+                return json.dumps({'documents': [{'document_id': doc_id, 'observations': [], 'limitations': []}]})
+            finally:
+                active -= 1
+
+        with patch.object(settings, 'strands_max_concurrent_calls', 2):
+            auditor = self.auditor('document_local')
+            with patch.object(auditor, '_text_agent', side_effect=transport):
+                await auditor.audit_answer_units('Question', self.units, spans, {})
+        self.assertEqual(maximum, 2)
+        self.assertEqual(seen, list(range(100, 120)))
+
+    async def test_simultaneous_audits_share_native_call_limit(self):
+        from types import SimpleNamespace
+        from app.config import settings
+        from app import strands_orchestrator as native
+        active, maximum = 0, 0
+        stages = []
+        spans = [{**self.spans[0], 'document_id': i + 100, 'span_id': f'span-{i}'} for i in range(8)]
+        verdict = self.verdict
+
+        class Result:
+            stop_reason = 'end_turn'
+            metrics = SimpleNamespace(accumulated_usage={})
+            def __init__(self, text):
+                self.text = text
+            def __str__(self):
+                return self.text
+
+        class Agent:
+            def __init__(self, **kwargs):
+                self.name = kwargs['name']
+            async def invoke_async(self, prompt):
+                nonlocal active, maximum
+                active += 1
+                maximum = max(maximum, active)
+                stages.append(self.name)
+                try:
+                    await asyncio.sleep(0.001)
+                    if self.name == 'source_auditor':
+                        return Result(verdict)
+                    doc = json.loads(prompt)['source_documents'][0]
+                    return Result(json.dumps({'documents': [{'document_id': doc['document_id'],
+                        'observations': [], 'limitations': []}]}))
+                finally:
+                    active -= 1
+
+        with patch.object(settings, 'strands_max_concurrent_calls', 2), patch.object(native, 'Agent', Agent):
+            auditor = self.auditor('document_local')
+            with patch.object(auditor, '_model', return_value=None):
+                await asyncio.gather(*(auditor.audit_answer_units('Question', self.units, spans, {}) for _ in range(2)))
+        self.assertEqual(maximum, 2)
+        self.assertEqual(active, 0)
+        self.assertEqual(stages.count('source_reader'), 16)
+        self.assertEqual(stages.count('source_auditor'), 2)

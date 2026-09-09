@@ -226,7 +226,8 @@ class SourceAuditEvaluationTests(unittest.TestCase):
 
 
 class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
-    async def run_capture(self, directory, *, stalled=False):
+    async def run_capture(self, directory, *, stalled=False, sdk_retry_policy='configured'):
+        self.agent_configs = []
         import asyncio
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -243,9 +244,11 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
             def __str__(self):
                 return 'NONTERMINAL SYNTHETIC BODY'
 
+        configs = self.agent_configs
+
         class Agent:
             def __init__(self, **kwargs):
-                pass
+                configs.append(kwargs)
             async def invoke_async(self, prompt):
                 if stalled:
                     await asyncio.sleep(10)
@@ -260,10 +263,29 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
              patch.object(native, 'Agent', Agent), patch.object(native.StrandsQueryOrchestrator, '_model', return_value=None):
             manifest = prepare(source, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
                                repetitions=1, max_attempts=4, seconds=0.02 if stalled else 10,
-                               estimated_tokens=1000, cache_note='Controlled protocol transport; no model inference')
+                               estimated_tokens=1000, cache_note='Controlled protocol transport; no model inference',
+                               sdk_retry_policy=sdk_retry_policy)
             report = await execute(source, manifest, output)
             self.assertIs(native.Agent, Agent)
+            Agent(name='after-evaluation')
         return report, output
+
+    async def test_single_attempt_is_manifest_bound_and_sdk_binding_restored_after_failure(self):
+        for stalled in (False, True):
+            with self.subTest(stalled=stalled), tempfile.TemporaryDirectory() as directory:
+                await self.run_capture(directory, stalled=stalled, sdk_retry_policy='single_attempt')
+                self.assertGreater(len(self.agent_configs), 1)
+                for config in self.agent_configs[:-1]:
+                    self.assertIn('retry_strategy', config)
+                    self.assertIsNone(config['retry_strategy'])
+                self.assertNotIn('retry_strategy', self.agent_configs[-1])
+                manifest = json.loads((Path(directory) / 'output/manifest.json').read_text())
+                self.assertEqual(manifest['sdk_retry_policy'], 'single_attempt')
+
+    async def test_configured_retry_policy_does_not_override_sdk_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            await self.run_capture(directory)
+        self.assertTrue(all('retry_strategy' not in config for config in self.agent_configs))
 
     async def test_nonterminal_native_body_survives_adapter_rejection(self):
         with tempfile.TemporaryDirectory() as directory:

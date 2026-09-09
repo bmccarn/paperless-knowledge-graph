@@ -144,7 +144,7 @@ class StrandsQueryOrchestrator:
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
                 "Return only the complete JSON object required by the response schema, with no extra prose." +
-                (source_reading.VERIFIER_NOTE if self.audit_strategy == 'source_first' else '')),
+                (source_reading.VERIFIER_NOTE if self.audit_strategy in {'source_first', 'document_local'} else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids']))
         if not text or not text.strip():
@@ -163,19 +163,40 @@ class StrandsQueryOrchestrator:
             documents = source_reading.group_sources(payload['source_spans'])
             grouped = {key: value for key, value in payload.items() if key != 'source_spans'}
             grouped['source_documents'] = documents
-            if self.audit_strategy == 'source_first':
-                # Construct a whitelist; no candidate, prior answer or correction reaches the reader.
-                reader_input = {key: payload[key] for key in ('question', 'evaluated_at', 'source_date_order')}
-                reader_input['source_documents'] = documents
-                text = await self._text_agent(
-                    name='source_reader', system_prompt=source_reading.READER_PROMPT,
-                    prompt=json.dumps(reader_input, ensure_ascii=False),
-                    response_format=source_reading.response_format(documents))
-                grouped['source_reading'] = source_reading.parse_reading(text, documents)
+            if self.audit_strategy in {'source_first', 'document_local'}:
+                grouped['source_reading'] = await self._read_source_documents(payload, documents)
             return grouped
         except source_reading.SourceReadingError as exc:
             logger.warning('Strands stage=source_reader outcome=invalid_reading reason=%s', exc)
             return None
+
+    async def _read_source_documents(self, payload, documents):
+        partitions = [[document] for document in documents] if self.audit_strategy == 'document_local' else [documents]
+        readings = [None] * len(partitions)
+        pending = iter(enumerate(partitions))
+
+        async def worker():
+            for index, partition in pending:
+                # No candidate, correction, other document or sibling reading reaches this call.
+                reader_input = {key: payload[key] for key in ('question', 'evaluated_at', 'source_date_order')}
+                reader_input['source_documents'] = partition
+                text = await self._text_agent(
+                    name='source_reader', system_prompt=source_reading.READER_PROMPT,
+                    prompt=json.dumps(reader_input, ensure_ascii=False),
+                    response_format=source_reading.response_format(partition))
+                readings[index] = source_reading.parse_reading(text, partition)['documents']
+
+        tasks = [asyncio.create_task(worker()) for _ in range(
+            min(len(partitions), max(1, settings.strands_max_concurrent_calls)))]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # No queued or active sibling may outlive a failed/cancelled audit.
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return {'documents': [document for reading in readings for document in reading]}
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:
         if not self.enabled:

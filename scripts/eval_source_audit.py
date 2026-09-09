@@ -95,13 +95,15 @@ def prepare(dataset_path, **options):
     return prepare_bytes(dataset_path.read_bytes(), **options)
 
 
-def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured', audit_strategy='flat'):
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured', audit_strategy='flat', sdk_retry_policy='configured'):
     data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
     from app.source_reading import STRATEGIES
     if audit_strategy not in STRATEGIES:
         raise ValueError('Unknown audit strategy')
+    if sdk_retry_policy not in {'configured', 'single_attempt'}:
+        raise ValueError('Unknown SDK retry policy')
     if proxy_cache_policy not in {'configured', 'bypass'}:
         raise ValueError('Unknown proxy cache policy')
     if type(allow_noncontiguous) is not bool:
@@ -121,7 +123,7 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
                 conditions='exact case documents and ordering; four-unit production batches',
                 cases=len(data['cases']), assertions=sum(len(c['claims']) for c in data['cases']),
                 synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous,
-                proxy_cache_policy=proxy_cache_policy, audit_strategy=audit_strategy)
+                proxy_cache_policy=proxy_cache_policy, audit_strategy=audit_strategy, sdk_retry_policy=sdk_retry_policy)
 
 
 def evidence_pack(case, *, allow_noncontiguous=False):
@@ -249,7 +251,8 @@ async def execute(dataset_path, manifest, output):
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
                        estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'],
                        allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'],
-                       proxy_cache_policy=manifest['proxy_cache_policy'], audit_strategy=manifest['audit_strategy'])
+                       proxy_cache_policy=manifest['proxy_cache_policy'], audit_strategy=manifest['audit_strategy'],
+                       sdk_retry_policy=manifest['sdk_retry_policy'])
     if manifest != expected:
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
     from app.config import settings
@@ -273,7 +276,8 @@ async def execute(dataset_path, manifest, output):
                   audit_timeout_seconds=settings.answer_audit_timeout_seconds,
                   audit_concurrency=settings.strands_max_concurrent_calls,
                   request_identifiers='Not exposed by native adapter; unavailable',
-                  provider_destination=settings.litellm_url, output_token_cap=None))
+                  provider_destination=settings.litellm_url, output_token_cap=None,
+                  sdk_retry_policy=manifest['sdk_retry_policy']))
     attempts, results = [], []
     native_text, native_audit, native_model = auditor._text_agent, auditor.audit_answer_units, auditor._model
     case_audits = []
@@ -313,6 +317,11 @@ async def execute(dataset_path, manifest, output):
     native_agent = native_module.Agent
 
     class CapturedAgent(native_agent):
+        def __init__(self, *args, **kwargs):
+            if manifest['sdk_retry_policy'] == 'single_attempt':
+                kwargs['retry_strategy'] = None
+            super().__init__(*args, **kwargs)
+
         async def invoke_async(self, *args, **kwargs):
             result = await super().invoke_async(*args, **kwargs)
             attempt = CURRENT_ATTEMPT.get()
@@ -414,7 +423,8 @@ def main():
                         help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
-    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first'], default='flat')
+    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first', 'document_local'], default='flat')
+    parser.add_argument('--sdk-retry-policy', choices=['configured', 'single_attempt'], default='configured')
     parser.add_argument('--proxy-cache-policy', choices=['configured', 'bypass'], default='configured')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
     parser.add_argument('--repetitions', type=int, default=3)
@@ -434,7 +444,7 @@ def main():
     manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
                        estimated_tokens=args.estimated_tokens, cache_note=args.cache_note,
-                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy, audit_strategy=args.audit_strategy)
+                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy, audit_strategy=args.audit_strategy, sdk_retry_policy=args.sdk_retry_policy)
     write_private(args.manifest, manifest)
     print(json.dumps(manifest))
     return 0

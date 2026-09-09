@@ -328,9 +328,6 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(output.exists())
 
 
-if __name__ == '__main__':
-    unittest.main()
-
     async def test_corrected_foreign_handle_cannot_erase_raw_false_approval(self):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -354,7 +351,7 @@ if __name__ == '__main__':
                 configs.append(kwargs)
             async def invoke_async(self, prompt):
                 payload = json.loads(prompt)
-                corrected = 'protocol_correction' in payload
+                corrected = bool(payload.get('protocol_correction'))
                 handle = payload['source_spans'][0]['span_id'] if corrected else 'foreign'
                 return Result(decision(status='unsupported' if corrected else 'supported',
                                        references=[{'span_id': handle}]))
@@ -383,3 +380,7 @@ if __name__ == '__main__':
             self.assertFalse(captured['score']['assertions'][0]['source_supported'])
             self.assertEqual(len(captured['raw_audits']), 2)
             self.assertTrue(all(c['retry_strategy'] is None for c in configs))
+
+
+if __name__ == '__main__':
+    unittest.main()

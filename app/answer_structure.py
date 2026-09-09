@@ -106,7 +106,7 @@ def _structure(answer, units):
             if owner is not None:
                 item = items[owner]
                 if not item.units:
-                    item.field_item = _field(token.content)
+                    item.field_item = _field(token.content) and not heading_level
                 item.units.update(ids)
 
     # Colon labels can share a CommonMark paragraph with the following line.
@@ -190,11 +190,12 @@ def _structure(answer, units):
     # preceding answer context exists it cannot be silently discarded.
     root_paragraphs = {uid: set().union(*(b.units for b in blocks if b.item is None and uid in b.units))
                        for block in blocks if block.item is None for uid in block.units}
+    root_headings = {uid for block in blocks if block.item is None and block.heading_level for uid in block.units}
     root_items = {uid: item.units for item in items if item.parent is None for uid in item.units}
     prior = set()
     for unit in units:
         uid = unit['id']
-        if uid in root_paragraphs and _field(unit['text']):
+        if uid in root_paragraphs and uid not in root_headings and _field(unit['text']):
             govern({uid}, prior, ('paragraph_field_run', tuple(sorted(prior))))
             prior = prior | {uid}
         elif uid in root_paragraphs or uid in root_items:

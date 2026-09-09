@@ -73,6 +73,8 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
             ('## Invoice Cedar REJECT', '## Invoice Maple'),
             ('Invoice Cedar REJECT\n--------------------', 'Invoice Maple\n-------------'),
             ('# Invoice Cedar REJECT', '# Invoice Maple'),
+            ('## Invoice Cedar REJECT', '## Invoice: Maple'),
+            ('Invoice Cedar REJECT\n--------------------', 'Invoice: Maple\n--------------'),
         ):
             answer = (bad_heading + '\n\n- Amount: $20.\n- Recipient: Casey.\n\n'
                       + good_heading + '\n\n- Amount: $30.\n- Recipient: Morgan.')

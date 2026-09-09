@@ -626,3 +626,54 @@ corrected with regressions using actual Uvicorn shutdown and Python 3.12 Server.
 A real loopback HTTP forced-shutdown check completed asynchronous cleanup with one
 cancellation and a closed listener; no model calls were made. All 52 live utility
 tests pass. Full live runtime admission/browser orchestration remains incomplete.
+
+V2 all-mode qualification stopped at case06 (hours history, Timeline): both
+reviewers found one missing required latest-record aspect and one false-complete
+coverage assessment; all raw/delivered factual approvals remained supported.
+The source reader and composer input contained the omitted information. Coverage
+received no original content, accepted a narrowed plan and declared complete, so
+conditional recovery did not run. Cases00–05 passed; 41 later cases were not run.
+The failed result and exclusive failure aggregate are retained under
+`/private/tmp/kg-question-recovery-v2-all-modes-20260909/case-06`. This candidate
+does not qualify live retrieval or deployment. The source-aware comparison proposal
+in `docs/specs/question-source-coverage.md` describes a twelve-call diagnostic with
+retained failures and complete-answer controls before another application change.
+
+
+The revised seven-case/twelve-document source-coverage diagnostic and its concrete
+input/gold pack passed both independent reviews. Input SHA256:
+`48c8bc35fa77395a09e93b4cbab3aae8a9904c6e2123c54bf47bd60efe3f2223`.
+The harness (`scripts/eval_source_coverage.py`) also passed both reviews after
+closing input replacement between admission/execution and missing second-reviewer
+identity. All 15 focused parser, execution, capture and locked SDK transport tests
+pass offline. Refused, truncated, unavailable and invalid responses cannot count as
+empty gap assessments; failed calls remain failures while later controls are still
+measured. Gold and previous coverage/planner labels never enter model input.
+
+No diagnostic model calls have run. Automatic approval review rejected staging
+repository code and synthetic fixtures in the existing KG pod's new temporary
+directory, including after verifying every original exactly matches the repository's
+synthetic-only dataset. Explicit permission for that transfer is pending. Artifacts
+and the staged command are local at `/private/tmp/kg-source-coverage-20260909` and
+`/private/tmp/prepare-kg-source-coverage-runtime.py`. No production mutation,
+publication or deployment occurred. A passing probe would permit the next reviewed
+integration design, not production qualification or activation.
+
+After explicit user approval, staging and the once-only diagnostic completed.
+All twelve calls terminated normally in 16.698540 seconds, with 10,292 reported
+tokens. Frozen manifest SHA256:
+`6dedcbe73bf415c889468b419a6fa9be1b9a3156bd299e0b90691c0536040477`;
+result SHA256:
+`2447f8e319eb075147a1e31c1ac9b8d0badbbeba5f27601113a95e9d631f48a0`.
+The missing-charge case was detected. The missing-latest-record case returned
+`gaps: []`, losing three required meanings in one requested aspect. All five
+complete controls returned no gaps. This fails the frozen diagnostic; the source
+checker is not justified for application integration. No retry was performed.
+
+The retained original reader had already extracted each lost latest-record fact.
+A new reader is therefore not the next experiment. The local proposal
+`docs/specs/question-fact-conservation.md` instead makes source-observation
+selection/exclusion explicit and tests false irrelevance and incomplete duplicate
+judgments separately from deterministic ID accounting. It remains unimplemented
+and unqualified. The approved draft PR #50 status update was published; no query
+activation or GitOps deployment occurred.

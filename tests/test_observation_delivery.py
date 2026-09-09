@@ -10,7 +10,7 @@ from tests.runtime import configure_test_environment
 configure_test_environment()
 
 from app.answer_finalization import AnswerFinalizer, citation_safe_span, evidence_spans, validate_reference
-from app.answer_observations import ObservationCandidate
+from app.answer_observations import ObservationCandidate, ObservationValidationError
 from tests.test_source_dates import pack
 
 
@@ -41,6 +41,81 @@ class ObservationRepairer:
 
 
 class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_initial_observations_are_atomic_and_audited_in_every_mode(self):
+        text = 'Cedar invoice records $20 in January 2024. The recipient is Casey.'
+        candidate = ObservationCandidate.from_response({'observations': [text, text]})
+        for mode in ('quick', 'deep', 'timeline', 'strict'):
+            auditor = HandleAuditor()
+            result = await AnswerFinalizer(auditor).finalize(
+                'What does the invoice record?', candidate, pack(text), mode=mode)
+            self.assertTrue(result['finalization']['answer_verified'], mode)
+            self.assertEqual(len(auditor.calls), 1)
+            self.assertEqual(auditor.calls[0][0], candidate.units())
+            self.assertEqual(auditor.calls[0][2]['answer_context'], '')
+            self.assertEqual(result['claim_ledger']['unitization'], 'observations_v1')
+            self.assertEqual(result['claim_ledger']['candidate_digest'],
+                             hashlib.sha256(candidate.text.encode()).hexdigest())
+
+    async def test_invalid_direct_candidates_fail_before_model_calls(self):
+        for values in (None, 'text', ['Cedar records $20.'], (), (None,), ('',),
+                       (' padded',), ('# Heading',), ('First\nSecond',), ('x' * 1200,),
+                       ('Cedar records $20 (Source: invoice).',),
+                       ('Cedar records $20 [source](/documents/101).',)):
+            auditor = HandleAuditor()
+            with self.assertRaises(ObservationValidationError):
+                await AnswerFinalizer(auditor).finalize(
+                    'What is recorded?', ObservationCandidate(values), pack('Cedar records $20.'), mode='quick')
+            self.assertEqual(auditor.calls, [])
+
+    async def test_initial_observations_preserve_subset_reaudit_and_new_identity(self):
+        early, bad, latest = ('Cedar records $20 in January 2024.',
+                              'Maple invoice is REJECT.', 'Cedar records $40 in January 2026.')
+        candidate = ObservationCandidate.from_response({'observations': [bad, early, latest]})
+        auditor = HandleAuditor()
+        result = await AnswerFinalizer(auditor).finalize(
+            'Compare the recorded invoices.', candidate, pack(' '.join((early, bad, latest))))
+        self.assertEqual(result['finalization']['disposition'], 'partial')
+        self.assertEqual(len(auditor.calls), 2)
+        self.assertEqual(auditor.calls[0][0], candidate.units())
+        subset = ObservationCandidate.from_response({'observations': [early, latest]})
+        self.assertEqual(auditor.calls[1][0], subset.units())
+        self.assertEqual(result['claim_ledger']['candidate_digest'], hashlib.sha256(subset.text.encode()).hexdigest())
+        self.assertNotEqual(result['claim_ledger']['candidate_digest'], hashlib.sha256(candidate.text.encode()).hexdigest())
+
+    async def test_initial_structured_candidate_retains_sign_checks(self):
+        for amount, accepted in (('-$40', True), ('$40', False)):
+            auditor = HandleAuditor()
+            result = await AnswerFinalizer(auditor).finalize('What adjustment is recorded?',
+                ObservationCandidate((f'Cedar records an adjustment of {amount} USD.',)),
+                pack('Cedar records an adjustment of -$40 USD.'), mode='quick')
+            self.assertEqual(result['finalization']['answer_verified'], accepted)
+
+    async def test_initial_candidate_cannot_hide_units_beyond_audit_capacity(self):
+        text = 'Cedar records $20.'
+        auditor = HandleAuditor()
+        result = await AnswerFinalizer(auditor, max_units=1).finalize(
+            'What is recorded?', ObservationCandidate((text, text)), pack(text), mode='quick')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['claim_ledger']['summary']['total'], 2)
+        self.assertFalse(result['claim_ledger']['complete'])
+
+    async def test_failed_replacement_audit_cannot_restore_initial_candidate_ledger(self):
+        original = ObservationCandidate(('Cedar invoice is REJECT.',))
+        replacement = ObservationCandidate(('Maple records $40.',))
+        class FailingReplacement(HandleAuditor):
+            async def audit_answer_units(self, *args):
+                raw = await super().audit_answer_units(*args)
+                if len(self.calls) == 2:
+                    raise TimeoutError()
+                return raw
+        auditor = FailingReplacement()
+        result = await AnswerFinalizer(auditor, ObservationRepairer(
+            {'observations': list(replacement.observations)})).finalize(
+                'What is recorded?', original, pack(original.text + ' ' + replacement.text))
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['claim_ledger']['candidate_digest'], hashlib.sha256(replacement.text.encode()).hexdigest())
+        self.assertNotIn('Cedar', json.dumps(result['claim_ledger']['claims']))
+
     async def test_independent_earlier_and_latest_records_survive_atomic_omission(self):
         for early, rejected, latest in (
             ('Cedar invoice records $20 in January 2024.',

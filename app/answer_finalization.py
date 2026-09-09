@@ -1062,7 +1062,7 @@ class AnswerFinalizer:
                 "selection_coverage": progress["selection_coverage"],
                 "audit_batches": diagnostics}
 
-    async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
+    async def finalize(self, question: str, answer: str | ObservationCandidate, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
         plan = dict(plan or {})
         evaluated_at = evaluated_at or datetime.now(timezone.utc).date().isoformat()
@@ -1072,10 +1072,20 @@ class AnswerFinalizer:
         disposition, attempts, error = "incomplete", 0, None
         repair_diagnostic = None
         repair_in_progress = False
-        candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
         observations = None
-        ledger = empty_ledger(candidate)
-        if mode == "quick":
+        if isinstance(answer, ObservationCandidate):
+            # Dataclass construction itself does not validate its fields. Re-enter
+            # the same contract used by model responses before making any call.
+            if not isinstance(answer.observations, tuple):
+                raise ObservationValidationError('invalid_observations')
+            observations = ObservationCandidate.from_response({'observations': list(answer.observations)})
+            candidate, declarations = canonical_candidate(observations.text, evidence_pack)
+            if candidate != observations.text or declarations:
+                raise ObservationValidationError('invalid_attribution')
+        else:
+            candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
+        ledger = empty_ledger(candidate, observations)
+        if mode == "quick" and observations is None:
             disposition = "unaudited"
         else:
             try:

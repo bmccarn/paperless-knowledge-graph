@@ -403,31 +403,34 @@ def citation_safe_span(span):
     """Trim only rejected edge tokens; retain one bounded original interval."""
     content = span['content']
     tokens = list(re.finditer(r'\S+', content))
+    markers = sorted(span.get('list_markers', []) + span.get('field_leaders', []))
     first, last = 0, len(tokens)
     while first < last:
         start = 0 if first == 0 else tokens[first].start()
         end = len(content) if last == len(tokens) else tokens[last - 1].end()
         failures = []
+        candidate = {**span,
+            'span_id': (span['span_id'] if start == 0 and end == len(content) else
+                        f"{span['span_id']}:safe:{start}:{end}"),
+            'content': content[start:end], 'start': span['start'] + start, 'end': span['start'] + end,
+            'list_markers': _slice_markers(span.get('list_markers', []), start, end),
+            'field_leaders': _slice_markers(span.get('field_leaders', []), start, end),
+            'date_context_before': date_context(span.get('date_context_before', '') + content[:start]),
+            'boundary_before': (span.get('boundary_before', '') + content[:start])[-2:],
+            'boundary_after': (content[end:] + span.get('boundary_after', ''))[:2],
+            'value_boundary_before': (span.get('value_boundary_before', '') +
+                _value_context(content[:start], _slice_markers(markers, 0, start)))[-16:],
+            'value_boundary_after': (_value_context(content[end:], _slice_markers(markers, end, len(content))) +
+                span.get('value_boundary_after', ''))[:2],
+        }
+        # Bind the exact proposed interval before validation. Searching a quote
+        # inside the old window could instead find an earlier repeated occurrence.
         reference = validate_reference({
-            'span_id': span['span_id'], 'evidence_id': span['evidence_id'],
-            'document_id': span['document_id'], 'quote': content[start:end],
-        }, [{**span, 'feedback_open': False}], diagnostics=failures)
+            'span_id': candidate['span_id'], 'evidence_id': candidate['evidence_id'],
+            'document_id': candidate['document_id'], 'quote': candidate['content'],
+        }, [{**candidate, 'feedback_open': False}], diagnostics=failures)
         if reference:
-            markers = sorted(span.get('list_markers', []) + span.get('field_leaders', []))
-            return {**span,
-                'span_id': (span['span_id'] if start == 0 and end == len(content) else
-                            f"{span['span_id']}:safe:{start}:{end}"),
-                'content': reference['quote'], 'start': reference['start'], 'end': reference['end'],
-                'list_markers': reference['source_list_markers'],
-                'field_leaders': reference['source_field_leaders'],
-                'date_context_before': reference['date_context_before'],
-                'boundary_before': (span.get('boundary_before', '') + content[:start])[-2:],
-                'boundary_after': (content[end:] + span.get('boundary_after', ''))[:2],
-                'value_boundary_before': (span.get('value_boundary_before', '') +
-                    _value_context(content[:start], _slice_markers(markers, 0, start)))[-16:],
-                'value_boundary_after': (_value_context(content[end:], _slice_markers(markers, end, len(content))) +
-                    span.get('value_boundary_after', ''))[:2],
-            }
+            return candidate
         if failures == ['boundary_start']:
             first += 1
         elif failures == ['boundary_end']:
@@ -976,13 +979,18 @@ class AnswerFinalizer:
                     raw_refs = assessment.get("references", [])
                     raw_refs = raw_refs if isinstance(raw_refs, list) else []
                     reference_diagnostics = []
+                    reference_diagnostic_counts = {}
                     refs = []
                     for index, reference in enumerate(raw_refs):
                         failures = []
                         refs.append(validate_reference(reference, selected, diagnostics=failures))
-                        reference_diagnostics.extend({'index': index, 'reason': reason} for reason in failures)
+                        for reason in failures:
+                            reference_diagnostic_counts[reason] = reference_diagnostic_counts.get(reason, 0) + 1
+                            if len(reference_diagnostics) < 8:
+                                reference_diagnostics.append({'index': index, 'reason': reason})
                     if not raw_refs:
                         reference_diagnostics.append({'reason': 'no_references'})
+                        reference_diagnostic_counts['no_references'] = 1
                     valid = bool(refs) and all(refs)
                     status = assessment.get("status", "unchecked")
                     if status not in {"supported", "unsupported", "conflicting", "missing"}:
@@ -1003,6 +1011,8 @@ class AnswerFinalizer:
                     claims.append({"id": unit["id"], "claim": unit["text"], "start": unit["start"],
                                    "end": unit["end"], "status": status, "references": [r for r in refs if r],
                                    "model_status": model_status, "reference_diagnostics": reference_diagnostics,
+                                   "reference_diagnostic_counts": reference_diagnostic_counts,
+                                   "reference_diagnostics_omitted": sum(reference_diagnostic_counts.values()) - len(reference_diagnostics),
                                    "rejection_reasons": claim_rejections, "value_mismatches": mismatch_details,
                                    "document_id": refs[0]["document_id"] if valid else None,
                                    "evidence_ids": [r["evidence_id"] for r in refs if r],

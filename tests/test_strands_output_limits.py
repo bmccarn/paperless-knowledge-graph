@@ -307,3 +307,18 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.audit_count - count, 1)
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertNotIn(text, result['answer'])
+
+    async def test_editor_requires_complete_json_without_salvage_or_duplicate_keys(self):
+        valid = json.dumps({'observations': [QUOTE]})
+        for text in (valid + ' The observation is withdrawn.', 'Preface: ' + valid,
+                     '```json\n' + valid + '\n```',
+                     '{"observations":["A discarded assertion."],"observations":[' + json.dumps(QUOTE) + ']}',
+                     valid + valid):
+            self.editor_text, self.audit_count, self.reject_first_audit = text, 0, True
+            before = len(self.requests)
+            result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
+                'What is recorded?', 'An unsupported draft.', PACK)
+            self.assertEqual(result['finalization']['disposition'], 'audit_failed')
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertEqual(self.audit_count, 1)
+            self.assertEqual(len(self.requests) - before, 2)

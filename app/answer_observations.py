@@ -1,5 +1,6 @@
 """Canonical rendering and atomic units for independently audited observations."""
 from dataclasses import dataclass
+import json
 
 from markdown_it import MarkdownIt
 
@@ -8,6 +9,20 @@ from markdown_it import MarkdownIt
 class ObservationCandidate:
     observations: tuple[str, ...]
     strategy = 'observations_v1'
+
+    @classmethod
+    def from_json(cls, text):
+        """Consume the complete editor response without salvaging inner JSON."""
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('Duplicate observation response key')
+                result[key] = value
+            return result
+        if not isinstance(text, str):
+            raise ValueError('Invalid observation response text')
+        return cls.from_response(json.loads(text, object_pairs_hook=unique_object))
 
     @classmethod
     def from_response(cls, response):

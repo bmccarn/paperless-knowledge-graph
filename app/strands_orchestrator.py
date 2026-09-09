@@ -248,7 +248,7 @@ Rules:
 - Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.
 - Do not assert that a newer document or record set lacks a value unless the evidence explicitly proves absence. If latest/current status is not fully provable, phrase it as the newest source-backed value found in the retrieved evidence.
 """
-        result = await self._json_agent(
+        text = await self._text_agent(
             name="answer_editor",
             system_prompt=(
                 "You are a source-faithful answer editor. Rebuild a concise, complete answer to the user\'s "
@@ -259,10 +259,10 @@ Rules:
         )
 
         try:
-            ObservationCandidate.from_response(result)
+            candidate = ObservationCandidate.from_json(text)
         except ValueError:
             return None
-        return result
+        return {'observations': list(candidate.observations)}
 
     async def review_entity_candidate(self, candidate: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any] | None:
         if not self.enabled:

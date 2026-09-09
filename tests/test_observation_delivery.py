@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from tests.runtime import configure_test_environment
 configure_test_environment()
 
-from app.answer_finalization import AnswerFinalizer, evidence_spans, validate_reference
+from app.answer_finalization import AnswerFinalizer, citation_safe_span, evidence_spans, validate_reference
 from app.answer_observations import ObservationCandidate
 from tests.test_source_dates import pack
 
@@ -209,6 +209,16 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(validate_reference({'span_id': span['span_id']}, [{**span, 'feedback_open': True}], diagnostics=failures))
         self.assertEqual(failures, ['source_feedback_open'])
 
+    def test_repeated_text_is_trimmed_at_its_actual_original_offset(self):
+        source = 'x' * 3800 + 'A ' * 2000
+        raw = evidence_spans(pack(source))[1]
+        safe = citation_safe_span(raw)
+        self.assertIsNotNone(safe)
+        self.assertEqual(safe['start'], 3802)
+        self.assertEqual(safe['end'], 7800)
+        self.assertEqual(safe['content'], source[3802:7800])
+        self.assertIsNotNone(validate_reference({'span_id': safe['span_id']}, [safe]))
+
     async def test_source_membership_does_not_override_semantic_rejection(self):
         class WrongSubject(HandleAuditor):
             async def audit_answer_units(self, *args):
@@ -222,6 +232,26 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claim['model_status'], 'unsupported')
         self.assertEqual(claim['value_mismatches'], {})
         self.assertTrue(claim['references'])
+
+    async def test_timeline_uses_the_same_safe_source_handles_and_separate_window_diagnostics(self):
+        from tests.test_query_delivery import RetrievedEngine
+        source = 'x' * 4200 + ' Cedar invoice dated January 1, 2026 records $20.'
+        supplied = []
+        class TimelineAdapter(HandleAuditor):
+            async def extract_timeline(self, question, evidence):
+                spans = json.loads(evidence)
+                supplied.extend(spans)
+                return [{'date': '2026-01-01', 'title': 'Cedar invoice records $20',
+                         'summary': '', 'document_id': 101,
+                         'references': [{'span_id': spans[0]['span_id']}]}]
+        with patch('app.query.strands_orchestrator', TimelineAdapter()):
+            events, trace = await RetrievedEngine()._extract_timeline_events(
+                'What is the dated invoice history?', {}, [], 'timeline', evidence_pack=pack(source))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['references'][0]['span_id'], supplied[0]['span_id'])
+        self.assertEqual(events[0]['references'][0]['quote'], source[supplied[0]['start']:supplied[0]['end']])
+        self.assertEqual(trace[0]['data']['source_diagnostics']['unavailable_citation_windows'], 1)
+        self.assertEqual(trace[0]['data']['rejection_reasons'], {})
 
     async def test_handle_resolves_to_a_contiguous_safe_source_range(self):
         source = 'Invoice Cedar records $20. ' + 'Routine descriptive text repeats here. ' * 140
@@ -247,3 +277,20 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 'What is recorded?', 'Invoice Cedar records $999.', pack('Invoice Cedar records $20.'))
             self.assertFalse(result['finalization']['answer_verified'])
             self.assertNotIn('$999', result['answer'])
+
+    async def test_reference_diagnostics_are_bounded_without_ignoring_rejections(self):
+        class InvalidReferences(HandleAuditor):
+            async def audit_answer_units(self, *args):
+                raw = await super().audit_answer_units(*args)
+                raw['assessments'][0]['references'] *= 100
+                raw['assessments'][0]['references'] += [{'span_id': 'unselected'}] * 100
+                return raw
+        result = await AnswerFinalizer(InvalidReferences()).finalize(
+            'What is recorded?', 'Cedar records $20.', pack('Cedar records $20.'))
+        self.assertFalse(result['finalization']['answer_verified'])
+        claim = result['claim_ledger']['claims'][0]
+        self.assertEqual(len(claim['reference_diagnostics']), 8)
+        self.assertEqual(claim['reference_diagnostic_counts'], {'unknown_or_unselected_span': 100})
+        self.assertEqual(claim['reference_diagnostics_omitted'], 92)
+        self.assertEqual(claim['model_status'], 'supported')
+        self.assertEqual(claim['status'], 'unsupported')

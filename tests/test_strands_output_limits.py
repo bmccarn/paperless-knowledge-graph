@@ -203,6 +203,25 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result, expected)
         self.assertEqual(len(self.requests), len(calls))
 
+    async def test_native_sdk_audit_receives_actual_selection_opportunities(self):
+        from tests.test_audit_evidence_opportunities import item
+        source = 'Cedar service record dated January 1, 2026 lists an open account.'
+        result = await AnswerFinalizer(self.orchestrator).finalize('What is the latest service record?',
+            'The latest Cedar service record dated January 1, 2026 lists an open account.',
+            {'items': [item(doc, 0, source + f' Record {doc}.') for doc in range(1, 36)]})
+        coverage = result['claim_ledger']['selection_coverage'][0]
+        self.assertTrue(coverage['comparison_opportunities'][0]['omitted_document_ids'])
+        for request in self.requests:
+            message = request['messages'][-1]['content']
+            if isinstance(message, list):
+                message = ''.join(block.get('text', '') for block in message)
+            payload = json.loads(message)
+            expected = {key: coverage[key] for key in ('comparison_opportunities', 'date_opportunities')}
+            self.assertEqual(payload['evidence_selection'], expected)
+            self.assertNotIn(source, json.dumps(payload['evidence_selection']))
+            self.assertLessEqual(len(json.dumps(payload['source_spans'], ensure_ascii=False)), 28000)
+            self.assertTrue(LIMIT_FIELDS.isdisjoint(request))
+
     async def test_actual_provider_truncation_still_cannot_certify_an_answer(self):
         self.force_length = True
         result = await AnswerFinalizer(self.orchestrator).finalize("What coverage is listed?", QUOTE, PACK)

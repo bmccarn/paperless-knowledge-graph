@@ -25,7 +25,7 @@ from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v20"
+POLICY_VERSION = "source-audit-v21"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -440,7 +440,17 @@ def citation_safe_span(span):
     return None
 
 
-def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy") -> list[dict]:
+def _calendar_features(text: str, date_order: str, context: str = '') -> set[str]:
+    features = set()
+    for found in source_dates(text, date_order, context_before=context):
+        if found.value and found.precision in {'month', 'day'}:
+            features.add('calendar:' + found.value)
+            # A day can supply a month observation, never the reverse.
+            features.add('calendar:' + found.value[:7])
+    return features
+
+
+def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy", diagnostics: dict | None = None) -> list[dict]:
     tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
     # Retrieval metadata identifies explicitly requested documents even when
     # their short OCR has fewer shared words than a long unrelated notice.
@@ -450,7 +460,9 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         r"([1-9]\d{0,18})\b", question, re.I)}
     quoted_titles = {normalize_quote(value).casefold() for value in re.findall(r'["“]([^"”\n]+)["”]', question)}
     costs = [len(json.dumps(span, ensure_ascii=False)) + 2 if serialized else len(span["content"]) for span in spans]
-    span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) for span in spans]
+    calendar_tokens = [_calendar_features(span['content'], date_order, span.get('date_context_before', '')) for span in spans]
+    span_tokens = [set(re.findall(r"[\w$%]+", span["content"].lower())) | dates for span, dates in zip(spans, calendar_tokens)]
+    tokens |= _calendar_features(question + ' ' + ' '.join(u['text'] for u in units), date_order)
     frequency = Counter(token for words in span_tokens for token in words)
     weights = {token: 1 + math.log((len(spans) + 1) / (count + 1)) for token, count in frequency.items()}
     def rank(pair, query_tokens=tokens):
@@ -492,11 +504,12 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
                        for doc_id, pairs in by_document.items()}
     # A queue is independent: a later unit cannot assume that another unit's
     # proposed window has actually survived budget admission.
-    queues = []
+    queues, comparisons = [], []
     for unit in units:
         per_unit = []
         queues.append(per_unit)
         unit_tokens = set(re.findall(r"[\w$%]+", unit["text"].lower())) - QUERY_STOPWORDS
+        unit_tokens |= _calendar_features(unit['text'], date_order)
         if not by_document:
             continue
         outstanding = unit_tokens.copy()
@@ -524,7 +537,10 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
                 covered |= span_tokens[pair[0]]
                 needed -= matched
             outstanding -= covered
-        alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order)
+        comparison = {'unit_id': unit.get('id')}
+        alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order, diagnostics=comparison)
+        if comparison.get('eligible_document_ids'):
+            comparisons.append(comparison)
         # Share opportunities between supporting details and alternatives, then
         # across units. A comparison cannot delay another unit's needed detail.
         per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
@@ -546,13 +562,29 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         contents.add(span["content"])
         selected.add(index)
         used += costs[index]
+    if diagnostics is not None:
+        delivered = {s['document_id'] for s in result}
+        for comparison in comparisons:
+            eligible = set(comparison['eligible_document_ids'])
+            comparison['selected_document_ids'] = sorted(eligible & delivered)
+            comparison['omitted_document_ids'] = sorted(eligible - delivered)
+        date_opportunities = []
+        for unit in units:
+            expected = _calendar_features(unit['text'], date_order)
+            available = {(span['document_id'], value) for span, values in zip(spans, calendar_tokens)
+                         if not span.get('feedback_open') for value in expected & values}
+            admitted = {(spans[index]['document_id'], value) for index in selected
+                        if not spans[index].get('feedback_open') for value in expected & calendar_tokens[index]}
+            date_opportunities.append({'unit_id': unit.get('id'), 'available': len(available),
+                                       'selected': len(admitted), 'omitted': len(available - admitted)})
+        diagnostics.update(comparison_opportunities=comparisons, date_opportunities=date_opportunities)
     return result
 
 
 
-def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str) -> list:
+def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None) -> list:
     """Reserve topical alternatives, never treating recency as factual proof."""
-    if not re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|"
+    if not re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|highest|lowest|"
                      r"earlier|later|newer|older|compared?|higher|lower)\b", text, re.I):
         return []
     generic = set("current currently active today now still latest newest recent most earlier later newer older "
@@ -581,14 +613,51 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
         windows = [(topical[2], topical[3])]
         windows.extend(pair for pair in sorted(pairs, key=lambda p: (p[1].get("chunk_index", 0), p[1].get("start", 0), p[0]))
                        if pair[0] != topical[2])
-        candidates.append((overlap, newest, topical[2], windows))
+        recent = any(span.get('recent_reserved') for _, span in pairs)
+        candidates.append((overlap, newest, topical[2], windows, recent))
     # OCR overlap admits the topical cohort. Within that cohort, a richer old
     # title must not crowd out a newer alternative whose OCR matches the subject.
     minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates), default=0) / 2))
-    candidates = [row for row in candidates if row[0][1] >= minimum_overlap]
-    candidates.sort(key=lambda row: (row[1], row[0], -row[2]), reverse=True)
-    return [pair for row in zip_longest(*(windows for _, _, _, windows in candidates[:2]))
-            for pair in row if pair is not None]
+    candidates = [row for row in candidates if row[0][1] >= minimum_overlap
+                  or (row[4] and row[0][0] > 0)]
+    # Calendar values are ordering hints, not document issue dates. A future
+    # term cannot grant two old documents every reserved continuation slot.
+    candidates.sort(key=lambda row: (row[4], row[1], row[0], -row[2]), reverse=True)
+    if diagnostics is not None:
+        diagnostics['eligible_document_ids'] = sorted({row[3][0][1]['document_id'] for row in candidates})
+        superlative = re.search(r'\b(?:latest|newest|most (?:recent|current)|highest|lowest)\b', text, re.I)
+        pairwise = re.search(r'\b(?:compared (?:with|to)|versus|vs\.?|(?:higher|lower) than)\b', text, re.I)
+        current = re.search(r'\b(?:current(?:ly)?|active|today|now|still)\b', text, re.I)
+        # This routes an omission safeguard, never proves semantic scope. The
+        # independent auditor still checks every stated comparison and source.
+        diagnostics['cohort_wide'] = bool(superlative or (current and not pairwise))
+    primary, continuation, deferred = [], [], []
+    represented, contents = set(), set()
+    openings = {row[3][0][1]['document_id']: row[3][0] for row in candidates}
+    for row in candidates:
+        pair = row[3][0]
+        if pair[1]['content'] in contents:
+            deferred.append(pair)
+        else:
+            primary.append(pair)
+            represented.add(pair[1]['document_id'])
+            contents.add(pair[1]['content'])
+    for pairs in zip_longest(*(row[3][1:] for row in candidates)):
+        for pair in pairs:
+            if pair is None:
+                continue
+            if pair[1]['content'] in contents:
+                deferred.append(pair)
+                continue
+            doc_id = pair[1]['document_id']
+            if doc_id not in represented:
+                # A different document's identical opening cannot supply this
+                # continuation's identity. Promote its own opening with it.
+                continuation.append(openings[doc_id])
+                represented.add(doc_id)
+            continuation.append(pair)
+            contents.add(pair[1]['content'])
+    return primary + continuation + deferred
 
 
 def _source_recency(span: dict, date_order: str) -> str:
@@ -934,14 +1003,17 @@ class AnswerFinalizer:
                                for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
+            selections = [{} for _ in batches]
             async def worker():
                 for index, batch in pending:
-                    selected = select_spans(question, batch, spans, serialized=True, date_order=self.date_order)
+                    selected = select_spans(question, batch, spans, serialized=True, date_order=self.date_order,
+                                            diagnostics=selections[index])
                     protocol = diagnostics[index]
                     async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
                         try:
-                            return await self.auditor.audit_answer_units(question, batch, selected, audit_request_plan)
+                            return await self.auditor.audit_answer_units(
+                                question, batch, selected, {**audit_request_plan, 'evidence_selection': selections[index]})
                         except asyncio.CancelledError:
                             protocol.update(status="cancelled", final_errors=["cancelled"])
                             raise
@@ -965,7 +1037,7 @@ class AnswerFinalizer:
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())
-            for batch, (selected, raw, protocol) in zip(batches, results):
+            for batch_index, (batch, (selected, raw, protocol)) in enumerate(zip(batches, results)):
                 manifest.update({s["span_id"]: s for s in selected})
                 assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
@@ -1032,7 +1104,12 @@ class AnswerFinalizer:
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
+                        omitted_cohort = any(
+                            opportunity['unit_id'] == unit['id'] and opportunity['cohort_wide']
+                            and opportunity['omitted_document_ids']
+                            for opportunity in selections[batch_index].get('comparison_opportunities', []))
                         if (assessment.get("comparison_scope") == "retrieved_documents"
+                                and not omitted_cohort
                                 and isinstance(compared, list) and compared
                                 and all(type(doc) is int and doc in available for doc in compared)
                                 and {r["document_id"] for r in refs if r}.issubset(set(compared))):
@@ -1040,7 +1117,8 @@ class AnswerFinalizer:
                                               comparison_document_ids=sorted(set(compared)))
                         else:
                             claims[-1]["temporal_scope"] = "unknown"
-                            claims[-1]["status"] = "unsupported"
+                            if claims[-1]['status'] != 'conflicting':
+                                claims[-1]["status"] = "unsupported"
                             claims[-1]["rejection_reasons"].append("invalid_comparison_scope")
         for declaration in declarations:
             preceding = [claim for claim in claims if claim["start"] < declaration["offset"]]
@@ -1071,7 +1149,8 @@ class AnswerFinalizer:
                 "rejection_reasons": rejection_reasons,
                 "spans": list(manifest.values()), "available_span_count": len(spans),
                 "candidate_digest": hashlib.sha256(answer.encode()).hexdigest(),
-                "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected, reserve_history=False)}
+                "selection_coverage": [{"batch": index, **span_coverage(question, spans, selected, reserve_history=False),
+                                        **selections[index]}
                                        for index, (selected, _, _) in enumerate(results)],
                 "audit_batches": diagnostics}
 

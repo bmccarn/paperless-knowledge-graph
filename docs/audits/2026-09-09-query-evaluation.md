@@ -396,3 +396,28 @@ An isolated temporary environment in the API pod installed the hash-locked SDK
 Gemini 3.8 Flash via the existing proxy, with 90-second native call and 120-second
 audit deadlines, concurrency four. No output-token cap is introduced. At this record,
 preparation made no native model calls and the new pipeline is not quality-qualified.
+
+### First question-level native experiment: stopped on frozen rubric failure
+
+Candidate code `3c788a9`, Strands 1.55.0, original question-development dataset:
+
+| Case | Calls | Seconds | Tokens | Independent grade |
+| --- | ---: | ---: | ---: | --- |
+| Capacity | 5 | 13.925 | 7610 | Both pass; zero false approvals or missing aspects |
+| Handover | 5 | 27.696 | 8945 | Both pass; zero false approvals or missing aspects |
+| Hours | 5 | 16.790 | 8631 | Both fail; one omitted required component |
+
+All 15 calls terminated normally; usage was available for every call. There were
+zero raw or delivered false approvals. The hours answer omitted the blank approval
+field. Both graders counted one false-complete coverage receipt under the frozen
+rubric. The source reader had identified that field; composition omitted it. Both
+reviewers also noted that the question did not request approval status, making this
+a rubric/question alignment concern rather than evidence that the application
+should emit every incidental source detail. No remaining cases ran. Preserve this
+experiment as failed; do not retroactively change its grade.
+
+A separate revision of the development evaluation is proposed for review. The hours
+question explicitly asks about approval, and all required-aspect components must be
+checked for alignment with their questions before a fresh run. No application code
+change follows from this finding. Full backend/frontend CI passed at `11d3e85`;
+the merge from main resolved only the graph spec's stale status.

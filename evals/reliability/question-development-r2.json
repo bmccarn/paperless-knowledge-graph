@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "partition": "development",
+  "synthetic_only": true,
+  "source_dataset_sha256": "3b0399a6b2d820e988d1a613acc890035922cf1d6792250b77489cd9a45082b0",
+  "purpose": "Fresh development revision aligning requested aspects with questions; prior run remains failed.",
+  "cases": [
+    {
+      "id": "capacity",
+      "domain": "operations",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 1,
+          "title": "Equipment authorization form",
+          "content": "Equipment authorization form. Operator: Morgan Sample.\nCurrent capacity: 480 units. Current custodian: Taylor Sample.\nPurpose: [X] Change custodian to Avery Sample. [ ] Increase capacity. [ ] Reduce capacity.\nNew capacity: blank. Signed March 20, 2024. Effective date of capacity change: blank."
+        }
+      ],
+      "question": "What change did Morgan select on the equipment form, and what capacity was recorded?",
+      "required_aspects": [
+        "Custodian change to Avery selected.",
+        "Current capacity recorded as 480 units."
+      ],
+      "forbidden_inferences": [
+        "New capacity elected as 480.",
+        "Custodian change completed."
+      ]
+    },
+    {
+      "id": "handover",
+      "domain": "operations",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 2,
+          "title": "Equipment checklist",
+          "content": "Equipment checklist dated May 4, 2024. References purchase agreement SAMPLE-81.\nBuyer contact: Jordan Example. [X] Verify buyer contact. [ ] Complete delivery.\nRequested delivery: May 7, 2024. Actual delivery: blank. Recipient receipt: blank."
+        }
+      ],
+      "question": "Who is named for contact verification, what delivery date was requested, and does the checklist establish completed delivery?",
+      "required_aspects": [
+        "Jordan named as buyer contact; contact verification selected.",
+        "May 7, 2024 requested delivery.",
+        "Completion not established; actual delivery and receipt blank."
+      ],
+      "forbidden_inferences": [
+        "Verification completed.",
+        "Delivery completed on requested or checklist date."
+      ]
+    },
+    {
+      "id": "hours",
+      "domain": "employment",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 3,
+          "title": "Employee change form",
+          "content": "Employee change form. Employee: Quinn Example. Current weekly hours: 32.\n[X] Change supervisor to Riley Sample. [ ] Change weekly hours to: blank.\nEmployee signed June 10, 2024. Supervisor acknowledgment June 12, 2024.\nApproval of hours change: blank."
+        }
+      ],
+      "question": "What changes were selected for Quinn, what weekly hours were recorded, and does the form show an approved hours change?",
+      "required_aspects": [
+        "Supervisor change to Riley selected.",
+        "Current weekly hours 32; hours change unselected with approval blank."
+      ],
+      "forbidden_inferences": [
+        "New hours approved.",
+        "Supervisor change implemented."
+      ]
+    },
+    {
+      "id": "leave",
+      "domain": "employment",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 4,
+          "title": "Leave application",
+          "content": "Leave application for Sage Example. Submitted August 1, 2024.\nRequested leave: August 12, 2024 through August 16, 2024. Requested days: 5.\nManager review: pending. Decision: [ ] Approved [ ] Denied.\nPayroll record, August 31, 2024: leave balance 18 days; leave taken this period 0 days."
+        }
+      ],
+      "question": "What leave did Sage request, was it approved, and what does payroll record?",
+      "required_aspects": [
+        "August 12 through 16, 2024; five days requested.",
+        "Manager review pending; no approval selected.",
+        "August 31 payroll: balance 18 days, leave taken zero."
+      ],
+      "forbidden_inferences": [
+        "Leave approved or taken.",
+        "Payroll balance describes present-day balance."
+      ]
+    },
+    {
+      "id": "refund",
+      "domain": "billing",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 5,
+          "title": "Refund request and receipt",
+          "content": "Refund request for account SAMPLE-42: requested $250 USD on July 1, 2024.\n[X] Request payment. [ ] Confirm payment received. Signed June 30, 2024.\nSeparate settled receipt for account SAMPLE-43: refund $125 USD completed July 2, 2024.\nReceipt signed July 3, 2024."
+        }
+      ],
+      "question": "Which refunds were requested or completed, for which accounts and amounts?",
+      "required_aspects": [
+        "SAMPLE-42 requested 250 USD July 1, 2024.",
+        "SAMPLE-42 receipt confirmation unselected.",
+        "Separate SAMPLE-43 refund 125 USD completed July 2, 2024."
+      ],
+      "forbidden_inferences": [
+        "SAMPLE-42 payment completed.",
+        "Signature dates substituted for transaction dates."
+      ]
+    },
+    {
+      "id": "credit",
+      "domain": "billing",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 6,
+          "title": "Invoice adjustment",
+          "content": "Invoice SAMPLE-56 issued September 2, 2024. Original charge: $310 USD.\nCredit adjustment posted September 6, 2024: -$40 USD. Revised balance: $270 USD.\nStatement issued September 8, 2024. No payment or settlement recorded."
+        }
+      ],
+      "question": "How did the recorded charge and balance for SAMPLE-56 change, and is payment recorded?",
+      "required_aspects": [
+        "Original charge 310 USD.",
+        "Posted September 6, 2024 credit adjustment printed as -40 USD.",
+        "Revised balance 270 USD.",
+        "No payment or settlement recorded."
+      ],
+      "forbidden_inferences": [
+        "Balance paid or settled.",
+        "Revised balance assigned specifically to September 8 statement."
+      ]
+    },
+    {
+      "id": "calibration",
+      "domain": "measurement",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 7,
+          "title": "Instrument calibration log",
+          "content": "Instrument METER-A calibration log. Calibration performed October 2, 2024.\nReference reading: 100 kPa. Instrument reading before adjustment: 104 kPa.\nInstrument reading after adjustment: 100 kPa. Technician signed October 3, 2024.\nPrior log, September 2, 2024: instrument reading 102 kPa at a 100 kPa reference."
+        }
+      ],
+      "question": "How do the prior, before-adjustment and after-adjustment readings for METER-A compare?",
+      "required_aspects": [
+        "September 2, 2024 prior reading 102 kPa at reference 100 kPa.",
+        "October 2, 2024 calibration: before 104 kPa, after 100 kPa, reference 100 kPa."
+      ],
+      "forbidden_inferences": [
+        "Signature date used as calibration date.",
+        "Reference or prior measurement confused with before/after."
+      ]
+    },
+    {
+      "id": "sampling",
+      "domain": "measurement",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 8,
+          "title": "Water sample report",
+          "content": "Water sample report. Sample NORTH collected November 4, 2024: concentration 6 mg/L.\nSample SOUTH collected November 5, 2024: concentration 9 mg/L.\nLaboratory report signed November 8, 2024. Proposed target: 4 mg/L.\nNo post-treatment sample supplied. Treatment authorization requested; completion unrecorded."
+        }
+      ],
+      "question": "What concentrations were measured at each site, and do the records show the treatment target was achieved?",
+      "required_aspects": [
+        "NORTH November 4, 2024: 6 mg/L.",
+        "SOUTH November 5, 2024: 9 mg/L.",
+        "Target 4 mg/L; no post-treatment sample supplied and completion unrecorded."
+      ],
+      "forbidden_inferences": [
+        "Target is an observed measurement.",
+        "Treatment completed or achieved target."
+      ]
+    },
+    {
+      "id": "capacity-history",
+      "domain": "operations",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 100,
+          "title": "Capacity register 2020",
+          "content": "Equipment UNIT-Z. Register dated January 2, 2020. Authorized capacity: 300 units."
+        },
+        {
+          "document_id": 101,
+          "title": "Capacity election 2024",
+          "content": "Equipment UNIT-Z. Signed March 20, 2024. [X] Increase authorized capacity to 480 units effective April 1, 2024. [ ] Change custodian. Approval: granted March 21, 2024."
+        },
+        {
+          "document_id": 102,
+          "title": "Delivery completion",
+          "content": "Equipment UNIT-Z. Delivery completed April 2, 2024. Recipient acceptance: signed April 3, 2024. Status: received."
+        }
+      ],
+      "question": "How has the equipment capacity changed, and what is the latest documented capacity?",
+      "required_aspects": [
+        "January 2, 2020 UNIT-Z authorized capacity 300 units.",
+        "Approved increase to 480 units effective April 1, 2024; latest documented authorized capacity 480."
+      ],
+      "forbidden_inferences": [
+        "Delivery changed capacity.",
+        "Current-world capacity independently established."
+      ]
+    },
+    {
+      "id": "hours-history",
+      "domain": "employment",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 110,
+          "title": "Hours record 2022",
+          "content": "Employee Robin Sample. Hours record dated February 2, 2022. Weekly scheduled hours: 24."
+        },
+        {
+          "document_id": 111,
+          "title": "Approved hours change",
+          "content": "Employee Robin Sample. [X] Change weekly scheduled hours to 32. Manager approved March 3, 2024. Effective April 1, 2024."
+        },
+        {
+          "document_id": 112,
+          "title": "Conditional overtime",
+          "content": "Employee Robin Sample. Overtime authorization May 1, 2024: 8 additional hours permitted only if training is completed. Training log: completed May 2, 2024. No overtime attendance recorded."
+        }
+      ],
+      "question": "How did scheduled hours change, and what do the latest records establish?",
+      "required_aspects": [
+        "February 2, 2022 weekly scheduled hours 24.",
+        "Approved change to 32 effective April 1, 2024.",
+        "May 1 conditional authorization of eight additional hours; May 2 training completed; no overtime attendance recorded."
+      ],
+      "forbidden_inferences": [
+        "40 hours actually worked.",
+        "Overtime permanently changes scheduled hours."
+      ]
+    },
+    {
+      "id": "balance-history",
+      "domain": "billing",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 120,
+          "title": "Opening statement",
+          "content": "Account SAMPLE-90. Statement January 1, 2024. Balance: $400 USD."
+        },
+        {
+          "document_id": 121,
+          "title": "Transactions",
+          "content": "Account SAMPLE-90.\n| Date | Charge USD | Credit USD | Balance USD |\n| --- | --- | --- | --- |\n| February 1, 2024 | 100 | 0 | 500 |\n| March 1, 2024 | 0 | 50 | 450 |"
+        },
+        {
+          "document_id": 122,
+          "title": "Statement issuer A",
+          "content": "Account SAMPLE-90. Issuer A statement dated April 1, 2024. Balance: $450 USD. No supersession or correction indicated."
+        },
+        {
+          "document_id": 123,
+          "title": "Statement issuer B",
+          "content": "Account SAMPLE-90. Issuer B statement dated April 1, 2024. Balance: $470 USD. No supersession or correction indicated."
+        }
+      ],
+      "question": "How did the account balance change, and what is the latest documented balance?",
+      "required_aspects": [
+        "January 1 balance 400 USD.",
+        "February 1 charge 100, balance 500; March 1 credit 50, balance 450 USD.",
+        "April 1 latest statements conflict: Issuer A 450 and Issuer B 470 USD, no established supersession."
+      ],
+      "forbidden_inferences": [
+        "Unique uncontested latest balance.",
+        "Issuer B supersedes Issuer A."
+      ]
+    },
+    {
+      "id": "treatment-history",
+      "domain": "measurement",
+      "evaluated_at": "2026-09-09",
+      "source_date_order": "mdy",
+      "documents": [
+        {
+          "document_id": 130,
+          "title": "Pretreatment measurements",
+          "content": "Sample site EAST. Collected January 5, 2024.\n| Measurement | Result | Target |\n| --- | --- | --- |\n| Concentration mg/L | 12 | 4 |\nTreatment plan: target is not an observed result."
+        },
+        {
+          "document_id": 131,
+          "title": "Treatment completion",
+          "content": "Sample site EAST. Treatment completed February 4, 2024. Operator signed February 5, 2024."
+        },
+        {
+          "document_id": 132,
+          "title": "Post-treatment measurements",
+          "content": "Sample site EAST. Collected February 6, 2024. Concentration: 4 mg/L. Report issued February 8, 2024. Sample site WEST collected February 7, 2024: concentration 9 mg/L."
+        }
+      ],
+      "question": "How have the sample results changed, what treatment was recorded, and what is the latest measured result?",
+      "required_aspects": [
+        "EAST January 5 result 12 mg/L, distinct from target 4.",
+        "EAST treatment completed February 4; February 6 result 4 mg/L.",
+        "WEST February 7 result 9 mg/L, a separate site and latest collection date."
+      ],
+      "forbidden_inferences": [
+        "EAST latest result 9.",
+        "January target is observed result.",
+        "Treatment proven to cause reduction."
+      ]
+    }
+  ],
+  "revision": 2,
+  "prior_question_dataset_sha256": "beebf835b69073d0d1dc1e9121fefb5d191e64682b93830f10b909669737650a"
+}

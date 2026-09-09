@@ -63,3 +63,27 @@ required aspects and false-complete coverage. Report unavailable usage as unknow
 not zero. Reviewers grade independently against originals and resolve disagreements
 before any continuation. A failure leads to a diagnosed, reviewed next candidate
 and fresh manifest; never edit gold to make a candidate pass.
+
+
+## Development revision 2: align the question and required aspects
+
+The first frozen question experiment stopped at case02. Cases00 and01 passed both
+independent reviews. Case02 delivered two supported observations and zero false
+approvals but omitted the blank approval field required by its rubric. Both reviewers
+counted one missing aspect component and one false-complete result under that frozen
+rubric, while independently noting that the question did not ask about approval.
+Keep the failed result and original dataset unchanged.
+
+`question-development-r2.json` is a separate development revision. The hours question
+now explicitly asks whether the form shows an approved hours change. Review every
+required component in all 12 cases against the question before freezing this revision:
+required facts must answer a requested aspect, while merely supporting field details
+are optional unless explicitly requested. A citation containing an omitted required
+fact does not count as delivered text. Do not require unrelated detail or reward
+verbosity. Preserve every original source and all additional-fact/false-approval
+checks. Any further rubric change belongs to this pre-run review, not later scoring.
+
+This is an evaluation correction, not permission to change the production pipeline
+or turn completed failures into passes. A fresh frozen experiment starts at case00;
+prior result approvals cannot be reused. The same finite budget and per-case review
+stop apply. This development revision remains ineligible as an independent holdout.

@@ -25,6 +25,7 @@ from app.answer_observations import ObservationCandidate, ObservationValidationE
 from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
+from app import source_quantities
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
 POLICY_VERSION = "source-audit-v25"
@@ -361,16 +362,20 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
             key = (item['document_id'], item['source_context']['digest'])
             if key not in source_structures:
                 parsed = _MARKDOWN.parse(document_text)
-                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed), _field_leader_ranges(document_text, parsed=parsed))
-            lists, fields = source_structures[key]
+                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed),
+                                          _field_leader_ranges(document_text, parsed=parsed),
+                                          source_quantities.table_ranges(document_text))
+            lists, fields, tables = source_structures[key]
             list_markers = _slice_markers(lists, offset, offset + len(content))
             field_leaders = _slice_markers(fields, offset, offset + len(content))
+            quantity_tables = _slice_markers(tables, offset, offset + len(content))
         else:
             # A failed full-source binding never falls back to chunk-local
             # authority. Unknown continuation context also stays conservative.
             known_start = item.get('chunk_index', 0) == 0 and item.get('source_context') is None and '_source_document_content' not in item
             list_markers = _list_marker_ranges(content, known_start=known_start)
             field_leaders = _field_leader_ranges(content, known_start=known_start)
+            quantity_tables = source_quantities.table_ranges(content) if known_start else []
         presentation_ranges = sorted(list_markers + field_leaders)
         guard_content, guard_offset, guard_ranges = content, 0, presentation_ranges
         if context:
@@ -393,6 +398,7 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
+                          "quantity_tables": _slice_markers(quantity_tables, start, start + len(text)),
                           "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
                           "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
                           "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
@@ -421,6 +427,7 @@ def citation_safe_span(span):
             'content': content[start:end], 'start': span['start'] + start, 'end': span['start'] + end,
             'list_markers': _slice_markers(span.get('list_markers', []), start, end),
             'field_leaders': _slice_markers(span.get('field_leaders', []), start, end),
+            'quantity_tables': _slice_markers(span.get('quantity_tables', []), start, end),
             'date_context_before': date_context(span.get('date_context_before', '') + content[:start]),
             'boundary_before': (span.get('boundary_before', '') + content[:start])[-2:],
             'boundary_after': (content[end:] + span.get('boundary_after', ''))[:2],
@@ -671,6 +678,7 @@ def validate_reference(reference: Any, spans: list[dict], *, diagnostics: list |
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
             "source_field_leaders": source_field_leaders,
+            "source_quantity_tables": _slice_markers(span.get("quantity_tables", []), start, end),
             **({'source_context': span['source_context']} if span.get('source_context') else {}),
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
@@ -727,18 +735,17 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in numbers(source)}
     if missing_numbers:
         mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
-    units = VALUE_UNITS
-    unit_pattern = r"(?<![A-Za-z'’])" + units + r"(?![A-Za-z])"
-    missing_units = set(re.findall(unit_pattern, text)) - {unit for source in numeric_sources for unit in re.findall(unit_pattern, source)}
+    source_pairs = set()
+    available_units = set()
+    for source, reference in zip(numeric_sources, references):
+        source_pairs.update(source_quantities.prose_quantities(source))
+        source_pairs.update(source_quantities.table_quantities(
+            reference['quote'], reference.get('source_quantity_tables', [])))
+        available_units.update(source_quantities.unit_names(source))
+    missing_units = source_quantities.unit_names(text) - source_quantities.source_currency_units(available_units)
     if missing_units:
         mismatches["units"] = sorted(missing_units)[:30]
-    def quantities(value):
-        pairs = {(Decimal(amount.replace(",", "")), unit) for amount, unit in re.findall(
-            r"(?<![\w.,])(" + number + r")\s*(" + units + r")(?![A-Za-z])", value)}
-        for unit, amount in re.findall(r"(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*(" + number + r")(?!\w|[.,]\d)", value):
-            pairs.add((Decimal(amount.replace(",", "")), unit))
-        return pairs
-    missing_quantities = quantities(text) - {pair for source in numeric_sources for pair in quantities(source)}
+    missing_quantities = source_quantities.prose_quantities(text) - source_quantities.source_currency_quantities(source_pairs)
     if missing_quantities:
         mismatches["quantities"] = sorted(f"{amount} {unit}" for amount, unit in missing_quantities)[:30]
     return mismatches

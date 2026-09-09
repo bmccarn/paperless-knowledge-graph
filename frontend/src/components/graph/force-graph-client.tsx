@@ -153,6 +153,21 @@ export function ForceGraphClient({
     };
   }, [graph]);
 
+  useEffect(() => {
+    if (is3D || renderer.mode !== is3D || !renderer.Component || !selectedNodeId ||
+        dimensions.width <= 0 || dimensions.height <= 0 ||
+        !graph.nodes.some((node) => node.id === selectedNodeId)) return;
+    // The inspector and responsive layout resize the canvas. Center after its
+    // new dimensions are applied, retaining zoom and renderer-owned positions.
+    const frame = requestAnimationFrame(() => {
+      const node = renderNodes.current.get(selectedNodeId);
+      if (!node || typeof node.x !== "number" || typeof node.y !== "number" ||
+          !Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+      handleRef.current?.centerAt(node.x, node.y, 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedNodeId, dimensions.width, dimensions.height, is3D, renderer.mode, renderer.Component, graph.nodes]);
+
   const highlighted = useMemo(() => {
     const ids = new Set<string>();
     if (selectedNodeId) {

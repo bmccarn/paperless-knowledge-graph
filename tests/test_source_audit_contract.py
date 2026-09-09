@@ -62,6 +62,15 @@ class SourceAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('semantic_assumptions', findings['rejection_reasons'])
         self.assertNotIn('PRIVATE', json.dumps(result))
 
+    async def test_failed_or_timed_out_editor_strips_original_assessment_text(self):
+        for error in (TimeoutError(), RuntimeError('PRIVATE provider failure')):
+            row = self.row(source_basis=PRIVATE_BASIS, unresolved_assumptions=['PRIVATE assumption'])
+            repairer = type('Repairer', (), {'repair_answer': AsyncMock(side_effect=error)})()
+            result, count = await self.run_finalizer(row, repairer=repairer)
+            self.assertEqual(count, 1)
+            self.assertFalse(result['finalization']['answer_verified'])
+            self.assertNotIn('PRIVATE', json.dumps(result))
+
     def test_negative_model_verdicts_remain_unchanged(self):
         for verdict in ('unsupported', 'missing', 'conflicting'):
             row = self.row(status=verdict, unresolved_assumptions=['A fact is not established.'])

@@ -19,7 +19,7 @@ PROTOCOL_ERRORS = frozenset({
     'invalid_json', 'duplicate_key', 'invalid_object', 'invalid_assessments',
     'invalid_assessment', 'invalid_unit_ids', 'invalid_source_basis',
     'invalid_checks', 'invalid_assumptions', 'invalid_references',
-    'invalid_temporal_metadata', 'invalid_status', 'unknown_source_handle',
+    'invalid_temporal_metadata', 'invalid_status', 'unknown_source_handle', 'inconsistent_scope_checks',
 })
 
 
@@ -139,3 +139,19 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
         })
     _require(set(seen) == set(unit_ids), 'invalid_unit_ids')
     return {'assessments': normalized}
+
+
+def validate_scope_consistency(parsed):
+    """Allow bounded metadata correction only when no semantic rejection can reroll."""
+    rows = parsed['assessments']
+    for row in rows:
+        semantic = row['semantic_decision']
+        if (row['model_status'] != 'supported' or semantic['unresolved_assumptions']
+                or any(value in {'not_established', 'contradicted'} for value in semantic['checks'].values())):
+            return
+    for row in rows:
+        semantic = row['semantic_decision']
+        if any(semantic['checks'][facet] == 'not_applicable'
+               and 'semantic_' + facet in semantic['rejection_reasons']
+               for facet in ('temporal', 'comparison')):
+            raise SourceAuditProtocolError('inconsistent_scope_checks')

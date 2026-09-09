@@ -329,6 +329,12 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_corrected_foreign_handle_cannot_erase_raw_false_approval(self):
+        await self._assert_raw_approval_survives_correction('handle')
+
+    async def test_corrected_scope_metadata_cannot_erase_raw_false_approval(self):
+        await self._assert_raw_approval_survives_correction('scope')
+
+    async def _assert_raw_approval_survives_correction(self, correction_kind):
         from types import SimpleNamespace
         from unittest.mock import patch
         from app import strands_orchestrator as native
@@ -352,9 +358,13 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
             async def invoke_async(self, prompt):
                 payload = json.loads(prompt)
                 corrected = bool(payload.get('protocol_correction'))
-                handle = payload['source_spans'][0]['span_id'] if corrected else 'foreign'
-                return Result(decision(status='unsupported' if corrected else 'supported',
-                                       references=[{'span_id': handle}]))
+                handle = payload['source_spans'][0]['span_id'] if corrected or correction_kind == 'scope' else 'foreign'
+                row = decision(status='unsupported' if corrected else 'supported', references=[{'span_id': handle}])
+                if correction_kind == 'scope' and not corrected:
+                    row['checks']['temporal'] = 'not_applicable'
+                    row['temporal_scope'] = 'historical'
+                    row['temporal_assertion'] = 'source_observation'
+                return Result(row)
 
         case = dict(id='raw-approval', family='capacity', domain='operations',
             question='What capacity is documented?', evaluated_at='2026-09-09', source_date_order='mdy',

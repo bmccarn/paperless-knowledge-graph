@@ -95,10 +95,12 @@ def prepare(dataset_path, **options):
     return prepare_bytes(dataset_path.read_bytes(), **options)
 
 
-def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False):
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured'):
     data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
+    if proxy_cache_policy not in {'configured', 'bypass'}:
+        raise ValueError('Unknown proxy cache policy')
     if type(allow_noncontiguous) is not bool:
         raise ValueError('Invalid reconstruction admission must be explicit')
     if repetitions < 1 or max_attempts < 1 or not math.isfinite(seconds) or seconds <= 0 or estimated_tokens < 1:
@@ -115,7 +117,8 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
                 cache_note=cache_note, independent_repetitions=False,
                 conditions='exact case documents and ordering; four-unit production batches',
                 cases=len(data['cases']), assertions=sum(len(c['claims']) for c in data['cases']),
-                synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous)
+                synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous,
+                proxy_cache_policy=proxy_cache_policy)
 
 
 def evidence_pack(case, *, allow_noncontiguous=False):
@@ -210,6 +213,21 @@ def score_case(case, ledger, audits):
     return dict(case_id=case['id'], passed=all(r['passed'] for r in rows), assertions=rows)
 
 
+def configure_proxy_cache(model, policy):
+    """Request-local proxy control; do not flush or modify shared cache settings."""
+    if policy == 'configured':
+        return model
+    if policy != 'bypass':
+        raise ValueError('Unknown proxy cache policy')
+    params = dict(model.get_config().get('params') or {})
+    extra = dict(params.get('extra_body') or {})
+    if 'cache' in extra:
+        raise ValueError('Existing request cache settings require separate review')
+    extra['cache'] = {'no-cache': True, 'no-store': True}
+    model.update_config(params={**params, 'extra_body': extra})
+    return model
+
+
 class AttemptLog(logging.Handler):
     """Retain production's content-free usage/stop diagnostics per async attempt."""
     def emit(self, record):
@@ -227,7 +245,8 @@ async def execute(dataset_path, manifest, output):
     expected = prepare_bytes(payload, model=manifest['model'], runtime=manifest['runtime'], repetitions=manifest['repetitions'],
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
                        estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'],
-                       allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'])
+                       allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'],
+                       proxy_cache_policy=manifest['proxy_cache_policy'])
     if manifest != expected:
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
     from app.config import settings
@@ -253,7 +272,7 @@ async def execute(dataset_path, manifest, output):
                   request_identifiers='Not exposed by native adapter; unavailable',
                   provider_destination=settings.litellm_url, output_token_cap=None))
     attempts, results = [], []
-    native_text, native_audit = auditor._text_agent, auditor.audit_answer_units
+    native_text, native_audit, native_model = auditor._text_agent, auditor.audit_answer_units, auditor._model
     case_audits = []
 
     async def captured_text(name, system_prompt, prompt, *, response_format=None):
@@ -281,6 +300,13 @@ async def execute(dataset_path, manifest, output):
         case_audits.append(result)
         return result
 
+    def captured_model(*, response_format=None):
+        model = configure_proxy_cache(native_model(response_format=response_format), manifest['proxy_cache_policy'])
+        attempt = CURRENT_ATTEMPT.get()
+        if attempt is not None:
+            attempt['proxy_cache_policy'] = manifest['proxy_cache_policy']
+        return model
+
     native_agent = native_module.Agent
 
     class CapturedAgent(native_agent):
@@ -295,7 +321,7 @@ async def execute(dataset_path, manifest, output):
 
     # This runner owns an isolated process. Restore the SDK binding on every exit.
     native_module.Agent = CapturedAgent
-    auditor._text_agent, auditor.audit_answer_units = captured_text, captured_audit
+    auditor._text_agent, auditor.audit_answer_units, auditor._model = captured_text, captured_audit, captured_model
     handler = AttemptLog()
     logger = logging.getLogger('app.strands_orchestrator')
     prior_level = logger.level
@@ -342,7 +368,7 @@ async def execute(dataset_path, manifest, output):
         await auditor.close()
         logger.removeHandler(handler)
         logger.setLevel(prior_level)
-        auditor._text_agent, auditor.audit_answer_units = native_text, native_audit
+        auditor._text_agent, auditor.audit_answer_units, auditor._model = native_text, native_audit, native_model
         native_module.Agent = native_agent
     rows = [row for result in results for row in result['assertions']]
     durations = [r['elapsed_seconds'] for r in results]
@@ -385,6 +411,7 @@ def main():
                         help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
+    parser.add_argument('--proxy-cache-policy', choices=['configured', 'bypass'], default='configured')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
     parser.add_argument('--repetitions', type=int, default=3)
     parser.add_argument('--max-attempts', type=int, default=96)
@@ -403,7 +430,7 @@ def main():
     manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
                        estimated_tokens=args.estimated_tokens, cache_note=args.cache_note,
-                       allow_noncontiguous=args.allow_noncontiguous_reconstruction)
+                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy)
     write_private(args.manifest, manifest)
     print(json.dumps(manifest))
     return 0

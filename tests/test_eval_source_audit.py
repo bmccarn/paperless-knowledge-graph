@@ -97,6 +97,25 @@ class SourceAuditEvaluationTests(unittest.TestCase):
                 write_private(path, {'passed': True})
             self.assertFalse(json.loads(path.read_text())['passed'])
 
+    def test_proxy_bypass_reaches_sdk_request_without_changing_messages_or_schema(self):
+        from strands.models.openai import OpenAIModel
+        from scripts.eval_source_audit import configure_proxy_cache
+        schema = {'type': 'json_schema', 'json_schema': {'name': 'synthetic'}}
+        model = OpenAIModel(client_args={'api_key': 'synthetic', 'base_url': 'http://127.0.0.1:1'},
+                            model_id='synthetic-route', params={'response_format': schema})
+        messages = [{'role': 'user', 'content': [{'text': 'Synthetic audit input.'}]}]
+        before = model.format_request(messages, system_prompt='Synthetic instruction.')
+        self.assertIs(configure_proxy_cache(model, 'configured'), model)
+        self.assertEqual(model.format_request(messages, system_prompt='Synthetic instruction.'), before)
+        configure_proxy_cache(model, 'bypass')
+        after = model.format_request(messages, system_prompt='Synthetic instruction.')
+        controls = after.pop('extra_body')
+        self.assertEqual(controls, {'cache': {'no-cache': True, 'no-store': True}})
+        self.assertEqual(after, before)
+        self.assertNotIn('max_tokens', after)
+        with self.assertRaises(ValueError):
+            configure_proxy_cache(model, 'bypass')
+
     def test_saved_ledger_units_roundtrip_without_adding_list_markers(self):
         from app.answer_observations import ObservationCandidate
         from scripts.eval_source_audit import observation_candidate

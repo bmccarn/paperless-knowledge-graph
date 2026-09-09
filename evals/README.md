@@ -106,3 +106,12 @@ invalid baseline input, writes per-case continuity diagnostics, and forces the
 experiment to fail regardless of model scores. Never use this option to qualify a
 candidate or silently replace original-window boundaries. Certifying overrides,
 changed source titles, and invalid document-context offsets always fail admission.
+
+For a separately frozen cache-controlled experiment, preparation accepts
+`--proxy-cache-policy bypass`. The runner adds only request-body
+`cache: {"no-cache": true, "no-store": true}` through the native SDK's `extra_body`.
+The installed proxy's asynchronous cache handler honors these read/write controls.
+No global cache is flushed, no prompt nonce is inserted, and messages, response
+schema, model route and output allowance stay unchanged. The chosen policy is
+captured in the manifest and each attempt. This requests proxy bypass; it does not
+prove upstream sampling independence or establish billed usage.

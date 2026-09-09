@@ -79,23 +79,53 @@ identified nine windows with copied table headers that are not contiguous origin
 passages. That captured input is classified as an invalid reconstruction; it cannot
 pass evaluation. A diagnostic admission can preserve it unchanged to reproduce the
 production failure, but cannot promote it to source-valid evidence. This is explicitly a
-reconstruction; the original raw native request was not retained. No standalone
-private replay has run. The concrete bounded request was submitted to automatic
-approval review and rejected: broader permission did not specifically authorize
-this sensitive payload to the configured model destination. The local approval
-artifact specifies cases, retrieved source scope, destination, retention, six-call
-and ten-minute bounds, cost estimate and exact command. Explicit user approval is
-required; no indirect execution or alternative tool may bypass the rejection.
+reconstruction; the original raw native request was not retained. The user subsequently approved the scoped replay. The first execution stopped
+before any model call because saved ledger units already contained their rendering
+prefixes. An explicitly declared saved-unit encoding now roundtrips through the
+production parser without changing text or offsets; both reviews passed at
+`5da5d347530b2268d2ea901f39f587c1adb8c546`. The zero-call failure is retained.
+
+The corrected full-context replay completed three native calls in 19.9 seconds.
+The unsupported unit was approved by both the model and source finalizer, while
+all three supported controls were accepted. This reproduces the semantic failure.
+The repeated responses were identical; the second and third native calls took
+approximately 0.13 and 0.11 seconds, so these are dependent observations rather than
+three independent confirmations. Reported usage: 488,550 input / 12,972 output
+tokens. Invalid-source classification still prevents this reconstructed input from
+passing overall qualification.
+
+The remaining three approved calls tested the same four claims against only their
+four independently identified source documents: eight items / 20 contiguous source
+windows. All four units were correctly assessed, including rejection of the bad
+inference, with no lost supported facts. This condition completed in 26.0 seconds
+and reported 47,511 input / 25,998 output tokens. Its repeats were also dependent.
+All six approved native calls are now spent. No production behavior was changed.
+
+Removing unrelated context also changed source positions and removed nine invalid
+table windows, so this contrast does not identify the precise cause. In the full
+manifest, the unsupported unit's source occupies positions 61–68 of 206; in the
+small manifest, it occupies 11–18 of 20. The next controlled comparison must
+separate these factors before choosing an implementation.
+
+The live proxy has Redis response caching enabled with a 3,600-second TTL.
+Read-only inspection of its installed asynchronous handler confirms request-level
+`cache.no-cache` skips cache reads and `cache.no-store` skips writes. Evaluation
+support for those controls preserves messages/schema/model/output allowance and
+makes no shared-cache mutation. Upstream independence remains unproven.
+
+Initial hypotheses, ranked from this contrast: broad context interferes with
+source/field association; placement within that context changes source use; copied
+header windows contribute to the failure. These are hypotheses, not a diagnosis.
+A four-condition comparison is being prepared: full context, removal of only the
+invalid windows, identical full context with the four target documents last, and
+the four-document control. All use the same claims and existing source scope.
+Further private calls require an extended bounded budget; none have run.
 
 ## Remaining G1 work
 
-- Complete and analyze the frozen native baseline without changing labels or
-  rerolling failed cases.
-- Independently label and obtain specifically scoped authorization for the
-  retained private-case model replay. Earlier automatic rejection still applies;
-  local reconstruction and synthetic calls do not authorize that replay.
-- Reproduce the semantic failure under representative source/batch context, retain
-  exact input/output, then minimize while preserving failure. Original native
+- Run the next frozen context comparison only after approval of its new call
+  budget; the original six-call scope is complete. Retain all outcomes and labels.
+- Continue minimizing the now-reproduced semantic failure while preserving failure. Original native
   inputs were not retained for the live failure, so reconstructed inputs must be
   labelled as reconstructed, not asserted byte-identical.
 - Add representative large-context/disjoint-window/source-order conditions and

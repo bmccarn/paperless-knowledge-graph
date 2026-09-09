@@ -72,7 +72,7 @@ export function ForceGraphClient({
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
   const renderNodes = useRef(new Map<string, RenderNode>());
-  const fitted = useRef(false);
+  const initialFitPending = useRef(true);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [renderer, setRenderer] = useState<{
     mode: boolean;
@@ -82,7 +82,7 @@ export function ForceGraphClient({
 
   useEffect(() => {
     let active = true;
-    fitted.current = false;
+    initialFitPending.current = true;
     async function load() {
       try {
         if (is3D) {
@@ -233,11 +233,17 @@ export function ForceGraphClient({
     [selectedNodeId, highlighted, showLabels, graph.nodes.length],
   );
 
+  const preserveUserView = (event: { target: EventTarget }) => {
+    if (event.target instanceof HTMLCanvasElement) initialFitPending.current = false;
+  };
+
   const Component = renderer.mode === is3D ? renderer.Component : null;
   const error = renderer.mode === is3D ? renderer.error : null;
   return (
     <div
       ref={containerRef}
+      onWheelCapture={preserveUserView}
+      onPointerDownCapture={preserveUserView}
       className="relative h-full w-full min-h-0 overflow-hidden bg-[#0b131c]"
       aria-label={`${is3D ? "3D" : "2D"} relationship graph`}
     >
@@ -314,9 +320,10 @@ export function ForceGraphClient({
             if (is3D) (node as RenderNode).fz = (node as RenderNode).z;
           }}
           onEngineStop={() => {
-            if (!fitted.current && handleRef.current) {
-              fitted.current = true;
-              handleRef.current.zoomToFit(350, 65);
+            if (initialFitPending.current && handleRef.current) {
+              initialFitPending.current = false;
+              // An initial tween must not keep overriding later user gestures.
+              handleRef.current.zoomToFit(0, 65);
             }
           }}
           warmupTicks={50}

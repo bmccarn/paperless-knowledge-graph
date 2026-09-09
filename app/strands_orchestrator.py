@@ -89,6 +89,15 @@ class StrandsQueryOrchestrator:
                 "Supported means ALL assertions in the unit follow from the cited source quotes, with "
                 "matching subject, time, amount, sign, units and scope. Quotes merely sharing words do "
                 "not prove entailment. Check conflicting supplied sources; a document date is not current "
+                "status. Verify the complete predicate as well as its nouns and numbers: who did what, to which "
+                "object, and whether the source requests, authorizes, plans, conditions or confirms that action. "
+                "A request, application, instruction, election or acknowledgment of receipt supports only its "
+                "stated stage. A signature or printed effective date does not prove the recipient executed it. "
+                "Do not promote requested payment into settled payment, a deployment instruction into completed "
+                "deployment, or acknowledged receipt of a request into completion of the requested action. "
+                "Conversely, an acknowledgment explicitly confirming completed payment can support that completion. "
+                "A source-observation label does not exempt a claim's action from this entailment check. "
+                "Preserve explicit historical completions when supported; distinguish them from present-world "
                 "status. Do not infer absence from retrieval or treat a derived summary as original proof. "
                 "Use missing when evidence is absent and conflicting when sources disagree. Headings and "
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
@@ -201,6 +210,7 @@ Rules:
 - For a record inventory, write a complete source-observation sentence for each relevant subject, using the identifying fields and dated terms the source actually supports. For a history question, preserve meaningful earlier observations and the latest documented observations for each relevant subject. Remove an unsupported identifying field rather than discarding an otherwise supported dated observation. Do not collapse the requested history or comparison into an inventory template.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - A dated record does not itself prove a submission or other event occurred on that date. Use the exact event meaning the cited passage establishes.
+- Preserve the source's actor, action and modality. A request, authorization, plan, application, election, signature or acknowledgment of receipt does not itself prove the requested action was executed. Describe what the source requests or records unless it explicitly confirms completion. Do not convert a payment request into a settled payment or a deployment instruction into a completed deployment. An acknowledgment explicitly confirming completed payment may support that completion; assess the complete statement rather than its document label.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Keep dated source observations as the answer when real-world current status is not established. The acceptance layer appends its own current-status limitation; do not add a generic current-status disclaimer to the candidate. Add an evidence-limit note only for a different missing fact that materially limits the direct answer.

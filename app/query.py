@@ -21,7 +21,7 @@ def _owner_name():
 def _owner_context():
     return settings.owner_context or ""
 from app.retry import retry_with_backoff
-from app.embeddings import chunk_text, embeddings_store
+from app.embeddings import chunk_text, embeddings_store, table_header_chunks
 from app.paperless import paperless_client
 from app.graph import graph_store
 from app.cache import (query_cache, vector_cache, graph_cache,
@@ -1284,17 +1284,52 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     reserved.setdefault(key, dict(chunk))[f"{scope}_reserved"] = True
         selected = list(reserved.values()) + selected
 
+        # Indexed table continuations can contain an inserted header. Rebind
+        # only known representations to uniquely located original intervals;
+        # neither a guessed prefix removal nor stale text grants authority.
+        document_contexts = {c['document_id']: c['_source_document_content'] for c in full_doc_chunks
+                             if isinstance(c.get('_source_document_content'), str)}
+        chunk_versions, original = {}, []
+        for chunk in selected:
+            doc_id = chunk.get('document_id')
+            if doc_id not in document_contexts:
+                original.append(chunk)
+                continue
+            text, index = certifying_text(chunk), chunk.get('chunk_index', 0)
+            if text is None or type(index) is not int or index < 0:
+                continue
+            expanded = index >= 100000
+            index = index - 100000 if expanded else index
+            key = (doc_id, expanded)
+            source = document_contexts[doc_id]
+            if key not in chunk_versions:
+                params = {'chunk_size':3600, 'overlap':500} if expanded else {'chunk_size':4000, 'overlap':800}
+                raw = chunk_text(source, **params, include_table_headers=False)
+                chunk_versions[key] = (chunk_text(source, **params), raw, table_header_chunks(source, raw))
+            represented, raw, headers = chunk_versions[key]
+            if index >= len(raw) or text not in (represented[index], raw[index]):
+                continue
+            if represented[index] != raw[index] and index not in headers:
+                continue  # Inserted header has no independently certified table.
+            start = source.find(raw[index])
+            if start < 0 or source.find(raw[index], start+1) >= 0:
+                continue
+            if index in headers:
+                header_index = headers[index]
+                if header_index is None:
+                    continue
+                original.append({**chunk, 'chunk_index':header_index + (100000 if expanded else 0),
+                                 'content':raw[header_index], 'source_content':raw[header_index]})
+            original.append({**chunk, 'content':raw[index], 'source_content':raw[index]})
         pack = build_evidence_pack(
             question=question,
             plan=plan,
-            chunks=selected,
+            chunks=original,
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
         # Full OCR is already available from bounded source expansion. Keep it
         # private and bind every retained chunk of those documents to its context.
-        document_contexts = {c['document_id']: c['_source_document_content'] for c in full_doc_chunks
-                             if isinstance(c.get('_source_document_content'), str)}
         for item in pack['items']:
             if item['document_id'] in document_contexts:
                 bind_document_context(item, document_contexts[item['document_id']])

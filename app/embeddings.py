@@ -140,11 +140,12 @@ def _find_table_regions(content: str) -> list:
     return regions
 
 
-def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list[str]:
+def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800, *, include_table_headers: bool = True) -> list[str]:
     """Split text into chunks using paragraph/sentence boundaries with overlap.
     Table-aware: when a chunk starts inside a markdown table, the table's header
     row and separator row are prepended so the chunk is self-contained and the
-    LLM can interpret column values correctly."""
+    LLM can interpret column values correctly. Source certification disables
+    inserted headers to retain the original contiguous intervals and indices."""
     if not content or not content.strip():
         return []
     if len(content) <= chunk_size:
@@ -195,6 +196,8 @@ def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list
 
     if not raw_chunks:
         return [content[:chunk_size]]
+    if not include_table_headers:
+        return raw_chunks
 
     # Phase 2: Prepend table headers to continuation chunks that start within a table
     result = [raw_chunks[0]]
@@ -212,6 +215,38 @@ def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list
 
         result.append(chunk)
 
+    return result
+
+
+def table_header_chunks(content: str, raw_chunks: list[str]) -> dict[int, int | None]:
+    """Locate a separate original header chunk for each table continuation.
+
+    Both locations must be unique original intervals. None records a required
+    header that cannot fit or be bound; callers must not invent its context.
+    """
+    from markdown_it import MarkdownIt
+
+    starts = []
+    for chunk in raw_chunks:
+        start = content.find(chunk)
+        starts.append(start if start >= 0 and content.find(chunk, start+1) < 0 else None)
+    result = {}
+    # Certification uses actual table boundaries, including adjacent tables
+    # separated only by a blank line. The legacy retrieval chunker stays stable.
+    line_offsets = [0] + [match.end() for match in re.finditer(r'\r\n|\r|\n', content)]
+    def offset(line):
+        return line_offsets[line] if line < len(line_offsets) else len(content)
+    for token in MarkdownIt('commonmark').enable('table').parse(content):
+        if token.type != 'table_open' or token.map is None:
+            continue
+        table_start, table_end = (offset(line) for line in token.map)
+        header_end = offset(token.map[0]+2)
+        candidates = [i for i, start in enumerate(starts) if start is not None
+                      and start <= table_start and start+len(raw_chunks[i]) >= header_end]
+        header = max(candidates, key=lambda i: starts[i]) if candidates else None
+        for index, start in enumerate(starts):
+            if start is not None and table_start < start < table_end:
+                result[index] = header
     return result
 
 

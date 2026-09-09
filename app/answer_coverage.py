@@ -3,6 +3,8 @@ import hashlib
 
 from app.answer_composition import object_schema, strict_object, valid_ids
 from app.answer_observations import ObservationCandidate
+from app.answer_delivery import validate_verified_delivery
+from app.answer_finalization import validate_reference
 from app.question_evidence import PIPELINE_VERSION, QuestionEvidenceError, canonical_json
 
 COVERAGE_PROMPT = (
@@ -29,16 +31,12 @@ def final_candidate(final):
     try:
         ledger, state = final['claim_ledger'], final['finalization']
         claims = ledger['claims']
-        if (state['answer_verified'] is not True or ledger['unitization'] != 'observations_v1'
-                or ledger['complete'] is not True or not claims
-                or any(c['status'] != 'supported' for c in claims)):
+        if ledger['unitization'] != 'observations_v1':
             raise ValueError()
         candidate = ObservationCandidate.from_response({'observations': [c['claim'][2:] for c in claims]})
-        if (any(any(c[k] != u[k] for k in ('id', 'start', 'end')) or c['claim'] != u['text']
-                for c, u in zip(claims, candidate.units()))
-                or hashlib.sha256(candidate.text.encode()).hexdigest() != ledger['candidate_digest']
-                or ledger['candidate_digest'] != state['candidate_digest']
-                or hashlib.sha256(final['answer'].encode()).hexdigest() != state['answer_digest']):
+        validate_verified_delivery(final['answer'], ledger, state, candidate=candidate.text)
+        if any(any(c[k] != u[k] for k in ('id', 'start', 'end')) or c['claim'] != u['text']
+               for c, u in zip(claims, candidate.units())):
             raise ValueError()
         return candidate
     except (KeyError, TypeError, ValueError, AttributeError):
@@ -63,6 +61,10 @@ def coverage_input(evidence, final):
                     for w in windows]
     if (final['claim_ledger']['spans'] != public_spans
             or final['finalization']['evaluated_at'] != source['evaluated_at']):
+        raise QuestionEvidenceError('evidence_snapshot_mismatch')
+    originals = [w['span'] for w in windows]
+    if any(validate_reference(ref, originals) != ref
+           for claim in final['claim_ledger']['claims'] for ref in claim['references']):
         raise QuestionEvidenceError('evidence_snapshot_mismatch')
     return {'question': source['question'], 'resolved_question': source['resolved_question'],
             'requirements': source['requirements'], 'observations': candidate.units()}

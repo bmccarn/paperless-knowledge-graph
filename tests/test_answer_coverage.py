@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import json
+import hashlib
 import unittest
 from unittest.mock import patch
 
@@ -72,6 +73,21 @@ class AnswerCoverageTests(unittest.IsolatedAsyncioTestCase):
                        lambda x: x['finalization'].update(answer_verified=False)):
             changed = copy.deepcopy(final); change(changed)
             with self.assertRaises(QuestionEvidenceError): coverage_input(evidence, changed)
+
+    async def test_recomputed_delivery_digest_and_inconsistent_ledger_cannot_gain_coverage(self):
+        evidence, final = await self.prepared()
+        def replace_answer(value):
+            value['answer'] = 'The vendor completed a refund of $999.'
+            value['finalization']['answer_digest'] = hashlib.sha256(value['answer'].encode()).hexdigest()
+        for change in (replace_answer,
+                       lambda x: x['finalization'].update(disposition='unsupported'),
+                       lambda x: x['finalization'].update(disposition='unaudited'),
+                       lambda x: x['finalization'].update(complete=False),
+                       lambda x: x['claim_ledger']['claims'][0].update(references=[]),
+                       lambda x: x['claim_ledger']['claims'][0]['references'][0].update(quote='Invented source'),
+                       lambda x: x['claim_ledger']['summary'].update(audited=0, supported=0)):
+            changed = copy.deepcopy(final); change(changed)
+            with self.assertRaises(QuestionEvidenceError): parse_coverage(json.dumps(self.response()), evidence, changed)
 
     async def test_failure_and_disabled_configuration_preserve_facts_without_false_complete(self):
         evidence, final = await self.prepared()

@@ -382,16 +382,18 @@ class QueryEngine:
         if normalize_mode(mode) != "timeline":
             return [], []
         pack = evidence_pack or {}
-        spans = select_spans(question, [], evidence_spans(pack), serialized=True)
+        source_diagnostics = {}
+        spans = select_spans(question, [], evidence_spans(pack, citation_safe=True, diagnostics=source_diagnostics), serialized=True)
         try:
             async with asyncio.timeout(settings.answer_audit_timeout_seconds):
                 events = await strands_orchestrator.extract_timeline(question, json.dumps(spans, ensure_ascii=False))
                 rejections = {}
                 accepted = await validate_timeline(events, pack, strands_orchestrator, question, manifest=spans,
-                                                   date_order=settings.source_date_order, diagnostics=rejections)
+                                                   date_order=settings.source_date_order, diagnostics=rejections, citation_safe=True)
             return accepted, [trace_step("timeline", "ok" if accepted else "needs_review",
                                         f"{len(accepted)} source-validated events; {sum(rejections.values())} rejected",
-                                        {"accepted": len(accepted), "rejection_reasons": rejections})]
+                                        {"accepted": len(accepted), "rejection_reasons": rejections,
+                                         "source_diagnostics": source_diagnostics})]
         except (TimeoutError, Exception):
             return [], [trace_step("timeline", "needs_review", "Timeline audit unavailable; no unverified events published")]
 

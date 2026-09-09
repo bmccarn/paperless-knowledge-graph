@@ -4,7 +4,8 @@ from app.answer_finalization import date_occurs, evidence_spans, parse_date, sel
 
 
 async def validate_timeline(events: list, pack: dict, auditor, question: str, *, manifest: list[dict] | None = None,
-                            date_order: str = "mdy", diagnostics: dict | None = None) -> list[dict]:
+                            date_order: str = "mdy", diagnostics: dict | None = None,
+                            citation_safe: bool = False) -> list[dict]:
     counts = diagnostics if diagnostics is not None else {}
     def reject(reason, count=1):
         counts[reason] = counts.get(reason, 0) + count
@@ -12,7 +13,7 @@ async def validate_timeline(events: list, pack: dict, auditor, question: str, *,
         reject("invalid_result")
         return []
     try:
-        spans = evidence_spans(pack)
+        spans = evidence_spans(pack, citation_safe=citation_safe)
     except (ValueError, TypeError):
         reject("invalid_evidence")
         return []

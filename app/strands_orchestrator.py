@@ -185,10 +185,28 @@ class StrandsQueryOrchestrator:
 
     async def compose_question_answer(self, evidence):
         from app.answer_composition import AnswerComposition, COMPOSER_PROMPT, response_format
+        from app.question_evidence import QuestionEvidenceError
+        if not self.enabled:
+            raise QuestionEvidenceError('composition_unavailable')
         text = await self._text_agent(name='answer_composer', system_prompt=COMPOSER_PROMPT,
                                       prompt=json.dumps(evidence.composition_input, ensure_ascii=False),
                                       response_format=response_format())
         return AnswerComposition.parse(text, evidence)
+
+    async def assess_question_coverage(self, evidence, final, *, planning_status='complete'):
+        from app import answer_coverage
+        if not self.enabled:
+            return answer_coverage.unavailable_coverage(evidence, final, planning_status=planning_status)
+        # Failure here cannot change already verified facts. Cancellation remains
+        # caller-owned and is deliberately not converted into a coverage result.
+        try:
+            payload = answer_coverage.coverage_input(evidence, final)
+            text = await self._text_agent(name='answer_coverage', system_prompt=answer_coverage.COVERAGE_PROMPT,
+                                          prompt=json.dumps(payload, ensure_ascii=False),
+                                          response_format=answer_coverage.response_format())
+            return answer_coverage.parse_coverage(text, evidence, final, planning_status=planning_status)
+        except Exception:
+            return answer_coverage.unavailable_coverage(evidence, final, planning_status=planning_status)
 
     async def _read_source_documents(self, payload, documents, *, strategy=None):
         strategy = strategy or self.audit_strategy

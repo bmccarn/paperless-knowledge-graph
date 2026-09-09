@@ -46,6 +46,14 @@ class AnswerCompositionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(composed.snapshot_digest, evidence.digest)
         self.assertEqual(composed.candidate.units()[0]['id'], 'u1')
 
+    async def test_disabled_composer_never_dispatches_originals(self):
+        evidence = await self.prepared()
+        auditor = StrandsQueryOrchestrator(); auditor.enabled = False
+        async def model(**kwargs): self.fail('Disabled composer dispatched a model call')
+        with patch.object(auditor, '_text_agent', side_effect=model):
+            with self.assertRaisesRegex(QuestionEvidenceError, '^composition_unavailable$'):
+                await auditor.compose_question_answer(evidence)
+
     async def test_foreign_missing_duplicate_and_unmapped_ids_reject_whole_composition(self):
         evidence = await self.prepared()
         changes = [lambda x: x['requirement_mapping'].clear(),

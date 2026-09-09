@@ -401,3 +401,27 @@ for (const [question, status, count] of [
     await record(page, question.toLowerCase().replaceAll(" ", "-"));
   });
 }
+
+test("invalid saved verification preserves text without positive certification panels", async t => {
+  const { context, page } = await fixturePage(t);
+  const saved = await (await context.request.post(`${base}/api/conversations`, { data: { title: "Invalid saved receipt" } })).json();
+  await page.route(`**/api/conversations/${saved.id}`, route => route.fulfill({ json: {
+    ...saved, messages: [{ role: "assistant", content: "Historical answer text retained for review.", confidence: 0,
+      sources: [], claim_ledger: { claims: [], summary: {} },
+      finalization: { pipeline_version: "question-evidence-v1", answer_verified: false, complete: false,
+        disposition: "stored_binding_unavailable", question_coverage: { status: "unavailable", complete: false, requirements: [] } },
+      verification: { status: "unavailable", missing_evidence: ["Saved verification could not be validated."] },
+      source_summary: { verification_status: "unavailable", audit_status: "unavailable", trust_score: 0,
+        claim_summary: {}, trust_dimensions: {}, trust_reasons: [], evidence_coverage: {} },
+    }],
+  } }));
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: saved.title, exact: true }).click();
+  await page.getByText("Historical answer text retained for review.", { exact: true }).waitFor();
+  await page.getByText("Coverage unavailable", { exact: true }).waitFor();
+  assert.equal(await page.getByText("supported", { exact: true }).count(), 0);
+  assert.equal(await page.getByText(/Claim ledger \(/).count(), 0);
+  assert.equal(await page.getByText("All answer units have validated source references.", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("100%", { exact: true }).count(), 0);
+  await record(page, "restored-invalid-receipt");
+});

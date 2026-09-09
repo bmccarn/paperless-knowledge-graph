@@ -279,7 +279,7 @@
           "content": "Account SAMPLE-90. Issuer B statement dated April 1, 2024. Balance: $470 USD. No supersession or correction indicated."
         }
       ],
-      "question": "How did the invoice balance change, and what is the latest documented balance?",
+      "question": "How did the account balance change, and what is the latest documented balance?",
       "required_aspects": [
         "January 1 balance 400 USD.",
         "February 1 charge 100, balance 500; March 1 credit 50, balance 450 USD.",
@@ -312,7 +312,7 @@
           "content": "Sample site EAST. Collected February 6, 2024. Concentration: 4 mg/L. Report issued February 8, 2024. Sample site WEST collected February 7, 2024: concentration 9 mg/L."
         }
       ],
-      "question": "How have the sample results changed, and what is the latest measured result?",
+      "question": "How have the sample results changed, what treatment was recorded, and what is the latest measured result?",
       "required_aspects": [
         "EAST January 5 result 12 mg/L, distinct from target 4.",
         "EAST treatment completed February 4; February 6 result 4 mg/L.",

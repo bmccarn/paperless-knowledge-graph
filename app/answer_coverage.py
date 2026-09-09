@@ -211,7 +211,9 @@ def restore_pipeline_metadata(metadata, answer):
     # Preserve an identifiable, consistently unverified execution failure.
     if (isinstance(final, dict) and final.get('pipeline_version') == PIPELINE_VERSION
             and final.get('answer_verified') is False and final.get('complete') is False
-            and final.get('disposition') in {'incomplete', 'audit_failed', 'corpus_changed'}
+            and isinstance(final.get('disposition'), str)
+            and final['disposition'] in {'incomplete', 'audit_failed', 'corpus_changed', 'timeout',
+                                        'unsupported', 'current_unresolved'}
             and final.get('answer_digest') == hashlib.sha256(answer.encode()).hexdigest()
             and isinstance(metadata.get('evidence'), dict) and metadata['evidence'].get('score') == 0
             and not (isinstance(final.get('question_coverage'), dict)

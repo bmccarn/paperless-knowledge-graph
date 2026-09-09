@@ -257,3 +257,20 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             restored = restore_pipeline_metadata(result, result['answer'])
             self.assertEqual(restored, result)
             self.assertEqual(restored['finalization']['pipeline_failure'], stage)
+
+    async def test_saved_timeout_preserves_failure_and_malformed_failure_is_downgraded(self):
+        import asyncio
+        original = self.model
+        async def pending_audit(**kwargs):
+            if kwargs['name'] == 'source_auditor':
+                await asyncio.sleep(10)
+            return await original(**kwargs)
+        with patch.object(self.orchestrator, '_text_agent', side_effect=pending_audit), patch(
+                'app.question_pipeline.settings.answer_audit_timeout_seconds', .01):
+            result = await self.engine.query('What monthly premium is recorded?', mode='strict')
+        self.assertEqual(result['finalization']['disposition'], 'timeout')
+        self.assertEqual(restore_pipeline_metadata(result, result['answer']), result)
+        for value in ([], {}):
+            changed = copy.deepcopy(result); changed['finalization']['disposition'] = value
+            self.assertEqual(restore_pipeline_metadata(changed, result['answer'])['finalization']['disposition'],
+                             'stored_binding_unavailable')

@@ -170,7 +170,7 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_colon_and_bold_labels_keep_following_fields_in_scope(self):
         for label in ('Invoice Cedar REJECT:', '**Invoice Cedar REJECT**', '__Invoice Cedar REJECT__'):
             for newline in ('\n', '\r\n', '\r'):
-                answer = newline.join((label, 'Amount: $20.', '- Recipient: Casey.', '',
+                answer = newline.join((label, '', 'Amount: $20.', '- Recipient: Casey.', '',
                                        '# Invoice Maple', 'Maple records $30.'))
                 result, _ = await self.finalize(answer)
                 self.assertEqual(result['finalization']['disposition'], 'partial')

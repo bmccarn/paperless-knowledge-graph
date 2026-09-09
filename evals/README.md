@@ -90,3 +90,11 @@ python scripts/reproduce_audit_protocol.py
 The second command intentionally exits 1 on the frozen v25 baseline. Its synthetic
 transport responses exercise protocol behavior only, not model semantics. Keep its
 red result separate from a real-model reproducer.
+
+Captured-window development cases may provide `evidence_pack` and `source_capture`
+in addition to original `documents`. Before any invocation, the runner rebuilds
+each supplied window using production chunking, verifies evidence identity and
+source-context digests, and preserves the supplied ordering and boundaries.
+This supports representative reconstructed contexts without replacing them with
+whole-document concatenation. It confers no authorization to replay private data;
+the concrete private experiment requires its separately scoped approval.

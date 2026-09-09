@@ -97,6 +97,30 @@ class SourceAuditEvaluationTests(unittest.TestCase):
                 write_private(path, {'passed': True})
             self.assertFalse(json.loads(path.read_text())['passed'])
 
+    def test_captured_windows_keep_original_boundaries_and_reject_tampering(self):
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from app.embeddings import chunk_text
+        from app.evidence import evidence_item_id
+        from scripts.eval_source_audit import evidence_pack
+        text = ('Synthetic equipment record: approved capacity 480 units.\n' * 110)
+        documents = [{'document_id': 17, 'title': 'Synthetic record', 'content': text}]
+        items = []
+        for index, chunk in enumerate(chunk_text(text)):
+            item = dict(document_id=17, chunk_index=index, content=chunk, source_kind='ocr')
+            item['id'] = evidence_item_id(item)
+            items.append(item)
+        case = dict(documents=documents, evidence_pack={'items': items}, source_capture='Synthetic original-window fixture')
+        self.assertEqual(evidence_pack(case), case['evidence_pack'])
+        changed = copy.deepcopy(case)
+        changed['evidence_pack']['items'][0]['content'] += ' A fabricated completion.'
+        with self.assertRaisesRegex(ValueError, 'original-source chunking'):
+            evidence_pack(changed)
+        changed = copy.deepcopy(case)
+        changed['documents'][0]['content'] = text.replace('480', '960')
+        with self.assertRaisesRegex(ValueError, 'original-source chunking'):
+            evidence_pack(changed)
+
 
 class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
     async def run_capture(self, directory, *, stalled=False):

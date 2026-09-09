@@ -114,6 +114,38 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
                 synthetic_only=data['synthetic_only'])
 
 
+def evidence_pack(case):
+    """Keep captured production window boundaries; verify them against originals."""
+    if 'evidence_pack' not in case:
+        return {'items': [dict(id=f"document-{doc['document_id']}", document_id=doc['document_id'],
+                              title=doc.get('title', ''), chunk_index=0, source_kind='ocr',
+                              content=doc['content'], source_content=doc['content']) for doc in case['documents']]}
+    from app.embeddings import chunk_text
+    from app.evidence import evidence_item_id
+    pack = json.loads(json.dumps(case['evidence_pack']))
+    documents = {doc['document_id']: doc['content'] for doc in case['documents']}
+    if not case.get('source_capture') or not isinstance(pack, dict) or not pack.get('items'):
+        raise ValueError('Captured windows require declared provenance and sources')
+    for item in pack['items']:
+        doc_id, index = item.get('document_id'), item.get('chunk_index')
+        if item.get('source_kind') != 'ocr' or doc_id not in documents or type(index) is not int or index < 0:
+            raise ValueError('Invalid captured source identity')
+        original = documents[doc_id]
+        expanded = index >= 100000
+        chunks = chunk_text(original, chunk_size=3600 if expanded else 4000,
+                            overlap=500 if expanded else 800, include_table_headers=not bool(item.get('source_context')))
+        offset = index - 100000 if expanded else index
+        if offset >= len(chunks) or chunks[offset] != item.get('content') or evidence_item_id(item) != item.get('id'):
+            raise ValueError('Captured window no longer matches original-source chunking')
+        if item.get('source_context'):
+            if item['source_context'].get('digest') != digest(original.encode()):
+                raise ValueError('Captured source context has a mismatched digest')
+            item['_source_document_content'] = original
+        elif item.get('_source_document_content'):
+            raise ValueError('Unexpected source context')
+    return pack
+
+
 def score_case(case, ledger, audits):
     claims = {c['id']: c for c in ledger.get('claims', [])}
     # Corrections replace malformed attempts only; every attempt stays in artifacts.
@@ -171,6 +203,7 @@ async def execute(dataset_path, manifest, output):
     auditor = StrandsQueryOrchestrator()
     if not auditor.enabled:
         raise ValueError('Native model adapter is unavailable')
+    packs = {case['id']: evidence_pack(case) for case in data['cases']}
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     write_private(output / 'manifest.json', manifest)
     write_private(output / 'dataset.json', data)
@@ -237,9 +270,7 @@ async def execute(dataset_path, manifest, output):
                 for case in data['cases']:
                     case_audits.clear()
                     candidate = ObservationCandidate.from_response({'observations': [c['text'] for c in case['claims']]})
-                    pack = {'items': [dict(id=f"document-{doc['document_id']}", document_id=doc['document_id'],
-                                          title=doc.get('title', ''), chunk_index=0, source_kind='ocr',
-                                          content=doc['content'], source_content=doc['content']) for doc in case['documents']]}
+                    pack = packs[case['id']]
                     finalizer = AnswerFinalizer(auditor, timeout_seconds=settings.answer_audit_timeout_seconds,
                                                 concurrency=settings.strands_max_concurrent_calls, date_order=case['source_date_order'])
                     case_started = time.monotonic()

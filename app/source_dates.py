@@ -8,8 +8,8 @@ VALUE_UNITS = r"(?:mmol/L|mg/dL|g/dL|USD|EUR|GBP|CAD|AUD|JPY|mL|ml|mcg|µg|μg|m
 def calendar_year_context(before: str, after: str) -> bool:
     """A four-digit scalar needs calendar context and cannot carry a unit."""
     before = date_context(before)
-    after = re.sub(r"[*_`\[\]]", "", after)
-    if re.match(r"\s*(?:" + VALUE_UNITS + r"|years?|yrs?|months?|mos?|weeks?|wks?|fortnights?|days?|hours?|hrs?|minutes?|mins?|(?:pico|nano|micro|milli)?seconds?|secs?|ms|us|µs|μs|ns|ps)(?![A-Za-z])", after, re.I):
+    after = re.sub(r"[*_`\[\](){}]", "", after)
+    if re.match(r"\s*(?:in\s+)?(?:(?:calendar|business|working)\s+)?(?:" + VALUE_UNITS + r"|years?|yrs?|months?|mos?|weeks?|wks?|fortnights?|days?|hours?|hrs?|minutes?|mins?|(?:pico|nano|micro|milli)?seconds?|secs?|ms|us|µs|μs|ns|ps)(?![A-Za-z])", after, re.I):
         return False
     return bool(re.search(r"\b(?:year|dated|date|during|in|since|until|effective|period|term)\s*:?\s*$", before, re.I))
 

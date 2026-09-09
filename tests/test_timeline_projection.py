@@ -216,3 +216,17 @@ class TimelineProjectionTests(unittest.IsolatedAsyncioTestCase):
             result=await self.result('The record date is 2024-01-03.',source)
             self.assertFalse(result['finalization']['answer_verified'],source)
             self.assertEqual(result['timeline_events'],[],source)
+
+    async def test_range_spacing_and_unit_presentation_preserve_calendar_distinction(self):
+        separators=['-', ' – ', '\u00a0–\u00a0', ' — ', ' to ', ' through ', ' until ', '** – **']
+        for separator in separators:
+            for unit in ['days','USD','mg','(days)','(USD)','[mg]','{days}','**days**','calendar days','business days','in days']:
+                claim=f'The service term is 2024{separator}2025 {unit}.'
+                result=await self.result(claim)
+                self.assertEqual(result['timeline_events'],[],claim)
+                self.assertEqual(result['finalization']['timeline']['status'],'no_dates',claim)
+            claim=f'The service term is 2024{separator}2025.'
+            result=await self.result(claim)
+            self.assertEqual([e['date'] for e in result['timeline_events']],['2024','2025'],claim)
+            for event in result['timeline_events']:
+                self.assertEqual(claim[event['date_start']:event['date_end']],event['date_text'])

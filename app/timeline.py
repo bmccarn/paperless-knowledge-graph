@@ -12,6 +12,7 @@ from app.answer_delivery import render_verified_answer
 from app.source_dates import calendar_year_context, date_context, date_supported, source_dates
 
 VERSION = 'verified-dates-v1'
+_YEAR_RANGE = re.compile(r'(?<!\w)(\d{4})[\s*_`]*(?:[-–—]|to|through|until)[\s*_`]*(\d{4})(?!\w)', re.I)
 
 
 def _digest(value):
@@ -19,17 +20,15 @@ def _digest(value):
 
 
 def _mentions(text, date_order, context_before=''):
+    ranges = [match for match in _YEAR_RANGE.finditer(text)]
     for found in source_dates(text, date_order, context_before=context_before):
         if not found.value:
             continue
         if found.precision == 'year':
             start, end = found.start, found.end
-            following = re.match(r'[-–]\d{4}(?!\d)', text[end:])
-            preceding = re.search(r'\d{4}[-–]$', text[:start])
-            if following:
-                end += following.end()
-            elif preceding:
-                start = preceding.start()
+            enclosing = next((match for match in ranges if found.start in {match.start(1), match.start(2)}), None)
+            if enclosing:
+                start, end = enclosing.start(), enclosing.end()
             # Inspect the complete numeric range. A unit after its second
             # endpoint governs both values, not just the nearest endpoint.
             before, after = date_context(context_before + text[:start]), text[end:]

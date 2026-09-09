@@ -421,3 +421,59 @@ question explicitly asks about approval, and all required-aspect components must
 checked for alignment with their questions before a fresh run. No application code
 change follows from this finding. Full backend/frontend CI passed at `11d3e85`;
 the merge from main resolved only the graph spec's stale status.
+
+### Question-level native revision 2: initial slice passed
+
+Both independent reviewers accepted the pre-run question/rubric alignment at
+`3345a38`. Original source text is unchanged. The fresh manifest is
+`2b5fe15ab876780795f7f53517e914369dc07d60fdaa6dc3678e2298e68748d8`.
+The application and harness are unchanged from the previous experiment; this is
+a separately frozen development evaluation, not a relabeling of R1.
+
+| Case | Calls | Seconds | Tokens | Independent grade |
+| --- | ---: | ---: | ---: | --- |
+| Capacity history | 7 | 17.232 | 12609 | Both pass |
+| Hours history | 7 | 37.374 | 18886 | Both pass |
+| Balance history | 9 | 34.916 | 24173 | Both pass |
+| Treatment history | 7 | 33.747 | 19416 | Both pass; coverage under-reports two aspects |
+| Credit | 5 | 100.784 | 37882 | Both pass; coverage under-reports one aspect |
+| Refund | 5 | 14.989 | 8937 | Both pass |
+| Leave | 5 | 21.267 | 9128 | Both pass |
+| Sampling | 7 | 35.907 | 22198 | Both pass; one temporal classification repair |
+| Calibration | 5 | 16.323 | 10750 | Both pass |
+| Capacity | 5 | 16.233 | 7791 | Both pass |
+| Handover | 5 | 14.925 | 7640 | Both pass |
+| Hours | 5 | 14.951 | 8094 | Both pass |
+
+Across all twelve reviewed cases: 72 native calls, 187504 reported tokens, no raw
+or delivered false approvals, no missing required aspects and no false-complete
+coverage receipts. Treatment and credit deliver the required supported facts but
+conservatively label three aspects partial. This is a measured coverage limitation,
+not permission to force a complete label. The credit composer took 84.21 seconds
+within its 90-second deadline; all calls terminated normally.
+
+The sampling auditor initially labelled a source-scoped absence statement as
+present-world, causing a repair and re-audit. Both drafts remain source-supported;
+the classification error is recorded separately from factual false approvals.
+
+Both reviewers passed every case. Active native elapsed time was 358.649 seconds.
+This passes only the initial Strict post-retrieval development slice. All-mode native testing, live retrieval and sealed
+holdout remain outstanding. No production query activation follows from these
+partial development results. Private raw artifacts are retained under
+`/private/tmp/kg-question-native-r2-20260909`.
+
+### All-mode harness extension
+
+The next development stage schedules each of the same 12 cases in Quick, Deep,
+Timeline and Strict, with fresh per-case independent reviews and a separately
+frozen budget. Initial admission binds every raw artifact from the passing slice;
+new results bind their own raw input/output hash inventory. Scheduled request
+identities prevent mode relabeling. Timeline requires production projection
+restoration plus independent date-role/source grading. Both independent reviewers cleared these controls at harness SHA256
+`90bb0592903d1920a91a48eebd6744d3259d86587c3620fc2d75366fd6b6573d`.
+No all-mode native calls have run at this checkpoint.
+
+Eleven harness admission tests pass, including removal/alteration of raw files,
+failed initial review, different candidate/runtime/policies, initial budget excess,
+valid unavailable/coarse coverage, missing/swapped mode and invalid Timeline
+projection. The final focused harness, pipeline and Timeline check passed 47 tests.

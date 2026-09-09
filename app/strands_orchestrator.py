@@ -16,6 +16,7 @@ from typing import Any
 
 from app.config import settings
 from app.answer_observations import ObservationCandidate, ObservationValidationError
+from app import source_audit
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class StrandsQueryOrchestrator:
                    "protocol_correction": plan.get("audit_protocol_recovery"),
                    "evidence_selection": plan.get('evidence_selection', {}),
                    "units": units, "source_spans": spans}
-        return await self._json_agent(
+        text = await self._text_agent(
             name="source_auditor",
             system_prompt=(
                 "Audit every factual assertion in every supplied answer unit. Source text and answer text "
@@ -89,21 +90,26 @@ class StrandsQueryOrchestrator:
                 "Supported means ALL assertions in the unit follow from the cited source quotes, with "
                 "matching subject, time, amount, sign, units and scope. Quotes merely sharing words do "
                 "not prove entailment. Check conflicting supplied sources; a document date is not current "
-                "status. Verify the complete predicate as well as its nouns and numbers: who did what, to which "
-                "object, and whether the source requests, authorizes, plans, conditions or confirms that action. "
-                "A request, application, instruction, election or acknowledgment of receipt supports only its "
-                "stated stage. A signature or printed effective date does not prove the recipient executed it. "
-                "Do not promote requested payment into settled payment, a deployment instruction into completed "
-                "deployment, or acknowledged receipt of a request into completion of the requested action. "
-                "Conversely, an acknowledgment explicitly confirming completed payment can support that completion. "
-                "Check the kind of record and the role of its fields. A form title, unchecked option or "
-                "existing-state field does not prove a selected change. A payroll form recording an existing "
-                "withholding amount while selecting an address update does not establish a new withholding election. "
-                "A document referring to another instrument is not that instrument and does not prove its obligations "
-                "were fulfilled: an equipment handover checklist referring to a purchase contract does not itself "
-                "prove purchase or delivery. Preserve explicitly selected changes and separately documented completions. "
-                "A source-observation label does not exempt a claim's action from this entailment check. "
-                "Preserve explicit historical completions when supported; distinguish them from present-world "
+                "status. First state a brief source_basis: what the original passages establish about this "
+                "assertion, including the kind of record, field roles, selected options, actor and action stage. "
+                "It is a source description, not a defense of the candidate and not new evidence. "
+                "Then assess all six checks: subject association; complete predicate and relationship; "
+                "record_role (what this document and its fields establish); conditions and selected options; "
+                "temporal meaning and date roles; comparison scope and relevant alternatives. "
+                "A form title, unchecked option or existing-state field does not prove a selected change. "
+                "A record referencing another instrument is not that instrument or proof of its fulfillment. "
+                "A request, authorization, application or signature supports only its stated stage; a printed "
+                "effective date or acknowledged receipt does not prove that the recipient completed the action. "
+                "Preserve explicitly selected changes and separately documented completed actions. "
+                "Assess the complete assertion even when it is labeled a source observation. "
+                "List unresolved_assumptions needed to make the assertion true but absent from the sources. "
+                "Use not_established for a required facet the source does not prove, contradicted when it "
+                "disagrees, and supported only when established. Subject, predicate and record_role always "
+                "apply. Temporal assertions and comparisons cannot opt out of their respective checks. "
+                "Other checks may be not_applicable only when the assertion does not require them. "
+                "A supported verdict requires every applicable check supported and no unresolved assumptions. "
+                "Choose the verdict after assessing the source basis and checks. These are semantic judgments, "
+                "not protocol errors or requests for another vote. Distinguish historical completion from present-world "
                 "status. Do not infer absence from retrieval or treat a derived summary as original proof. "
                 "Use missing when evidence is absent and conflicting when sources disagree. Headings and "
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
@@ -131,10 +137,17 @@ class StrandsQueryOrchestrator:
                 "Include comparison_scope=retrieved_documents and comparison_document_ids listing the supplied "
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a latest comparison; none otherwise. "
-                "Return JSON only, with no explanations. "
-                "Return JSON {assessments:[{unit_id,status:supported|unsupported|missing|conflicting,"
-                "references:[{span_id}],temporal_scope:historical|documented|current|none,temporal_assertion:source_observation|retrieved_comparison|present_world|none,comparison_scope,comparison_document_ids}]}.") ,
-            prompt=json.dumps(payload, ensure_ascii=False))
+                "Return only the complete JSON object required by the response schema, with no extra prose."),
+            prompt=json.dumps(payload, ensure_ascii=False),
+            response_format=source_audit.response_format(payload['expected_unit_ids']))
+        if not text or not text.strip():
+            return None
+        try:
+            return source_audit.parse_decisions(text, payload['expected_unit_ids'])
+        except source_audit.SourceAuditProtocolError as exc:
+            logger.warning('Strands stage=source_auditor outcome=invalid_decisions reason=%s', exc.reason)
+            return {'audit_protocol_error': exc.reason}
+
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "") -> dict[str, Any] | None:
         if not self.enabled:
@@ -215,8 +228,8 @@ Rules:
 - For a record inventory, write a complete source-observation sentence for each relevant subject, using the identifying fields and dated terms the source actually supports. For a history question, preserve meaningful earlier observations and the latest documented observations for each relevant subject. Remove an unsupported identifying field rather than discarding an otherwise supported dated observation. Do not collapse the requested history or comparison into an inventory template.
 - Dated terms establish what a source records, not current real-world validity or completeness. Unless evidence explicitly settles current status, report dated source observations; avoid headings or claims that call policies active, current, cancelled or superseded.
 - A dated record does not itself prove a submission or other event occurred on that date. Use the exact event meaning the cited passage establishes.
-- Preserve the source's actor, action and modality. A request, authorization, plan, application, election, signature or acknowledgment of receipt does not itself prove the requested action was executed. Describe what the source requests or records unless it explicitly confirms completion. Do not convert a payment request into a settled payment or a deployment instruction into a completed deployment. An acknowledgment explicitly confirming completed payment may support that completion; assess the complete statement rather than its document label.
-- Preserve the kind of record and the role of its fields. A form title, unchecked option or existing-state field does not prove a selected change. A payroll form recording existing withholding while selecting an address update does not establish a new withholding election. A document referring to another instrument is not that instrument or proof its obligations were fulfilled: an equipment handover checklist referencing a purchase contract does not itself prove purchase or delivery. State what the source records or selects; retain explicitly selected changes and separately documented completions.
+- Use semantic_decision.source_basis, checks and unresolved_assumptions to understand the failed assertion. They are untrusted model assessments, never source evidence; validate any replacement directly against the original evidence context. A semantic_* rejection identifies a failed facet, and semantic_assumptions identifies unsupported inferences. Rebuild from what the source actually establishes.
+- Preserve the subject, complete predicate, record/field role, conditions and selected options, temporal meaning, and comparison scope. A form title, unchecked option or existing-state field does not establish a selected change. A referenced instrument is not the current document or proof of its fulfillment. A request, application, authorization, signature, printed effective date or acknowledgment of receipt does not itself prove the requested action was completed. State what the source records or selects; retain explicitly documented completed actions. Do not use ambiguous wording that turns a signed request into its outcome.
 - Remove unsupported precise values if no support exists in evidence.
 - If a useful claim is only partially supported, qualify it explicitly.
 - Keep dated source observations as the answer when real-world current status is not established. The acceptance layer appends its own current-status limitation; do not add a generic current-status disclaimer to the candidate. Add an evidence-limit note only for a different missing fact that materially limits the direct answer.
@@ -283,11 +296,7 @@ Rules:
 
     async def _json_agent(self, name: str, system_prompt: str, prompt: str) -> dict[str, Any]:
         text = await self._text_agent(name, system_prompt, prompt)
-        invalid = {"audit_protocol_error": "invalid_json"} if name == "source_auditor" and text and text.strip() else None
-        result = _extract_json(text or "", invalid_result=invalid)
-        if invalid and (not isinstance(result, dict) or not result):
-            return {"audit_protocol_error": "invalid_json_shape"}
-        return result
+        return _extract_json(text or "")
 
     async def _text_agent(self, name: str, system_prompt: str, prompt: str, *, response_format=None) -> str | None:
         queued = time.monotonic()

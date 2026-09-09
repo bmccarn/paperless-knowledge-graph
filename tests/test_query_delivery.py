@@ -79,6 +79,20 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[Document 101](/documents/101)", streamed["answer"])
         self.assertEqual(streamed["evidence_pack"]["items"][0]["support_spans"][0]["document_id"], 101)
 
+    async def test_previous_audit_policy_cache_cannot_bypass_new_audit(self):
+        from app import query as query_module
+        self.assertNotEqual(query_module.QUERY_CACHE_VERSION, 'source-audit-v24:bounded-context-v1')
+        with patch.object(query_module, 'QUERY_CACHE_VERSION', 'source-audit-v24:bounded-context-v1'):
+            previous = await self.engine.query('Recorded premium?', mode='strict')
+            repeated = await self.engine.query('Recorded premium?', mode='strict')
+        self.assertTrue(previous['finalization']['answer_verified'])
+        self.assertTrue(repeated['cached'])
+        before = len(self.engine.calls)
+        current = await self.engine.query('Recorded premium?', mode='strict')
+        self.assertFalse(current['cached'])
+        self.assertEqual(len(self.engine.calls), before + 1)
+        self.assertTrue(current['finalization']['answer_verified'])
+
     async def test_partial_is_consistent_across_delivery_and_never_cached(self):
         from tests.test_partial_answers import MixedAuditor, SOURCE
         from tests.test_source_dates import pack

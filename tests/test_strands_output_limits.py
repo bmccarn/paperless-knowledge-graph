@@ -16,6 +16,7 @@ from app import strands_orchestrator as module
 from app.answer_finalization import AnswerFinalizer, evidence_spans
 from app.cache import invalidate_on_sync
 from tests.test_query_delivery import RetrievedEngine
+from tests.source_audit_fixtures import decision
 
 
 QUOTE = "The listed policy provides liability coverage."
@@ -82,8 +83,8 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                     return httpx.Response(400, json={'error': {'message':'Synthetic context window exceeded',
                         'type':'invalid_request_error', 'code':'context_length_exceeded'}})
                 span = payload["source_spans"][0]
-                result = {"assessments": [{"unit_id": unit["id"], "status": "unsupported" if self.reject_all_audits or (self.reject_first_audit and self.audit_count == 1) else "supported",
-                    "references": [{"span_id": span["span_id"]}]} for unit in payload["units"]]}
+                result = {"assessments": [decision(unit_id=unit["id"], status="unsupported" if self.reject_all_audits or (self.reject_first_audit and self.audit_count == 1) else "supported",
+                    references=[{"span_id": span["span_id"]}]) for unit in payload["units"]]}
                 if self.audit_responder:
                     result = await self.audit_responder(payload)
             # Simulate a provider completion that exceeds the former 6,000-token
@@ -214,8 +215,9 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         evidence, facts, tails = continuity_fixture()
         auditor = ContinuityAuditor(facts, tails)
         async def respond(payload):
-            return await auditor.audit_answer_units(payload['question'], payload['units'],
-                                                    payload['source_spans'], payload)
+            response = await auditor.audit_answer_units(payload['question'], payload['units'],
+                                                       payload['source_spans'], payload)
+            return {'assessments': [decision(**row) for row in response['assessments']]}
         self.audit_responder = respond
         self.audit_override = '{}'
         self.editor_text = json.dumps({'observations':facts})
@@ -249,7 +251,8 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(facts[0],json.dumps(coverage))
             self.assertIn('unchecked option',system + prompt)
             self.assertIn('existing-state field',system + prompt)
-            self.assertIn('purchase contract',system + prompt)
+            self.assertIn('source_basis',system + prompt)
+            self.assertIn('selected',system + prompt)
         self.assertTrue(editor_seen)
         self.assertIsNone(payloads[0]['protocol_correction'])
         self.assertIsNotNone(payloads[1]['protocol_correction'])
@@ -329,7 +332,49 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(payload['units']), 1)
         self.assertIn('Do not use any sibling unit', text(messages[0]))
         self.assertNotIn('Answer context preserves surrounding headings', text(messages[0]))
-        self.assertIn('references:[{span_id}]', text(messages[0]))
+        fields = request['response_format']['json_schema']['schema']['properties']['assessments']['items']['properties']
+        self.assertEqual(fields['references']['items']['required'], ['span_id'])
+        self.assertFalse(fields['references']['items']['additionalProperties'])
+
+    async def test_native_negative_checks_cannot_be_overridden_by_supported_verdict(self):
+        async def respond(payload):
+            row = decision(unit_id=payload['units'][0]['id'],
+                           references=[{'span_id': payload['source_spans'][0]['span_id']}],
+                           source_basis='PRIVATE source establishes existing state only.')
+            row['checks']['record_role'] = 'contradicted'
+            return {'assessments': [row]}
+        self.audit_responder = respond
+        with self.assertLogs(module.logger, level='INFO') as logs:
+            result = await AnswerFinalizer(self.orchestrator).finalize('What is recorded?', QUOTE, PACK)
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(self.audit_count, 1)
+        claim = result['claim_ledger']['claims'][0]
+        self.assertEqual(claim['model_status'], 'supported')
+        self.assertIn('semantic_record_role', claim['rejection_reasons'])
+        self.assertNotIn('PRIVATE', json.dumps(result) + '\n'.join(logs.output))
+
+    async def test_native_duplicate_decisions_and_unknown_facets_use_only_one_correction(self):
+        # Wire responses must not salvage inner JSON or overwrite negative keys.
+        for defect in ('duplicate', 'missing', 'unknown', 'envelope'):
+            row = decision()
+            raw = json.dumps({'assessments': [row]})
+            if defect == 'duplicate':
+                raw = raw.replace('"predicate": "supported"', '"predicate": "contradicted", "predicate": "supported"')
+            elif defect == 'missing':
+                del row['checks']['record_role']; raw = json.dumps({'assessments': [row]})
+            elif defect == 'unknown':
+                row['checks']['record_role'] = 'PRIVATE unknown'; raw = json.dumps({'assessments': [row]})
+            else:
+                raw = 'PRIVATE prefix ' + raw
+            self.audit_override, self.audit_count = raw, 0
+            before = len(self.requests)
+            result = await AnswerFinalizer(self.orchestrator).finalize('What is recorded?', QUOTE, PACK)
+            self.assertTrue(result['finalization']['answer_verified'], defect)
+            self.assertEqual(self.audit_count, 2)
+            self.assertEqual(result['claim_ledger']['audit_batches'][0]['status'], 'corrected')
+            self.assertTrue(all(r['response_format']['json_schema']['name'] == 'source_audit_decisions'
+                                for r in self.requests[before:]))
+            self.assertNotIn('PRIVATE', json.dumps(result))
 
     async def test_editor_empty_exception_timeout_and_truncation_are_unavailable(self):
         for failure in ('empty', 'exception', 'timeout', 'truncation'):
@@ -409,8 +454,19 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(repaired['finalization']['answer_verified'])
         self.assertEqual(planned, {'ok': True})
         structured = [r for r in self.requests if 'response_format' in r]
-        self.assertEqual(len(structured), 1)
-        format = structured[0]['response_format']
+        self.assertEqual(len(structured), 3)  # original audit, editor, fresh audit
+        editor_requests = [r for r in structured if r['response_format']['json_schema']['name'] == 'answer_observations']
+        self.assertEqual(len(editor_requests), 1)
+        format = editor_requests[0]['response_format']
+        for request in self.requests:
+            if request not in structured:
+                self.assertNotIn('response_format', request)
+            elif request not in editor_requests:
+                audit_schema = request['response_format']['json_schema']['schema']
+                self.assertEqual(audit_schema['required'], ['assessments'])
+                fields = audit_schema['properties']['assessments']['items']['properties']
+                self.assertEqual(list(fields['checks']['properties']), ['subject', 'predicate', 'record_role', 'conditions', 'temporal', 'comparison'])
+                self.assertNotIn('not_applicable', fields['checks']['properties']['predicate']['enum'])
         self.assertEqual(format['type'], 'json_schema')
         self.assertTrue(format['json_schema']['strict'])
         schema = format['json_schema']['schema']

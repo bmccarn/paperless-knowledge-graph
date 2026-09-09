@@ -114,10 +114,10 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import AsyncMock, patch
         from app import strands_orchestrator as module
         from app.answer_finalization import evidence_spans
+        from tests.source_audit_fixtures import decision
         span = evidence_spans(pack(ANSWER))[0]
-        valid = json.dumps({"assessments": [{"unit_id": "u1", "status": "supported", "temporal_scope": "historical",
-            "references": [{"span_id": span["span_id"], "evidence_id": span["evidence_id"],
-                            "document_id": 101, "quote": ANSWER}]}]})
+        valid = json.dumps({'assessments': [decision(temporal_scope='historical', temporal_assertion='source_observation',
+                                                    references=[{'span_id': span['span_id']}])]})
         class CompletedText(str):
             stop_reason = 'end_turn'
         for raw, expected_calls in [(' {"assessments":', 2), ('private malformed model text', 2), ('', 1),

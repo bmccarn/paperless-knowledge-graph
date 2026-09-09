@@ -861,11 +861,12 @@ class AnswerFinalizer:
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         results = []
-        complete = bool(units) and len(units) <= self.max_units and bool(spans)
+        context = audit_context(answer)
+        complete = bool(units) and len(units) <= self.max_units and len(context) <= self.max_units * 1200 and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
-            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": audit_context(answer)}
+            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
             diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
                                for index in range(len(batches)))

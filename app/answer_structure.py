@@ -16,13 +16,25 @@ def _starts(text):
 
 
 def is_colon_label(line):
-    return bool(re.fullmatch(r"\s*(?:[-+*]\s+)?(?:\*\*[^*\n]+:\*\*|[^\n]+:)\s*", line))
+    return bool(re.fullmatch(r"(?:[-+*]\s+)?(?:\*\*[^*\n]+:\*\*|[^\n]+:)", line.strip()))
 
 
 def audit_context(answer):
-    # Keep nesting, headings and paragraph boundaries; bound redundant empty
-    # lines without flattening the layout or changing any factual text.
-    return re.sub(r'((?:\r\n?|\n))(?:[ \t]*(?:\r\n?|\n)){2,}', r'\1\1', answer)
+    # Empty-line width and trailing spaces do not establish subject scope.
+    # Preserve hard breaks (two spaces), indentation and paragraph boundaries.
+    lines = []
+    for line in answer.splitlines(keepends=True):
+        body = line.rstrip('\r\n')
+        ending = line[len(body):]
+        trimmed = body.rstrip(' \t')
+        trailing = body[len(trimmed):]
+        lines.append(trimmed + ('  ' if len(trailing) >= 2 and trimmed else trailing if trimmed else '') + ending)
+    return re.sub(r'((?:\r\n?|\n))(?:\r\n?|\n){2,}', r'\1\1', ''.join(lines))
+
+
+def _field(text):
+    text = re.sub(r'^\s*(?:[-+*]|\d+[.)])\s+', '', text)
+    return bool(re.match(r'^(?:\*\*[^*\n]+:\*\*|__[^_\n]+:__|[^\n:]+:)[ \t]*\S', text))
 
 
 def _strong_label(token):
@@ -94,8 +106,7 @@ def _structure(answer, units):
             if owner is not None:
                 item = items[owner]
                 if not item.units:
-                    item.field_item = bool(re.match(
-                        r'^(?:\*\*[^*\n]+:\*\*|__[^_\n]+:__|[^.!?\n:]{1,100}:)[ \t]+\S', token.content))
+                    item.field_item = _field(token.content)
                 item.units.update(ids)
 
     # Colon labels can share a CommonMark paragraph with the following line.
@@ -174,6 +185,19 @@ def _structure(answer, units):
             previous[item.list_id] = prior | item.units
         else:
             previous[item.list_id] = set(item.units)
+    # Plain field paragraphs have the same subject dependency as list fields.
+    # A leading standalone field can be resolved by the question/auditor; once
+    # preceding answer context exists it cannot be silently discarded.
+    root_paragraphs = {uid for block in blocks if block.item is None for uid in block.units}
+    root_items = {uid for item in items if item.parent is None for uid in item.units}
+    prior = set()
+    for unit in units:
+        uid = unit['id']
+        if uid in root_paragraphs and _field(unit['text']):
+            govern({uid}, prior, ('paragraph_field_run', tuple(sorted(prior))))
+            prior = prior | {uid}
+        elif uid in root_paragraphs or uid in root_items:
+            prior = {uid}
     return dependencies, unknown, signatures
 
 

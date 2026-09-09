@@ -86,12 +86,13 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_flat_field_run_does_not_reset_context_at_a_rejected_subject_field(self):
         answer = ('- Invoice Cedar records delivery.\n- Amount: $20.\n'
-                  '- **Subject:** Invoice Maple REJECT.\n- Amount: $30.\n- Recipient: Morgan.\n\n'
+                  '- **Subject:** Invoice Maple REJECT.\n- Reference No.: A-30.\n- Amount: $30.\n- Recipient: Morgan.\n\n'
                   '- Invoice Birch records delivery of 40 kg.')
         result, _ = await self.finalize(answer)
         self.assertEqual(result['finalization']['disposition'], 'partial')
         self.assertNotIn('$30', result['answer'])
         self.assertNotIn('Morgan', result['answer'])
+        self.assertNotIn('A-30', result['answer'])
         self.assertIn('$20', result['answer'])
         self.assertIn('40 kg', result['answer'])
 
@@ -177,3 +178,27 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('$20', result['answer'])
                 self.assertNotIn('Casey', result['answer'])
                 self.assertIn('Maple records $30', result['answer'])
+
+    async def test_field_dependencies_do_not_depend_on_spaces_or_bullets(self):
+        for marker in ('', '- '):
+            for field in ('Amount:$20.', '**Amount:**$20.', 'Amount: $20.'):
+                answer = (marker + 'Invoice Cedar REJECT records delivery.\n\n'
+                          + marker + field + '\n\n' + marker + 'Recipient:Casey.\n\n'
+                          + marker + 'Invoice Maple records $30.')
+                result, _ = await self.finalize(answer)
+                self.assertEqual(result['finalization']['disposition'], 'partial')
+                self.assertNotIn('$20', result['answer'])
+                self.assertNotIn('Casey', result['answer'])
+                self.assertIn('Maple records $30', result['answer'])
+
+    async def test_audit_context_bounds_layout_only_whitespace(self):
+        for padding in ('\n' + ' ' * 200000 + '\n', ' ' * 200000 + '\n'):
+            answer = 'The invoice records $20.' + padding + 'The invoice records $30.'
+            result, auditor = await self.finalize(answer)
+            self.assertTrue(result['finalization']['answer_verified'])
+            self.assertLess(len(auditor.calls[0][1]), 100)
+        # Huge indentation that cannot be removed without changing structure
+        # must fail closed before any provider call, at the existing prose bound.
+        result, auditor = await self.finalize('The invoice records $30.\n' + ' ' * 200000 + 'The invoice records $20.')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(auditor.calls, [])

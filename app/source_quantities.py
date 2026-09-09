@@ -78,20 +78,25 @@ def _physical_lines(text):
 
 def _rows(text):
     lines = [line.rstrip('\r\n') for line in _physical_lines(text)]
-    # Decline escaped/inline-code structures rather than normalize them into cells.
-    if len(lines) < 3 or any('\\' in line or '`' in line or '<' in line or '>' in line for line in lines):
+    def cells(line):
+        # Unsupported row syntax grants no values, even beside a valid row.
+        if any(char in line for char in ('\\', '`', '<', '>')) or '|' not in line:
+            return None
+        value = line.strip()
+        return [cell.strip() for cell in value.removeprefix('|').removesuffix('|').split('|')]
+
+    if len(lines) < 3:
+        return None
+    headings, separator = cells(lines[0]), cells(lines[1])
+    if (not headings or separator is None or len(separator) != len(headings)
+            or not all(re.fullmatch(r':?-{3,}:?', cell) for cell in separator)):
         return None
     rows = []
-    for line in lines:
-        value = line.strip()
-        if '|' not in value:
-            return None
-        rows.append([cell.strip() for cell in value.removeprefix('|').removesuffix('|').split('|')])
-    if len(rows[0]) < 1 or any(len(row) != len(rows[0]) for row in rows):
-        return None
-    if not all(re.fullmatch(r':?-{3,}:?', cell) for cell in rows[1]):
-        return None
-    return rows[0], rows[2:]
+    for line in lines[2:]:
+        row = cells(line)
+        if row is not None and len(row) == len(headings):
+            rows.append(row)
+    return headings, rows
 
 
 def table_ranges(original):

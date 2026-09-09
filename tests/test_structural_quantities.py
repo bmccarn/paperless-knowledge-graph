@@ -105,6 +105,20 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
             table = '| Item | Amount USD |\n| --- | --- |\n| ' + label + ' | 100 |'
             self.assertTrue(values_match('Amount: 100 USD.', references(table)), label)
 
+    def test_complete_table_rows_survive_adjacent_unstructured_rows(self):
+        source = MEASURE + '\nTreatment plan: target is not an observed result.'
+        self.assertTrue(values_match('Concentration: 12 mg/L.', references(source)))
+        for invalid in ('| Missing row | 99 |', 'Unstructured 99 mg/L', '| `99` | 99 | 99 |'):
+            table = MEASURE + '\n' + invalid
+            self.assertTrue(values_match('Concentration: 12 mg/L.', references(table)), invalid)
+            # Explicit prose quantities remain existing prose evidence; incomplete
+            # numeric cells must never inherit the valid row's unit or a missing cell.
+            if invalid != 'Unstructured 99 mg/L':
+                self.assertFalse(values_match('Concentration: 99 mg/L.', references(table)), invalid)
+        heading, row = MEASURE.rsplit('\n', 1)
+        for rows in (['| Incomplete | 99 |', row], [row, '| Incomplete | 99 |', row]):
+            self.assertTrue(values_match('Concentration: 12 mg/L.', references(heading + '\n' + '\n'.join(rows))))
+
     def test_split_or_unknown_context_does_not_authorize_table_inheritance(self):
         header, row = TABLE.rsplit('\n', 1)
         self.assertFalse(values_match('Charge: 100 USD.', references(header) + references(row)))

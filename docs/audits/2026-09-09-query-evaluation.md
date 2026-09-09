@@ -511,6 +511,26 @@ completion tests across four modes and two domains. These are controlled contrac
 tests, not native accuracy evidence. A fresh candidate manifest and native run are
 required; no result from the stopped v1 experiment qualifies v2.
 
+The recovery implementation passed both independent review axes at `e486535` and
+backend/frontend CI, including disposable datastore checks and production browser
+regressions. Its fresh initial native experiment uses unchanged R2 questions and
+rubrics, manifest `7a4737fbd89a0904a9c4a1003aea3677120a598ec32004c4d05c02758a544f17`.
+Cases00–03 passed both reviewers with zero false approvals, missing required facts,
+unsupported extras or false completeness. Treatment coverage conservatively
+under-reported one aspect; its completion worker proposed no additions. These
+results do not yet demonstrate a native recovery of an omitted fact. The initial
+slice, all-mode run, live retrieval and holdout are not complete.
+
+Retained v2 complete and partial answers were replayed in the built frontend.
+Desktop/mobile coverage, factual checks, source drawers and private history replay
+passed and screenshots were visually inspected with no page errors or horizontal
+overflow. The initial complete replay omitted the public source-summary projection,
+so its source-check locator timed out; adding the production formatter's projection
+fixed this fixture failure without a new native call or application change. These
+remain rendering checks, with replay timing and absent fixed-pack summary metrics,
+not live retrieval or real conversation persistence. Artifacts are private under
+`/private/tmp/kg-recovery-v2-ui-20260909`.
+
 Native computer control was retried and still failed native-pipe startup. A local
 Playwright fallback replayed retained native complete, conservative-partial and
 Timeline answers through the built frontend. Source excerpts, separate coverage
@@ -546,3 +566,10 @@ utilities have focused offline checks and independent slice reviews; full runtim
 and browser wiring remain incomplete. All-mode admission failed and is still required
 before native live-retrieval execution. Retained source copies establish preparation
 evidence only, not an immutable whole-corpus snapshot or a passing model result.
+
+The delivery utility additionally guards the actual engine query invoked by its
+real stream implementation, uses a private conversation antecedent, and checks
+exact final SSE conservation. Review reproduced acceptance of an unterminated SSE
+frame and bytes whose send failed; both now reject qualification while retaining
+diagnostic bytes. Both axes cleared the slice; five actual-route tests pass and all
+29 live utility tests pass. This still does not supply an executable live harness.

@@ -231,6 +231,8 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
         for field in ('Start time: 12:01 AM.', '**Start time:**08:30.',
                       'Device1:20.', 'Device 1:20.', 'Item 1:20 kg.',
                       'Line 1:20.00 USD.', 'Item at 1:20 kg.', 'Line at 1:20.00 USD.',
+                      'Item at 1:20,000 USD.', 'Line at 1:20,50 EUR.',
+                      'Line at 1:20, 000 USD.',
                       '08:30: Released.',
                       '12:01 AM: Cancelled.', 'Departure at 08:30: Released.',
                       'Ratio: 3:1.'):

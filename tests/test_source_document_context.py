@@ -12,6 +12,48 @@ from tests.test_source_dates import ExactAuditor, pack
 
 
 class SourceDocumentContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_table_continuations_are_rebound_before_source_certification(self):
+        from app.query import QueryEngine
+        from app.embeddings import chunk_text
+        header = '| Record | Charge |\n| --- | --- |\n'
+        source = 'Service invoices\n\n' + header + ''.join(
+            f'| Account {i} recorded service | ${i+100} |\n' for i in range(190)) + '\nEnd of table.'
+        represented = chunk_text(source)
+        index = next(i for i, text in enumerate(represented) if text not in source)
+        record = {'document_id':101, 'chunk_index':index, 'source_kind':'ocr', 'content':represented[index],
+                  'title':'Service invoices', 'doc_type':'invoice', 'similarity':1.0}
+        engine = QueryEngine()
+        async def build(records):
+            with patch('app.query.paperless_client.get_document', AsyncMock(return_value={'content':source,'title':'Service invoices'})) as fetch, \
+                    patch('app.query.embeddings_store.get_chunks_for_documents', AsyncMock(return_value=records)), \
+                    patch('app.query.embeddings_store.get_open_feedback_document_ids', AsyncMock(return_value=set())):
+                result = await engine._build_evidence_pack('What invoice charges are recorded?', {'vector_results':records},
+                    [{'document_id':101}], {}, 'strict')
+            self.assertEqual(fetch.await_count, 1)
+            return result
+        evidence = await build([record])
+        item = next(i for i in evidence['items'] if i['chunk_index'] == index)
+        self.assertIn(item['content'], source)
+        self.assertNotEqual(item['content'], represented[index])
+        self.assertTrue(all(s['content'] in source for s in evidence_spans(evidence, citation_safe=True)))
+        self.assertTrue(all(i.get('source_context', {}).get('start') is not None for i in evidence['items']))
+        self.assertEqual(chunk_text(source), represented)  # Indexed representation remains unchanged.
+        altered = {**record, 'content':'Invented prefix. ' + record['content']}
+        rejected = await build([altered])
+        self.assertFalse(any(i['chunk_index'] == index for i in rejected['items']))
+        generated = {**record, 'source_kind':'summary'}
+        excluded = await build([generated])
+        self.assertFalse(any(i['chunk_index'] == index for i in excluded['items']))
+
+    def test_unbound_full_source_cannot_certify_an_inserted_header(self):
+        source = '| Field | Value |\n| --- | --- |\n| Charge | $500 |'
+        transformed = '| Field | Value |\n| --- | --- |\n' + 'Value |\n| --- | --- |\n| Charge | $500 |'
+        evidence = pack(transformed)
+        bind_document_context(evidence['items'][0], source)
+        diagnostics = {}
+        self.assertEqual(evidence_spans(evidence, citation_safe=True, diagnostics=diagnostics), [])
+        self.assertEqual(diagnostics['unbound_source_chunks'], 1)
+
     def test_full_document_structure_is_parsed_once_for_multiple_chunks(self):
         from app import answer_finalization as module
         fields = [f'**RECORDED DOSE** - - - **{i} mg**' for i in range(1, 21)]

@@ -140,11 +140,12 @@ def _find_table_regions(content: str) -> list:
     return regions
 
 
-def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list[str]:
+def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800, *, include_table_headers: bool = True) -> list[str]:
     """Split text into chunks using paragraph/sentence boundaries with overlap.
     Table-aware: when a chunk starts inside a markdown table, the table's header
     row and separator row are prepended so the chunk is self-contained and the
-    LLM can interpret column values correctly."""
+    LLM can interpret column values correctly. Source certification disables
+    inserted headers to retain the original contiguous intervals and indices."""
     if not content or not content.strip():
         return []
     if len(content) <= chunk_size:
@@ -195,6 +196,8 @@ def chunk_text(content: str, chunk_size: int = 4000, overlap: int = 800) -> list
 
     if not raw_chunks:
         return [content[:chunk_size]]
+    if not include_table_headers:
+        return raw_chunks
 
     # Phase 2: Prepend table headers to continuation chunks that start within a table
     result = [raw_chunks[0]]

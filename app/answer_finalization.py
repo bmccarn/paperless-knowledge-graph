@@ -27,7 +27,7 @@ from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v22"
+POLICY_VERSION = "source-audit-v23"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -352,6 +352,10 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
         seen[item["id"]] = identity
         digest = hashlib.sha256(content.encode()).hexdigest()
         context = certified_document_context(item, content)
+        if not context and ('source_context' in item or '_source_document_content' in item):
+            if diagnostics is not None:
+                diagnostics['unbound_source_chunks'] = diagnostics.get('unbound_source_chunks', 0) + 1
+            continue
         if context:
             document_text, offset = context
             key = (item['document_id'], item['source_context']['digest'])
@@ -452,7 +456,13 @@ def _calendar_features(text: str, date_order: str, context: str = '') -> set[str
     return features
 
 
-def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy", diagnostics: dict | None = None) -> list[dict]:
+class EvidenceReservationError(ValueError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
+def select_spans(question: str, units: list[dict], spans: list[dict], budget: int = 28000, *, serialized: bool = False, date_order: str = "mdy", diagnostics: dict | None = None, required_span_ids: tuple[str, ...] = ()) -> list[dict]:
     tokens = set(re.findall(r"[\w$%]+", question.lower() + " " + " ".join(u["text"].lower() for u in units)))
     # Retrieval metadata identifies explicitly requested documents even when
     # their short OCR has fewer shared words than a long unrelated notice.
@@ -485,6 +495,13 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             represented.add(doc_id)
         else:
             remaining.append(pair)
+    required_ids = set(required_span_ids)
+    required = [(index, span) for index, span in enumerate(spans) if span['span_id'] in required_ids]
+    if (len(required) != len(required_ids) or any(span.get('feedback_open') for _, span in required)):
+        raise EvidenceReservationError('invalid_reserved_source')
+    mandatory = {index for index, _ in first_per_document + required}
+    if required and sum(costs[index] for index in mandatory) > budget:
+        raise EvidenceReservationError('reserved_sources_exceed_budget')
     priority_queues = []
     for scope in ("recent", "history"):
         priority, represented = [], set()
@@ -548,7 +565,7 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
         # across units. A comparison cannot delay another unit's needed detail.
         per_unit[:] = [pair for row in zip_longest(per_unit, alternatives) for pair in row if pair is not None]
     per_unit = [pair for row in zip_longest(*queues) for pair in row if pair is not None]
-    ranked = first_per_document + history + per_unit + remaining
+    ranked = first_per_document + required + history + per_unit + remaining
     explicit_indices = {pair[0] for pair in first_per_document}
     result, used, selected, contents = [], 0, set(), set()
     for index, span in ranked:
@@ -587,6 +604,9 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
             date_opportunities.append({'unit_id': unit.get('id'), 'available': len(available),
                                        'selected': len(admitted), 'omitted': len(available - admitted)})
         diagnostics.update(comparison_opportunities=comparisons, date_opportunities=date_opportunities)
+        if required:
+            diagnostics['source_reservations'] = {
+                'required_windows': len(required), 'selected_windows': sum(index in selected for index, _ in required)}
     return result
 
 
@@ -988,6 +1008,25 @@ def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
     return errors
 
 
+def subset_source_reservations(candidate, ledger, revised_units, retained_ids):
+    """Bind unchanged survivors in order, including duplicate observation text."""
+    claims = ledger['claims']
+    units = (ObservationCandidate.from_text(candidate).units() if ledger.get('unitization') == 'observations_v1'
+             else answer_units(candidate))
+    if (ledger.get('candidate_digest') != hashlib.sha256(candidate.encode()).hexdigest()
+            or len(claims) != len(units)
+            or any(any(c.get(k) != u[k] for k in ('id', 'start', 'end')) or c.get('claim') != u['text']
+                   for c, u in zip(claims, units))
+            or not isinstance(retained_ids, list) or len(set(retained_ids)) != len(retained_ids)):
+        raise EvidenceReservationError('invalid_reserved_candidate')
+    survivors = [c for c in claims if c['id'] in retained_ids]
+    if ([c['id'] for c in survivors] != retained_ids or len(survivors) != len(revised_units)
+            or any(c['claim'] != u['text'] or c['status'] != 'supported' or not c['references']
+                   for c, u in zip(survivors, revised_units))):
+        raise EvidenceReservationError('invalid_reserved_candidate')
+    return {unit['id']: claim['references'] for claim, unit in zip(survivors, revised_units)}
+
+
 class AnswerFinalizer:
     def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
                  concurrency: int = 4, date_order: str = "mdy"):
@@ -1005,7 +1044,7 @@ class AnswerFinalizer:
         batches = math.ceil(min(len(units), self.max_units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
-    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None):
+    async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None):
         diagnostics = diagnostics if diagnostics is not None else []
         if observations and observations.text != answer:
             raise ValueError('Observation candidate text mismatch')
@@ -1023,15 +1062,28 @@ class AnswerFinalizer:
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
                           "unitization": observations.strategy if observations else 'prose_v1'}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            reservation_ids = {}
+            for unit_id, references in (source_reservations or {}).items():
+                if unit_id not in {u['id'] for u in units} or not references:
+                    raise EvidenceReservationError('invalid_reserved_candidate')
+                for ref in references:
+                    if not isinstance(ref, dict) or not ref or validate_reference(ref, spans) != ref:
+                        raise EvidenceReservationError('invalid_reserved_source')
+                reservation_ids[unit_id] = [ref['span_id'] for ref in references]
+            selections = [{} for _ in batches]
+            # Plan all admissions before invoking the auditor. An invalid or
+            # over-budget reservation never triggers a partial set of calls.
+            selected_batches = [select_spans(question, batch, spans, serialized=True, date_order=self.date_order,
+                diagnostics=selections[index], required_span_ids=tuple(
+                    span_id for unit in batch for span_id in reservation_ids.get(unit['id'], [])))
+                for index, batch in enumerate(batches)]
             diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
                                for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
-            selections = [{} for _ in batches]
             async def worker():
                 for index, batch in pending:
-                    selected = select_spans(question, batch, spans, serialized=True, date_order=self.date_order,
-                                            diagnostics=selections[index])
+                    selected = selected_batches[index]
                     protocol = diagnostics[index]
                     async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
@@ -1281,9 +1333,11 @@ class AnswerFinalizer:
             if subset:
                 ledger["subset_audit_batches"] = subset_diagnostics = []
                 try:
+                    subset_units = subset_observations.units() if subset_observations else answer_units(subset)
+                    reservations = subset_source_reservations(candidate, ledger, subset_units, selection['retained_ids'])
                     async with asyncio.timeout(self._audit_timeout(subset, subset_observations)):
                         subset_ledger = await self._audit(question, subset, evidence_pack, plan,
-                                                         diagnostics=subset_diagnostics, observations=subset_observations)
+                            diagnostics=subset_diagnostics, observations=subset_observations, source_reservations=reservations)
                     subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
                     ledger['subset_audit'] = {
                         'candidate_digest': subset_ledger['candidate_digest'],
@@ -1306,6 +1360,10 @@ class AnswerFinalizer:
                         candidate, ledger, disposition = subset, subset_ledger, "partial"
                     elif not subset_ledger['complete']:
                         disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
+                except EvidenceReservationError as exc:
+                    ledger['subset_evidence_diagnostic'] = {'reason': exc.reason}
+                    disposition = 'incomplete' if exc.reason == 'reserved_sources_exceed_budget' else 'audit_failed'
+                    error = 'The partial answer could not retain its required source evidence.'
                 except TimeoutError:
                     disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
                 except Exception:

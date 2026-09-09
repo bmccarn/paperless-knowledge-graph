@@ -1284,17 +1284,44 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
                     reserved.setdefault(key, dict(chunk))[f"{scope}_reserved"] = True
         selected = list(reserved.values()) + selected
 
+        # Indexed table continuations can contain an inserted header. Rebind
+        # only known representations to uniquely located original intervals;
+        # neither a guessed prefix removal nor stale text grants authority.
+        document_contexts = {c['document_id']: c['_source_document_content'] for c in full_doc_chunks
+                             if isinstance(c.get('_source_document_content'), str)}
+        chunk_versions, original = {}, []
+        for chunk in selected:
+            doc_id = chunk.get('document_id')
+            if doc_id not in document_contexts:
+                original.append(chunk)
+                continue
+            text, index = certifying_text(chunk), chunk.get('chunk_index', 0)
+            if text is None or type(index) is not int or index < 0:
+                continue
+            expanded = index >= 100000
+            index = index - 100000 if expanded else index
+            key = (doc_id, expanded)
+            source = document_contexts[doc_id]
+            if key not in chunk_versions:
+                params = {'chunk_size':3600, 'overlap':500} if expanded else {'chunk_size':4000, 'overlap':800}
+                chunk_versions[key] = (chunk_text(source, **params),
+                                       chunk_text(source, **params, include_table_headers=False))
+            represented, raw = chunk_versions[key]
+            if index >= len(raw) or text not in (represented[index], raw[index]):
+                continue
+            start = source.find(raw[index])
+            if start < 0 or source.find(raw[index], start+1) >= 0:
+                continue
+            original.append({**chunk, 'content':raw[index], 'source_content':raw[index]})
         pack = build_evidence_pack(
             question=question,
             plan=plan,
-            chunks=selected,
+            chunks=original,
             sources=sources,
             max_items=90 if broad or high_accuracy else 60,
         )
         # Full OCR is already available from bounded source expansion. Keep it
         # private and bind every retained chunk of those documents to its context.
-        document_contexts = {c['document_id']: c['_source_document_content'] for c in full_doc_chunks
-                             if isinstance(c.get('_source_document_content'), str)}
         for item in pack['items']:
             if item['document_id'] in document_contexts:
                 bind_document_context(item, document_contexts[item['document_id']])

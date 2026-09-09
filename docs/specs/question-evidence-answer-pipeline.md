@@ -62,12 +62,15 @@ an answer. Reuse the resulting untrusted notes only within that request and exac
 snapshot; a changed source pack or requirement set invalidates them. No persistent
 model cache, reindex or ingestion reset. Preserve every original source window for
 independent verification; notes are neither replacement text nor authoritative
-facts. Source expansion uses existing retrieval capability and must produce a new
-certified snapshot. Do not concatenate unrelated snippets into synthetic originals.
+facts. For the first integrated candidate, existing retrieval/gap passes finish before
+this reading stage; the pipeline adds no source-expansion loop. Any later supported
+expansion must be a separately reviewed change producing a new certified snapshot. Do not concatenate unrelated snippets into synthetic originals.
 
 Maintain bounded concurrency, cancellation and provider-context handling. Physical
 model context limits remain real; report overflow or split coherent work explicitly
-rather than silently discarding original certifying context. No arbitrary output
+rather than silently discarding original certifying context. The first integrated
+candidate does not automatically split a document further: overflow is an explicit
+reader-unavailable result, not permission for an unbounded split/retry loop. No arbitrary output
 max-token cap is added.
 
 ### 3. Cross-document reconciliation and composition
@@ -131,6 +134,62 @@ Do not turn audit coverage into factual certainty or a fabricated probability.
 Transport/planning/reader/composition/verification failures get identifiable states.
 Saved and streamed responses must display the same final answer, citations and
 coverage. Changing metadata must not silently upgrade previously saved answers.
+
+## Review-resolved execution and receipt contract
+
+The query orchestrator owns the pipeline. Planning, reading, composition, editing,
+source verification and coverage use the configured Strands model route and shared
+concurrency semaphore. The first candidate adds zero retrieval expansion passes
+and zero recursive document splits. Existing retrieval limits remain explicit in
+the manifest. Reader reference recovery is at most one extra call per document;
+composition and coverage each get one native call and no semantic retry. Existing
+single protocol correction per audit batch and one candidate repair remain the
+only verifier/editor retries. The native qualification harness uses one SDK attempt;
+production transport retries must be separately recorded, never called native stages.
+
+For D document packets and audited batch counts B0 (initial), B1 (optional repair)
+and Bs (optional subset), the pipeline native-call ceiling after retrieval is
+`1 planner + 2D readers + 1 composer + 2(B0+B1+Bs) auditors + 1 editor + 1 coverage`.
+Absent optional passes contribute zero. Each B is bounded by the existing audit
+unit/batch settings. Publish both this computed ceiling and the per-stage counts.
+Existing call and audit deadlines apply; coverage/composition use the configured
+Strands call deadline. Deadline/overflow/protocol failure is terminal for that
+stage; it cannot start an undeclared pass or emit an unaudited draft. Cancellation
+drains child tasks and cancels later stages. Evaluation additionally has a finite
+manifest wall-clock ceiling. Raising a deadline or changing transport attempts
+requires a new frozen measurement, not an invisible retry.
+
+The single coverage call runs only after the final supported candidate is selected.
+It sees the original and resolved questions, original requested aspects, and exact
+final supported observations. It must check for planner-omitted subjects/time aspects
+against the question, rather than merely marking every generated requirement done.
+A malformed response, timeout, omitted-aspect mismatch or coarse planner fallback
+cannot report complete coverage. The mapping and statuses are interpretation
+metadata, not new factual content. Use fixed, nonfactual gap categories such as
+`not_answered`, `partially_answered`, `planning_unavailable` and `coverage_unavailable`;
+free-form explanations asserting additional source/world facts must not be displayed
+without their own normal source audit. Coverage failure can deliver already verified
+facts with coverage explicitly unavailable; it cannot withhold/overwrite those facts
+or present them as a complete answer. Overall request cancellation still cancels
+delivery. Native evaluation must test false-complete coverage independently.
+
+Bind every coverage receipt to hashes of the original/resolved question, requirement
+set, immutable source snapshot, pipeline version and final delivered candidate digest.
+Proposed composition mappings are never final coverage receipts. Repair replaces IDs;
+subset extraction can renumber them. Discard earlier mappings and assess the final
+candidate anew after either operation, including duplicated/reordered observation
+text. Validate all returned IDs against that final candidate and requirements.
+
+Introduce a new explicit pipeline/policy cache version for activation, included in
+cache admission before returning a hit. Legacy unaudited Quick entries and entries
+without valid matching receipt bindings cannot satisfy the new all-mode path. No
+global cache flush is needed. Persist the receipt with the exact response; stream,
+HTTP, cache and restoration validate equivalent bindings. Legacy saved conversations
+remain historical records with their original verification state, never silently
+upgraded or represented as new-pipeline answers. Corrupted/mismatched restored
+receipts show unavailable coverage and cannot present newly verified status. Test
+preexisting Quick cache entries, changed question/snapshot, dropped first observation,
+reordered repair, duplicate text, malformed coverage IDs, timeout and cancellation.
 
 ## Implementation sequence and gates
 

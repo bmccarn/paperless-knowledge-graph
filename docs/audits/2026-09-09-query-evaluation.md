@@ -75,8 +75,8 @@ unsupported assertion and three supported assertions, all high confidence. A
 local-only reconstruction preserves its four atomic units and all 83 retrieved
 items (206 canonical windows from 36 originals). Production chunking and evidence
 identities reproduce from the captured originals. A subsequent continuity check
-identified nine windows with copied table headers that are not contiguous original
-passages. That captured input is classified as an invalid reconstruction; it cannot
+identified nine source items with copied table headers that are not contiguous
+original passages. That captured input is classified as an invalid reconstruction; it cannot
 pass evaluation. A diagnostic admission can preserve it unchanged to reproduce the
 production failure, but cannot promote it to source-valid evidence. This is explicitly a
 reconstruction; the original raw native request was not retained. The user subsequently approved the scoped replay. The first execution stopped
@@ -102,7 +102,7 @@ and reported 47,511 input / 25,998 output tokens. Its repeats were also dependen
 All six approved native calls are now spent. No production behavior was changed.
 
 Removing unrelated context also changed source positions and removed nine invalid
-table windows, so this contrast does not identify the precise cause. In the full
+source items, so this contrast does not identify the precise cause. In the full
 manifest, the unsupported unit's source occupies positions 61–68 of 206; in the
 small manifest, it occupies 11–18 of 20. The next controlled comparison must
 separate these factors before choosing an implementation.
@@ -121,12 +121,60 @@ noncontiguous source items, identical full context with the four target document
 last, and the four-document control. Removing those items also removes their other
 spans (206 windows become 183); this is not a pure copied-header formatting test.
 All use the same claims and existing source scope.
-Further private calls require an extended bounded budget; none have run.
+The user approved that comparison, which is now complete as recorded below.
+
+## Cache-controlled context comparison
+
+The frozen comparison completed all 12 case runs using 12 native invocations
+(including zero protocol corrections), within its 24-call / 1,800-second bounds.
+Elapsed time was 250.8 seconds; case median 20.2 seconds and maximum 40.0 seconds.
+All calls completed; no assertion was unavailable. Reported usage was 1,466,016
+input and 63,877 output tokens (1,529,893 total). These are usage receipts, not a
+billing statement. The unused correction allowance does not authorize new cases.
+
+| Condition | Windows | False approvals / 3 negative observations | False rejections / 9 positive observations |
+| --- | ---: | ---: | ---: |
+| Full original order | 206 | 2 | 0 |
+| Remove nine noncontiguous source items | 183 | 2 | 0 |
+| Full context with target documents last | 206 | 2 | 0 |
+| Four-document control | 20 | 0 | 3 |
+
+All six false approvals survived both native normalization and the original-source
+finalizer. The 183-window condition contains only contiguous original source items,
+so malformed reconstructed windows are not necessary for the semantic failure.
+Moving the relevant documents to the end also failed to remove it. This finite
+sample supports context-sensitive interpretation as the next design target; it does
+not prove that context length alone causes the errors or establish a population rate.
+
+The three positive rejections all occurred in one four-document run. The model
+approved their historical source observations with comparison scope null and
+comparison check not applicable, but populated the unused comparison-document list.
+The adapter rejected each solely as `semantic_comparison`. This now reproduces the
+previously deterministic metadata defect in a captured native model call. The same
+run correctly rejected the negative on predicate, record-role, condition and
+assumption grounds; fixing irrelevant metadata must preserve those grounds.
+
+Request-scoped proxy cache bypass was declared on every invocation. All 12 response
+hashes differ, including within repeated identical inputs. Seven invocations report
+upstream cached-input tokens; cache telemetry is absent on the other five. This is
+not evidence of complete-response reuse, but upstream sampling independence remains
+unverified. No global cache was cleared and no production configuration changed.
+The two conditions containing noncontiguous items remain invalid for qualification,
+even when an individual assertion score passes. No labels or inputs were changed
+following the run, and no failed condition was rerolled.
+
+The next candidate comparison should preserve the complete eligible source set and
+test document-grouped evidence presentation against the current flat window format.
+A separate source-first assessment remains the second ranked approach if grouping
+fails. These are experiment proposals, not an accepted production architecture;
+G2 must freeze their interfaces, controls and resource budgets before execution.
+The four-document reduction is diagnostic only and is not a proposed production cap.
 
 ## Remaining G1 work
 
-- Run the next frozen context comparison only after approval of its new call
-  budget; the original six-call scope is complete. Retain all outcomes and labels.
+- The approved context comparison is complete. Retain its variable failure pattern
+  and source-valid 183-window reproducer; do not reinterpret the four-document
+  control as an accepted source-selection policy.
 - Continue minimizing the now-reproduced semantic failure while preserving failure. Original native
   inputs were not retained for the live failure, so reconstructed inputs must be
   labelled as reconstructed, not asserted byte-identical.

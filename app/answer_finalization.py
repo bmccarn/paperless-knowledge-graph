@@ -18,11 +18,13 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from markdown_it import MarkdownIt
+
+from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
 from app.source_text import certifying_text, certified_document_context
 from app.evidence import QUERY_STOPWORDS
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, calendar_year_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v16"
+POLICY_VERSION = "source-audit-v17"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -184,28 +186,9 @@ def _name_initial_continues(prefix: str, suffix: str) -> bool:
     }
 
 
-def _strong_label_offsets(answer: str) -> set[int]:
-    """Locate standalone display labels using structure from the complete answer."""
-    starts = [0, *(match.end() for match in re.finditer(r"\r\n?|\n", answer))]
-    labels = set()
-    for token in _MARKDOWN.parse(answer):
-        if token.type != 'inline' or not token.map or token.map[1] != token.map[0] + 1:
-            continue
-        children = [child for child in token.children or []
-                    if child.type != 'text' or child.content.strip()]
-        if (len(children) < 3 or children[0].type != 'strong_open'
-                or children[-1].type != 'strong_close'
-                or any(child.level < 1 for child in children[1:-1])):
-            continue
-        text = ''.join(child.content for child in children).rstrip()
-        if text and not re.search(r"[.!?]['\"’”)}\]]*$", text):
-            labels.add(starts[token.map[0]])
-    return labels
-
-
 def answer_units(answer: str) -> list[dict]:
     units = []
-    strong_labels = _strong_label_offsets(answer)
+    strong_labels = strong_label_offsets(answer)
     pending_heading = None
     pending_content_start = None
     pending_end = 0
@@ -225,7 +208,7 @@ def answer_units(answer: str) -> list[dict]:
         first = line_match.start() + len(line) - len(line.lstrip())
         last = line_match.end() - len(line) + len(line.rstrip())
         heading = re.match(r" {0,3}#{1,6}[ \t]+\S", line)
-        label = re.fullmatch(r"\s*(?:[-+*]\s+)?(?:\*\*[^*\n]+:\*\*|[^\n]+:)\s*", line)
+        label = is_colon_label(line)
         if heading or label or line_match.start() in strong_labels:
             pending_heading = first if pending_heading is None else pending_heading
             pending_end = last
@@ -878,11 +861,12 @@ class AnswerFinalizer:
         manifest, claims, rejection_reasons = {}, [], []
         checked = 0
         results = []
-        complete = bool(units) and len(units) <= self.max_units and bool(spans)
+        context = audit_context(answer)
+        complete = bool(units) and len(units) <= self.max_units and len(context) <= self.max_units * 1200 and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
-            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": "\n".join(unit["text"] for unit in units)}
+            audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
             diagnostics.extend({"batch": index, "attempts": 0, "status": "pending", "initial_errors": [], "final_errors": []}
                                for index in range(len(batches)))
@@ -892,10 +876,10 @@ class AnswerFinalizer:
                 for index, batch in pending:
                     selected = select_spans(question, batch, spans, serialized=True, date_order=self.date_order)
                     protocol = diagnostics[index]
-                    async def invoke(audit_context):
+                    async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
                         try:
-                            return await self.auditor.audit_answer_units(question, batch, selected, audit_context)
+                            return await self.auditor.audit_answer_units(question, batch, selected, audit_request_plan)
                         except asyncio.CancelledError:
                             protocol.update(status="cancelled", final_errors=["cancelled"])
                             raise
@@ -1072,36 +1056,38 @@ class AnswerFinalizer:
                 and all(c["status"] in {"supported", "unsupported", "missing"}
                         and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                  & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
-            subset = "\n\n".join(c["claim"] for c in ledger["claims"] if c["status"] == "supported")
-            ledger["subset_audit_batches"] = subset_diagnostics = []
-            try:
-                async with asyncio.timeout(self._audit_timeout(subset)):
-                    subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
-                subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
-                ledger['subset_audit'] = {
-                    'candidate_digest': subset_ledger['candidate_digest'],
-                    'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
-                    'rejection_reasons': subset_ledger.get('rejection_reasons', []),
-                    'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
-                    'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
-                    'selection_coverage': subset_ledger['selection_coverage'],
-                    'temporal_disposition': subset_status,
-                }
-                if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
-                        and subset_status in {"supported", "qualified"}):
-                    omitted = [c for c in ledger["claims"] if c["status"] != "supported"]
-                    partial = {"original_candidate_digest": ledger["candidate_digest"],
-                               "original_total": summary["total"], "original_supported": summary["supported"],
-                               "omitted_count": len(omitted),
-                               "omitted_units": [{"id": c["id"], "status": c["status"],
-                                                  "rejection_reasons": c["rejection_reasons"]} for c in omitted]}
-                    candidate, ledger, disposition = subset, subset_ledger, "partial"
-                elif not subset_ledger['complete']:
-                    disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
-            except TimeoutError:
-                disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
-            except Exception:
-                disposition, error = "audit_failed", "The partial answer source audit was unavailable or returned invalid data."
+            selection = supported_revision(candidate, ledger["claims"], answer_units)
+            subset = selection.pop("candidate")
+            ledger["subset_selection"] = selection
+            if subset:
+                ledger["subset_audit_batches"] = subset_diagnostics = []
+                try:
+                    async with asyncio.timeout(self._audit_timeout(subset)):
+                        subset_ledger = await self._audit(question, subset, evidence_pack, plan, diagnostics=subset_diagnostics)
+                    subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
+                    ledger['subset_audit'] = {
+                        'candidate_digest': subset_ledger['candidate_digest'],
+                        'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
+                        'rejection_reasons': subset_ledger.get('rejection_reasons', []),
+                        'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
+                        'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
+                        'selection_coverage': subset_ledger['selection_coverage'],
+                        'temporal_disposition': subset_status,
+                    }
+                    if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
+                            and subset_status in {"supported", "qualified"}):
+                        omitted = selection["omitted_units"]
+                        partial = {"original_candidate_digest": ledger["candidate_digest"],
+                                   "original_total": summary["total"], "original_supported": summary["supported"],
+                                   "omitted_count": len(omitted),
+                                   "omitted_units": omitted}
+                        candidate, ledger, disposition = subset, subset_ledger, "partial"
+                    elif not subset_ledger['complete']:
+                        disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
+                except TimeoutError:
+                    disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
+                except Exception:
+                    disposition, error = "audit_failed", "The partial answer source audit was unavailable or returned invalid data."
         temporal_disposition, current = temporal_acceptance(
             question, candidate, ledger, plan, evidence_pack, evaluated_at)
         if disposition in {"supported", "qualified", "current_unresolved"}:

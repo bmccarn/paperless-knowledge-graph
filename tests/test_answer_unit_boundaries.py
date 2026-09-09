@@ -60,7 +60,9 @@ class AnswerUnitBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
     async def check_subset(self, first, second, omitted, expected='The statement records $321.'):
         source = expected
-        answer = first + ' ' + second
+        # Explicitly close a rejected heading/label scope before the independent
+        # source observation; partial delivery must not erase governing context.
+        answer = first + ('\n\n# Independent statement\n' if first.startswith(('Recipients:', '# ')) else ' ') + second
         class Auditor:
             async def audit_answer_units(self, question, units, spans, plan):
                 span = spans[0]

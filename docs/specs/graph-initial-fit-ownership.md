@@ -1,6 +1,6 @@
 # Initial graph fit must yield to user navigation
 
-Status: proposed from an actual production browser reproduction, before implementation.
+Status: implemented after plan review; production-build browser regressions pass. GitOps delivery and live verification remain pending.
 
 The graph's `onEngineStop` performs its first `zoomToFit` whenever `fitted.current`
 is false. A user can already wheel, pan, drag or select before those cooldown ticks

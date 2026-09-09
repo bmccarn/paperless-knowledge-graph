@@ -112,6 +112,14 @@ class SourceAuditEvaluationTests(unittest.TestCase):
             items.append(item)
         case = dict(documents=documents, evidence_pack={'items': items}, source_capture='Synthetic original-window fixture')
         self.assertEqual(evidence_pack(case), case['evidence_pack'])
+        for metadata in ({'source_context': None}, {'source_context': {}}, {'source_context': False},
+                         {'_source_document_content': ''}, {'document_id': True}):
+            changed = copy.deepcopy(case)
+            changed['evidence_pack']['items'][0].update(metadata)
+            changed['evidence_pack']['items'][0]['id'] = evidence_item_id(changed['evidence_pack']['items'][0])
+            with self.assertRaises(ValueError, msg=repr(metadata)):
+                evidence_pack(changed)
+
         changed = copy.deepcopy(case)
         changed['evidence_pack']['items'][0]['source_content'] = text.replace('480', '960')
         with self.assertRaisesRegex(ValueError, 'original-source chunking'):

@@ -62,7 +62,7 @@ def parse_dataset(payload: bytes):
         if not case.get('documents') or not case.get('claims') or len(case['claims']) > 80:
             raise ValueError('Missing sources/claims or excessive audit units')
         for doc in case['documents']:
-            if type(doc.get('document_id')) is not int or not isinstance(doc.get('content'), str) or not doc['content']:
+            if type(doc.get('document_id')) is not int or doc['document_id'] <= 0 or not isinstance(doc.get('content'), str) or not doc['content']:
                 raise ValueError('Invalid original document')
             previous = documents.setdefault(doc['document_id'], doc)
             if previous != doc:
@@ -131,7 +131,8 @@ def evidence_pack(case, *, allow_noncontiguous=False):
         raise ValueError('Captured windows require declared provenance and sources')
     for item in pack['items']:
         doc_id, index = item.get('document_id'), item.get('chunk_index')
-        if item.get('source_kind') != 'ocr' or doc_id not in documents or type(index) is not int or index < 0:
+        if (item.get('source_kind') != 'ocr' or type(doc_id) is not int or doc_id <= 0
+                or doc_id not in documents or type(index) is not int or index < 0):
             raise ValueError('Invalid captured source identity')
         document = documents[doc_id]
         original = document['content']
@@ -144,13 +145,15 @@ def evidence_pack(case, *, allow_noncontiguous=False):
         if (offset >= len(chunks) or chunks[offset] != item.get('content')
                 or chunks[offset] != certifying_text(item) or evidence_item_id(item) != item.get('id')):
             raise ValueError('Captured window no longer matches original-source chunking')
-        if item.get('source_context'):
+        if 'source_context' in item:
+            if not isinstance(item['source_context'], dict):
+                raise ValueError('Captured source context must be a complete certificate')
             if item['source_context'].get('digest') != digest(original.encode()):
                 raise ValueError('Captured source context has a mismatched digest')
             item['_source_document_content'] = original
             if certified_document_context(item, chunks[offset]) is None:
                 raise ValueError('Captured source context has invalid original offsets')
-        elif item.get('_source_document_content'):
+        elif '_source_document_content' in item:
             raise ValueError('Unexpected source context')
     if source_continuity(case, pack)['noncontiguous_items'] and not allow_noncontiguous:
         raise ValueError('Noncontiguous reconstructed input requires explicit diagnostic admission')

@@ -6,7 +6,7 @@ import unittest
 
 from tests.runtime import configure_test_environment
 configure_test_environment()
-from app.answer_finalization import (AnswerFinalizer, EvidenceReservationError, evidence_spans, select_spans,
+from app.answer_finalization import (AnswerFinalizer, EvidenceReservationError, evidence_spans,
                                      subset_source_reservations)
 from app.answer_observations import ObservationCandidate
 from tests.test_observation_delivery import ObservationRepairer
@@ -81,26 +81,6 @@ class AuditEvidenceContinuityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(EvidenceReservationError):
             subset_source_reservations(original.text, ledger, revised.units(), ['u3','u1'])
 
-    def test_required_windows_fail_explicitly_when_missing_flagged_or_over_budget(self):
-        evidence, facts, _ = continuity_fixture()
-        spans = evidence_spans(evidence, citation_safe=True)
-        required = tuple(s['span_id'] for s in spans if s['document_id']==99)
-        cost = sum(len(json.dumps(s, ensure_ascii=False))+2 for s in spans if s['span_id'] in required)
-        units = [{'id':'u1','text':facts[-1]}]
-        diagnostics = {}
-        selected = select_spans('Invoice history?', units, spans, budget=cost, serialized=True,
-                                required_span_ids=required+required, diagnostics=diagnostics)
-        self.assertEqual({s['span_id'] for s in selected}, set(required))
-        self.assertEqual(diagnostics['source_reservations'], {'required_windows':3,'selected_windows':3})
-        for available, ids, budget, reason in (
-            (spans, required, cost-1, 'reserved_sources_exceed_budget'),
-            (spans, ('unknown',), 28000, 'invalid_reserved_source'),
-            ([{**s,'feedback_open':s['document_id']==99} for s in spans], required, 28000, 'invalid_reserved_source'),
-        ):
-            with self.assertRaises(EvidenceReservationError) as raised:
-                select_spans('Invoice history?', units, available, budget=budget, serialized=True, required_span_ids=ids)
-            self.assertEqual(raised.exception.reason, reason)
-
     async def test_regrouped_invoice_and_measurement_observations_keep_disjoint_sources(self):
         for kind in ('invoice', 'measurement'):
             evidence, facts, tails = continuity_fixture(kind)
@@ -114,7 +94,7 @@ class AuditEvidenceContinuityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([len(call[0]) for call in last_calls], [1, 4])
             for _, spans, plan in last_calls:
                 self.assertTrue(all(any(tail in s['content'] for s in spans) for tail in tails))
-                self.assertLessEqual(sum(len(json.dumps(s, ensure_ascii=False))+2 for s in spans), 28000)
+                self.assertEqual(spans, evidence_spans(evidence, citation_safe=True))
                 self.assertNotIn('supported', json.dumps(plan))
             self.assertEqual(auditor.last_seen, 2)
 

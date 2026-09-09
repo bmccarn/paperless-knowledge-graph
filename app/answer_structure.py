@@ -34,7 +34,14 @@ def audit_context(answer):
 
 def _field(text):
     text = re.sub(r'^\s*(?:[-+*]|\d+[.)])\s+', '', text)
-    return bool(re.match(r'^[^\r\n:]+:', text))
+    label = re.match(r'^[^\r\n:]+:', text)
+    if not label:
+        return False
+    colon = label.end() - 1
+    # A clock value inside an observation is not a key/value delimiter.
+    # Actual field prefixes such as "Start time:" still govern their values.
+    clocks = re.finditer(r'(?<!\w)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)', text)
+    return not any(clock.start() < colon < clock.end() for clock in clocks)
 
 
 def _strong_label(token):

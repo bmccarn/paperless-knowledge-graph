@@ -184,12 +184,15 @@ function GraphContent() {
     handleRef.current = handle;
   }, []);
 
+  // Inspector selection does not change membership unless focus is enabled.
+  // Keep the renderer's force data stable when only highlighting changes.
+  const focusedNodeId = focused ? selectedNodeId : null;
   const visibleGraph = useMemo(() => {
     const neighborhood = new Set<string>();
-    if (focused && selectedNodeId) {
-      neighborhood.add(selectedNodeId);
+    if (focusedNodeId) {
+      neighborhood.add(focusedNodeId);
       for (const link of graph.links)
-        if (link.source === selectedNodeId || link.target === selectedNodeId) {
+        if (link.source === focusedNodeId || link.target === focusedNodeId) {
           neighborhood.add(link.source);
           neighborhood.add(link.target);
         }
@@ -197,7 +200,7 @@ function GraphContent() {
     const nodes = graph.nodes.filter(
       (node) =>
         (typeFilter === "all" || node.label === typeFilter) &&
-        (!focused || !selectedNodeId || neighborhood.has(node.id)),
+        (!focusedNodeId || neighborhood.has(node.id)),
     );
     const ids = new Set(nodes.map((node) => node.id));
     return {
@@ -207,7 +210,7 @@ function GraphContent() {
         (link) => ids.has(link.source) && ids.has(link.target),
       ),
     };
-  }, [graph, typeFilter, focused, selectedNodeId]);
+  }, [graph, typeFilter, focusedNodeId]);
 
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId);
   const selectedLink = graph.links.find((link) => link.id === selectedLinkId);

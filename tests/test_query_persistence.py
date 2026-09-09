@@ -122,6 +122,31 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type": "error"', response.text)
         self.assertEqual([message["role"] for message in self.saved.messages], ["user"])
 
+    async def test_evidence_opportunity_diagnostics_roundtrip_ordinary_and_stream(self):
+        from app.answer_finalization import AnswerFinalizer
+        from tests.test_audit_evidence_opportunities import item
+        source = 'Cedar service record dated January 1, 2026 lists an open account.'
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': spans[0]['span_id']}],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents',
+                    'comparison_document_ids': [spans[0]['document_id']]} for u in units]}
+        result = await AnswerFinalizer(Auditor()).finalize('What is the latest documented service status?',
+            'The latest Cedar service record dated January 1, 2026 lists an open account.',
+            {'items': [item(doc, 0, source + f' Record {doc}.') for doc in range(1, 36)]})
+        self.assertFalse(result['finalization']['answer_verified'])
+        coverage = result['claim_ledger']['selection_coverage']
+        self.assertTrue(coverage[0]['comparison_opportunities'][0]['omitted_document_ids'])
+        self.assertGreater(coverage[0]['date_opportunities'][0]['omitted'], 0)
+        payload = {**final_payload(), **result}
+        with patch(__name__ + '.final_payload', return_value=payload):
+            await self.test_ordinary_and_sse_persist_identical_complete_metadata()
+        for row in self.saved.messages:
+            if row['role'] == 'assistant':
+                self.assertEqual(row['metadata']['claim_ledger']['selection_coverage'], coverage)
+
     async def test_atomic_observation_metadata_roundtrips_ordinary_and_stream(self):
         from app.answer_finalization import AnswerFinalizer
         from app.answer_observations import ObservationCandidate

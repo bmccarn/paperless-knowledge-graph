@@ -63,6 +63,7 @@ class StrandsQueryOrchestrator:
                    "source_date_order": plan.get("source_date_order", settings.source_date_order),
                    "expected_unit_ids": [unit["id"] for unit in units],
                    "protocol_correction": plan.get("audit_protocol_recovery"),
+                   "evidence_selection": plan.get('evidence_selection', {}),
                    "units": units, "source_spans": spans}
         return await self._json_agent(
             name="source_auditor",
@@ -105,6 +106,10 @@ class StrandsQueryOrchestrator:
                 "Use temporal_scope=documented only for an explicit comparison among the retrieved documents, "
                 "such as the latest dated record for the same subject. Check all supplied relevant dated records "
                 "and conflicts. This scope never establishes current real-world validity or archive completeness. "
+                "Evidence selection reports known eligible comparison documents whose available passages could not be fully supplied. "
+                "Do not accept a documented comparison when its comparison opportunities include omitted passages, "
+                "even if an opening from each document is present or the answer names only some records. "
+                "Independently supported dated source observations remain eligible. Selection opportunities are retrieval diagnostics, not proof. "
                 "Also set temporal_assertion to source_observation for historical descriptions (including quoted "
                 "active/current source language), retrieved_comparison for documented comparisons, present_world "
                 "for currently true assertions, or none for nontemporal assertions. Assess what the answer itself "
@@ -246,7 +251,7 @@ Rules:
 - Do not add new facts unless they are directly supported by the evidence context and relevant to the question.
 - Remove source/admin details, account/client identifiers, logistics, or adjacent facts when they are merely evidence context and not part of the answer requested.
 - Do not mention missing source/admin details, ordering logistics, account/client identifiers, or provider metadata unless the user asked for those details.
-- Do not assert that a newer document or record set lacks a value unless the evidence explicitly proves absence. If latest/current status is not fully provable, phrase it as the newest source-backed value found in the retrieved evidence.
+- Do not assert that a newer document or record set lacks a value unless the evidence explicitly proves absence. If a latest/current comparison is unresolved, rebuild it as self-contained dated observations from the relevant competing records. Do not replace it with another newest/latest/most-current assertion. Keep a comparison only when its comparison scope and relevant alternatives are supported. Preserve the earlier history and recent dated observations needed to answer the question; the application adds the current-status qualification.
 """
         text = await self._text_agent(
             name="answer_editor",

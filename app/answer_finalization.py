@@ -538,7 +538,8 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
                 needed -= matched
             outstanding -= covered
         comparison = {'unit_id': unit.get('id')}
-        alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order, diagnostics=comparison)
+        alternatives = _comparison_windows(unit["text"], by_document, per_unit, date_order,
+                                            diagnostics=comparison, reserved=first_per_document + history)
         if comparison.get('eligible_document_ids'):
             comparisons.append(comparison)
         # Share opportunities between supporting details and alternatives, then
@@ -588,25 +589,35 @@ def select_spans(question: str, units: list[dict], spans: list[dict], budget: in
 
 
 
-def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None) -> list:
+def _comparison_words(text: str) -> set[str]:
+    """Keep short, alphanumeric and Unicode identities; exclude bare numbers."""
+    return set(re.findall(r"\b[^\W\d_]\w*\b", text.casefold()))
+
+
+def _comparison_windows(text: str, by_document: dict, supporting: list, date_order: str, *, diagnostics: dict | None = None, reserved: list | None = None) -> list:
     """Reserve topical alternatives, never treating recency as factual proof."""
     reserve = re.search(r"\b(?:current(?:ly)?|active|today|now|still|latest|newest|recent|highest|lowest|"
                         r"earlier|later|newer|older|compared?|higher|lower)\b", text, re.I)
     generic = set("current currently active today now still latest newest recent most earlier later newer older "
                   "compare compared higher lower recorded records record dated date year years usd eur gbp cad aud jpy "
                   "january february march april may june july august september october november december".split())
-    topic = set(re.findall(r"\b[a-z]{3,}\b", text.lower())) - QUERY_STOPWORDS - generic
+    topic = _comparison_words(text) - QUERY_STOPWORDS - generic
     anchor = supporting[0][1]["document_id"] if supporting else None
+    supporting_ids = {pair[1]['document_id'] for pair in supporting + (reserved or [])}
     candidates = []
     for doc_id, pairs in by_document.items():
-        title_words = set(re.findall(r"\b[a-z]{3,}\b", str(pairs[0][1].get("title", "")).lower()))
-        content_words = set(re.findall(r"\b[a-z]{3,}\b", " ".join(p[1]["content"] for p in pairs).lower()))
+        title_words = _comparison_words(str(pairs[0][1].get("title", "")))
+        content_words = _comparison_words(" ".join(p[1]["content"] for p in pairs))
         overlap = len(topic & title_words), len(topic & content_words)
-        if not overlap[1]:
+        if topic and not overlap[1] and doc_id not in supporting_ids:
             continue
-        dated = [(len(topic & set(re.findall(r"\b[a-z]{3,}\b", span["content"].lower()))),
+        dated = [(len(topic & _comparison_words(span["content"])),
                   _source_recency(span, date_order), index, span) for index, span in pairs]
         relevant = [row for row in dated if row[0] >= max(1, math.ceil(max(row[0] for row in dated) / 2))]
+        if not relevant:
+            # No topic signal cannot certify completeness. Retain the available
+            # windows conservatively, including already-reserved support.
+            relevant = dated
         # A printing date alone does not replace the subject-bearing passage.
         topical = max(relevant, key=lambda row: (row[0], -row[3].get("chunk_index", 0), -row[3].get("start", 0), -row[2]))
         latest = max(dated, key=lambda row: (row[1], -row[2]))
@@ -622,7 +633,7 @@ def _comparison_windows(text: str, by_document: dict, supporting: list, date_ord
     # title must not crowd out a newer alternative whose OCR matches the subject.
     minimum_overlap = max(1, math.ceil(max((row[0][1] for row in candidates
                                           if row[3][0][1]['document_id'] != anchor), default=0) / 2))
-    candidates = [row for row in candidates if row[3][0][1]['document_id'] == anchor or row[0][1] >= minimum_overlap
+    candidates = [row for row in candidates if not topic or row[3][0][1]['document_id'] in supporting_ids or row[0][1] >= minimum_overlap
                   or (row[4] and row[0][0] > 0)]
     # Calendar values are ordering hints, not document issue dates. A future
     # term cannot grant two old documents every reserved continuation slot.
@@ -1112,6 +1123,7 @@ class AnswerFinalizer:
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
+                        selected_ids = {span['span_id'] for span in selected}
                         omitted_comparison = any(
                             opportunity['unit_id'] == unit['id'] and opportunity['omitted_document_ids']
                             for opportunity in selections[batch_index].get('comparison_opportunities', []))
@@ -1119,6 +1131,10 @@ class AnswerFinalizer:
                                 and not omitted_comparison
                                 and isinstance(compared, list) and compared
                                 and all(type(doc) is int and doc in available for doc in compared)
+                                # Claimed comparison documents must be complete
+                                # even if lexical cohort discovery missed them.
+                                and all(span['span_id'] in selected_ids for span in spans
+                                        if not span.get('feedback_open') and span['document_id'] in compared)
                                 and {r["document_id"] for r in refs if r}.issubset(set(compared))):
                             claims[-1].update(comparison_scope="retrieved_documents",
                                               comparison_document_ids=sorted(set(compared)))

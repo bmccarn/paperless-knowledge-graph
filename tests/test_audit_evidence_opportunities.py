@@ -217,6 +217,31 @@ class AuditEvidenceOpportunityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(2, opportunity['omitted_document_ids'])
             self.assertIn(2, opportunity['partially_selected_document_ids'])
 
+    async def test_short_and_unicode_identities_preserve_omission_accounting(self):
+        class Auditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                return {'assessments': [{'unit_id': u['id'], 'status': 'supported',
+                    'references': [{'span_id': s['span_id']} for s in spans if s['document_id'] == 1],
+                    'temporal_scope': 'documented', 'temporal_assertion': 'retrieved_comparison',
+                    'comparison_scope': 'retrieved_documents', 'comparison_document_ids': [1]} for u in units]}
+        for identity in ('AB', 'A2', '測定', ''):
+            for scenario in ('other_documents', 'own_continuation', 'explicit_reservation'):
+                with self.subTest(identity=identity, scenario=scenario):
+                    old = f'{identity} Record date: 01/01/2025. Charge: 500 USD.'
+                    new = f'{identity} Record date: 01/01/2026. Charge: 600 USD.'
+                    if scenario == 'other_documents':
+                        items = [item(1, 0, old)] + [item(doc, 0, new + f' Reference {doc}.') for doc in range(2, 37)]
+                    else:
+                        items = [item(1, index, old) for index in range(18)] + [item(1, 18, new)]
+                    question = f'Which {identity} record is latest?' if scenario != 'explicit_reservation' else 'What is latest in document 1?'
+                    result = await AnswerFinalizer(Auditor()).finalize(question,
+                        f'The latest {identity} record is dated January 1, 2025 and records 500 USD.', {'items': items})
+                    self.assertFalse(result['finalization']['answer_verified'])
+                    opportunities = result['claim_ledger']['selection_coverage'][0]['comparison_opportunities']
+                    self.assertTrue(opportunities[0]['omitted_document_ids'])
+                    if scenario != 'other_documents':
+                        self.assertIn(1, opportunities[0]['omitted_document_ids'])
+
     async def test_identical_openings_keep_their_own_distinct_continuation_context(self):
         opening = 'Cedar service record for account SHAREDREF.'
         old = 'The account was reviewed on January 1, 2025.'

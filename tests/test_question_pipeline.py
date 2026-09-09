@@ -102,7 +102,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_cache_and_saved_receipts_bind_question_sources_and_final_ledger(self):
         result = await self.engine.query('What monthly premium is recorded?', mode='quick')
         self.assertIsNotNone(restore_question_coverage(result))
-        self.assertTrue(self.engine._cacheable_answer(result, 'quick'))
+        self.assertTrue(self.engine._cacheable_answer(result, 'quick', request_identity=result['query_plan']['request_identity_digest']))
         for change in (lambda x: x['finalization'].pop('question_coverage'),
                        lambda x: x['finalization'].update(disposition='unaudited'),
                        lambda x: x['query_plan'].update(original_question='Different question'),
@@ -175,7 +175,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         result = await self.engine.query('What monthly premium is recorded?', mode='quick')
         changed = copy.deepcopy(result); changed['finalization'].pop('question_coverage')
         now = datetime.now(timezone.utc)
-        base = {'id': uuid.uuid4(), 'role': 'assistant', 'content': result['answer'], 'sources': None,
+        base = {'id': uuid.uuid4(), 'role': 'assistant', 'content': result['answer'], 'sources': json.dumps([{'document_id': 999, 'title': 'Wrong source', 'excerpt': '$999', 'paperless_url': 'https://wrong.invalid'}]),
                 'entities': None, 'confidence': .8, 'query_time_ms': 10, 'cached': False,
                 'follow_ups': None, 'created_at': now}
         rows = [{**base, 'metadata': json.dumps(r)} for r in (result, changed)]
@@ -188,8 +188,45 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(conversations, '_pool', SimpleNamespace(acquire=acquire)):
             restored = await conversations.get_conversation(str(uuid.uuid4()))
         self.assertTrue(restored['messages'][0]['finalization']['question_coverage']['complete'])
+        sources = restored['messages'][0]['sources']
+        self.assertEqual([s['document_id'] for s in sources], [101])
+        self.assertIn('$321', sources[0]['excerpt'])
+        self.assertNotIn('wrong.invalid', sources[0]['paperless_url'])
+        self.assertEqual(restored['messages'][1]['sources'], [])
         self.assertFalse(restored['messages'][1]['finalization']['answer_verified'])
         self.assertFalse(restored['messages'][1]['finalization']['question_coverage']['complete'])
         self.assertEqual(restored['messages'][1]['confidence'], 0)
         self.assertEqual(restored['messages'][1]['content'], result['answer'])
         self.assertEqual(rows, original)
+
+    async def test_other_request_cache_entry_is_rejected(self):
+        prior = await self.engine.query('What monthly premium is recorded?', mode='quick')
+        for question, mode, history in (
+                ('What annual charge is recorded?', 'quick', None),
+                ('What monthly premium is recorded?', 'strict', None),
+                ('What monthly premium is recorded?', 'quick', [{'role': 'user', 'content': 'Different context'}])):
+            self.calls.clear()
+            with patch('app.query.cache_get', AsyncMock(return_value=copy.deepcopy(prior))):
+                result = await self.engine.query(question, mode=mode, conversation_history=history)
+            self.assertFalse(result['cached'])
+            self.assertIn('answer_composer', self.calls)
+            self.assertNotEqual(result['query_plan']['request_identity_digest'], prior['query_plan']['request_identity_digest'])
+
+    async def test_corrupt_saved_success_states_never_retain_verified_presentation(self):
+        result = await self.engine.query('What monthly premium is recorded?', mode='quick')
+        mutations = [lambda r: r['finalization'].pop('pipeline_version'),
+            lambda r: r['finalization'].update(pipeline_version='question-evidence-v0'),
+            lambda r: r.update(finalization=[]), lambda r: r.update(query_plan=[])]
+        mutations += [lambda r, value=value: r['finalization'].update(answer_verified=value)
+                      for value in (False, 1, 'true')]
+        mutations += [lambda r, value=value: (r['finalization'].pop('question_coverage'),
+                      r['evidence'].update(coverage=value)) for value in ([], ['bad'], 'bad', True)]
+        for mutate in mutations:
+            changed = copy.deepcopy(result); mutate(changed)
+            restored = restore_pipeline_metadata(changed, result['answer'])
+            self.assertFalse(restored['finalization']['answer_verified'])
+            self.assertFalse(restored['finalization']['complete'])
+            self.assertFalse(restored['finalization']['question_coverage']['complete'])
+            self.assertEqual(restored['verification']['status'], 'unavailable')
+            self.assertEqual(restored['evidence']['score'], 0)
+            self.assertEqual(restored['answer'], result['answer'])

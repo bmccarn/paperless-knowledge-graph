@@ -10,7 +10,7 @@ from typing import Optional
 import httpx
 from app.config import settings
 from app.timeline import restore_timeline
-from app.answer_coverage import restore_pipeline_metadata
+from app.answer_coverage import restore_pipeline_metadata, has_question_pipeline_metadata, restore_question_coverage, restored_sources
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,13 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
         for m in msgs:
             metadata = json.loads(m["metadata"]) if m["metadata"] else {}
             metadata = restore_pipeline_metadata(metadata, m['content'])
+            sources = json.loads(m['sources']) if m['sources'] else None
+            if has_question_pipeline_metadata(metadata):
+                sources = (restored_sources(metadata)
+                           if restore_question_coverage({**metadata, 'answer': m['content']}) is not None else [])
+                for source in sources:
+                    source['paperless_url'] = (f'{settings.effective_paperless_external_url}'
+                                              f"/documents/{source['document_id']}/details")
             if metadata.get("mode") == "timeline" or metadata.get("timeline_events"):
                 events, receipt = restore_timeline({**metadata, "answer": m["content"]})
                 metadata["timeline_events"] = events
@@ -180,7 +187,7 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                 "id": str(m["id"]),
                 "role": m["role"],
                 "content": m["content"],
-                "sources": json.loads(m["sources"]) if m["sources"] else None,
+                "sources": sources,
                 "entities": json.loads(m["entities"]) if m["entities"] else None,
                 "confidence": (0.0 if isinstance(metadata.get('finalization'), dict) and
                                metadata['finalization'].get('disposition') == 'stored_binding_unavailable' else m["confidence"]),

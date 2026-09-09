@@ -74,6 +74,7 @@ def binding(evidence, final):
     source = evidence.composition_input
     return {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(source['question']),
             'evaluated_at': source['evaluated_at'], 'source_date_order': source['source_date_order'],
+            'request_identity_digest': final['finalization'].get('request_identity_digest'),
             'resolved_question_digest': digest(source['resolved_question']),
             'requirements_digest': digest(source['requirements']), 'snapshot_digest': evidence.digest,
             'candidate_digest': final['finalization']['candidate_digest'],
@@ -145,6 +146,11 @@ def restore_question_coverage(result):
                 or ('question' in result and result['question'] != question)
                 or plan['evaluated_at'] != final['evaluated_at']):
             return None
+        request_identity = plan['request_identity_digest']
+        if (not isinstance(request_identity, str) or len(request_identity) != 64
+                or any(c not in '0123456789abcdef' for c in request_identity)
+                or final.get('request_identity_digest') != request_identity):
+            return None
         snapshot = final['evidence_snapshot_digest']
         if not isinstance(snapshot, str) or len(snapshot) != 64 or any(c not in '0123456789abcdef' for c in snapshot):
             return None
@@ -154,6 +160,7 @@ def restore_question_coverage(result):
             return None
         expected_binding = {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(question),
             'evaluated_at': plan['evaluated_at'], 'source_date_order': plan['source_date_order'],
+            'request_identity_digest': request_identity,
             'resolved_question_digest': digest(requested['resolved_question']),
             'requirements_digest': digest(requested['requirements']), 'snapshot_digest': snapshot,
             'candidate_digest': final['candidate_digest'], 'answer_digest': final['answer_digest'],
@@ -178,21 +185,38 @@ def restore_question_coverage(result):
         return None
 
 
+def has_question_pipeline_metadata(metadata):
+    if not isinstance(metadata, dict):
+        return False
+    final, plan = metadata.get('finalization'), metadata.get('query_plan')
+    return any(isinstance(part, dict) and (
+        'pipeline_version' in part or 'request_identity_digest' in part
+        or 'question_coverage' in part) for part in (final, plan))
+
+
+def restored_sources(metadata):
+    """Derive source panels only from references in a validated receipt."""
+    refs = [ref for claim in metadata['claim_ledger']['claims'] for ref in claim['references']]
+    return [{'document_id': doc_id,
+             'title': next(r.get('source_title', '') for r in refs if r['document_id'] == doc_id),
+             'excerpt': '\n…\n'.join(dict.fromkeys(r['quote'] for r in refs if r['document_id'] == doc_id))}
+            for doc_id in dict.fromkeys(r['document_id'] for r in refs)]
+
+
 def restore_pipeline_metadata(metadata, answer):
     """Keep saved text, but never display an invalid new-pipeline receipt as verified."""
     final = metadata.get('finalization')
-    if not isinstance(final, dict) or final.get('pipeline_version') != PIPELINE_VERSION:
+    if not has_question_pipeline_metadata(metadata):
         return metadata
     receipt = restore_question_coverage({**metadata, 'answer': answer})
     if receipt is not None:
         return metadata
     import copy
     restored = copy.deepcopy(metadata)
-    final = restored['finalization']
+    final = restored['finalization'] = final.copy() if isinstance(final, dict) else {}
+    final['pipeline_version'] = PIPELINE_VERSION
     final['question_coverage'] = {'status': 'unavailable', 'complete': False,
                                   'requirements': [], 'reason': 'stored_binding_unavailable'}
-    if final.get('answer_verified') is not True:
-        return restored  # Retain the original failed execution state.
     final.update(answer_verified=False, complete=False, disposition='stored_binding_unavailable')
     verification = restored.get('verification')
     if isinstance(verification, dict):
@@ -201,7 +225,8 @@ def restore_pipeline_metadata(metadata, answer):
     evidence = restored.get('evidence')
     if isinstance(evidence, dict):
         evidence.update(score=0.0, level='low', audit_status='unavailable')
-        evidence['coverage'] = {**(evidence.get('coverage') or {}), 'requested_aspects_complete': False,
+        coverage = evidence.get('coverage')
+        evidence['coverage'] = {**(coverage if isinstance(coverage, dict) else {}), 'requested_aspects_complete': False,
                                 'answer_complete': False}
     summary = restored.get('source_summary')
     if isinstance(summary, dict):

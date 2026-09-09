@@ -22,6 +22,7 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
             date_order=settings.source_date_order).finalize(
                 question, composition.candidate, evidence_pack, plan=plan,
                 mode=mode, evaluated_at=plan['evaluated_at'])
+        final['finalization']['request_identity_digest'] = plan['request_identity_digest']
         stage = 'answer_coverage'
         try:
             coverage = await orchestrator.assess_question_coverage(evidence, final,

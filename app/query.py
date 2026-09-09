@@ -504,7 +504,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                     "source_date_order": settings.source_date_order}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)
-        if self._cacheable_answer(cached, mode):
+        if self._cacheable_answer(cached, mode, request_identity=cache_key):
             cached["cached"] = True
             return cached
 
@@ -513,6 +513,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         plan["evaluated_at"] = evaluated_at
         if self.question_pipeline:
             plan['source_date_order'] = settings.source_date_order
+            plan['request_identity_digest'] = cache_key
         plan["conversation_context"] = self._conversation_context(conversation_history)
         if is_broad:
             plan["broad_query"] = True
@@ -601,11 +602,11 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         metrics = CURRENT_QUERY_METRICS.get()
         if metrics is not None:
             result['finalization']['pipeline_execution'] = metrics.report()
-        if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode):
+        if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode, request_identity=cache_key):
             await cache_set(query_cache, cache_key, result)
         return result
 
-    def _cacheable_answer(self, result, mode):
+    def _cacheable_answer(self, result, mode, *, request_identity=None):
         if not isinstance(result, dict):
             return False
         final = result.get("finalization")
@@ -613,7 +614,10 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             return False
         if self.question_pipeline:
             receipt = restore_question_coverage(result)
-            if receipt is None or receipt['complete'] is not True:
+            if (receipt is None or receipt['complete'] is not True
+                    or request_identity is None
+                    or final.get('request_identity_digest') != request_identity
+                    or result.get('mode') != mode):
                 return False
         if mode == "timeline" and restore_timeline(result)[1]["status"] not in {"ready", "no_dates"}:
             return False

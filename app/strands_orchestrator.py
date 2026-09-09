@@ -2,7 +2,7 @@
 
 The query engine owns retrieval, ranking, and source handling. Strands is used
 only for bounded agent decisions where the model can improve quality: planning,
-timeline extraction, and evidence verification.
+and evidence verification.
 """
 
 from __future__ import annotations

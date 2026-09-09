@@ -181,7 +181,8 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_field_dependencies_do_not_depend_on_spaces_or_bullets(self):
         for marker in ('', '- '):
-            for field in ('Amount:$20.', '**Amount:**$20.', 'Amount: $20.'):
+            for field in ('Amount:$20.', '**Amount:**$20.', 'Amount: $20.', 'Amount:\u00a0$20.',
+                          'Amount:\u2009$20.', 'Amount:\n  $20.'):
                 answer = (marker + 'Invoice Cedar REJECT records delivery.\n\n'
                           + marker + field + '\n\n' + marker + 'Recipient:Casey.\n\n'
                           + marker + 'Invoice Maple records $30.')
@@ -202,3 +203,12 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
         result, auditor = await self.finalize('The invoice records $30.\n' + ' ' * 200000 + 'The invoice records $20.')
         self.assertFalse(result['finalization']['answer_verified'])
         self.assertEqual(auditor.calls, [])
+
+    async def test_all_assertions_of_a_plain_parent_paragraph_govern_its_fields(self):
+        answer = ('Invoice Cedar REJECT records delivery. A parcel is recorded.\n\n'
+                  'Weight: 20 kg.\nRecipient: Casey.\n\nInvoice Maple records 30 kg.')
+        result, _ = await self.finalize(answer)
+        self.assertEqual(result['finalization']['disposition'], 'partial')
+        self.assertNotIn('20 kg', result['answer'])
+        self.assertNotIn('Casey', result['answer'])
+        self.assertIn('Maple records 30 kg', result['answer'])

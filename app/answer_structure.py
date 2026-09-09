@@ -34,7 +34,7 @@ def audit_context(answer):
 
 def _field(text):
     text = re.sub(r'^\s*(?:[-+*]|\d+[.)])\s+', '', text)
-    return bool(re.match(r'^(?:\*\*[^*\n]+:\*\*|__[^_\n]+:__|[^\n:]+:)[ \t]*\S', text))
+    return bool(re.match(r'^[^\r\n:]+:', text))
 
 
 def _strong_label(token):
@@ -188,8 +188,9 @@ def _structure(answer, units):
     # Plain field paragraphs have the same subject dependency as list fields.
     # A leading standalone field can be resolved by the question/auditor; once
     # preceding answer context exists it cannot be silently discarded.
-    root_paragraphs = {uid for block in blocks if block.item is None for uid in block.units}
-    root_items = {uid for item in items if item.parent is None for uid in item.units}
+    root_paragraphs = {uid: set().union(*(b.units for b in blocks if b.item is None and uid in b.units))
+                       for block in blocks if block.item is None for uid in block.units}
+    root_items = {uid: item.units for item in items if item.parent is None for uid in item.units}
     prior = set()
     for unit in units:
         uid = unit['id']
@@ -197,7 +198,7 @@ def _structure(answer, units):
             govern({uid}, prior, ('paragraph_field_run', tuple(sorted(prior))))
             prior = prior | {uid}
         elif uid in root_paragraphs or uid in root_items:
-            prior = {uid}
+            prior = root_paragraphs.get(uid, root_items.get(uid, {uid}))
     return dependencies, unknown, signatures
 
 

@@ -611,3 +611,18 @@ retains the previously reviewed six questions/history and 128 original documents
 with explicit `gemini-3.8-flash` selection. This is preparation, not fresh corpus
 admission or an executable live harness. Browser-session helper commit `2d156c3`
 passed backend/frontend CI.
+
+Fresh v2 all-mode cases00–05 passed both independent reviews: capacity history in
+all four modes, then hours history in Quick and Deep. All error counts and coverage
+under-reporting are zero in these six results. Case06 has executed and awaits
+review; the rest have not run. This is not a passing all-mode qualification yet.
+
+Corpus and loopback-server helpers passed both review axes. Corpus checks preserve
+exact source/index IDs, shared generation, processing fingerprints, stale/missing
+records and open feedback, without repairing state. Failed concurrent reads join
+siblings before reader teardown. Server review reproduced double cancellation
+that interrupted ASGI cleanup and a listener-close ordering deadlock; both are
+corrected with regressions using actual Uvicorn shutdown and Python 3.12 Server.
+A real loopback HTTP forced-shutdown check completed asynchronous cleanup with one
+cancellation and a closed listener; no model calls were made. All 52 live utility
+tests pass. Full live runtime admission/browser orchestration remains incomplete.

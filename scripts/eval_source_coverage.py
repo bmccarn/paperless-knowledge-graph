@@ -130,7 +130,7 @@ def manifest_for(directory, *, payload=None):
             'sdk_retries':0,'strands_retries':None,'proxy_cache':'bypass','upstream_attempts':'unknown'}
 
 
-def successful_call(capture, stages, start, text, allowed):
+def validate_native_call(capture, stages, start):
     # Earlier failed calls remain failed but must not hide later control behavior.
     failures = {k:v for k,v in capture.failures.items() if k >= start}
     if (len(capture.attempts) != start + 1 or capture.pending or failures or capture.exhausted
@@ -144,6 +144,11 @@ def successful_call(capture, stages, start, text, allowed):
                 raise ValueError('Refusal or tool call is not a gap assessment')
             if choice.get('finish_reason') not in (None, 'stop'):
                 raise ValueError('Non-text provider termination')
+    return None
+
+
+def successful_call(capture, stages, start, text, allowed):
+    validate_native_call(capture, stages, start)
     return parse_gaps(text, allowed)
 
 

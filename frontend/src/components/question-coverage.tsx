@@ -2,6 +2,7 @@ export interface QuestionCoverageReceipt {
   status: string;
   complete: boolean;
   planning_status?: string;
+  conservation_status?: string;
   omitted_requested_aspects?: boolean | null;
   requirements?: Array<{
     requirement_id: string;
@@ -37,6 +38,10 @@ export function QuestionCoverage({ receipt }: { receipt?: QuestionCoverageReceip
           <span className="text-muted-foreground">{labels[row.status] || "Not assessed"}</span>
         </li>)}
       </ul>}
+      {receipt.conservation_status === "partial" &&
+        <p className="text-amber-700 dark:text-amber-400">Some source information may be missing from this answer.</p>}
+      {receipt.conservation_status === "unavailable" &&
+        <p className="text-amber-700 dark:text-amber-400">The check for missing source information could not finish.</p>}
       {(receipt.omitted_requested_aspects || (receipt.planning_status && receipt.planning_status !== "complete")) &&
         <p className="text-amber-700 dark:text-amber-400">Some parts of your question may be missing from this assessment.</p>}
     </section>

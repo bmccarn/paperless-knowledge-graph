@@ -4,7 +4,8 @@ import hashlib
 from app.answer_finalization import AnswerFinalizer
 from app.config import settings
 from app.question_evidence import QuestionEvidence, PIPELINE_VERSION
-from app.answer_coverage import unavailable_coverage
+from app.answer_coverage import unavailable_coverage, augment_fact_coverage
+from app.answer_fact_selection import select_facts
 from app.answer_completion import recover_coverage, PriorSupportRevoked
 
 
@@ -13,9 +14,10 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
     try:
         evidence = await QuestionEvidence.prepare(orchestrator, question,
             {key: plan[key] for key in ('resolved_question', 'requirements')}, evidence_pack,
-            evaluated_at=plan['evaluated_at'], source_date_order=settings.source_date_order)
-        stage = 'answer_composer'
-        composition = await orchestrator.compose_question_answer(evidence)
+            evaluated_at=plan['evaluated_at'], source_date_order=settings.source_date_order,
+            conversation_context=plan.get('conversation_context', ''))
+        stage = 'fact_selector'
+        composition = await select_facts(orchestrator, evidence)
         stage = 'source_audit'
         final = await AnswerFinalizer(evidence.auditor(orchestrator), orchestrator,
             timeout_seconds=settings.answer_audit_timeout_seconds,
@@ -33,6 +35,9 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
         stage = 'answer_completion'
         final, coverage = await recover_coverage(orchestrator, evidence, composition, final,
                                                 coverage, evidence_pack, plan, mode)
+        conservation = composition.bind_final(evidence, final)
+        final['finalization']['fact_conservation'] = conservation
+        coverage = augment_fact_coverage(coverage, conservation)
         final['finalization'].update(pipeline_version=PIPELINE_VERSION,
             evidence_snapshot_digest=evidence.digest, question_coverage=coverage)
         final['evidence']['coverage']['requested_aspects_complete'] = coverage['complete']
@@ -43,7 +48,7 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
         final = await AnswerFinalizer(None).finalize(question, '', evidence_pack,
             mode='timeline' if mode == 'timeline' else 'strict', evaluated_at=plan['evaluated_at'])
         messages = {'source_reader': 'The original-source reading could not complete. Please retry the query.',
-                    'answer_composer': 'The source-based answer could not be composed. Please retry the query.',
+                    'fact_selector': 'The source facts could not be selected reliably. Please retry the query.',
                     'source_audit': 'The source audit could not complete. Please retry the query.',
                     'answer_coverage': 'The answer coverage check could not complete. Please retry the query.',
                     'answer_completion': 'The completion audit could not validate the earlier answer. Please review the source documents.'}

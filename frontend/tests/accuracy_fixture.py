@@ -388,6 +388,10 @@ class Handler(BaseHTTPRequestHandler):
                             {'requirement_id': 'r1', 'aspect': 'The documented earlier amount', 'status': 'unavailable' if unavailable else 'answered'},
                             {'requirement_id': 'r2', 'aspect': 'The latest documented amount',
                              'status': 'unavailable' if unavailable else 'unresolved' if partial_coverage else 'answered'}]})
+            if 'source gap coverage' in question.lower() or 'unfinished source check coverage' in question.lower():
+                conservation = 'partial' if 'source gap' in question.lower() else 'unavailable'
+                result['finalization']['question_coverage'].update(
+                    status=conservation, complete=False, conservation_status=conservation)
             with LOCK:
                 if conv:
                     conv['messages'].append({'role': 'assistant', 'content': result['answer'],

@@ -133,6 +133,47 @@ def unavailable_coverage(evidence, final, *, planning_status='complete'):
             'binding': binding(evidence, final)}
 
 
+def _fact_summary(summary):
+    if (not isinstance(summary, dict) or set(summary) != {
+            'total', 'preserved', 'excluded', 'unresolved', 'unavailable'}
+            or any(type(value) is not int or value < 0 for value in summary.values())
+            or summary['total'] != sum(summary[key] for key in summary if key != 'total')):
+        raise QuestionEvidenceError('invalid_fact_coverage')
+    return dict(summary)
+
+
+def augment_fact_coverage(base_coverage, conservation_receipt):
+    """Bind settled coverage to conservation without changing its planner assessment."""
+    statuses = {'complete', 'partial', 'unavailable'}
+    try:
+        if (not isinstance(base_coverage, dict) or set(base_coverage) != {
+                'status', 'complete', 'requirements', 'omitted_requested_aspects', 'planning_status', 'binding'}
+                or not isinstance(conservation_receipt, dict)
+                or not isinstance(base_coverage['status'], str) or base_coverage['status'] not in statuses
+                or not isinstance(conservation_receipt['status'], str) or conservation_receipt['status'] not in statuses
+                or type(base_coverage['complete']) is not bool
+                or type(conservation_receipt['complete']) is not bool
+                or base_coverage['complete'] != (base_coverage['status'] == 'complete')
+                or conservation_receipt['complete'] != (conservation_receipt['status'] == 'complete')
+                or not isinstance(base_coverage['binding'], dict)
+                or base_coverage['binding'] != conservation_receipt['binding']):
+            raise ValueError()
+        summary = _fact_summary(conservation_receipt['summary'])
+        # A public receipt owns its nested values; callers can still use the
+        # unchanged internal base receipt during completion or failure handling.
+        coverage = strict_object(canonical_json(base_coverage))
+        conserved = conservation_receipt['status']
+        complete = base_coverage['complete'] and conservation_receipt['complete']
+        status = ('unavailable' if 'unavailable' in (base_coverage['status'], conserved)
+                  else 'complete' if complete else 'partial')
+        return {**coverage, 'assessment_status': base_coverage['status'],
+                'conservation_status': conserved, 'conservation_summary': summary,
+                'status': status, 'complete': complete,
+                'binding': {**coverage['binding'], 'fact_conservation_digest': digest(conservation_receipt)}}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise QuestionEvidenceError('invalid_fact_coverage') from None
+
+
 def restore_question_coverage(result):
     """Validate a persisted historical receipt; never re-certify source semantics."""
     try:
@@ -156,8 +197,10 @@ def restore_question_coverage(result):
             return None
         receipt = result['finalization']['question_coverage']
         if not isinstance(receipt, dict) or set(receipt) != {
-                'status', 'complete', 'requirements', 'omitted_requested_aspects', 'planning_status', 'binding'}:
+                'status', 'complete', 'requirements', 'omitted_requested_aspects', 'planning_status', 'binding',
+                'assessment_status', 'conservation_status', 'conservation_summary'} or type(receipt['complete']) is not bool:
             return None
+        _fact_summary(receipt['conservation_summary'])
         expected_binding = {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(question),
             'evaluated_at': plan['evaluated_at'], 'source_date_order': plan['source_date_order'],
             'request_identity_digest': request_identity,
@@ -166,9 +209,13 @@ def restore_question_coverage(result):
             'candidate_digest': final['candidate_digest'], 'answer_digest': final['answer_digest'],
             'ledger_digest': ledger_digest(result['claim_ledger']),
             'source_manifest_digest': digest(result['claim_ledger']['spans'])}
-        if receipt['binding'] != expected_binding or receipt['planning_status'] != plan['requirements_status']:
+        from app.answer_fact_selection import restore_fact_conservation
+        conservation = restore_fact_conservation(result)
+        if (conservation is None or receipt['binding'] != {
+                **expected_binding, 'fact_conservation_digest': digest(conservation)}
+                or receipt['planning_status'] != plan['requirements_status']):
             return None
-        if receipt['status'] == 'unavailable':
+        if receipt['assessment_status'] == 'unavailable':
             expected = {'status': 'unavailable', 'complete': False,
                 'requirements': [{'requirement_id': r['id'], 'aspect': r['aspect'], 'status': 'unavailable',
                     'observation_ids': [], 'gap_reason': 'coverage_unavailable'} for r in requested['requirements']],
@@ -180,6 +227,7 @@ def restore_question_coverage(result):
                                     for row in receipt['requirements']]}
             expected = {**coverage_assessment(raw, requested['requirements'], candidate.units(), plan['requirements_status']),
                         'binding': expected_binding}
+        expected = augment_fact_coverage(expected, conservation)
         return expected if expected == receipt else None
     except (KeyError, TypeError, ValueError, AttributeError):
         return None

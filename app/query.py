@@ -48,14 +48,14 @@ from app.evidence import (
     structured_fact_count,
 )
 from app.strands_orchestrator import strands_orchestrator
-from app.question_evidence import PIPELINE_VERSION, validate_requirements, coarse_requirements, QuestionEvidenceError
+from app.question_evidence import (PIPELINE_VERSION, validate_requirements, coarse_requirements,
+                                   QuestionEvidenceError, CONVERSATION_CONTEXT_MAX_CHARS)
 from app.question_pipeline import finalize_question
 from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
 from app.answer_coverage import restore_question_coverage, restored_sources
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
-CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 _REQUEST_MODEL = ContextVar("query_model", default=None)
 _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 

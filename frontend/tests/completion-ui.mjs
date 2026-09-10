@@ -377,6 +377,8 @@ for (const [question, status, count] of [
   ["Show complete coverage", "Requested aspects answered", "2 of 2 requested aspects answered"],
   ["Show partial coverage", "Partly answered", "1 of 2 requested aspects answered"],
   ["Show unavailable coverage", "Coverage unavailable", "no complete coverage assessment"],
+  ["Show source gap coverage", "Partly answered", "Some source information may be missing"],
+  ["Show unfinished source check coverage", "Coverage unavailable", "check for missing source information could not finish"],
 ]) {
   test(`question coverage stays separate from source support: ${status}`, async t => {
     const { context, page } = await fixturePage(t);

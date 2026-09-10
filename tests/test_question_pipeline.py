@@ -54,11 +54,9 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             return json.dumps({'documents': [{'document_id': d['document_id'], 'observations': [
                 {'text': 'The statement records a monthly premium of $321.00 USD.',
                  'references': [{'span_id': d['windows'][0]['span']['span_id']}]}], 'limitations': []}]})
-        if name == 'answer_composer':
-            handle = payload['source_documents'][0]['windows'][0]['span']['span_id']
-            return json.dumps({'observations': ['The statement records a monthly premium of $321.00 USD.'],
-                'requirement_mapping': [{'requirement_id': 'r1', 'observation_ids': ['u1'], 'status': 'proposed'}],
-                'source_references': [{'observation_id': 'u1', 'span_ids': [handle]}]})
+        if name == 'fact_selector':
+            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered',
+                'target_id': None} for row in payload['observations']]})
         if name == 'source_auditor':
             handle = payload['source_documents'][0]['windows'][0]['span']['span_id']
             return json.dumps({'assessments': [decision(unit_id=u['id'], references=[{'span_id': handle}])
@@ -74,7 +72,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             result = await self.engine.query('What monthly premium is recorded?', mode=mode)
             self.assertTrue(result['finalization']['answer_verified'], mode)
             self.assertTrue(result['finalization']['question_coverage']['complete'])
-            self.assertEqual(self.calls, ['query_planner', 'source_reader', 'answer_composer', 'source_auditor', 'answer_coverage'])
+            self.assertEqual(self.calls, ['query_planner', 'source_reader', 'fact_selector', 'source_auditor', 'answer_coverage'])
             execution = result['finalization']['pipeline_execution']
             self.assertEqual(execution['native_call_count'], 5)
             self.assertEqual(execution['native_call_ceiling'], 7)
@@ -138,7 +136,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['finalization']['question_coverage']['complete'])
 
     async def test_reader_and_composer_failure_never_fall_back_to_old_draft(self):
-        for stage in ('source_reader', 'answer_composer'):
+        for stage in ('source_reader', 'fact_selector'):
             self.fail_stage = stage
             result = await self.engine.query('What monthly premium is recorded?', mode='quick')
             self.assertFalse(result['finalization']['answer_verified'])
@@ -209,7 +207,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             with patch('app.query.cache_get', AsyncMock(return_value=copy.deepcopy(prior))):
                 result = await self.engine.query(question, mode=mode, conversation_history=history)
             self.assertFalse(result['cached'])
-            self.assertIn('answer_composer', self.calls)
+            self.assertIn('fact_selector', self.calls)
             self.assertNotEqual(result['query_plan']['request_identity_digest'], prior['query_plan']['request_identity_digest'])
 
     async def test_corrupt_saved_success_states_never_retain_verified_presentation(self):
@@ -251,7 +249,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['finalization']['disposition'], 'corpus_changed')
 
     async def test_failed_execution_remains_identifiable_when_restored(self):
-        for stage in ('source_reader', 'answer_composer'):
+        for stage in ('source_reader', 'fact_selector'):
             self.fail_stage = stage
             result = await self.engine.query('What monthly premium is recorded?', mode='quick')
             restored = restore_pipeline_metadata(result, result['answer'])

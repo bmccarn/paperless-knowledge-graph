@@ -677,3 +677,58 @@ selection/exclusion explicit and tests false irrelevance and incomplete duplicat
 judgments separately from deterministic ID accounting. It remains unimplemented
 and unqualified. The approved draft PR #50 status update was published; no query
 activation or GitOps deployment occurred.
+
+
+The retained-fact selection/exclusion diagnostic passed both independent reviews:
+seven selection cases and eight fixed exclusion challenges, fifteen normally
+completed model calls in 40.388774 seconds with 25,037 reported tokens. All
+selection losses, unnecessary retained material, false exclusion approvals,
+false exclusion rejections and transport failures were zero. The source inventories
+retained exact reader observations and original source identities; one deliberately
+unrequested delivery/receipt observation was correctly excluded. The original
+missing-hours and missing-charge meanings survived, and incomplete duplicates
+losing condition, subject or date role were rejected.
+
+Input SHA256: `1917a14d90acafd06e18d666fa1ed0c490e34bd2040e6cc245d750d6dd892570`.
+Manifest SHA256: `f99c4fd630eea95e8ba9e3da4e2acc0be8e2ec3a8c78d71ccab8e6645ca82420`.
+Result SHA256: `552f8904a3b637473d8f3c353e2777b7a887e74b4dbf2111e5395b1997dfbb51`.
+Private captures/grades: `/private/tmp/kg-fact-conservation-20260909/results`.
+The conditional alternative-model arm was not triggered and remains unrun.
+
+This qualifies only the focused disposition diagnostic, not factual audit, reader
+recall, full query accuracy or deployment. The next concrete integration proposal
+is `docs/specs/question-fact-conservation-integration.md`, pending independent
+review before application implementation. The reviewed harness/protocol and
+21 focused tests are saved in local commit `07a4cbc`; production is unchanged.
+
+
+The concrete v3 integration design passed both independent reviews and is now
+implemented locally with qualification still pending. Initial free-form composition
+is replaced by exhaustive reader-observation selection, with independent reviews
+for exclusions. Final source-supported units are matched back to individual retained
+observations; public completeness and saved-answer restoration include this receipt.
+Conversation context is a bounded, untrusted selector/exclusion hint. The original
+source reader remains candidate-blind, including in the existing audit strategies.
+
+Frontend lint, type checking and all 12 data/format regressions passed. The normal
+Turbopack build was blocked by a local compiler-worker socket permission error;
+the supported webpack production build passed without changing production build
+configuration. The normal build remains a CI requirement. All browser suites passed:
+21 completion cases plus accuracy, source inspection, graph zoom and hub contracts.
+Screenshots of the two new coverage states and mobile graph inspector were visually
+inspected. Private browser artifacts: `/private/tmp/kg-fact-conservation-ui-20260909`.
+These are synthetic delivery/UI checks, not live-query accuracy qualification.
+
+The full offline backend suite passed 772 tests in 24.735 seconds, with 48 expected
+disposable-datastore skips. All 60 app/script Python files parsed. The initial test
+run exposed and fixed two implementation defects: forwarding prior conversation
+text into candidate-blind audit readers, and relabelling a source-audit timeout when
+binding conservation. A direct-snapshot oversized-context review finding was also
+fixed with a before-dispatch regression. Saved timeout failures retain their original
+disposition and unavailable conservation cannot certify a saved answer.
+
+Both final integration reviews are clear. The additional standalone multipart /
+narrowed-plan regression passed after the full-suite run; the final focused slice
+passed 34 tests. The reviewed fact module SHA256 is
+`d6f868f9abb003ba903fd91c4d919efb7ac65d5b3c57f0683717299dd265e1f7`.
+Fresh v3 native qualification is next; no previous candidate's approval is reused.

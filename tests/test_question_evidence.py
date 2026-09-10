@@ -130,3 +130,32 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(active, 0)
+
+
+class FollowupSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bounded_context_is_immutable_and_bound_without_replacing_question(self):
+        pack = {'items':[{'id':'capacity','document_id':1,'chunk_index':0,'title':'Capacity',
+            'source_kind':'ocr','content':'UNIT-Z authorized capacity: 300 units.',
+            'source_content':'UNIT-Z authorized capacity: 300 units.'}]}
+        from app.question_evidence import CONVERSATION_CONTEXT_MAX_CHARS
+        # Reader output is intentionally empty; this exercises request identity,
+        # not semantic selection or successful answer generation.
+        class Reader:
+            async def read_question_sources(self, payload):
+                return {'documents':[{'document_id':d['document_id'],'observations':[],
+                    'limitations':[]} for d in payload['source_documents']]}
+        context='User: Explain UNIT-Z capacity.\nAssistant: The record names UNIT-Z.'
+        first=await QuestionEvidence.prepare(Reader(),'How did it change?',REQUIREMENTS,pack,
+            evaluated_at='2026-09-09',conversation_context=context)
+        second=await QuestionEvidence.prepare(Reader(),'How did it change?',REQUIREMENTS,pack,
+            evaluated_at='2026-09-09',conversation_context=context.replace('UNIT-Z','UNIT-Y'))
+        self.assertNotEqual(first.digest,second.digest)
+        data=first.composition_input
+        self.assertEqual(data['question'],'How did it change?')
+        self.assertEqual(data['conversation_context'],context)
+        data['conversation_context']='mutated'
+        self.assertEqual(first.composition_input['conversation_context'],context)
+        for invalid in ({'gold':'select everything'},'x'*(CONVERSATION_CONTEXT_MAX_CHARS+1)):
+            with self.assertRaises(QuestionEvidenceError):
+                await QuestionEvidence.prepare(Reader(),'How did it change?',REQUIREMENTS,pack,
+                    evaluated_at='2026-09-09',conversation_context=invalid)

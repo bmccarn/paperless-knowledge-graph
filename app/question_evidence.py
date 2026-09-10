@@ -12,7 +12,8 @@ from app import source_reading
 from app.answer_finalization import evidence_spans
 from app.query_metrics import CURRENT_QUERY_METRICS
 
-PIPELINE_VERSION = 'question-evidence-v2'
+PIPELINE_VERSION = 'question-evidence-v3'
+CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 
 class QuestionEvidenceError(ValueError):
     """Content-free planning/snapshot failures; source text is never an error."""
@@ -51,7 +52,7 @@ class QuestionEvidence:
 
     @classmethod
     async def prepare(cls, orchestrator, question, requirements, evidence_pack, *,
-                      evaluated_at, source_date_order='mdy'):
+                      evaluated_at, source_date_order='mdy', conversation_context=''):
         if not isinstance(question, str) or not question.strip():
             raise QuestionEvidenceError('invalid_question')
         try:
@@ -61,6 +62,8 @@ class QuestionEvidence:
             raise QuestionEvidenceError('invalid_evaluated_at') from None
         if not isinstance(source_date_order, str) or source_date_order not in {'mdy', 'dmy', 'reject_ambiguous'}:
             raise QuestionEvidenceError('invalid_date_order')
+        if not isinstance(conversation_context, str) or len(conversation_context) > CONVERSATION_CONTEXT_MAX_CHARS:
+            raise QuestionEvidenceError('invalid_conversation_context')
         requested = validate_requirements(requirements)
         spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]
         documents = source_reading.group_sources(spans)
@@ -69,7 +72,8 @@ class QuestionEvidence:
             metrics.reader_documents = len(documents)
         snapshot = canonical_json({'pipeline_version': PIPELINE_VERSION,
                                    'question': question, **requested, 'evaluated_at': evaluated_at,
-                                   'source_date_order': source_date_order, 'source_documents': documents})
+                                   'source_date_order': source_date_order, 'source_documents': documents,
+                                   'conversation_context': conversation_context})
         # The reader gets copies, before there is a candidate to anchor its reading.
         payload = json.loads(snapshot)
         reading = await orchestrator.read_question_sources(payload)
@@ -90,12 +94,13 @@ class QuestionEvidence:
         documents = source_reading.group_sources(payload['source_spans'])
         if (any(payload.get(key) != snapshot[key] for key in ('question', 'evaluated_at', 'source_date_order'))
                 or any(key in payload and payload[key] != snapshot[key]
-                       for key in ('requirements', 'resolved_question'))
+                       for key in ('requirements', 'resolved_question', 'conversation_context'))
                 or documents != snapshot['source_documents']):
             raise QuestionEvidenceError('evidence_snapshot_mismatch')
         return {**{k: v for k, v in payload.items() if k != 'source_spans'},
                 'resolved_question': snapshot['resolved_question'],
                 'requirements': snapshot['requirements'], 'source_documents': documents,
+                'conversation_context': snapshot['conversation_context'],
                 'source_reading': json.loads(self._reading)}
 
     def auditor(self, orchestrator):

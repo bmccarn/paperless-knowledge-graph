@@ -51,7 +51,8 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None)
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
         'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
         'docs/specs/question-pipeline-development-evaluation.md',
-        'docs/specs/question-coverage-recovery.md')]
+        'docs/specs/question-coverage-recovery.md',
+        'docs/specs/question-fact-conservation-integration.md')]
     if stage == 'all-modes':
         paths.append(ROOT / 'docs/specs/question-all-mode-evaluation.md')
     runtime = runtime_snapshot()

@@ -39,8 +39,11 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
             doc = payload['source_documents'][0]
             return json.dumps({'documents': [{'document_id': doc['document_id'], 'observations': [
                     {'text': text, 'references': [{'span_id': doc['windows'][0]['span']['span_id']}]}
-                    for text in (self.first, self.second)], 'limitations': []}]})
-        if name in {'answer_composer', 'answer_completion'}:
+                    for text in ((self.second, self.first) if self.behavior == 'complete' else (self.second,))], 'limitations': []}]})
+        if name == 'fact_selector':
+            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered',
+                'target_id': None} for row in payload['observations']]})
+        if name == 'answer_completion':
             completion = name == 'answer_completion'
             if completion and self.behavior == 'cancel': raise asyncio.CancelledError
             if completion and self.behavior == 'malformed': return 'not json'
@@ -92,7 +95,7 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(metrics.report()['native_call_count'], metrics.report()['native_call_ceiling'])
         return final
 
-    async def test_omission_is_recovered_in_all_modes_only_after_combined_original_audit(self):
+    async def test_reader_gap_is_recovered_in_all_modes_only_after_combined_original_audit(self):
         for mode in ('quick', 'deep', 'timeline', 'strict'):
             final = await self.run_pipeline(mode)
             self.assertTrue(final['finalization']['answer_verified'], final)
@@ -103,7 +106,7 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
             if mode == 'timeline':
                 from app.timeline import restore_timeline
                 self.assertIn(restore_timeline(final)[1]['status'], {'ready', 'no_dates'})
-            self.assertEqual(self.calls, ['source_reader', 'answer_composer', 'source_auditor',
+            self.assertEqual(self.calls, ['source_reader', 'fact_selector', 'source_auditor',
                 'answer_coverage', 'answer_completion', 'source_auditor', 'answer_coverage'])
             audits = [p for n, p in self.payloads if n == 'source_auditor']
             self.assertEqual(audits[0]['units'][0]['text'], audits[1]['units'][0]['text'])
@@ -150,11 +153,11 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
         async def two_batches(**kwargs):
             response = await base(**kwargs)
             name, payload = kwargs['name'], json.loads(kwargs['prompt'])
-            if name == 'answer_composer':
-                raw = json.loads(response); raw['observations'] = prior
-                raw['requirement_mapping'][1]['observation_ids'] = ['u1', 'u2', 'u3', 'u4']
+            if name == 'source_reader':
+                raw = json.loads(response)
                 span = payload['source_documents'][0]['windows'][0]['span']['span_id']
-                raw['source_references'] = [{'observation_id': f'u{i}', 'span_ids': [span]} for i in range(1, 5)]
+                raw['documents'][0]['observations'] = [
+                    {'text': text, 'references': [{'span_id': span}]} for text in prior]
                 return json.dumps(raw)
             if name == 'source_auditor' and 'answer_completion' in self.calls:
                 if payload['units'][0]['id'] == 'u5':
@@ -187,7 +190,7 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
                 await self.run_pipeline()
             self.assertNotIn('answer_completion', self.calls)
 
-    async def test_cross_domain_capacity_omission_uses_the_same_contract(self):
+    async def test_cross_domain_capacity_reader_gap_uses_the_same_contract(self):
         self.first = 'The equipment record lists an initial capacity of 300 kW.'
         self.second = 'The equipment record lists an approved capacity of 480 kW.'
         self.question = 'What initial and approved equipment capacities are documented?'

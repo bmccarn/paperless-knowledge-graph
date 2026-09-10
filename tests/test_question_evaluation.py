@@ -256,13 +256,15 @@ class CoverageStageAdmissionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(restore_question_coverage(ready)['status'], 'complete')
             unavailable = copy.deepcopy(ready)
             unavailable['finalization']['question_coverage'] = {
-                **receipt, 'status': 'unavailable', 'complete': False, 'omitted_requested_aspects': None,
+                **receipt, 'status': 'unavailable', 'assessment_status': 'unavailable',
+                'complete': False, 'omitted_requested_aspects': None,
                 'requirements': [{'requirement_id': r['id'], 'aspect': r['aspect'], 'status': 'unavailable',
                     'observation_ids': [], 'gap_reason': 'coverage_unavailable'}
                     for r in ready['query_plan']['requirements']]}
             coarse = copy.deepcopy(ready)
             coarse['query_plan']['requirements_status'] = 'coarse'
-            coarse['finalization']['question_coverage'].update(status='partial', complete=False, planning_status='coarse')
+            coarse['finalization']['question_coverage'].update(status='partial', assessment_status='partial',
+                complete=False, planning_status='coarse')
             for final in (unavailable, coarse):
                 self.assertIsNotNone(restore_question_coverage(final))
                 with tempfile.TemporaryDirectory() as path:

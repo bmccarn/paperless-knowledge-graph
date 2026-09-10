@@ -185,6 +185,20 @@ class StrandsQueryOrchestrator:
         return await self._read_source_documents(payload, payload['source_documents'],
                                                  strategy='document_local_corrected')
 
+    async def select_question_facts(self, payload):
+        from app.answer_fact_selection import SELECTION_PROMPT
+        if not self.enabled:
+            return None
+        return await self._text_agent(name='fact_selector', system_prompt=SELECTION_PROMPT,
+                                      prompt=json.dumps(payload, ensure_ascii=False))
+
+    async def review_fact_exclusion(self, payload):
+        from app.answer_fact_selection import EXCLUSION_PROMPT
+        if not self.enabled:
+            return None
+        return await self._text_agent(name='fact_exclusion', system_prompt=EXCLUSION_PROMPT,
+                                      prompt=json.dumps(payload, ensure_ascii=False))
+
     async def compose_question_answer(self, evidence):
         from app.answer_composition import AnswerComposition, COMPOSER_PROMPT, response_format
         from app.question_evidence import QuestionEvidenceError

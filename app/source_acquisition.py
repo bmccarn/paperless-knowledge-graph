@@ -11,7 +11,7 @@ from app.evidence import build_evidence_item, build_evidence_pack
 from app.history_coverage import HISTORY_WORDS
 from app.evidence import query_terms
 from app.paperless import PaperlessClient
-from app.source_text import bind_document_context
+from app.source_text import bind_document_context, missing_intervals
 
 ACQUISITION_VERSION = 'source-acquisition-v1'
 
@@ -78,19 +78,6 @@ def _span_inventory(pack):
             'start': span['start'], 'end': span['end'], 'span_id': span['span_id'],
             'reader_span_digest': acquisition_digest(span)})
     return result
-
-
-def missing_intervals(length, spans):
-    """Exact Unicode-offset union, including whitespace and interior gaps."""
-    cursor, missing = 0, []
-    for span in sorted(spans, key=lambda s: (s['start'], s['end'])):
-        start, end = span['start'], span['end']
-        if type(start) is not int or type(end) is not int or not 0 <= start < end <= length:
-            raise ValueError('invalid_acquisition_interval')
-        if start > cursor: missing.append([cursor, start])
-        cursor = max(cursor, end)
-    if cursor < length: missing.append([cursor, length])
-    return missing
 
 
 def validate_receipt(receipt, anchor, request=None):

@@ -9,6 +9,7 @@ import hashlib
 import json
 
 from app import source_reading
+from app.source_scopes import SourceScope, ScopedReading, SourceScopeError
 from app.answer_finalization import evidence_spans
 from app.query_metrics import CURRENT_QUERY_METRICS
 
@@ -49,10 +50,12 @@ class QuestionEvidence:
     """An immutable question/requirements/originals/reading snapshot, never truth."""
     _snapshot: str
     _reading: str
+    _scope: SourceScope | None = None
+    _scope_reading_receipt: str | None = None
 
     @classmethod
     async def prepare(cls, orchestrator, question, requirements, evidence_pack, *,
-                      evaluated_at, source_date_order='mdy', conversation_context=''):
+                      evaluated_at, source_date_order='mdy', conversation_context='', source_scope=None):
         if not isinstance(question, str) or not question.strip():
             raise QuestionEvidenceError('invalid_question')
         try:
@@ -77,6 +80,10 @@ class QuestionEvidence:
                 raise QuestionEvidenceError('acquisition_request_mismatch')
         spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]
         documents = source_reading.group_sources(spans)
+        view = source_scope.view(spans) if source_scope is not None else None
+        if view is not None and [{k: v for k, v in d.items() if k != 'source_scope'}
+                                 for d in view.documents] != documents:
+            raise QuestionEvidenceError('scope_snapshot_mismatch')
         metrics = CURRENT_QUERY_METRICS.get()
         if metrics is not None:
             metrics.reader_documents = len(documents)
@@ -84,20 +91,50 @@ class QuestionEvidence:
                                    'question': question, **requested, 'evaluated_at': evaluated_at,
                                    'source_date_order': source_date_order, 'source_documents': documents,
                                    'conversation_context': conversation_context,
+                                   **({'source_scope_digest': view.digest} if view is not None else {}),
                                    **({'acquisition_inventory_digest': acquisition['inventory_digest']} if acquisition else {})})
         # The reader gets copies, before there is a candidate to anchor its reading.
         payload = json.loads(snapshot)
-        reading = await orchestrator.read_question_sources(payload)
+        receipt = None
+        if view is None:
+            reading = await orchestrator.read_question_sources(payload)
+        else:
+            result = await orchestrator.read_question_sources(payload, source_scope=source_scope)
+            if not isinstance(result, ScopedReading):
+                raise QuestionEvidenceError('invalid_scoped_reading')
+            try:
+                result.validate(source_scope, documents)
+            except SourceScopeError:
+                raise QuestionEvidenceError('scope_reading_mismatch') from None
+            reading, receipt = result.reading, result.receipt
         validated = source_reading.parse_reading(canonical_json(reading), documents)
-        return cls(snapshot, canonical_json(validated))
+        return cls(snapshot, canonical_json(validated), source_scope,
+                   canonical_json(receipt) if receipt is not None else None)
 
     @property
     def digest(self):
         return hashlib.sha256(self._snapshot.encode()).hexdigest()
 
     @property
+    def scope_view(self):
+        if self._scope is None:
+            return None
+        snapshot = json.loads(self._snapshot)
+        view = self._scope.view([w['span'] for w in sorted(
+            (w for d in snapshot['source_documents'] for w in d['windows']), key=lambda w: w['ordinal'])])
+        if view.digest != snapshot.get('source_scope_digest'):
+            raise QuestionEvidenceError('scope_snapshot_mismatch')
+        return view
+
+    @property
+    def scope_reading_receipt(self):
+        return json.loads(self._scope_reading_receipt) if self._scope_reading_receipt is not None else None
+
+    @property
     def composition_input(self):
-        return {**json.loads(self._snapshot), 'source_reading': json.loads(self._reading)}
+        view = self.scope_view
+        return {**json.loads(self._snapshot),
+                **({'source_documents': view.documents} if view is not None else {}), 'source_reading': json.loads(self._reading)}
 
     def audit_payload(self, payload):
         """Only an exact source/question/date match can reuse the prior reading."""
@@ -108,9 +145,14 @@ class QuestionEvidence:
                        for key in ('requirements', 'resolved_question', 'conversation_context'))
                 or documents != snapshot['source_documents']):
             raise QuestionEvidenceError('evidence_snapshot_mismatch')
+        view = self.scope_view
+        if view is not None and self._scope.view(payload['source_spans']).digest != view.digest:
+            raise QuestionEvidenceError('scope_snapshot_mismatch')
         return {**{k: v for k, v in payload.items() if k != 'source_spans'},
+                **({'source_scope_digest': view.digest} if view is not None else {}),
                 'resolved_question': snapshot['resolved_question'],
-                'requirements': snapshot['requirements'], 'source_documents': documents,
+                'requirements': snapshot['requirements'],
+                'source_documents': view.documents if view is not None else documents,
                 'conversation_context': snapshot['conversation_context'],
                 'source_reading': json.loads(self._reading)}
 

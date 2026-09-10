@@ -51,7 +51,7 @@ class SourceAuditProtocolError(ValueError):
         super().__init__(self.reason)
 
 
-def response_format(unit_ids):
+def response_format(unit_ids, *, reference_schema=None):
     """A fresh schema belongs to one native audit request, including corrections."""
     properties = {
         'unit_id': {'type': 'string', 'enum': list(unit_ids)},
@@ -63,7 +63,8 @@ def response_format(unit_ids):
         'unresolved_assumptions': {'type': 'array', 'maxItems': MAX_ASSUMPTIONS,
                                    'items': {'type': 'string', 'minLength': 1, 'maxLength': MAX_ASSUMPTION_CHARS},
                                    'description': 'Any inference required to make the assertion true that the source does not establish. Empty only if none.'},
-        'references': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+        'references': {'type': 'array', 'items': reference_schema if reference_schema is not None else
+                      {'type': 'object', 'additionalProperties': False,
                        'required': ['span_id'], 'properties': {'span_id': {'type': 'string'}}}},
         'temporal_scope': {'type': 'string', 'enum': list(SCOPES)},
         'temporal_assertion': {'type': 'string', 'enum': list(ASSERTIONS),
@@ -91,7 +92,7 @@ def _bounded_text(value, limit):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
 
 
-def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
+def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None):
     """Reject malformed protocols; downgrade semantic inconsistency without retry."""
     def unique_object(pairs):
         result = {}
@@ -126,6 +127,14 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
         _require(isinstance(assumptions, list) and len(assumptions) <= MAX_ASSUMPTIONS
                  and all(_bounded_text(value, MAX_ASSUMPTION_CHARS) for value in assumptions), 'invalid_assumptions')
         refs = row['references']
+        resolution = None
+        if source_scope is not None:
+            from app.source_scopes import SourceScopeError
+            try:
+                resolution = source_scope.resolve(refs)
+                refs = row['references'] = resolution.references
+            except SourceScopeError:
+                raise SourceAuditProtocolError('invalid_references') from None
         _require(isinstance(refs, list) and all(isinstance(ref, dict) and set(ref) == {'span_id'}
                  and isinstance(ref['span_id'], str) and bool(ref['span_id']) for ref in refs), 'invalid_references')
         if allowed_span_ids is not None:
@@ -162,6 +171,8 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
             'semantic_decision': {'checks': dict(checks), 'rejection_reasons': reasons,
                                   'source_basis': row['source_basis'], 'unresolved_assumptions': list(assumptions)},
         })
+        if resolution is not None:
+            normalized[-1]['semantic_decision']['reference_scope_resolution'] = resolution.receipt
     _require(set(seen) == set(unit_ids), 'invalid_unit_ids')
     return {'assessments': normalized}
 

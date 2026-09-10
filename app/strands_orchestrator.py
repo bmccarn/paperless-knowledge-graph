@@ -18,6 +18,7 @@ from typing import Any
 from app.config import settings
 from app.answer_observations import ObservationCandidate, ObservationValidationError
 from app import source_audit, source_reading
+from app.source_scopes import MODEL_NOTE, ScopedReading
 from app.query_metrics import record_native_stage
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class StrandsQueryOrchestrator:
                    await self._prepare_audit_payload(payload))
         if payload is None:
             return None
+        scope_view = prepared_evidence.scope_view if prepared_evidence is not None else None
         text = await self._text_agent(
             name="source_auditor",
             system_prompt=(
@@ -125,10 +127,11 @@ class StrandsQueryOrchestrator:
                 "status. Do not infer absence from retrieval or treat a derived summary as original proof. "
                 "Use missing when evidence is absent and conflicting when sources disagree. Headings and "
                 "qualifications also require grounding. No unchecked or nonfactual exemption. "
+                + (MODEL_NOTE if scope_view is not None else
                 "Select the supplied source passages that support the complete assertion. Return only their exact "
                 "span_id handles in references; the application resolves original source text and identities. "
                 "Do not recreate quotations, evidence IDs or document IDs inside references. A handle does not "
-                "make a claim supported: assess the actual passage, subject and relationship. "
+                "make a claim supported: assess the actual passage, subject and relationship. ") +
                 "Include exact source forms for every asserted number and quantity; a four-digit asserted "
                 "year needs a quote containing that four-digit year, not only a two-digit date. If a short-year "
                 "table and an explicit full-year field both exist, cite the full-year field. Respect the supplied "
@@ -159,14 +162,16 @@ class StrandsQueryOrchestrator:
                 "documents compared, including the cited documents. Use current for present-world assertions; "
                 "historical for individual dated observations without a retrieved-record comparison; none otherwise. "
                 "Return only the complete JSON object required by the response schema, with no extra prose." +
-                (source_reading.VERIFIER_NOTE if 'source_reading' in payload else '')),
+                (source_reading.verifier_note(scoped=scope_view is not None) if 'source_reading' in payload else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
-            response_format=source_audit.response_format(payload['expected_unit_ids']))
+            response_format=source_audit.response_format(payload['expected_unit_ids'],
+                reference_schema=scope_view.reference_schema if scope_view is not None else None))
         if not text or not text.strip():
             return None
         try:
             parsed = source_audit.parse_decisions(text, payload['expected_unit_ids'],
-                                                 allowed_span_ids={span['span_id'] for span in spans})
+                                                 allowed_span_ids={span['span_id'] for span in spans},
+                                                 source_scope=scope_view)
             source_audit.validate_scope_consistency(parsed)
             return parsed
         except source_audit.SourceAuditProtocolError as exc:
@@ -188,11 +193,11 @@ class StrandsQueryOrchestrator:
             logger.warning('Strands stage=source_reader outcome=invalid_reading reason=%s', exc)
             return None
 
-    async def read_question_sources(self, payload):
+    async def read_question_sources(self, payload, *, source_scope=None):
         if not self.enabled:
             raise source_reading.SourceReadingError('unavailable_source_reading')
         return await self._read_source_documents(payload, payload['source_documents'],
-                                                 strategy='document_local_corrected')
+                                                 strategy='document_local_corrected', source_scope=source_scope)
 
     async def review_source_omissions(self, payload):
         """Diagnostic-only adapter; callers own validation, attempts and receipts."""
@@ -268,10 +273,11 @@ class StrandsQueryOrchestrator:
         except Exception:
             return answer_coverage.unavailable_coverage(evidence, final, planning_status=planning_status)
 
-    async def _read_source_documents(self, payload, documents, *, strategy=None):
+    async def _read_source_documents(self, payload, documents, *, strategy=None, source_scope=None):
         strategy = strategy or self.audit_strategy
         partitions = [[document] for document in documents] if strategy in {'document_local', 'document_local_corrected'} else [documents]
         readings = [None] * len(partitions)
+        resolutions = [None] * len(partitions)
         pending = iter(enumerate(partitions))
 
         async def worker():
@@ -281,17 +287,23 @@ class StrandsQueryOrchestrator:
                 for key in ('resolved_question', 'requirements'):
                     if key in payload:
                         reader_input[key] = payload[key]
-                reader_input['source_documents'] = partition
+                view = source_scope.view([w['span'] for d in partition for w in d['windows']]) if source_scope is not None else None
+                reader_input['source_documents'] = view.documents if view is not None else partition
                 limit = 2 if strategy == 'document_local_corrected' else 1
                 for attempt in range(limit):
                     text = await self._text_agent(
-                        name='source_reader', system_prompt=source_reading.READER_PROMPT,
+                        name='source_reader', system_prompt=(source_reading.reader_prompt(MODEL_NOTE)
+                            if view is not None else source_reading.READER_PROMPT),
                         prompt=json.dumps(reader_input, ensure_ascii=False),
-                        response_format=source_reading.response_format(partition))
+                        response_format=source_reading.response_format(partition,
+                            reference_schema=view.reference_schema if view is not None else None))
                     if not isinstance(text, str) or not text.strip():
                         raise source_reading.SourceReadingError('unavailable_source_reading')
                     try:
-                        readings[index] = source_reading.parse_reading(text, partition)['documents']
+                        receipts = []
+                        readings[index] = source_reading.parse_reading(text, partition,
+                            source_scope=view, resolution_receipts=receipts)['documents']
+                        resolutions[index] = receipts
                         break
                     except source_reading.SourceReadingError:
                         if attempt + 1 == limit:
@@ -299,7 +311,9 @@ class StrandsQueryOrchestrator:
                         reader_input['reading_protocol_correction'] = {
                             'error': 'invalid_source_reading',
                             'instruction': 'Re-read these unchanged originals and return the required structure '
-                                           'using only this document ID and its exact supplied span_id references. '
+                                           + ('using only this document ID and its offered typed references. '
+                                              if view is not None else
+                                              'using only this document ID and its exact supplied span_id references. ') +
                                            'This corrects the response protocol, not a requested factual verdict.'}
 
 
@@ -313,7 +327,12 @@ class StrandsQueryOrchestrator:
                     task.cancel()
             # No queued or active sibling may outlive a failed/cancelled audit.
             await asyncio.gather(*tasks, return_exceptions=True)
-        return {'documents': [document for reading in readings for document in reading]}
+        reading = {'documents': [document for reading in readings for document in reading]}
+        if source_scope is not None:
+            view = source_scope.view([w['span'] for w in sorted(
+                (w for d in documents for w in d['windows']), key=lambda w: w['ordinal'])])
+            return ScopedReading.create(reading, [r for rows in resolutions for r in rows], view.digest)
+        return reading
 
     async def plan_query(self, question: str, mode: str, conversation_context: str = "",
                          *, include_requirements=False) -> dict[str, Any] | None:

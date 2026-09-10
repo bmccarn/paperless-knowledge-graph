@@ -1628,3 +1628,18 @@ both implementation review axes are now clear, and 1,018 backend tests pass with
 controls are included. This code result does not retrospectively change any native
 grade or trigger a production release. The general next steps are tracked in the
 [source-grounded contract plan](../specs/source-grounded-interpretation-contract.md).
+
+
+## Typed original-scope prototype: implementation only
+
+The source-scope contract now has a diagnostic-only implementation with independently
+cleared Standards and Spec reviews. It distinguishes complete, partial and unknown
+supplied originals and preserves raw typed selections separately from resolved source
+windows. Whole-original selection cannot override a semantic rejection; a filtered
+answer is independently re-audited against the same immutable source view.
+
+The full backend suite passed 1,031 tests (58 expected skips). The final receipt/type
+binding refinements passed thirteen focused regressions. Twelve synthetic actual-SDK
+localhost requests exercised both existing model profiles with control/scoped wire
+schemas, with no provider calls. Native accuracy remains unmeasured for this change;
+both previous route grades remain FAIL. See the [concrete contract and validation](../specs/source-grounded-interpretation-contract.md).

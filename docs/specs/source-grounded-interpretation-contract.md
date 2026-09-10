@@ -2,7 +2,9 @@
 
 Status: both native model-comparison grades and their reconciliation are complete;
 both routes FAIL. The deterministic date-spacing repair is reviewed and implemented.
-The next source-scope hypothesis needs concrete interface review before implementation.
+The source-scope interface review is complete and the diagnostic-only prototype is
+implemented. Both implementation reviews are clear; the matched native accuracy
+comparison has not run.
 This plan does not activate a route or change factual acceptance. Parent:
 [question evidence pipeline](question-evidence-answer-pipeline.md), issue #33.
 
@@ -137,6 +139,146 @@ adapter remain to be independently reviewed. Calculation support requires its ow
 concrete protocol review; this draft is not permission to add an unbounded general
 math engine or another unconstrained agent. Production model routing is not chosen
 by the number of reader observations or a lower abstention count.
+
+## Selected source-scope prototype: concrete review contract
+
+Three independent interface proposals compared an opaque span-handle catalog,
+a new single-body/range presentation, and explicit typed support references.
+Select typed references with expansion into the existing original windows. This
+keeps passage and complete-original selection distinct without a second source
+presentation, synthetic quotes, new I/O or a finalizer rewrite. The present source
+window text, order and ownership stay unchanged. This is a diagnostic opt-in within
+the inactive pipeline; ordinary production and existing diagnostic paths keep their
+current protocol until a new measured candidate qualifies.
+
+The causal hypothesis is specific and falsifiable: some native rejections explicitly
+assumed the supplied original might omit sections, while some supported negatives
+selected citations covering only part of their asserted record scope. Providing
+validated original coverage and an explicit way to select that scope may reduce
+both failures. It does not prove that a model will select or interpret it correctly.
+
+### Pure module
+
+Use one immutable `SourceScope` module with `bind`, `view` and `resolve` operations.
+`bind` receives admitted original records (document ID, exact content, expected full
+digest and authoritative extent) and existing source spans. It validates and freezes
+these before any await. Production acquisition and frozen-original diagnostics are
+the input adapters; neither may derive expected authority from model output. No
+network client or semantic classifier belongs in this module.
+
+`view` accepts the actual supplied spans, checks exact membership in the bound
+inventory and exposes grouped original windows plus per-document supply coverage.
+It must not borrow coverage from windows outside that invocation. Complete means
+the Unicode-offset union covers the authoritative full extent, including whitespace.
+Partial has known missing intervals. Unknown has no admitted original authority.
+Missing original authority must not be manufactured from the last span end or a
+chunk digest. A supplied but mismatched original, context, digest, owner or interval
+is invalid and fails before dispatch, rather than degrading to unknown.
+
+Span positions must use the existing certified chunk-to-original context. A direct
+whole-original span can use its own full digest and offsets; a different chunk
+digest without certified original offsets cannot gain complete-original authority.
+Preserve original quotes and structural/date context. Views expose no sibling
+document IDs, coverage records or reference handles to a document-local reader.
+
+The proposed uniform wire reference shape is:
+
+```json
+{"kind":"passage","handle":"existing span_id"}
+{"kind":"complete_original","handle":"offered original-scope handle"}
+```
+
+Both fields are required, with no extras. The two `kind` values form a small enum;
+handles are locally checked rather than enumerating the corpus in provider schema.
+A complete-original handle binds document identity, full digest, extent and exact
+supplied-window inventory. It is offered only for a complete view. Guessing an
+unoffered handle, using the wrong kind, selecting another view's unavailable source,
+or attempting whole-original selection in partial/unknown scope fails closed.
+
+`resolve` returns ordinary existing `span_id` references and a separate immutable
+resolution receipt. A passage remains that passage even when a complete original
+is available. A complete-original selection expands to all its actual original
+windows, in deterministic source order; no extra source text is introduced. Retain
+every raw typed selection in the receipt, while deduplicating expanded handles.
+Bind the view, original identities, selected scopes and expanded reference list.
+Do not pretend the model individually returned the expanded window IDs.
+
+### Integration and failure ownership
+
+Keep `QuestionEvidence` as the lifecycle owner. Add a constructor-only diagnostic
+opt-in that binds the scope digest into its existing immutable question/source
+snapshot. Ordinary callers retain the existing behavior. Changed questions,
+requirements, evaluated date or sources cannot reuse that snapshot. The diagnostic
+adapter must construct the scope from independently admitted originals; direct
+construction with no scope retains the old protocol and grants no new authority.
+
+The existing Strands reader and auditor adapters consume the scoped view and shared
+reference schema when explicitly enabled. Each document-local reader resolves only
+its own view. Preserve strict outer schemas, duplicate-key checks, observation
+ownership and existing content-free protocol correction rules. A typed selection
+is resolved before the existing finalizer validates ordinary source references.
+Keep raw reader/auditor selections and resolution receipts separately from resolved
+interpretations. Reader notes and scope receipts remain nonfactual metadata.
+
+Audit receipts must survive in the claim's existing semantic diagnostic data, so
+initial and independently re-audited subset results identify their actual selections.
+The finalizer's original quote, value, date, candidate-binding and subset acceptance
+rules remain unchanged. A subset audit must resolve references against the sources
+actually supplied to that new invocation. No prior approved scope substitutes for
+the fresh audit. There is no new persistent restoration path or live activation in
+this prototype; future saved-state integration must preserve these same bindings.
+
+Coverage metadata uses explicit complete-original wording. It never declares a
+complete archive, current-world validity, accurate OCR or exhaustive interpretation.
+The model must still distinguish a scoped observation that a record lacks a field
+from an unsupported assertion that an event never occurred. No claim-text keyword
+classifier, automatic supported verdict or semantic retry is introduced.
+
+### Implementation tasks and acceptance
+
+1. Independently review this concrete interface and resolve material findings.
+2. Implement the pure binding/view/reference module with tests through its three
+   operations: mutation, forged authority, gaps, overlap, whitespace, bad offsets,
+   foreign/unknown handles, passage versus original selection and partition isolation.
+3. Integrate the explicit diagnostic opt-in through existing reader and auditor
+   adapters. Capture exact model request schemas, raw typed selections, resolutions,
+   final ordinary references and independently re-audited subset receipts in synthetic
+   end-to-end tests. Legacy paths must retain their current protocol and behavior.
+4. Obtain both implementation reviews and run focused plus required full checks.
+5. Before native calls, write a bounded matched diagnostic comparing unchanged
+   originals, questions and fixed assertions with and without this contract. Freeze
+   code, both actual SDK request forms, cases, labels, three repetitions and shared
+   call/time limits. Grade raw decisions, selected scope and final references
+   separately; include explicit world-absence negatives and partial-original controls.
+   A new false approval or loss of a required positive rejects the scoped hypothesis.
+
+This prototype does not implement arithmetic derivations, unit inference, reader
+precision normalization, scalable whole-corpus counterevidence, or a new model route.
+Those measured obligations and the full G3–G6 plan remain open. A local or scoped
+diagnostic pass is not whole-query qualification.
+
+## Prototype implementation validation
+
+The constructor-only opt-in is implemented through `SourceScope`, `QuestionEvidence`
+and the existing Strands reader/auditor adapters. Exact original identities and
+actual supplied windows determine coverage; typed selections expand into existing
+ordinary references. Reader receipts are replayed against each immutable local view
+before admission. Canonical comparisons reject altered nested scalar types as well
+as missing or foreign selections. Audits validate their actual incoming source view.
+
+Standards review reproduced missing reader receipts and then a boolean/integer
+receipt-equivalence defect; both are repaired with regressions and independently
+cleared. Spec review found no remaining implementation blocker. Thirteen focused
+scope/integration tests pass, including subset re-audit and failed reader correction.
+The full backend suite passed 1,031 tests with 58 expected skips; the final stricter
+receipt/view comparisons additionally passed the focused suite. Default reader and
+verifier prompt bytes and the flat auditor request match the pre-prototype revision.
+
+A local actual-SDK serialization exercise covered both existing model profiles,
+control and scoped paths: twelve synthetic requests, zero native provider calls.
+Reader and auditor schemas serialized and the controlled finalizer retained exact
+original references. This is protocol validation only; it neither proves provider
+schema acceptance nor satisfies the frozen native diagnostic admission gate.
 
 ## First confirmed repair: numeric date spacing
 

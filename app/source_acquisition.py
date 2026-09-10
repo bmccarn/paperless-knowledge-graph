@@ -271,24 +271,45 @@ class SourceAcquisition:
             items.clear()
             for row in rows.values():
                 row['admitted'] = False
-        admitted_items = list(items.values())
-        pack = build_evidence_pack(request['question'], {'mode': request['mode']},
-            admitted_items, [], max_items=max(1, len(admitted_items)))
-        # The standard pack derives UI aggregates, while these originals retain
-        # their already checked whole-document provenance bindings.
-        pack['items'] = admitted_items
-        receipt = {'version': ACQUISITION_VERSION, 'request_digest': acquisition_digest(request),
-                   'corpus_generation': request['corpus_generation'], 'snapshot_status': snapshot_status,
-                   'operations': operations, 'documents': list(rows.values())}
-        receipt['complete'] = (snapshot_status == 'complete' and all(o['status'] == 'complete' for o in operations)
-                              and all(r['state'] in {'supplied', 'ineligible'} for r in rows.values()))
-        receipt['measurements'] = {'discovered_documents': len(rows), 'admitted_documents': len(items),
-            'original_characters': sum(r.get('extent', 0) for r in rows.values() if r.get('spans')),
-            'original_bytes': sum(r.get('original_bytes', 0) for r in rows.values() if r.get('spans')),
-            'reference_windows': sum(len(r['spans']) for r in rows.values())}
-        anchor = acquisition_digest(receipt); receipt['digest'] = anchor
-        validate_bundle(pack, receipt, anchor, request)
-        return AcquisitionBundle(_json(pack), _json(receipt), anchor)
+        def expire_packaging():
+            nonlocal snapshot_status
+            if (snapshot_status != 'complete' or execution.deadline is None
+                    or asyncio.get_running_loop().time() < execution.deadline):
+                return False
+            snapshot_status = 'deadline_exhausted'
+            self._progress['snapshot_status'] = snapshot_status
+            items.clear()
+            for row in rows.values(): row['admitted'] = False
+            return True
+
+        def package():
+            admitted_items = list(items.values())
+            pack = build_evidence_pack(request['question'], {'mode': request['mode']},
+                admitted_items, [], max_items=max(1, len(admitted_items)))
+            # The standard pack derives UI aggregates, while these originals retain
+            # their already checked whole-document provenance bindings.
+            pack['items'] = admitted_items
+            receipt = {'version': ACQUISITION_VERSION, 'request_digest': acquisition_digest(request),
+                       'corpus_generation': request['corpus_generation'], 'snapshot_status': snapshot_status,
+                       'operations': operations, 'documents': list(rows.values())}
+            receipt['complete'] = (snapshot_status == 'complete' and all(o['status'] == 'complete' for o in operations)
+                                  and all(r['state'] in {'supplied', 'ineligible'} for r in rows.values()))
+            receipt['measurements'] = {'discovered_documents': len(rows), 'admitted_documents': len(items),
+                'original_characters': sum(r.get('extent', 0) for r in rows.values() if r.get('spans')),
+                'original_bytes': sum(r.get('original_bytes', 0) for r in rows.values() if r.get('spans')),
+                'reference_windows': sum(len(r['spans']) for r in rows.values())}
+            anchor = acquisition_digest(receipt); receipt['digest'] = anchor
+            validate_bundle(pack, receipt, anchor, request)
+            return AcquisitionBundle(_json(pack), _json(receipt), anchor)
+
+        # Synchronous packaging cannot be preempted by asyncio's timer. Never
+        # admit an original after that work has consumed the owner deadline.
+        # Completed transfer diagnostics survive; this is not a wall-time bound.
+        expire_packaging()
+        bundle = package()
+        if expire_packaging(): bundle = package()
+        return bundle
+
 
 
 def augment_acquisition_coverage(coverage, receipt):

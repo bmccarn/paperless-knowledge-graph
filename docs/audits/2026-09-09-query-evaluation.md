@@ -1236,3 +1236,43 @@ the diagnostic code upload and full production-document reads, including a revis
 helper retaining only aggregate sizes/hashes. Neither rejected helper ran. The
 unchanged-reader B2 diagnostic can still be prepared from already retained local
 originals, with separate plan/runner review and native admission required.
+
+### Approved measurement and boundary-cost diagnosis (September 10)
+
+The user explicitly approved the previously blocked code upload and read-only
+production measurement. That attempt ran, then was interrupted after more than
+ten minutes without producing measurement.json. The helper exited with code 130;
+the serving pod remained Running with zero restarts. No native model call or
+production deployment occurred. Source-free progress and outcome artifacts remain
+at /private/tmp/kg-acquisition-measure-20260910.
+
+Progress records 36 completed discovery operations, 919 discovered documents,
+903 supplied originals, nine ConnectTimeout states and seven citation interval
+gaps. Observed original extent totals 17,807,343 characters; the largest is
+1,211,567. Transfer snapshot status is complete, which does not mean source
+coverage is complete. Packaging/sizing did not complete; final cancellation during
+database cleanup does not identify the preceding CPU stack. This failed attempt
+remains failed, with no resource-capacity or model-accuracy conclusion.
+
+Independent local profiling reproduced roughly quadratic scalar-boundary work:
+74k/148k/296k-character originals caused 1.40M/5.62M/22.78M characters to be
+normalized. The same 1,211,567-character synthetic source spent 8.555 seconds in
+span inventory before the fix and 0.893 seconds after it under cProfile. Tracing
+Python allocations raised the original span time to 28.576 seconds. These are
+local diagnostics, not measured production speedups.
+
+Adaptive edge reads preserve the exact former boundary transforms, expanding
+through arbitrary ignored runs and retaining legacy behavior for overlapping
+markers. Original text, reader spans, and provenance are not shortened. A
+separate reproduced issue allowed successful admission after synchronous
+packaging consumed the acquisition deadline; before/after packaging checks now
+withhold those originals and preserve transfer diagnostics. This prevents late
+admission but does not promise preemption of synchronous CPU work.
+
+948 backend tests passed in 39.263 seconds (58 expected opt-in skips), followed
+by focused boundary/acquisition checks after the overlapping-marker review fix.
+All six regenerated reader-retention input packages have exactly the prior
+preparation hash 47a23363074360d65c3acb285e277075b2d4f2ff5c9b1aaee285d0d5d923de61.
+No native diagnostic has run. Remaining work includes closure review, controlled
+resource measurement with a process-owned timeout, citation-gap diagnosis, the
+predeclared reader diagnostic and whole-query release gates.

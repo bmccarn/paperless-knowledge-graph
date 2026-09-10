@@ -328,6 +328,36 @@ def _value_context(text: str, markers: list = ()) -> str:
     return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_presentation_ranges(text, markers)))
 
 
+
+def _value_edge(text: str, markers: list, start: int, end: int, *, width: int, tail: bool) -> str:
+    """Exact normalized edge; expand past ignored runs rather than scanning interiors.
+
+    A retained edge longer than width cannot depend on normalization at the
+    opposite cut. Include entire removable markers crossing that cut, while
+    preserving markers not wholly contained in the caller's requested interval.
+    """
+    relevant = [(a, b) for a, b in markers if start <= a < b <= end]
+    # Preserve even the legacy transform's positional behavior for overlapping
+    # ranges; edge independence requires disjoint presentation removals.
+    if any(a < previous_end for (_, previous_end), (a, _) in zip(relevant, relevant[1:])):
+        value = _value_context(text[start:end], _slice_markers(relevant, start, end))
+        return value[-width:] if tail else value[:width]
+    size = max(64, width * 2)
+    while True:
+        first, last = (max(start, end - size), end) if tail else (start, min(end, start + size))
+        while True:
+            expanded_first, expanded_last = first, last
+            for a, b in relevant:
+                if a < first < b: expanded_first = min(expanded_first, a)
+                if a < last < b: expanded_last = max(expanded_last, b)
+            if (expanded_first, expanded_last) == (first, last): break
+            first, last = expanded_first, expanded_last
+        value = _value_context(text[first:last], _slice_markers(relevant, first, last))
+        if len(value) > width or (first == start and last == end):
+            return value[-width:] if tail else value[:width]
+        size *= 2
+
+
 def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict | None = None) -> list[dict]:
     spans = []
     seen = {}
@@ -394,15 +424,15 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
                           "content": text, "content_digest": digest,
                           **({'source_context': item['source_context']} if context else {}),
                           "boundary_before": guard_content[max(0, guard_start - 2):guard_start],
-                          "date_context_before": date_context(guard_content[:guard_start]),
+                          "date_context_before": date_context(guard_content, end=guard_start),
                           "boundary_after": guard_content[guard_end:guard_end + 2],
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
                           "quantity_tables": _slice_markers(quantity_tables, start, start + len(text)),
                           "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
-                          "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
-                          "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
+                          "value_boundary_before": _value_edge(guard_content, guard_ranges, 0, guard_start, width=16, tail=True),
+                          "value_boundary_after": _value_edge(guard_content, guard_ranges, guard_end, len(guard_content), width=2, tail=False),
                           "feedback_open": bool(item.get("feedback_open"))})
     if not citation_safe:
         return spans

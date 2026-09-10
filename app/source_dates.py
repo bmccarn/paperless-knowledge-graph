@@ -49,13 +49,20 @@ class SourceDate:
     reason: str | None = None
 
 
-def date_context(text: str) -> str:
-    """Bound lexical context after removing presentation-only marker/space runs.
+def date_context(text: str, *, end: int | None = None) -> str:
+    """Exact bounded lexical tail after stripping presentation and whitespace.
 
-    Collapse before truncating so whitespace or an opening value wrapper cannot
-    hide an immediately governing identifier label. Never use this as a quote.
+    Expand through arbitrary ignored runs. More than 80 normalized characters
+    make the retained tail independent of the left cut; no original is truncated.
     """
-    return " ".join(re.sub(r"[*_`]", "", text).split())[-80:] + (" " if text and text[-1].isspace() else "")
+    end = len(text) if end is None else end
+    size = 160
+    while True:
+        start = max(0, end - size)
+        normalized = " ".join(re.sub(r"[*_`]", "", text[start:end]).split())
+        if start == 0 or len(normalized) > 80:
+            return normalized[-80:] + (" " if end and text[end - 1].isspace() else "")
+        size *= 2
 
 
 def source_dates(text: str, date_order: str = "mdy", *, context_before: str = "") -> list[SourceDate]:

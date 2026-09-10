@@ -56,6 +56,27 @@ class AcquisitionTests(unittest.IsolatedAsyncioTestCase):
             {'id': 'planned:0', 'query': 'station pressure', 'status': 'complete',
              'sampling': 'sampled', 'document_ids': []}], execution or Execution(concurrency=3, page_size=71))
 
+    async def test_packaging_expiration_withholds_completed_originals(self):
+        from unittest.mock import patch
+        from app import source_acquisition as module
+        loop = asyncio.get_running_loop()
+        current = [loop.time()]
+        deadline = current[0] + 100
+        original_pack = module.build_evidence_pack
+        def expensive_pack(*args, **kwargs):
+            result = original_pack(*args, **kwargs)
+            current[0] = deadline + 1
+            return result
+        with patch.object(loop, 'time', lambda: current[0]), patch.object(module, 'build_evidence_pack', expensive_pack):
+            bundle = await self.collect(docs(1), execution=Execution(deadline=deadline))
+        self.assertFalse(bundle.receipt['complete'])
+        self.assertEqual(bundle.receipt['snapshot_status'], 'deadline_exhausted')
+        self.assertEqual(bundle.evidence_pack['items'], [])
+        row = self.collector.progress['documents']['1']
+        self.assertEqual(row['state'], 'supplied')
+        self.assertFalse(row['admitted'])
+        self.assertTrue(row['spans'])
+
     async def test_all_521_matches_and_late_sections_transfer(self):
         originals = docs(521)
         originals[9]['content'] = 'Initial station inspection.\n' * 500 + 'Final qualification: proposed only.\n'

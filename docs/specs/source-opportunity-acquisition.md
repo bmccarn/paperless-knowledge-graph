@@ -206,3 +206,30 @@ both an initial helper retaining private originals and a revised aggregate/hash-
 helper because the cluster code upload and production document reads require more
 specific authorization. Neither helper ran. Local retained-original B2 preparation
 and offline validation are unaffected.
+
+## Follow-up: exact boundary-context cost
+
+The approved production sizing attempt transferred 919 discovered records (903
+supplied, nine connection timeouts, seven citation interval gaps), then failed to
+finish packaging/sizing. No measurement or native accuracy result was produced.
+Local profiling reproduced repeated whole-prefix/suffix normalization for every
+citation window. This is a performance defect, separate from unresolved interval
+gaps and the packaging deadline boundary.
+
+Replace repeated full-range normalization used only for boundary guards with
+adaptively expanded edge reads. Required invariant: byte-for-byte identical date
+and scalar boundary strings, including arbitrary whitespace, Unicode, removed
+presentation markers, and markers crossing the requested edge. Expand until the
+retained boundary cannot depend on omitted interior text; never cap source content
+or approximate a guard. Exact original spans, source identities, reference
+validation, and reader prompts remain unchanged. Differential tests must compare
+with the original whole-range transforms, and deterministic work counters must
+show ordinary long-text edges avoid scanning the full document. Reprofile the
+same synthetic input after validation. This does not qualify the failed sizing
+attempt or establish production throughput.
+
+Packaging must recheck the inherited deadline before returning admitted originals.
+If it expires during synchronous packaging, return an unadmitted, incomplete bundle
+while retaining transfer progress. This closes late admission; it does not claim
+asyncio can preempt CPU work or provide a hard wall-time kill. A process-owned
+execution watchdog remains necessary for that stronger resource guarantee.

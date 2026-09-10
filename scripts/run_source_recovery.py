@@ -172,6 +172,16 @@ class RecoveryCapture(ModelCapture):
             self.integrity_error = 'capture_write_failed'
             raise IntegrityFailure(self.integrity_error) from exc
 
+    def read(self, name):
+        try:
+            raw = (self.directory/name).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != self.hashes.get(name):
+                raise ValueError('Capture artifact changed')
+            return json.loads(raw)
+        except Exception as exc:
+            self.integrity_error = 'capture_read_failed'
+            raise IntegrityFailure(self.integrity_error) from exc
+
     def start(self, kind, kwargs):
         if self.integrity_error: raise IntegrityFailure(self.integrity_error)
         if not kind.endswith(':chat'):
@@ -225,7 +235,7 @@ def validate_call(capture, stages, stage_index):
     if (index in capture.pending or index in capture.failures or index not in capture.wires
             or stage.get('native_result', {}).get('stop_reason') != 'end_turn'):
         raise PairFailure('Incomplete native execution')
-    raw = json.loads((capture.directory/f'model-{index:03d}-output.json').read_bytes())
+    raw = capture.read(f'model-{index:03d}-output.json')
     for chunk in raw.get('chunks', [raw.get('response', {})]):
         for choice in chunk.get('choices', []):
             body = choice.get('delta', choice.get('message', {}))

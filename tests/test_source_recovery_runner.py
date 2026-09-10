@@ -214,6 +214,18 @@ class RecoveryRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['native_attempts'], 1)
                 self.assertEqual(result['rows'][0]['status'], 'failed')
                 self.assertTrue(all(r['status'] == 'not_run' for r in result['rows'][1:]))
+                native_read = Path.read_bytes
+                def broken_read(path):
+                    if path.name == 'model-000-output.json' and path.parent.parent == root/'shared-read':
+                        raise OSError('synthetic capture read failure')
+                    return native_read(path)
+                async with mock_sdk('synthetic'):
+                    with patch.object(Path, 'read_bytes', broken_read):
+                        with self.assertRaises(runner.IntegrityFailure):
+                            await runner.run(root/'manifest.json', root/'shared-read')
+                result = json.loads((root/'shared-read/run.json').read_bytes())
+                self.assertEqual(result['native_attempts'], 1)
+                self.assertTrue(all(r['status'] == 'not_run' for r in result['rows'][1:]))
                 # Validating the hash and consuming the same bytes prevents an input swap.
                 (root/manifest['pairs'][0]['input']).write_text('{}')
                 with self.assertRaises(runner.IntegrityFailure):

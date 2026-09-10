@@ -87,7 +87,7 @@ async def query_runtime(request, directory, *, max_calls, seconds, expected_corp
                     if state['corpus_before'] != expected_corpus or date.today().isoformat() != evaluated_at:
                         raise ValueError('Live corpus or date differs from the admitted snapshot')
                     def adapters(history):
-                        return browser_adapters(history, request, paperless_url=settings.paperless_url)
+                        return browser_adapters(history, request, paperless_url=settings.effective_paperless_external_url)
                     async with delivery_session(main, engine, request, adapters) as delivery:
                         async with loopback_server(delivery['app']) as server:
                             state.update(server)
@@ -97,7 +97,7 @@ async def query_runtime(request, directory, *, max_calls, seconds, expected_corp
                     final = delivery['observed']['final']
                     if not delivery['observed']['guard'].started or final is None:
                         raise ValueError('Frozen browser request did not complete')
-                    state['final'] = delivery['delivery'].conserved_final(final, settings.paperless_url)
+                    state['final'] = delivery['delivery'].conserved_final(final, settings.effective_paperless_external_url)
                     coverage = restore_question_coverage(state['final'])
                     if (coverage is None or coverage['status'] not in {'complete', 'partial'}
                             or state['final'].get('query_plan', {}).get('requirements_status') != 'complete'):

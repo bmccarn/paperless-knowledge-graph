@@ -102,7 +102,8 @@ async def local_frontend(ready, *, kubectl, context, namespace, pod,
     async with AsyncExitStack() as stack:
         forward = await stack.enter_async_context(child(forward_command, directory, 'forward.log',
                     f'Forwarding from 127.0.0.1:{backend_port} -> {ready["port"]}'.encode()))
-        env = {**os.environ, 'BACKEND_URL': backend, 'NEXT_TELEMETRY_DISABLED': '1',
+        from scripts.live_query_local_identity import node_environment
+        env = {**node_environment(), 'BACKEND_URL': backend, 'NEXT_TELEMETRY_DISABLED': '1',
                'HOSTNAME': '127.0.0.1', 'PORT': str(ui_port)}
         ui = await stack.enter_async_context(child([str(node), '.next/standalone/server.js'],
                     directory, 'frontend.log', b'Ready in', env=env, cwd=frontend))

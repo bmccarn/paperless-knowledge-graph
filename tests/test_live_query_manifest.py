@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.live_query_manifest import parse_requests, private_inputs, prepare_manifest
+from scripts.live_query_manifest import parse_requests, private_inputs, prepare_manifest, reviewed_private_inputs
 from scripts.live_query_evaluation import sha256
 
 
@@ -26,6 +26,12 @@ class LiveManifestTests(unittest.TestCase):
         self.originals = {'inventory_sha256': sha256((self.root / 'inventory.json').read_bytes()),
                           'originals_sha256': {'42.json': sha256(original)}}
         (self.root / 'originals-manifest.json').write_text(json.dumps(self.originals))
+        self.review_inputs()
+
+    def review_inputs(self):
+        for axis in ('spec','standards'):
+            (self.root/f'input-review-{axis}.json').write_text(json.dumps({
+                'axis':axis,'reviewer':axis,'verdict':'pass','inputs_sha256':private_inputs(self.root)}))
 
     def test_exact_private_inputs_are_bound_and_changed_original_or_inventory_rejects(self):
         hashes = private_inputs(self.root)
@@ -63,6 +69,8 @@ class LiveManifestTests(unittest.TestCase):
             first = prepare_manifest(**args)
             self.requests['cases'][0]['question'] += '?'
             (self.root / 'requests.json').write_text(json.dumps(self.requests))
+            with self.assertRaises(ValueError): prepare_manifest(**args)
+            self.review_inputs()
             second = prepare_manifest(**args)
         self.assertNotEqual(first['private_inputs_sha256'], second['private_inputs_sha256'])
         self.assertIn('scripts/live_query_manifest.py', first['live_code_sha256'])
@@ -95,3 +103,11 @@ class LiveManifestTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             configuration['timeouts']['audit'] = float('nan')
             with self.assertRaises(ValueError): prepare_manifest(**args)
+
+    def test_missing_or_same_reviewer_cannot_approve_private_inputs(self):
+        self.assertEqual(len(reviewed_private_inputs(self.root)),7)
+        path=self.root/'input-review-spec.json';payload=json.loads(path.read_bytes())
+        payload['reviewer']='standards';path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError,'Two independent'):reviewed_private_inputs(self.root)
+        path.unlink()
+        with self.assertRaises(FileNotFoundError):reviewed_private_inputs(self.root)

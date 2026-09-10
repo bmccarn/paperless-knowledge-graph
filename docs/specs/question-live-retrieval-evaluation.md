@@ -1,6 +1,6 @@
 # Live retrieval qualification of the inactive question pipeline
 
-Status: preparation proposal. All-mode development admission remains pending;
+Status: inactive implementation under review. All-mode development admission remains pending;
 this document does not authorize production activation or count as a passing run.
 
 ## Question and evidence selection
@@ -136,8 +136,9 @@ remain required after development; no passing subset closes the production issue
 
 ## Executable assembly plan
 
-The existing boundary modules need one executable owner; they are not yet a
-completed live runner. Implement these slices without changing application code:
+The boundary modules are composed by `scripts/live_query_command.py` on the remote
+runtime and `scripts/live_query_local.py` on the local browser host. Native admission
+and the release gate remain pending. The implementation follows these slices:
 
 1. Add separate prepare/run-case commands. Bind independently reviewed private
    requests, rubric and originals, all-mode prerequisites, conservative admission
@@ -200,3 +201,24 @@ Browser disconnection alone is insufficient:
 the current frontend stream proxy does not forward its request cancellation signal.
 Test control EOF, explicit stop, mismatched identity, startup failure and teardown
 ordering using synthetic resources before opening production readers.
+
+
+### Concrete command inputs
+
+The remote `prepare --preparation PATH --manifest PATH` command writes a new private
+manifest only after all-mode and original-input reviews pass. Preparation JSON names
+`dataset`, `initial_output`, `all_mode_output`, `inputs`, `configuration`,
+`corpus_snapshot` and `evaluated_at`; an optional conservative admission is retained
+only when explicitly applicable to the frozen candidate. Configuration includes
+explicit non-secret actual runtime settings, the local build/browser snapshot, and
+the effective public source URL. Runtime rechecks the actual corpus and date before
+browser readiness; supplied preparation values alone never establish freshness.
+
+Each private input review names its axis and independent reviewer, records `pass`,
+and binds the complete private-input hash map. Neither original-review receipt is
+passed to the candidate as evidence. Local options identify the exact manifest,
+private inputs, output directory, case index, repository frontend and Node, cluster
+context/namespace/pod/UID, and staged remote interpreter/code/preparation/manifest/
+output paths. Transfer is exclusive or byte-identical; changed artifacts stop the
+run. The local command collects final artifacts and writes result.json only after
+runtime, browser, corpus and ownership checks succeed. It never writes a grade.

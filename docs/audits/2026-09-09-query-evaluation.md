@@ -1038,3 +1038,44 @@ three original observations then survive with complete restored conservation. Th
 is a causal code-path control, not native model evidence. Unchanged captured none/none
 responses still withhold the current-bearing unit; the original v6 result stays failed.
 No fresh model call, activation or deployment has occurred for this new contract.
+
+## Live browser owner implementation (September 10)
+
+The live harness now has remote `prepare`/`run-case` commands and a local executable
+owner. This remains inactive evaluation tooling, not production activation or a
+successful live retrieval run. The frozen temporal-v1 candidate is unchanged.
+
+The remote command repeats all-mode and predecessor-result admission before opening
+readers. Private input admission binds independent reviews of the exact request,
+rubric, inventory and original bytes. The local owner binds the repository build,
+Node, Playwright and actual Chromium installation, owns forwarding and the browser,
+waits for the nonce-bound remote stop acknowledgment, and retains remote artifacts
+without overwriting any differing bytes. Result packaging additionally checks actual
+engine question/mode/request identity, SSE conservation, source/corpus stability,
+provider termination, complete captures and the independent grade chain.
+
+Review reproduced and closed request-file replacement after manifest validation,
+a wrong-question final passing a copied browser request, an unknown native capture
+kind bypassing truncation checks, repeat cancellation interrupting child cleanup,
+temporary-path traversal, and a different frontend resolving a different browser
+installation. Public source projection now uses the same effective external
+Paperless URL as the real HTTP routes. These changes affect evaluation tooling only.
+
+A synthetic built-frontend run exercised the real HTTP/SSE handlers, source drawer,
+Timeline source/answer links, one contextual submission, mobile restoration and
+copied-answer equality. Its mobile screenshot was visually inspected. A second
+assembled control exercised actual remote-control protocol, local forwarding,
+Chromium and artifact collection with a disposable fake cluster. Browser-startup
+failure drained the remote runtime, retained failure evidence and produced no
+passing result. These tests establish transport/ownership behavior, not native
+model accuracy. Qualification prerequisites and factual result packaging are
+explicitly substituted in the fake-cluster control and tested separately.
+
+Final offline validation ran 892 tests in 36.832 seconds with 53 expected opt-in
+skips and no failures. Thirteen local owner/browser checks passed in 16.871 seconds.
+An independent reviewer reran both assembled browser controls successfully in 6.312
+seconds. The exact Node preload regression proves an external NODE_OPTIONS file
+cannot execute: identity capture, the frontend and the browser all use the same
+minimal OS environment, with explicit application listener settings. Cluster
+context, namespace, pod and UID are also bound to the frozen manifest. The six real-corpus questions, all-mode native admission, sealed
+holdout and GitOps release remain uncompleted gates. No deployment was performed.

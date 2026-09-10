@@ -61,6 +61,27 @@ def private_inputs(directory):
     return {name: sha256(payload) for name, payload in captured.items()}
 
 
+def reviewed_private_inputs(directory):
+    hashes = private_inputs(directory)
+    reviewers = []
+    receipts = {}
+    from scripts.conservative_query_admission import strict_json
+    for axis in ('spec', 'standards'):
+        name = f'input-review-{axis}.json'
+        payload = (Path(directory) / name).read_bytes()
+        review = strict_json(payload)
+        if (not isinstance(review, dict) or set(review) != {'axis', 'reviewer', 'verdict', 'inputs_sha256'}
+                or review['axis'] != axis or review['verdict'] != 'pass'
+                or not isinstance(review['reviewer'], str) or not review['reviewer'].strip()
+                or review['inputs_sha256'] != hashes):
+            raise ValueError('Independent private input review differs from frozen originals and requests')
+        reviewers.append(review['reviewer'])
+        receipts[name] = sha256(payload)
+    if len(set(reviewers)) != 2:
+        raise ValueError('Two independent private input reviewers required')
+    return {**hashes, **receipts}
+
+
 def prepare_manifest(*, dataset, initial_output, all_mode_output, inputs,
                      configuration, corpus_snapshot, evaluated_at, conservative_admission=None):
     """No readers or models open here. Repeat and compare before each live case.
@@ -76,11 +97,11 @@ def prepare_manifest(*, dataset, initial_output, all_mode_output, inputs,
                                      'corpus_snapshot': corpus_snapshot}, allow_nan=False))
     files = sorted((ROOT / 'scripts').glob('live_query_*.py'))
     files += sorted((ROOT / 'tests').glob('test_live_query_*.py'))
-    files += [ROOT / 'docs/specs/question-live-retrieval-evaluation.md']
+    files += [ROOT / 'scripts/live_query_ui.mjs', ROOT / 'docs/specs/question-live-retrieval-evaluation.md']
     return {'version': 1, 'stage': 'live_question_pipeline_development',
             'all_mode_admission': admission,
             'live_code_sha256': {str(p.relative_to(ROOT)): sha256(p.read_bytes()) for p in files},
-            'private_inputs_sha256': private_inputs(inputs),
+            'private_inputs_sha256': reviewed_private_inputs(inputs),
             'configuration': snapshot['configuration'], 'corpus_snapshot': snapshot['corpus_snapshot'],
             'evaluated_at': evaluated_at, 'max_model_calls': 300, 'active_seconds': 3600,
             'sdk_retries': 0, 'strands_retry_strategy': None, 'proxy_cache': 'bypass',

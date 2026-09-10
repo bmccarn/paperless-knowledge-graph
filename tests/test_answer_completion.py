@@ -40,9 +40,6 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
             return json.dumps({'documents': [{'document_id': doc['document_id'], 'observations': [
                     {'text': text, 'references': [{'span_id': doc['windows'][0]['span']['span_id']}]}
                     for text in ((self.second, self.first) if self.behavior == 'complete' else (self.second,))], 'limitations': []}]})
-        if name == 'fact_selector':
-            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered'}
-                for row in payload['observations']]})
         if name == 'answer_completion':
             completion = name == 'answer_completion'
             if completion and self.behavior == 'cancel': raise asyncio.CancelledError
@@ -106,7 +103,7 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
             if mode == 'timeline':
                 from app.timeline import restore_timeline
                 self.assertIn(restore_timeline(final)[1]['status'], {'ready', 'no_dates'})
-            self.assertEqual(self.calls, ['source_reader', 'fact_selector', 'source_auditor',
+            self.assertEqual(self.calls, ['source_reader', 'source_auditor',
                 'answer_coverage', 'answer_completion', 'source_auditor', 'answer_coverage'])
             audits = [p for n, p in self.payloads if n == 'source_auditor']
             self.assertEqual(audits[0]['units'][0]['text'], audits[1]['units'][0]['text'])

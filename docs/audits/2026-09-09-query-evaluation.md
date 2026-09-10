@@ -881,3 +881,69 @@ Fresh manifests now bind the v5 contract and grading version2; complete raw/dual
 review bindings, aggregate zero-error/coverage agreement and scheduled identities
 apply without the v4 exception. That old receipt cannot admit changed application
 code. No v5 native execution, activation or deployment has occurred yet.
+
+
+Fresh v5 candidate `8f23e80` failed initial case00; cases01-11 and all-mode are
+unstarted. Reader observations captured granted approval separately from the signed
+selection. Exclusion attempt005 wrongly approved outside-request for approval,
+leaving an answer about a selected increase without its approved status. Both
+reviewers record one missing required aspect, one false authoritative exclusion
+approval and one false-complete final coverage judgment. The delivered facts were
+supported, but incomplete. V5 therefore does not qualify, despite its successful
+controlled repair of correctly rejected omissions. Both failed grades and aggregate
+are preserved; no subsequent case or deployment follows this failure.
+
+Manifest canonical SHA256:
+`65aeff8b74b0ddf7239296eab70cc52bc5b244d0cb16709f7e08e6c73f1ece32`;
+package SHA256:
+`deff9c9fb58aaad93b9bc12237c00ba947529564d0c8cb863b8443ad9088ceb3`;
+failed result SHA256:
+`2a44845bc9ff849c3a53979ce845c31925552d6f6e4224e39df8fd9dacb310b3`.
+Nine native calls took 27.337 active seconds and reported 17,175 tokens.
+This identifies the independent relevance/exclusion decision as an unsafe deletion
+authority, not merely a missing reaction to rejected omissions. The next proposed
+contract, `docs/specs/question-reader-inventory.md`, removes runtime selection and
+exclusion calls and source-audits the complete question-led reader inventory.
+Original-based coverage, whole-query qualification and release gates remain intact.
+
+
+The v6 full-reader-inventory contract passed both independent design reviews before
+implementation. Runtime selection and exclusion are removed; the source reader now
+explicitly produces standalone source-scoped observations, with material negative
+facts and conditions in referenced observations. Supported incidental details and
+repeated occurrences can increase verbosity. Original-source factual and requested-
+meaning qualification remain mandatory; no earlier failure is rescored.
+
+The harness independently passed 26 focused controls. It denies retired filter
+stages before model dispatch and requires matching input/output stage identities,
+zero filter calls and dual result-bound grades. Shared live capture provides an
+explicit reader-inventory guard while retaining historical classifier diagnostics.
+All 21 capture/diagnostic controls passed. Full CI on the previous v5 commit passed
+(run `34431166807`), but does not qualify that failed candidate's accuracy.
+
+Initial v6 full-suite execution ran 810 tests with 48 expected skips and three
+failures: two shared-capture historical diagnostic incompatibilities (fixed) and a
+follow-up coverage fixture under correction. Independent application review also
+reproduced a saved-inventory deletion that could falsely upgrade partial coverage;
+that restoration defect is being repaired before freezing any native v6 run.
+No native v6 execution, activation or deployment has occurred.
+
+
+Final v6 implementation reviews are clear. The immutable prepared inventory now
+anchors reader_inventory_digest outside the mutable conservation receipt. Removing
+the last row or a whole document and recomputing receipt/public coverage digests
+cannot upgrade partial coverage; missing, wrong and boolean anchors also fail.
+The same prepared anchor is reapplied after completion without changing the base
+coverage binding contract. This is integrity binding under the existing saved-object
+trust model, not a claim of cryptographic authenticity for rewritten whole objects.
+
+The final full offline suite passed 812 tests in 25.098 seconds with 48 expected
+datastore skips. Independent Standards ran 67 focused app tests, the implementation
+slice ran 58, and the root completion/harness slice ran 38; all passed. All 62 app
+and script files parsed, and whitespace checks passed. Controls include distinct
+source-owned occurrences, substituted/rewritten/removed facts, source-resolved versus
+ambiguous references, real six-unit 4+2 audit batching, 81-unit failure without
+truncation, and timeout/cancellation. Frozen v5 loses granted approval in all four
+controlled modes; v6 retains and audits it. The earlier hours repair remains intact
+while its model selection/exclusion calls are removed. Fresh native qualification,
+actual-corpus/browser work and release gates are still pending.

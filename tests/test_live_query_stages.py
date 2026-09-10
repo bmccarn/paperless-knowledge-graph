@@ -19,6 +19,27 @@ class StageCaptureTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temp.name)
         self.capture = ModelCapture(self.root, max_calls=5, seconds=30)
 
+    async def test_retired_filter_stages_are_recorded_without_transport_calls(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+        original = AsyncMock(return_value='must not dispatch')
+        orchestrator = SimpleNamespace(_text_agent=original, _model=Mock())
+        with patch.object(native_module, 'Agent', type('UnusedAgent', (), {})):
+            with capture_stages(orchestrator, self.capture, self.root, reader_inventory=True) as stages:
+                for name in ('fact_selector', 'fact_exclusion'):
+                    with self.assertRaisesRegex(ValueError, 'forbids semantic filtering'):
+                        await orchestrator._text_agent(name, 'system', '{}')
+        original.assert_not_awaited()
+        self.assertEqual(self.capture.attempts, [])
+        self.assertEqual(len(stages['hashes']), 4)
+        for index, name in enumerate(('fact_selector', 'fact_exclusion')):
+            for kind in ('input', 'output'):
+                record = json.loads((self.root / f'stage-{index:03d}-{kind}.json').read_bytes())
+                self.assertEqual(record['name'], name)
+                if kind == 'output':
+                    self.assertEqual(record['exception_type'], 'ValueError')
+                    self.assertNotIn('native_result', record)
+
     async def test_concurrent_native_stages_bind_actual_requests_and_close_clients(self):
         import httpx
         from strands.models.openai import OpenAIModel
@@ -52,7 +73,7 @@ class StageCaptureTests(unittest.IsolatedAsyncioTestCase):
         native_agent = native_module.Agent
         original_text = orchestrator._text_agent
         with patch.object(orchestrator, '_model', model):
-            with capture_stages(orchestrator, self.capture, self.root) as stages:
+            with capture_stages(orchestrator, self.capture, self.root, reader_inventory=True) as stages:
                 result = await asyncio.gather(orchestrator._text_agent('first', 'System', 'One'),
                                                orchestrator._text_agent('second', 'System', 'Two'))
         self.assertEqual(result, ['One\n', 'Two\n'])

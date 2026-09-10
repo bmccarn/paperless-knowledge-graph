@@ -9,12 +9,14 @@ from scripts.live_query_evaluation import sha256
 
 
 @contextmanager
-def capture_stages(orchestrator, capture, directory):
+def capture_stages(orchestrator, capture, directory, *, reader_inventory=False):
     """Wrap the existing orchestrator; do not replace its planning or verdicts.
 
     The caller owns the isolated process and must join all query tasks before exit.
     Stage attempts and transport attempts are separate ledgers, never added
-    together when reporting call count or tokens.
+    together when reporting call count or tokens. Reader-inventory live runs must
+    set reader_inventory=True; historical classifier diagnostics retain their wire
+    captures without this runtime-stage restriction.
     """
     from app import strands_orchestrator as native_module
 
@@ -33,6 +35,8 @@ def capture_stages(orchestrator, capture, directory):
         token = CURRENT_ATTEMPT.set(attempt)
         started = time.monotonic()
         try:
+            if reader_inventory and name in {'fact_selector', 'fact_exclusion'}:
+                raise ValueError('Reader-inventory evaluation forbids semantic filtering stages')
             attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format)
             return attempt['response']
         except BaseException as exc:

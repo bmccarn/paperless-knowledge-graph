@@ -13,19 +13,18 @@ class QueryMetrics:
     calls: Counter = field(default_factory=Counter)
     reader_documents: int = 0
     audit_batches: int = 0
-    exclusion_observations: int = 0
 
     def report(self):
         # Optional stages absent from the run contribute zero. Readers and audit
-        # batches each allow only their existing single protocol correction.
+        # batches each allow only their existing single protocol correction. Retired
+        # filter calls remain observable but have no runtime budget allowance.
         ceiling = (int(self.calls['query_planner'] > 0) + 2 * self.reader_documents
                    + int(self.calls['answer_composer'] > 0) + 2 * self.audit_batches
                    + int(self.calls['answer_editor'] > 0) + self.calls['answer_coverage']
-                   + int(self.calls['answer_completion'] > 0)
-                   + int(self.calls['fact_selector'] > 0) + self.exclusion_observations)
+                   + int(self.calls['answer_completion'] > 0))
         return {'native_stage_calls': dict(self.calls), 'native_call_count': sum(self.calls.values()),
                 'native_call_ceiling': ceiling, 'reader_documents': self.reader_documents,
-                'audit_batches': self.audit_batches, 'exclusion_observations': self.exclusion_observations,
+                'audit_batches': self.audit_batches,
                 'scope': 'strands_pipeline_stages_only',
                 'transport_attempts': 'not_established'}
 

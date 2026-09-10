@@ -13,6 +13,20 @@ from tests.source_audit_fixtures import decision
 
 
 class SourceReadingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reader_wire_requires_independent_scope_and_referenced_negative_facts(self):
+        auditor = self.auditor('source_first')
+        with patch.object(auditor, '_text_agent', AsyncMock(side_effect=[json.dumps(self.reading), self.verdict])) as calls:
+            await auditor.audit_answer_units('Question', self.units, self.spans, {})
+        reader = calls.await_args_list[0].kwargs
+        self.assertIn('Each observation', reader['system_prompt'])
+        self.assertIn('without relying on sibling observations', reader['system_prompt'])
+        self.assertIn('material negative facts', reader['system_prompt'])
+        self.assertIn('Missing records do not prove', reader['system_prompt'])
+        properties = reader['response_format']['json_schema']['schema']['properties']['documents']['items']['properties']
+        observation = properties['observations']['items']['properties']
+        self.assertIn('subject or record', observation['text']['description'])
+        self.assertIn('referenced observations', properties['limitations']['description'])
+
     def setUp(self):
         self.pack = {'items': [
             {'id': 'receipt', 'document_id': 17, 'chunk_index': 0, 'title': 'Receipt',

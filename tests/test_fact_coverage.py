@@ -25,9 +25,9 @@ class FactCoverageTests(unittest.TestCase):
                 'planning_status': 'complete', 'binding': {'snapshot_digest': 'original'}}
 
     def conservation(self, status='complete'):
-        return {'version': 3, 'status': status, 'complete': status == 'complete',
+        return {'version': 4, 'status': status, 'complete': status == 'complete',
                 'inventory': [{'id': 'f1', 'text': 'Private reader interpretation.'}],
-                'reviews': [], 'binding': {'snapshot_digest': 'original'},
+                'mappings': [], 'binding': {'snapshot_digest': 'original'},
                 'summary': {'total': 1, 'preserved': int(status == 'complete'), 'excluded': 0,
                             'unresolved': int(status == 'partial'), 'unavailable': int(status == 'unavailable')}}
 
@@ -90,8 +90,38 @@ class FactCoverageTests(unittest.TestCase):
 
 
 class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
-    async def prepared(self, *, review='accepted', assessment='complete'):
-        from app.answer_fact_selection import select_facts
+    async def test_inventory_deletion_cannot_upgrade_partial_when_receipt_and_coverage_are_recomputed(self):
+        from app.answer_fact_selection import prepare_facts
+        from app.answer_observations import ObservationCandidate
+        from tests.test_answer_fact_selection import prepared, audited
+        for values in ([['Cedar is pending.', 'Cedar requires authorization.'], []],
+                       [['Cedar is pending.'], ['Maple requires authorization.']]):
+            with self.subTest(values=values):
+                evidence, source_pack = await prepared(values)
+                inventory = prepare_facts(evidence)
+                final = await audited(evidence, source_pack, ObservationCandidate(('Cedar is pending.',)))
+                receipt = inventory.bind_final(evidence, final)
+                final['finalization']['fact_conservation'] = receipt
+                base = parse_coverage(json.dumps({'requirements': [
+                    {'requirement_id': 'r1', 'status': 'answered', 'observation_ids': ['u1']}],
+                    'omitted_requested_aspects': False}), evidence, final)
+                final['finalization']['question_coverage'] = augment_fact_coverage(base, receipt)
+                self.assertEqual(restore_question_coverage(final)['status'], 'partial')
+                changed = copy.deepcopy(final)
+                receipt = changed['finalization']['fact_conservation']
+                receipt['inventory'].pop()
+                receipt['mappings'].pop()
+                receipt.update(status='complete', complete=True,
+                    summary={'total': 1, 'preserved': 1, 'excluded': 0, 'unresolved': 0, 'unavailable': 0})
+                # All inner/public checksums and completeness flags agree. The
+                # independent original-inventory anchor must still reject it.
+                changed['finalization']['question_coverage'] = augment_fact_coverage(base, receipt)
+                self.assertIsNone(restore_question_coverage(changed))
+                self.assertFalse(restore_pipeline_metadata(changed, changed['answer'])['finalization']['answer_verified'])
+
+    async def prepared(self, *, retained=True, assessment='complete'):
+        from app.answer_fact_selection import prepare_facts
+        from app.answer_observations import ObservationCandidate
         text = 'Cedar invoice records $20 USD.'
         unrelated = 'The form identifies Casey as the operator.'
         question = 'What amount does the invoice record?'
@@ -108,33 +138,21 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
                     {'text': value, 'references': [{'span_id': handle}]} for value in (text, unrelated)],
                     'limitations': []}]}
 
-            async def select_question_facts(inner, payload):
-                return json.dumps({'dispositions': [{'observation_id': row['id'],
-                    'status': 'delivered' if index == 0 else 'omitted'}
-                    for index, row in enumerate(payload['observations'])]})
-
-            async def review_fact_exclusion(inner, payload):
-                if review == 'unavailable':
-                    raise TimeoutError('private transport detail')
-                # The exclusion interface supplies one proposal alongside the
-                # immutable inventory. Locate its ID without guessing one.
-                excluded = next(row['id'] for row in payload['observations'] if row['text'] == unrelated)
-                return json.dumps({'decisions': [{'observation_id': excluded,
-                    'decision': 'outside_request' if review == 'accepted' else 'reject', 'target_id': None}]})
 
         adapter = Adapter()
         evidence = await QuestionEvidence.prepare(adapter, question, requested, source_pack,
                                                   evaluated_at='2026-09-09')
-        selection = await select_facts(adapter, evidence)
+        selection = prepare_facts(evidence)
+        candidate = selection.candidate if retained else ObservationCandidate((text,))
         final = await AnswerFinalizer(HandleAuditor()).finalize(
-            question, selection.candidate, source_pack, evaluated_at='2026-09-09')
+            question, candidate, source_pack, evaluated_at='2026-09-09')
         self.assertTrue(final['finalization']['answer_verified'])
         plan = {**requested, 'original_question': question, 'requirements_status': 'complete',
                 'evaluated_at': '2026-09-09', 'source_date_order': 'mdy',
                 'request_identity_digest': 'a' * 64, 'pipeline_version': PIPELINE_VERSION}
         final['query_plan'] = plan
         final['finalization'].update(pipeline_version=PIPELINE_VERSION,
-            request_identity_digest=plan['request_identity_digest'], evidence_snapshot_digest=evidence.digest)
+            request_identity_digest=plan['request_identity_digest'], evidence_snapshot_digest=evidence.digest, reader_inventory_digest=selection.inventory_digest)
         conservation = selection.bind_final(evidence, final)
         final['finalization']['fact_conservation'] = conservation
         if assessment == 'unavailable':
@@ -146,31 +164,34 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
         final['finalization']['question_coverage'] = augment_fact_coverage(base, conservation)
         return final, base
 
-    async def test_restoration_distinguishes_conservation_unavailability_from_planner_unavailability(self):
-        for review in ('accepted', 'rejected', 'unavailable'):
+    async def test_restoration_distinguishes_missing_inventory_from_planner_unavailability(self):
+        for retained in (True, False):
             for assessment in ('complete', 'partial', 'unavailable'):
-                with self.subTest(review=review, assessment=assessment):
-                    final, base = await self.prepared(review=review, assessment=assessment)
+                with self.subTest(retained=retained, assessment=assessment):
+                    final, base = await self.prepared(retained=retained, assessment=assessment)
                     before = copy.deepcopy(final)
                     restored = restore_question_coverage(final)
                     self.assertIsNotNone(restored)
                     self.assertEqual(restored, final['finalization']['question_coverage'])
                     self.assertEqual(restored['assessment_status'], assessment)
                     self.assertEqual(restored['requirements'], base['requirements'])
-                    self.assertIs(restored['complete'], review != 'unavailable' and assessment == 'complete')
+                    self.assertIs(restored['complete'], retained and assessment == 'complete')
                     self.assertEqual(final, before)
 
     async def test_fact_and_final_candidate_tampering_invalidates_saved_success(self):
         original, _ = await self.prepared()
         self.assertTrue(restore_question_coverage(original)['complete'])
         mutations = (
+            lambda x: x['finalization'].pop('reader_inventory_digest'),
+            lambda x: x['finalization'].update(reader_inventory_digest=True),
+            lambda x: x['finalization'].update(reader_inventory_digest='a' * 64),
             lambda x: x['finalization'].pop('fact_conservation'),
             lambda x: x['finalization']['fact_conservation']['inventory'][0].update(text='An invented amount.'),
             lambda x: x['finalization']['fact_conservation']['inventory'][0]['references'][0].update(span_id='foreign'),
-            lambda x: x['finalization']['fact_conservation']['dispositions'][0].update(status='omitted'),
-            lambda x: x['finalization']['fact_conservation']['reviews'][0].update(status='rejected'),
-            lambda x: x['finalization']['fact_conservation']['reviews'][0].update(decision='covered_by'),
-            lambda x: x['finalization']['fact_conservation']['reviews'][0].update(target_id='foreign-fact'),
+            lambda x: x['finalization']['fact_conservation'].update(dispositions=[]),
+            lambda x: x['finalization']['fact_conservation'].update(reviews=[]),
+            lambda x: x['finalization']['fact_conservation']['mappings'][0].update(status='excluded'),
+            lambda x: x['finalization']['fact_conservation']['mappings'][0].update(target_id='foreign-fact'),
             lambda x: x['finalization']['fact_conservation'].update(version=1),
             lambda x: x['claim_ledger']['claims'][0].update(claim='- Another recorded amount.'),
             lambda x: x['finalization'].update(candidate_digest='f' * 64),
@@ -195,7 +216,7 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(restored['finalization']['answer_verified'])
                 self.assertEqual(restored['finalization']['disposition'], 'stored_binding_unavailable')
 
-    async def test_legacy_base_receipt_cannot_certify_v3_even_with_a_valid_fact_receipt(self):
+    async def test_legacy_base_receipt_cannot_certify_v6_even_with_a_valid_fact_receipt(self):
         final, base = await self.prepared()
         final['finalization']['question_coverage'] = base
         self.assertIsNone(restore_question_coverage(final))

@@ -50,7 +50,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
         raise ValueError('Unknown evaluation stage')
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
         'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
-        'scripts/conservative_query_admission.py', 'docs/specs/question-reviewed-retention.md',
+        'scripts/conservative_query_admission.py', 'docs/specs/question-reader-inventory.md',
         'docs/specs/question-pipeline-development-evaluation.md',
         'docs/specs/question-coverage-recovery.md',
         'docs/specs/question-fact-conservation-integration.md',
@@ -62,7 +62,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
     runtime = runtime_snapshot()
     if runtime['packages']['strands-agents'] != '1.55.0':
         raise ValueError('Qualification requires locked Strands 1.55.0 runtime')
-    manifest = {'version': 1, 'grading_version': 2, 'stage': 'fixed_originals_question_pipeline_development',
+    manifest = {'version': 1, 'grading_version': 2, 'fact_filtering': 'disabled', 'stage': 'fixed_originals_question_pipeline_development',
         'dataset_sha256': digest(payload),
         'code_sha256': {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths},
         'runtime': runtime, 'mode': 'strict', 'cases': 12, 'max_native_calls': 300,
@@ -255,6 +255,8 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
         token = CURRENT_ATTEMPT.set(attempt)
         started = time.monotonic()
         try:
+            if manifest.get('fact_filtering') == 'disabled' and name in {'fact_selector', 'fact_exclusion'}:
+                raise ValueError('Reader-inventory evaluation forbids semantic filtering stages')
             attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format)
             return attempt['response']
         except BaseException as exc:

@@ -10,12 +10,18 @@ READER_PROMPT = (
     'Describe what the record actually establishes: its type, subject, field roles, selected and '
     'unselected options, stated actions and action stages, quantities and date roles. Distinguish '
     'existing state from a selected change, a request from completion, and a signature date from '
-    'an event date. Preserve supported positive facts as well as limits. Note relevant ambiguities '
-    'and contradictions without resolving them by assumption. Referenced instruments are not '
+    'an event date. Each observation must independently identify its original-source subject or record '
+    'and relevant scope, without relying on sibling observations to supply identity or time. '
+    'Write each observation on one plain-text line, without Markdown, headings or citations. '
+    'Preserve material negative facts, conditions, uncertainty and contradictions established by '
+    'the original in referenced observations, alongside positive facts. Do not resolve ambiguities '
+    'by assumption or turn uncertainty into a definite event. Referenced instruments are not '
     'necessarily the current record. The supplied passages are not a complete archive. '
     'Use original span_id references belonging to that document for every observation. '
-    'Do not invent facts or handles. Empty observations are allowed when no relevant fact is '
-    'established; explain material limits separately. These reading notes are interpretations '
+    'Missing records do not prove that an event did not occur. Do not invent facts or handles. '
+    'Empty observations are allowed when no relevant fact is established. Use limitations only '
+    'for unreferenced processing notes about the reading; these are not answer facts. Do not put '
+    'source-established material facts only in limitations. These reading notes are interpretations '
     'for a later independent verifier, not new evidence. Return only the required JSON object.'
 )
 VERIFIER_NOTE = (
@@ -51,7 +57,10 @@ def response_format(documents):
     # Large handle enums exceed provider schema complexity; parse_reading binds every reference.
     observation = {'type': 'object', 'additionalProperties': False,
         'required': ['text', 'references'], 'properties': {
-            'text': {'type': 'string', 'minLength': 1},
+            'text': {'type': 'string', 'minLength': 1, 'description':
+                'A source-grounded observation identifying its subject or record and relevant scope '
+                'independently of sibling observations; preserve conditions and date roles. '
+                'One plain-text line without Markdown, headings or citations.'},
             'references': {'type': 'array', 'minItems': 1, 'items': {
                 'type': 'object', 'additionalProperties': False, 'required': ['span_id'],
                 'properties': {'span_id': {'type': 'string'}}}}}}
@@ -60,7 +69,10 @@ def response_format(documents):
             # Vertex structured output supports string enums only; ownership is validated below.
             'document_id': {'type': 'integer'},
             'observations': {'type': 'array', 'items': observation},
-            'limitations': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}}}}
+            'limitations': {'type': 'array', 'description':
+                'Unreferenced processing notes only, not answer facts. Source-established material '
+                'negative facts and uncertainty belong in referenced observations.',
+                'items': {'type': 'string', 'minLength': 1}}}}
     return {'type': 'json_schema', 'json_schema': {'name': 'source_reading', 'strict': True,
         'schema': {'type': 'object', 'additionalProperties': False, 'required': ['documents'],
             'properties': {'documents': {'type': 'array', 'minItems': len(doc_ids),

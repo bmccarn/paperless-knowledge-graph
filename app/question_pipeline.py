@@ -5,7 +5,7 @@ from app.answer_finalization import AnswerFinalizer
 from app.config import settings
 from app.question_evidence import QuestionEvidence, PIPELINE_VERSION
 from app.answer_coverage import unavailable_coverage, augment_fact_coverage
-from app.answer_fact_selection import select_facts
+from app.answer_fact_selection import prepare_facts
 from app.answer_completion import recover_coverage, PriorSupportRevoked
 
 
@@ -16,18 +16,20 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
             {key: plan[key] for key in ('resolved_question', 'requirements')}, evidence_pack,
             evaluated_at=plan['evaluated_at'], source_date_order=settings.source_date_order,
             conversation_context=plan.get('conversation_context', ''))
-        stage = 'fact_selector'
-        composition = await select_facts(orchestrator, evidence)
+        stage = 'fact_inventory'
+        composition = prepare_facts(evidence)
+        inventory_digest = composition.inventory_digest
         candidate = composition.candidate
         if candidate is None:
-            # A completed exclusion phase can retain nothing. Preserve its raw
-            # judgments, but never treat an empty answer as factual success.
+            # A valid source reading can contain no observations. Never treat
+            # an empty inventory as factual success or promote its limitations.
             final = await AnswerFinalizer(None).finalize(question, '', evidence_pack,
                 plan=plan, mode=mode, evaluated_at=plan['evaluated_at'])
             final['answer'] = 'No source observations could be retained for a verified answer.'
             final['finalization'].update(pipeline_version=PIPELINE_VERSION,
-                pipeline_failure='no_retained_facts', request_identity_digest=plan['request_identity_digest'],
+                pipeline_failure='empty_fact_inventory', request_identity_digest=plan['request_identity_digest'],
                 evidence_snapshot_digest=evidence.digest,
+                reader_inventory_digest=inventory_digest,
                 disposition='incomplete', complete=False, answer_verified=False,
                 answer_digest=hashlib.sha256(final['answer'].encode()).hexdigest())
             # Empty Quick strings normally take the legacy unaudited path. This
@@ -54,6 +56,7 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
                 question, candidate, evidence_pack, plan=plan,
                 mode=mode, evaluated_at=plan['evaluated_at'])
         final['finalization']['request_identity_digest'] = plan['request_identity_digest']
+        final['finalization']['reader_inventory_digest'] = inventory_digest
         stage = 'answer_coverage'
         try:
             coverage = await orchestrator.assess_question_coverage(evidence, final,
@@ -63,6 +66,9 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
         stage = 'answer_completion'
         final, coverage = await recover_coverage(orchestrator, evidence, composition, final,
                                                 coverage, evidence_pack, plan, mode)
+        # Completion/editor produce new final receipts; the original inventory
+        # identity remains anchored independently of their surviving subset.
+        final['finalization']['reader_inventory_digest'] = inventory_digest
         conservation = composition.bind_final(evidence, final)
         final['finalization']['fact_conservation'] = conservation
         coverage = augment_fact_coverage(coverage, conservation)
@@ -76,7 +82,7 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
         final = await AnswerFinalizer(None).finalize(question, '', evidence_pack,
             mode='timeline' if mode == 'timeline' else 'strict', evaluated_at=plan['evaluated_at'])
         messages = {'source_reader': 'The original-source reading could not complete. Please retry the query.',
-                    'fact_selector': 'The source facts could not be selected reliably. Please retry the query.',
+                    'fact_inventory': 'The source observations could not form a verified answer. Please review the source documents.',
                     'source_audit': 'The source audit could not complete. Please retry the query.',
                     'answer_coverage': 'The answer coverage check could not complete. Please retry the query.',
                     'answer_completion': 'The completion audit could not validate the earlier answer. Please review the source documents.'}

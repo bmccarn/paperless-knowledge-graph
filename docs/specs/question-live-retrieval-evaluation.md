@@ -170,3 +170,33 @@ completed live runner. Implement these slices without changing application code:
    exhaustion. Include a built-frontend success exercising source inspection,
    contextual history and mobile restoration. Independent review precedes native
    execution; this assembly plan grants no release approval.
+
+### Remote runtime and local browser ownership
+
+The locked Python runtime and read-only stores are reached from an isolated process
+in the existing API pod; Node and the built standalone frontend run on the Mac.
+The remote owner exposes only a dynamically selected loopback listener. Its readiness
+message binds the frozen manifest hash, pod UID and a per-case nonce. The local
+owner forwards that exact pod/port on 127.0.0.1 and sets the frontend's existing
+BACKEND_URL to that local forwarding endpoint. Bind the actual frontend build,
+source, lockfile, Node and browser identities in the live manifest. No frontend
+application change or replacement query route is required.
+
+Use the shared native-stage capture with reader_inventory=True so retired filtering
+stages fail before dispatch. Browser submission remains subject to the exact
+SingleRequest boundary. Capture remote engine/SSE output and local received SSE,
+then compare them; neither forwarding nor history replay constitutes another run.
+
+A private control channel carries readiness and an explicit nonce-bound stop.
+Control-channel EOF, malformed control, deadline expiry or local browser/forwarding
+failure must cancel the remote owner and drain its nested server, route and query
+workers before readers/model capture close. Only then may it acknowledge closure.
+The local owner keeps forwarding alive while awaiting that acknowledgment, then
+joins its frontend/browser/forwarding children. This wait is bounded: if the
+control channel dies and acknowledgment cannot arrive, record remote cleanup as
+unconfirmed and the run as failed, then join local children. Remote EOF independently
+initiates its own bounded shutdown; never infer remote success from local exit.
+Browser disconnection alone is insufficient:
+the current frontend stream proxy does not forward its request cancellation signal.
+Test control EOF, explicit stop, mismatched identity, startup failure and teardown
+ordering using synthetic resources before opening production readers.

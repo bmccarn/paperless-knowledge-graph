@@ -127,7 +127,7 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_fresh_contract_requires_bound_grades_and_strict_identity_without_exception(self):
         self.assertEqual(self.original['grading_version'], 2)
         self.assertNotIn('conservative_admission', self.original)
-        self.assertIn('docs/specs/question-reviewed-retention.md', self.original['code_sha256'])
+        self.assertIn('docs/specs/question-reader-inventory.md', self.original['code_sha256'])
         directory = self.root / 'case-00'
         original = {p.name: p.read_bytes() for p in directory.glob('*.json')}
         grade = directory / 'grade-spec.json'

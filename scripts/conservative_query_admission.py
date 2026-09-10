@@ -254,6 +254,25 @@ def validate_case_grades(snapshot, result, review):
             and review.get('conservative_duplicate_targets') == targets, 'Aggregate conservative judgment mismatch')
     final = result['final']
     receipt = final['finalization']['fact_conservation']
+    if receipt.get('version') == 4:
+        require(count == 0 and not targets and not {'dispositions', 'reviews'} & set(receipt),
+                'Reader inventory cannot use semantic exclusion authority')
+        for axis in ('spec', 'standards'):
+            counts(strict_json(snapshot[f'grade-{axis}.json']), {'fact_filter_calls': 0})
+        counts(review, {'fact_filter_calls': 0})
+        stages = {name: strict_json(payload) for name, payload in snapshot.items()
+                  if name.startswith(('attempt-', 'stage-'))
+                  and name.endswith(('-input.json', '-output.json'))}
+        inputs = {name for name in stages if name.endswith('-input.json')}
+        outputs = {name for name in stages if name.endswith('-output.json')}
+        require(inputs and outputs == {name.replace('-input.json', '-output.json') for name in inputs}
+                and all(isinstance(row.get('name'), str) and row['name']
+                        and row['name'] not in {'fact_selector', 'fact_exclusion'}
+                        for row in stages.values())
+                and all(stages[name]['name'] == stages[name.replace('-input.json', '-output.json')]['name']
+                        for name in inputs),
+                'Reader inventory contains missing, mismatched or forbidden stage evidence')
+        return
     mappings = {r['observation_id']: r for r in receipt['mappings']}
     dispositions = {r['observation_id']: r['status'] for r in receipt['dispositions']}
     reviews = {r['observation_id']: r for r in receipt['reviews']}

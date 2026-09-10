@@ -72,26 +72,22 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             result = await self.engine.query('What monthly premium is recorded?', mode=mode)
             self.assertTrue(result['finalization']['answer_verified'], mode)
             self.assertTrue(result['finalization']['question_coverage']['complete'])
-            self.assertEqual(self.calls, ['query_planner', 'source_reader', 'fact_selector', 'source_auditor', 'answer_coverage'])
+            self.assertEqual(self.calls, ['query_planner', 'source_reader', 'source_auditor', 'answer_coverage'])
             execution = result['finalization']['pipeline_execution']
-            self.assertEqual(execution['native_call_count'], 5)
-            self.assertEqual(execution['native_call_ceiling'], 7)
+            self.assertEqual(execution['native_call_count'], 4)
+            self.assertEqual(execution['native_call_ceiling'], 6)
             self.assertFalse(result['cached'])
 
-    async def test_zero_retained_answer_preserves_requested_mode_and_saved_failure(self):
+    async def test_empty_inventory_preserves_requested_mode_and_saved_failure(self):
         original = self.model
         async def omit(**kwargs):
             name = kwargs['name']
-            if name == 'fact_selector':
+            if name == 'source_reader':
                 self.calls.append(name); record_native_stage(name)
                 payload = json.loads(kwargs['prompt'])
-                return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'omitted'}
-                                                    for row in payload['observations']]})
-            if name == 'fact_exclusion':
-                self.calls.append(name); record_native_stage(name)
-                payload = json.loads(kwargs['prompt'])
-                return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
-                    'decision': 'outside_request', 'target_id': None}]})
+                doc = payload['source_documents'][0]
+                return json.dumps({'documents': [{'document_id': doc['document_id'],
+                    'observations': [], 'limitations': ['No requested source observation was produced.']}]})
             return await original(**kwargs)
         for mode in ('quick', 'deep', 'timeline', 'strict'):
             with self.subTest(mode=mode), patch.object(self.orchestrator, '_text_agent', side_effect=omit):
@@ -99,7 +95,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.engine.query('What monthly premium is recorded?', mode=mode)
                 self.assertEqual(result['mode'], mode)
                 self.assertEqual(result['query_plan']['mode'], mode)
-                self.assertEqual(result['finalization']['pipeline_failure'], 'no_retained_facts')
+                self.assertEqual(result['finalization']['pipeline_failure'], 'empty_fact_inventory')
                 self.assertFalse(result['finalization']['answer_verified'])
                 self.assertEqual(result['evidence']['score'], 0)
                 self.assertEqual(result['verification']['status'], 'incomplete')
@@ -107,7 +103,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(restore_question_coverage(result))
                 self.assertFalse(self.engine._cacheable_answer(result, mode,
                     request_identity=result['query_plan']['request_identity_digest']))
-                self.assertEqual(self.calls, ['query_planner', 'source_reader', 'fact_selector', 'fact_exclusion'])
+                self.assertEqual(self.calls, ['query_planner', 'source_reader'])
                 self.assertEqual(result['finalization']['pipeline_execution']['audit_batches'], 0)
 
     async def test_http_style_and_sse_deliver_identical_final_state_without_drafts(self):
@@ -167,8 +163,8 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['query_plan']['requirements_status'], 'coarse')
         self.assertFalse(result['finalization']['question_coverage']['complete'])
 
-    async def test_reader_and_composer_failure_never_fall_back_to_old_draft(self):
-        for stage in ('source_reader', 'fact_selector'):
+    async def test_reader_failure_never_fall_back_to_old_draft(self):
+        for stage in ('source_reader',):
             self.fail_stage = stage
             result = await self.engine.query('What monthly premium is recorded?', mode='quick')
             self.assertFalse(result['finalization']['answer_verified'])
@@ -239,7 +235,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             with patch('app.query.cache_get', AsyncMock(return_value=copy.deepcopy(prior))):
                 result = await self.engine.query(question, mode=mode, conversation_history=history)
             self.assertFalse(result['cached'])
-            self.assertIn('fact_selector', self.calls)
+            self.assertIn('source_reader', self.calls)
             self.assertNotEqual(result['query_plan']['request_identity_digest'], prior['query_plan']['request_identity_digest'])
 
     async def test_corrupt_saved_success_states_never_retain_verified_presentation(self):
@@ -281,7 +277,7 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['finalization']['disposition'], 'corpus_changed')
 
     async def test_failed_execution_remains_identifiable_when_restored(self):
-        for stage in ('source_reader', 'fact_selector'):
+        for stage in ('source_reader',):
             self.fail_stage = stage
             result = await self.engine.query('What monthly premium is recorded?', mode='quick')
             restored = restore_pipeline_metadata(result, result['answer'])

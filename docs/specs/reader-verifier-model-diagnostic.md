@@ -1,9 +1,8 @@
 # Reader and verifier model capability comparison
 
-Status: proposed next diagnostic after the reconciled failed source-record comparison;
-independent Spec/design and Standards plan reviews cleared the acceptance contract.
-The diagnostic runner is implemented, reviewed and technically admitted. Native
-execution awaits specific authorization for the new OpenAI source/prompt transfer.
+Status: completed and failed. The user explicitly approved both provider transfers;
+all 36 native executions completed. Both independent all-output grades and their
+separate occurrence reconciliation are frozen. Neither route qualifies for release.
 
 ## Decision to test
 
@@ -229,3 +228,78 @@ Before execution, obtain the new destination approval, then reverify the exact p
 unchanged live route metadata and absent results. Run once under the frozen shared
 1,536-attempt/four-hour ceilings and independently grade every output. No production
 activation, complete-query pass or release approval follows from this readiness state.
+
+The user subsequently explicitly approved the frozen comparison's private source and
+prompt transfer through LiteLLM to OpenAI gpt-5.6-sol alongside the Google Gemini
+control, under the declared 1,536-call/four-hour ceilings. Fresh exact dual-receipt,
+runtime, source/wire and live provider-route checks passed, and results were absent
+before the single execution started. This approval closes the transfer boundary for
+this unchanged experiment. Code, labels, limits and schedule remain frozen during it.
+
+## Native execution and integrity receipt
+
+The approved schedule finished all 36 route executions in 2,169.744 seconds using
+261 model calls, with zero transport failures. Gemini made 18 reader and 120 auditor
+calls; OpenAI made 18 reader and 105 auditor calls. There were no reader protocol
+corrections. The returned readings contain 85 Gemini and 106 OpenAI observations;
+these counts are not completeness or correctness grades.
+
+All 1,794 output artifacts are frozen privately. Verification checked 1,576 registered
+capture hashes and all 261 actual SDK request-body hashes, including each route identity.
+Run SHA:
+739182ad71d89b47c243fb15d4f72db7fc454a564d829589a3fa1c88dccd4154.
+Result inventory SHA:
+2ea9fadb2f164fbbe233419b9b7fcaa53a002919938cbb40f0975df3773fd85a.
+
+Two independent prospective checklists were written before either reviewer accessed
+outputs. Both complete grades are now frozen. They reviewed every fixed and fresh
+assertion, raw verdict and final delivery against unchanged originals and labels.
+All required opportunities are observed: 66 required meanings and 216 fixed baseline
+occurrences per model route. Both routes FAIL the frozen capability gates.
+
+| Independently agreed measure | Gemini | Comparison route |
+| --- | ---: | ---: |
+| Reader required content present | 63/66 | 66/66 |
+| Reader required meaning with source precision preserved | 61/66 | 63/66 |
+| Baseline final required meanings retained | 58/66 | 45/66 |
+| Fresh final required meanings retained | 54/66 | 52/66 |
+| Definite factually unsupported delivered occurrences | 2 | 0 |
+
+The last row is factual truth against full originals, not complete citation support.
+The independent grades disagreed on some raw verdict categories and selected-reference
+sufficiency. Separate occurrence-level reconciliations preserve both original grades;
+do not collapse them into an aggregate pass, silently relabel uncertainty, or infer route
+independence from repetition. In particular, the comparison route's absence of
+definite false delivered facts does not establish that its delivered references or
+question coverage pass.
+
+| Reconciled failure category | Gemini | Comparison route |
+| --- | ---: | ---: |
+| Noncalendar factual/action/date-role false raw approvals | 19 | 1 |
+| Calendar-precision false raw approvals | 14 | 0 |
+| Raw citation-scope failures | 1 | 11 |
+| Distinct raw approval failures across these categories | 33 | 12 |
+| Definite supported-meaning rejection errors | 4 | 12 |
+| Citation-scope-deficient delivered occurrences | 0 | 5 |
+
+One Gemini occurrence overlaps factual/action and calendar categories. Six
+comparison-route policy-provides rejections and one compound Gemini transition/date
+rejection remain uncertain at whole-unit level; no clean-pass credit is granted.
+The complete-original absence facets remain source-readable. An auditor's deficient
+returned references cannot retroactively narrow the original evidence it received
+and thereby justify rejecting a supported fact. Conversely, truth against the full
+original cannot repair deficient citations on a delivered answer.
+
+Parent adjudication SHA:
+c034c4e8954e00890f95d2e1731a1da800bee77bc03d8aa7e928a0d6225abb40.
+
+Spec grade SHA:
+7aaab73f7bcaa204fed40598bb534a9fbf5193474fc1b4a43b361d88d37e3b5d.
+Standards grade SHA:
+6c077c5cb61174cc3f4c5d0fbb8ab741e74110e10da45911bffea0ef11013001.
+
+The [next implementation plan](source-grounded-interpretation-contract.md) keeps
+the underlying source-scope, precision and calculation contracts separate. Its
+first confirmed deterministic repair preserves numeric dates across separator
+spacing. That repair is independently reviewed with backend regressions; it neither
+rewrites these native results nor authorizes production activation.

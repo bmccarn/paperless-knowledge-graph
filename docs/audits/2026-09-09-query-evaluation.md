@@ -1591,3 +1591,40 @@ The exact package hashes, scope, budgets, blocker and continuation command contr
 are recorded in [source-record diagnostic](../specs/source-record-native-diagnostic.md).
 The next step remains that admitted native comparison followed by two independent
 all-output grades. Previous failed results and all later release gates are unchanged.
+
+## Completed source-record and reader/verifier comparisons
+
+After subsequent explicit approval, the source-record comparison ran once. Ten
+pairs completed; two failed with reader timeouts. Both complete independent grades
+FAIL: there was no net required-meaning gain and three unsupported final assertions.
+The prior readiness/blocker record above is historical. Exact frozen receipts remain
+in the [source-record diagnostic](../specs/source-record-native-diagnostic.md).
+
+The next approved model comparison at frozen application 6d72699 completed all
+36 route executions in 2,169.744 seconds using 261 calls, without transport failures.
+Both routes received the same originals and prompts. Independent grades reviewed
+all 191 fresh reader observations, 771 raw assessments and 72 final answers. Both
+FAIL. They agree on fresh-final required retention of 54/66 for Gemini and 52/66
+for the OpenAI comparison route; baseline-final retention is 58/66 versus 45/66.
+The stronger reader's content presence improved, but verification and delivery
+still lost required meaning. It is not a qualified route change.
+
+Raw semantic categories and selected-citation scope have been reconciled separately
+without changing either frozen grade. Truth against complete originals and sufficient selected references
+are distinct obligations; zero definite false delivered facts cannot stand in for
+complete attribution or coverage. The comparison route has five citation-deficient
+deliveries despite zero definite false delivered facts. Distinct raw approval
+failures across factual/calendar/reference axes are 33 versus 12, and definite
+supported-meaning rejection errors are four versus twelve; uncertain compound
+framing stays quarantined. The [model diagnostic](../specs/reader-verifier-model-diagnostic.md)
+holds exact execution, inventory and frozen independent-grade identities.
+
+One confirmed local repair, 35f6460, preserves short/full numeric date precision
+across horizontal slash spacing. Before the fix, native supported worksheet facts
+were withheld solely because the original spaced date and compact date failed
+calendar matching. Eighteen synthetic regression subcases reproduced the failure;
+both implementation review axes are now clear, and 1,018 backend tests pass with
+58 expected skips (50.823 seconds). Adversarial chain/identifier and prose-separator
+controls are included. This code result does not retrospectively change any native
+grade or trigger a production release. The general next steps are tracked in the
+[source-grounded contract plan](../specs/source-grounded-interpretation-contract.md).

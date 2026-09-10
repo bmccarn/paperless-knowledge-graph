@@ -1,7 +1,9 @@
 # Source-grounded interpretation and verification
 
-Status: draft; native model-comparison grades and independent design review are
-pending. This plan does not activate a route or change factual acceptance. Parent:
+Status: both native model-comparison grades and their reconciliation are complete;
+both routes FAIL. The deterministic date-spacing repair is reviewed and implemented.
+The next source-scope hypothesis needs concrete interface review before implementation.
+This plan does not activate a route or change factual acceptance. Parent:
 [question evidence pipeline](question-evidence-answer-pipeline.md), issue #33.
 
 ## Outcome
@@ -13,9 +15,9 @@ lookup, inventory, comparison, current-state and history questions in every doma
 
 The completed reader/verifier comparison supplies the evidence for selecting the
 next change. Its 36 executions completed without transport failures; independent
-semantic grades are still being finalized. Execution success does not establish
-accuracy. Freeze and reconcile both grades before choosing a candidate or revising
-the acceptance rules. Preserve disputed labels and prior failed experiments.
+semantic grades and reconciliation are frozen in the linked diagnostic. Execution
+success does not establish accuracy. Preserve disputed labels and prior failures;
+new candidates cannot revise the frozen acceptance rules retrospectively.
 
 ## Reproduced implementation constraints
 
@@ -173,4 +175,6 @@ named/ISO dates and numeric dates followed by slash-delimited prose, while refus
 date-shaped prefixes or suffixes of numeric and identifier chains. Independent
 Standards review is also clear, including 100 additional spacing/order/year cases
 with chain controls. The final backend suite passes 1,018 tests with 58 expected
-skips (50.823 seconds). No native result was regraded.
+skips (50.823 seconds). Commit 35f6460 passed exact-head CI 34522789737, including
+disposable datastore checks and production browser contracts. No native result was
+regraded and no production deployment occurred.

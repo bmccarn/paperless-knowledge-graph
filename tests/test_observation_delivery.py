@@ -272,7 +272,9 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 reference = validate_reference({'span_id': span['span_id']}, [span])
                 self.assertIsNotNone(reference, span)
                 self.assertEqual(reference['quote'], source[reference['start']:reference['end']])
-                self.assertLessEqual(reference['end'] - reference['start'], 4000)
+                # Exact adjacent OCR whitespace may extend the reference window;
+                # its substantive core and all scalar/identity guards stay bounded.
+                self.assertLessEqual(len(reference['quote'].strip()), 4000)
         spans = evidence_spans(pack('Cedar records $20.'), citation_safe=True)
         span = spans[0]
         for handle, reason in (({'span_id': 'unselected'}, 'unknown_or_unselected_span'),

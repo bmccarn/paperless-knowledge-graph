@@ -77,6 +77,22 @@ class AcquisitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(row['admitted'])
         self.assertTrue(row['spans'])
 
+    async def test_blank_ocr_runs_are_transferred_without_becoming_blank_citations(self):
+        from app.answer_finalization import evidence_spans, validate_reference
+        original = docs(1)
+        text = (' ' * 12000 + 'Station was inspected.\n' + ' ' * 24000
+                + 'Completion is not recorded.\n' + ' ' * 12000)
+        original[1]['content'] = text
+        bundle = await self.collect(original)
+        self.assertTrue(bundle.receipt['complete'])
+        self.assertEqual(bundle.evidence_pack['items'][0]['content'], text)
+        spans = evidence_spans(bundle.evidence_pack, citation_safe=True)
+        self.assertTrue(all(span['content'].strip() for span in spans))
+        self.assertEqual(bundle.receipt['documents'][0]['missing_intervals'], [])
+        for span in spans:
+            self.assertEqual(span['content'], text[span['start']:span['end']])
+            self.assertIsNotNone(validate_reference({'span_id':span['span_id']}, spans))
+
     async def test_all_521_matches_and_late_sections_transfer(self):
         originals = docs(521)
         originals[9]['content'] = 'Initial station inspection.\n' * 500 + 'Final qualification: proposed only.\n'

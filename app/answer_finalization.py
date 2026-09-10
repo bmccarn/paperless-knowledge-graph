@@ -412,10 +412,20 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
         if context:
             guard_content, guard_offset = context
             guard_ranges = sorted(lists + fields)
-        for start in range(0, len(content), window - 200):
-            text = content[start:start + window]
-            guard_start, guard_end = guard_offset + start, guard_offset + start + len(text)
-            spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
+        for nominal_start in range(0, len(content), window - 200):
+            start, end = nominal_start, min(len(content), nominal_start + window)
+            if not content[start:end].strip():
+                # Blank OCR is context, never a standalone factual citation.
+                # Neighboring nonblank windows retain the entire blank run.
+                continue
+            while start > 0 and content[start - 1].isspace(): start -= 1
+            while end < len(content) and content[end].isspace(): end += 1
+            text = content[start:end]
+            guard_start, guard_end = guard_offset + start, guard_offset + end
+            handle = f"{item['id']}:{digest[:16]}:{nominal_start}"
+            if start != nominal_start or end != min(len(content), nominal_start + window):
+                handle += f":context:{start}:{end}"
+            spans.append({"span_id": handle,
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
                           "recent_reserved": item.get("recent_reserved") is True,

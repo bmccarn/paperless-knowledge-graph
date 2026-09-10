@@ -201,11 +201,10 @@ reading output and candidate units and remain explicitly unmeasured at this poin
 Provider context capacity is unknown. Do not treat source-byte floors as total
 model context or repeat a large native query before separate admission.
 
-Production resource measurement is pending: automatic approval review rejected
-both an initial helper retaining private originals and a revised aggregate/hash-only
-helper because the cluster code upload and production document reads require more
-specific authorization. Neither helper ran. Local retained-original B2 preparation
-and offline validation are unaffected.
+The initial two production measurement uploads were rejected by automatic approval
+review and did not run. Subsequent explicit user approval authorized the revised
+aggregate/hash-only helper. Its failed execution and follow-up are recorded below;
+that authorization remains in effect for the reviewed read-only diagnostic scope.
 
 ## Follow-up: exact boundary-context cost
 
@@ -233,3 +232,88 @@ If it expires during synchronous packaging, return an unadmitted, incomplete bun
 while retaining transfer progress. This closes late admission; it does not claim
 asyncio can preempt CPU work or provide a hard wall-time kill. A process-owned
 execution watchdog remains necessary for that stronger resource guarantee.
+
+## Active completion checklist (September 10, after feda355)
+
+Work in this order; append outcomes and artifact identities here and in the audit.
+Do not deploy partial candidates or substitute local passes for native accuracy.
+
+- [x] G1 Source acquisition gaps: reproduce the seven citation interval gaps from
+  source-free receipts; inspect original text in memory, retain only hashes, offsets
+  and rejection classes. Test boundary/reference behavior with a minimized synthetic
+  regression before any repair. Separately determine whether nine ConnectTimeout
+  outcomes are transient, client lifecycle, or resource-contention failures. Preserve
+  failed-attempt history. No ingestion or reindexing is part of this diagnostic.
+- [x] G2 Resource measurement: freeze updated code and run a new exclusive model-free
+  measurement. A parent process enforces wall time and preserves progress after
+  timeout. Avoid allocation tracing in the timing run; report RSS and exact input
+  bytes, with provider capacity unknown unless verified. Do not resume the failed
+  prior package. Source text stays in memory; retain aggregate sizes and hashes.
+- [ ] G3 Reader retention: finish and independently review the preregistered runner
+  for source-reader-retention-diagnostic.md; bind unchanged six paired inputs and
+  gold, runtime/request hashes and 24 logical / 48 maximum native attempt budgets.
+  Execute both repetitions and independently grade every raw attempt. Missing
+  supplied meaning stays a failure, requiring a separately reviewed recovery design.
+- [ ] G4 Whole-query qualification: after G1-G3 close, freeze candidate and run fresh
+  cross-domain strict/all-mode, live, held-out and matched-baseline evaluations.
+  Verify composed answers, completeness limits, and every added factual assertion.
+- [ ] G5 Visual acceptance: exercise the built candidate in browser/computer control,
+  including answers, sources, trust/coverage, saved conversation reload, mobile and
+  graph interaction. Retain screenshots and actual observed outcomes.
+- [ ] G6 Delivery: check current CI and remote state, complete review, merge application
+  changes, pin the immutable image via the homelab GitOps repo, verify Flux and
+  production UI behavior. Review paused processing schedules before closure.
+
+Current status: G3 admission prepared; specific input-upload permission is pending.
+G1 transfer checks and G2 source-size measurement passed. Later-stage feasibility
+and native accuracy remain unproved; no deployment is claimed. Prepared reader inputs retain the exact
+previous preparation hash after that change.
+
+### G1 whitespace transfer amendment
+
+The source-free replay reproduced all seven citation gaps with identical original
+hashes: every missing interval contains only whitespace. All nine prior timeout
+records read successfully on the sequential diagnostic; the earlier timeout
+failures remain recorded, and their operational cause is not yet established.
+
+Citation windows must preserve blank OCR runs as original context without treating
+a blank string as a factual citation. Extend nonblank original windows through
+adjacent whitespace runs; omit whitespace-only windows only when the nonblank
+windows preserve exact interval coverage. Keep original bytes/Unicode offsets,
+unique window identities, reference validation and explicit unavailable states for
+real nonwhitespace gaps. Entirely blank originals remain unavailable. Do not simply
+ignore whitespace when computing transfer completeness. Reproduce this with long
+leading/interior/trailing blank runs and prove exact body/interval conservation.
+
+### G1/G2 observed outcome
+
+The reviewed whitespace change passed a second source-free production replay: all
+16 target documents read, all seven interval gaps closed, and original hashes
+matched. A new exclusive model-free acquisition run then supplied all 919
+discovered originals with exact interval coverage, zero unavailable documents and
+complete acquisition. It completed in 171.006 seconds; acquisition/sizing measured
+168.998 seconds and peak process RSS 707,854,336 bytes. The serving pod remained
+Running with zero restarts. The earlier failed run remains failed.
+
+Measured first-reader maximum is 1,863,601 serialized bytes across 919 readers,
+29,221,892 bytes total; source inventory is 25,086,855 bytes and evidence pack
+38,433,687 bytes. Full composition/audit requests and provider capacity remain
+unestablished. These are workload measurements, not native accuracy results.
+
+Whitespace acquisition is closed. The nine old timeout outcomes did not reproduce
+in either sequential diagnostic or the full concurrent acquisition after the CPU
+fix and removal of allocation tracing. Their exact historical cause remains
+unproven; no retry or ingestion change was introduced to conceal them. G3 is now
+active; G4 requires a separately feasible plan for the measured large inventory.
+
+### G3 admission and authorization boundary
+
+The concrete private diagnostic package has six original/capture pairs, both
+reviewed source arms, unchanged gold, 24 initial/correction SDK wire preflights,
+frozen code and dependency lock, observed runtime/route identity, the 24-cell
+schedule and fixed execution budgets. It remains model-free preparation.
+Automatic approval review rejected uploading the sensitive originals to the
+existing Kubernetes pod because that destination requires explicit user permission.
+No sensitive input upload or native call ran. Code-only runtime inspection was
+allowed and completed separately. Complete exact-package review before requesting
+the final specific upload/execution authorization; do not bypass the rejection.

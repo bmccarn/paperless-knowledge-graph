@@ -1276,3 +1276,41 @@ preparation hash 47a23363074360d65c3acb285e277075b2d4f2ff5c9b1aaee285d0d5d923de6
 No native diagnostic has run. Remaining work includes closure review, controlled
 resource measurement with a process-owned timeout, citation-gap diagnosis, the
 predeclared reader diagnostic and whole-query release gates.
+
+### Whitespace conservation and completed acquisition measurement
+
+The seven recorded citation gaps were reproduced against originals in memory;
+all matched prior hashes and every missing character was whitespace. Nonblank
+source windows now retain adjacent blank OCR runs with exact offsets and unique
+handles. Entirely blank sources remain unavailable, and nonwhitespace gaps and
+signed-value guards remain enforced. The former physical 4,000-character test
+limit now applies to the nonblank core, allowing only the specified blank context.
+Independent reviews passed Unicode, history-window, signed-value and exact-source
+controls. The original-source replay then read all 16 target documents, with zero
+read errors and zero citation gaps. No original text was retained by these helpers.
+
+A new frozen model-free measurement completed in 171.006 seconds with 919 of 919
+discovered originals supplied and complete interval coverage. Peak process RSS
+was 707,854,336 bytes. First-reader maximum: 1,863,601 serialized bytes; total
+reader bytes: 29,221,892; source inventory: 25,086,855; evidence pack: 38,433,687.
+No native calls occurred, and the pod remained Running with zero restarts. Source-
+free artifacts are in /private/tmp/kg-acquisition-measure-v2-20260910. Full later-
+stage requests and provider capacity remain unestablished. Old timeouts did not
+reproduce, but their historical cause remains unproven.
+
+The reader-retention runner was independently reviewed against the preregistered
+schedule. Nine local tests and separate actual-SDK MockTransport probes passed.
+Review closed lost attempt accounting on capture failure, repeated-cancellation
+cleanup, individual deadline classification (including a clock crossing), unsafe
+post-validation rereads, incomplete runtime/lock/route binding and weak native
+termination checks. These are runner controls, not native accuracy results.
+First and correction request serialization for all 12 arms used local mock
+transport only: largest requests 67,456 and 67,761 bytes respectively.
+
+Final backend validation for this slice: 959 tests passed in 38.864 seconds with
+58 expected opt-in skips. Concrete native admission is prepared locally, but
+automatic approval review rejected uploading the sensitive document package to
+the existing Kubernetes pod without explicit destination permission. That upload
+did not run. Only code and non-secret runtime observation were subsequently sent;
+no original, gold, prompt or wire payload was included in that allowed operation.
+Native accuracy and downstream release gates remain open.

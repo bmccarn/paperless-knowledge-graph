@@ -40,8 +40,8 @@ each assigned audit unit. The appendix includes all newly confirmed factual fail
 patterns from the reconciled source-record grades and explicit supported counterparts,
 plus the observed source-value/date representation controls. Review each appendix
 label against original text before admission. Preserve the original gold unchanged;
-new labels live in their own admitted file. Quarantine the disputed subtotal wording
-judgment as uncertain rather than assigning a convenient supported/unsupported label.
+new labels live in their own admitted file. Quarantine the disputed subtotal and application-stage proposed-term wording
+judgments as uncertain rather than assigning a convenient supported/unsupported label.
 
 This maps qualifier broadening, arithmetic composition/allocation, N/A-field overreach,
 and information-request versus coverage-election errors to fixed claims. Missing

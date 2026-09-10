@@ -9,7 +9,8 @@ from scripts.eval_source_audit import write_private
 
 async def prepare(b2_root, labels_path, output):
     output = Path(output)
-    labels = json.loads(Path(labels_path).read_bytes())
+    labels_raw = Path(labels_path).read_bytes()
+    labels = json.loads(labels_raw)
     await prepare_records(b2_root, output)
     prepared = output/'manifest-prepared.json'
     legacy = json.loads(prepared.read_bytes())
@@ -17,7 +18,8 @@ async def prepare(b2_root, labels_path, output):
     prepared.rename(output/'source-manifest.json')
     appendix = {case: [copy.deepcopy(row['observation']) for row in labels[case]] for case in runner.CASE_ORDER}
     write_private(output/'appendix.json', appendix)
-    write_private(output/'appendix-labels.json', labels)
+    with (output/'appendix-labels.json').open('xb') as stream: stream.write(labels_raw)
+    (output/'appendix-labels.json').chmod(0o600)
     cases = {}
     for case in runner.CASE_ORDER:
         rows = sorted([r for r in legacy['pairs'] if r['case'] == case], key=lambda r: r['repetition'])

@@ -23,7 +23,8 @@ class ModelComparisonTests(unittest.IsolatedAsyncioTestCase):
         legacy = root/'legacy'; legacy.mkdir()
         await record_tests.RecordComparisonTests().package(legacy)
         source = json.loads((legacy/'manifest-prepared.json').read_bytes())
-        labels = root/'labels.json'; write_private(labels, {c: [] for c in runner.CASE_ORDER})
+        labels = root/'labels.json'
+        labels.write_text(json.dumps({c: [] for c in runner.CASE_ORDER}, indent=3))
         async def copy_prepared(b2, output):
             output.mkdir()
             for name in source['sha256']:
@@ -33,6 +34,7 @@ class ModelComparisonTests(unittest.IsolatedAsyncioTestCase):
         inputs = root/'inputs'
         with patch.object(preparation, 'prepare_records', copy_prepared):
             await preparation.prepare(legacy, labels, inputs)
+        self.assertEqual((inputs/'appendix-labels.json').read_bytes(), labels.read_bytes())
         await preflight(inputs/'manifest-prepared.json', inputs/'preflight')
         manifest = json.loads((inputs/'manifest-prepared.json').read_bytes())
         manifest.update(status='admitted', limits={'pair_seconds': 30, 'total_seconds': 300,

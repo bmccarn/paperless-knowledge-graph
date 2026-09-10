@@ -1,7 +1,9 @@
 # Source interpretation recovery
 
-Status: the diagnostic-only slice was independently reviewed and implemented locally;
-native validation is not admitted. B2 grades completed FAIL. The completed B2 run remains immutable;
+Status: the diagnostic-only module and runner are implemented and independently
+reviewed. The exact v2 package has both technical admission receipts; native
+execution is blocked on explicit private-input transfer approval. No recovery
+model calls have run. B2 grades completed FAIL. The completed B2 run remains immutable;
 this design cannot relabel any of its failures.
 
 ## Problem and scope
@@ -221,4 +223,7 @@ all rejections and all raw attempts; preserve B2's failure unchanged. This is a
 recovery-mechanism test, not whole-query, all-mode, held-out or deployment evidence.
 
 The next native protocol is [recovery diagnostic](source-interpretation-recovery-diagnostic.md).
-It has not been admitted or executed; unused B2 attempts are not its budget.
+Its exact v2 package is technically admitted but has not executed. Automatic
+approval review rejected the private-input upload; explicit approval for that
+payload and destination is required. Unused B2 attempts are not its budget.
+See the evaluation report for the frozen identities and remaining execution steps.

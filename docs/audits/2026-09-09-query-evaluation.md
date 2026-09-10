@@ -1401,3 +1401,40 @@ and actual SDK-body capture for conditional baseline/combined calls. Protocol SH
 c1f98867fb756320df6e6d0b307ccf58ebb27960bc00c1eaaa949a4db0ea4835.
 This clears protocol review only; no runner/package admission or new native result
 is claimed.
+
+
+### Recovery runner admission and transfer block (September 10)
+
+Diagnostic runner revision cf2c8c3 preserves matched frozen primary readings,
+original source and auditor context, with no new retrieval or reader invocation.
+It records actual SDK bodies, raw audit decisions before subset selection,
+per-stage outcomes and spent calls. Review closed concurrent capture ownership,
+pre-subset ledger write and captured-output read/hash failure paths. Shared
+capture failures now stop the run; individual model failures stop their pair.
+Ten focused runner tests pass, including full-run failure accounting and repeated
+cancellation. The preceding full suite passed 982 tests with 58 expected skips;
+CI 34484126557 passed at e6a14b7. The guarded-read fix is published at cf2c8c3.
+
+Both independent reviewers approved exact subject
+ a7f623dd8ed959e9f93c7d8c42a000ecf3016d9c12a1dcdcf1e65f996504bb68.
+The private package is /private/tmp/kg-source-recovery-v2-20260910, with 518
+bound input files and 80 code files. Fresh local pinned-SDK MockTransport preflight
+serialized all 12 pairs into 68 requests, largest 78,862 bytes, with zero native
+calls. Full code and runtime identity matched the isolated cluster interpreter.
+Final manifest SHA:
+73d50631c73216cb349af6875967363bf1ace7e0c45a76f28d178f422cea56b2.
+
+Automatic approval review rejected upload of the private input tarball to the
+existing diagnostic pod because it did not recognize specific authorization for
+that payload and destination. No workaround or retry followed. Code-only upload
+and runtime probing succeeded; private inputs were not uploaded by the rejected
+operation, and no recovery native calls ran. This is technical admission, not an
+accuracy result. The frozen package remains ready for the explicitly approved
+transfer and run; no production activation or GitOps change occurred.
+
+Remaining sequence: upload the admitted inputs after explicit transfer approval,
+validate the complete remote package, execute the fixed 12 pairs once, freeze all
+artifacts, obtain both independent semantic grades, then decide whether the
+candidate can advance. Preserve the existing B2 failure and all later whole-query,
+held-out, UI and GitOps release gates. No rerun or semantic retry is authorized by
+unused diagnostic budget.

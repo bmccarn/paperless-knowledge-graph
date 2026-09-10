@@ -1438,3 +1438,18 @@ artifacts, obtain both independent semantic grades, then decide whether the
 candidate can advance. Preserve the existing B2 failure and all later whole-query,
 held-out, UI and GitOps release gates. No rerun or semantic retry is authorized by
 unused diagnostic budget.
+
+
+### Approved recovery upload; downstream execution block
+
+The user explicitly approved the named private package transfer and comparison.
+Upload to tools/paperless-kg-api-6bf8c7564f-x2pxz succeeded, and the remote runner
+validated the final manifest, both receipts, input hashes, code and runtime before
+any model call. Automatic approval review then separately rejected native execution:
+the stated reason was that approval named the pod/package but not the downstream
+model provider. No retry or workaround followed; zero recovery native calls ran.
+Read-only route inspection confirmed litellm.tools.svc.cluster.local, alias
+ gemini-3.8-flash, upstream gemini/gemini-3.8-flash (Google Gemini), with no custom
+upstream base URL reported. Only selected routing metadata was output; credentials
+and source text were not displayed. Explicit downstream authorization is the next
+step; the same frozen package remains ready and must not be resumed or replaced.

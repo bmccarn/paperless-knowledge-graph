@@ -25,7 +25,7 @@ class FactCoverageTests(unittest.TestCase):
                 'planning_status': 'complete', 'binding': {'snapshot_digest': 'original'}}
 
     def conservation(self, status='complete'):
-        return {'version': 1, 'status': status, 'complete': status == 'complete',
+        return {'version': 2, 'status': status, 'complete': status == 'complete',
                 'inventory': [{'id': 'f1', 'text': 'Private reader interpretation.'}],
                 'reviews': [], 'binding': {'snapshot_digest': 'original'},
                 'summary': {'total': 1, 'preserved': int(status == 'complete'), 'excluded': 0,
@@ -110,7 +110,7 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
 
             async def select_question_facts(inner, payload):
                 return json.dumps({'dispositions': [{'observation_id': row['id'],
-                    'status': 'delivered' if index == 0 else 'outside_request', 'target_id': None}
+                    'status': 'delivered' if index == 0 else 'omitted'}
                     for index, row in enumerate(payload['observations'])]})
 
             async def review_fact_exclusion(inner, payload):
@@ -120,7 +120,7 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
                 # immutable inventory. Locate its ID without guessing one.
                 excluded = next(row['id'] for row in payload['observations'] if row['text'] == unrelated)
                 return json.dumps({'decisions': [{'observation_id': excluded,
-                    'decision': 'accept' if review == 'accepted' else 'reject'}]})
+                    'decision': 'outside_request' if review == 'accepted' else 'reject', 'target_id': None}]})
 
         adapter = Adapter()
         evidence = await QuestionEvidence.prepare(adapter, question, requested, source_pack,
@@ -167,11 +167,14 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
             lambda x: x['finalization'].pop('fact_conservation'),
             lambda x: x['finalization']['fact_conservation']['inventory'][0].update(text='An invented amount.'),
             lambda x: x['finalization']['fact_conservation']['inventory'][0]['references'][0].update(span_id='foreign'),
-            lambda x: x['finalization']['fact_conservation']['dispositions'][0].update(status='outside_request'),
+            lambda x: x['finalization']['fact_conservation']['dispositions'][0].update(status='omitted'),
             lambda x: x['finalization']['fact_conservation']['reviews'][0].update(status='rejected'),
+            lambda x: x['finalization']['fact_conservation']['reviews'][0].update(decision='covered_by'),
+            lambda x: x['finalization']['fact_conservation']['reviews'][0].update(target_id='foreign-fact'),
+            lambda x: x['finalization']['fact_conservation'].update(version=1),
             lambda x: x['claim_ledger']['claims'][0].update(claim='- Another recorded amount.'),
             lambda x: x['finalization'].update(candidate_digest='f' * 64),
-            lambda x: x['query_plan'].update(pipeline_version='question-evidence-v2'),
+            lambda x: x['query_plan'].update(pipeline_version='question-evidence-v3'),
             lambda x: x['finalization']['question_coverage'].update(assessment_status='unavailable'),
             lambda x: x['finalization']['question_coverage'].update(complete=1),
             lambda x: x['finalization']['question_coverage']['conservation_summary'].update(preserved=0),

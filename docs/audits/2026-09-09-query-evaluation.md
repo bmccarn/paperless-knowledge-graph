@@ -732,3 +732,53 @@ narrowed-plan regression passed after the full-suite run; the final focused slic
 passed 34 tests. The reviewed fact module SHA256 is
 `d6f868f9abb003ba903fd91c4d919efb7ac65d5b3c57f0683717299dd265e1f7`.
 Fresh v3 native qualification is next; no previous candidate's approval is reused.
+
+
+The frozen v3 candidate `17139a7` passed full CI run `34425866468`, including the
+normal production frontend build/browser suites and disposable datastore checks.
+Its fresh native initial run passed cases00 and01 under both reviews, then stopped
+at case02 (balance history). All five delivered observations and every requested
+meaning were supported, but the selector classified relevant repeated March balance
+information as outside-request instead of naming its existing duplicate target.
+The independent exclusion reviewer rejected that proposal and public coverage stayed
+partial. This is one raw selector contract violation, zero false audit/exclusion
+approvals, zero missing required meanings and zero false completeness. The original
+standards PASS is preserved alongside an addendum resolving the contract as FAIL;
+no artifact was overwritten. Cases03-11 and the new all-mode run remain unstarted.
+
+V3 initial manifest SHA256:
+`ee033525a3a484c53b1466d6c34574988c875ace52ca9dd4b6ac4d2554696c91`.
+Failed result SHA256:
+`b86065eeb3c6237bbd66fe441af5754df49480efcdf852ca67639e8da67f0048`.
+The three cases used 24 native calls, 127.995 active seconds and 70,339 reported
+tokens. Private artifacts: `/private/tmp/kg-question-fact-v3-20260909`.
+The next proposed authority separation is documented in
+`docs/specs/question-exclusion-authority.md`. It is not yet implemented or qualified.
+The pipeline remains disabled; no deployment occurred.
+
+
+The v4 authority-separation plan passed both reviews before implementation. The
+selector now proposes delivered/omitted observations without classifying exclusions.
+The existing independent review owns outside-request / explicit-single-target
+covered-by / reject decisions. Receipt version 2 and question-evidence-v4 bind those
+classifications and targets; final source-compatible target survival is still required.
+No model stage, retry or output cap was added. The live admission helper now also
+requires exact integer zero false exclusion approvals in both grades and aggregate.
+
+V4 focused integration passed 63 tests. The completed full offline suite passed
+787 tests in 26.459 seconds, with 48 expected datastore skips; all 61 app/script files
+parsed. The new diagnostic has 12 offline tests, including locked Strands/OpenAI
+mock transport, complete captures, truncated EOF, continued fixed controls and client
+cleanup. The nine concrete cross-domain inputs preserve old originals/reader notes
+and add the retained v3 balance case; input SHA256 is
+`71feb03629da7d5cb3d4a645e008c6a115fab6facdcdc569cf57c0a75c43c2c3`.
+Independent implementation and concrete input review must complete before native
+calls. No v4 native call, activation or deployment has occurred.
+
+Both independent implementation/harness reviews and both concrete input/gold reviews
+are clear. Before freezing, the reviewed disabled-by-default
+`QUESTION_PIPELINE_ENABLED` setting was added so GitOps can activate the exact
+qualified code later. Explicit constructor booleans override the setting; invalid
+values fail before client construction. Configuration controls were red before the
+change and green afterward. The final full suite passed 789 tests in 24.907 seconds,
+with 48 expected datastore skips. Serving configuration is unchanged.

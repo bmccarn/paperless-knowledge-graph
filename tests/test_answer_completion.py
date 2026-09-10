@@ -41,8 +41,8 @@ class AnswerCompletionTests(unittest.IsolatedAsyncioTestCase):
                     {'text': text, 'references': [{'span_id': doc['windows'][0]['span']['span_id']}]}
                     for text in ((self.second, self.first) if self.behavior == 'complete' else (self.second,))], 'limitations': []}]})
         if name == 'fact_selector':
-            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered',
-                'target_id': None} for row in payload['observations']]})
+            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered'}
+                for row in payload['observations']]})
         if name == 'answer_completion':
             completion = name == 'answer_completion'
             if completion and self.behavior == 'cancel': raise asyncio.CancelledError

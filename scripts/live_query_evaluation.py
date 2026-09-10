@@ -12,7 +12,7 @@ from pathlib import Path
 
 FAILURE_COUNTS = (
     'raw_false_approvals', 'delivered_false_approvals', 'missing_required_aspects',
-    'false_complete_coverage', 'unsupported_extras',
+    'false_complete_coverage', 'unsupported_extras', 'false_exclusion_approvals',
 )
 AXES = ('spec', 'standards')
 

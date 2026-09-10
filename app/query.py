@@ -63,8 +63,11 @@ _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 class QueryEngine:
     question_pipeline = False
 
-    def __init__(self, *, question_pipeline=False):
-        self.question_pipeline = question_pipeline
+    def __init__(self, *, question_pipeline: bool | None = None):
+        if question_pipeline is not None and type(question_pipeline) is not bool:
+            raise ValueError('question_pipeline must be a boolean or None')
+        self.question_pipeline = (settings.question_pipeline_enabled
+                                  if question_pipeline is None else question_pipeline)
         self.client = AsyncOpenAI(
             base_url=settings.litellm_url,
             api_key=settings.litellm_api_key,

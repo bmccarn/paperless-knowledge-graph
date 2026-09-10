@@ -35,7 +35,7 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
                2:'Account Beta records a monthly charge of $200 USD.'}
         pack={'items':[item(k,v) for k,v in texts.items()]}
         orchestrator=StrandsQueryOrchestrator();orchestrator.enabled=True
-        for exclusion_decision in ('accept','reject'):
+        for exclusion_decision in ('outside_request','reject'):
             payloads=[]
             async def model(**kwargs):
                 name=kwargs['name'];x=json.loads(kwargs['prompt']);payloads.append((name,x))
@@ -49,13 +49,11 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(x['conversation_context'],context)
                     self.assertNotIn('resolved_question',x);self.assertNotIn('requirements',x)
                     return json.dumps({'dispositions':[{'observation_id':r['id'],
-                        'status':'delivered' if 'Alpha' in r['text'] else 'outside_request',
-                        'target_id':None} for r in x['observations']]})
+                        'status':'delivered' if 'Alpha' in r['text'] else 'omitted'} for r in x['observations']]})
                 if name=='fact_exclusion':
                     self.assertEqual(x['conversation_context'],context)
-                    excluded=[r for r in x['proposal']['dispositions'] if r['status']!='delivered']
-                    return json.dumps({'decisions':[{'observation_id':r['observation_id'],
-                        'decision':exclusion_decision} for r in excluded]})
+                    return json.dumps({'decisions':[{'observation_id':x['omitted_id'],
+                        'decision':exclusion_decision,'target_id':None}]})
                 if name=='source_auditor':
                     doc=next(d for d in x['source_documents'] if d['document_id']==1)
                     return json.dumps({'assessments':[decision(unit_id=u['id'],
@@ -69,7 +67,7 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
             final.update(question=question,query_plan=p)
             self.assertTrue(final['finalization']['answer_verified'],final)
             self.assertIn(texts[1],final['answer']);self.assertNotIn(texts[2],final['answer'])
-            self.assertEqual(restore_question_coverage(final)['complete'],exclusion_decision=='accept')
+            self.assertEqual(restore_question_coverage(final)['complete'],exclusion_decision=='outside_request')
             self.assertEqual(sum(n=='fact_exclusion' for n,_ in payloads),1)
 
     async def test_derived_comparison_uses_completion_and_combined_source_audit(self):
@@ -89,8 +87,8 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
                     return json.dumps({'documents':[{'document_id':1,'observations':[
                         {'text':t,'references':[{'span_id':span}]} for t in (first,second)],'limitations':[]}]})
                 if name=='fact_selector':
-                    return json.dumps({'dispositions':[{'observation_id':r['id'],'status':'delivered',
-                        'target_id':None} for r in x['observations']]})
+                    return json.dumps({'dispositions':[{'observation_id':r['id'],'status':'delivered'}
+                        for r in x['observations']]})
                 if name=='answer_completion':
                     span=x['source_documents'][0]['windows'][0]['span']['span_id']
                     return json.dumps({'observations':[comparison],

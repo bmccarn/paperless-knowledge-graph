@@ -59,14 +59,14 @@ class Adapter:
         if self.select:
             return await self.select(payload)
         return json.dumps({'dispositions': [{'observation_id': row['id'],
-            'status': 'delivered', 'target_id': None} for row in payload['observations']]})
+            'status': 'delivered'} for row in payload['observations']]})
 
     async def review_fact_exclusion(self, payload):
         self.exclusions.append(copy.deepcopy(payload))
         if self.review:
             return await self.review(payload)
-        row = next(row for row in payload['proposal']['dispositions'] if row['status'] != 'delivered')
-        return json.dumps({'decisions': [{'observation_id': row['observation_id'], 'decision': 'accept'}]})
+        return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+            'decision': 'outside_request', 'target_id': None}]})
 
 
 async def audited(evidence, pack, candidate, *, all_sources=False):
@@ -115,7 +115,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({r['text'] for r in payload['observations']}, {
                 'The Cedar request is pending.', 'The Maple request is pending.'})
             return json.dumps({'dispositions': [{'observation_id': r['id'],
-                'status': 'delivered', 'target_id': None} for r in payload['observations']]})
+                'status': 'delivered'} for r in payload['observations']]})
 
         selection = await select_facts(Adapter(select=select), direct)
         self.assertEqual(selection.candidate.observations,
@@ -168,7 +168,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
         first['observations'][0]['text'] = 'Changed caller copy.'
 
         async def mutate_payload(payload):
-            rows = [{'observation_id': row['id'], 'status': 'delivered', 'target_id': None}
+            rows = [{'observation_id': row['id'], 'status': 'delivered'}
                     for row in payload['observations']]
             payload['observations'][0]['text'] = 'Changed model copy.'
             return json.dumps({'dispositions': rows})
@@ -189,22 +189,20 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
         async def select(payload):
             ids = [o['id'] for o in payload['observations']]
             return json.dumps({'dispositions': [
-                {'observation_id': identity, 'status': 'delivered' if index == 0 else 'outside_request',
-                 'target_id': None} for index, identity in reversed(list(enumerate(ids)))]})
+                {'observation_id': identity, 'status': 'delivered' if index == 0 else 'omitted'}
+                for index, identity in reversed(list(enumerate(ids)))]})
 
         async def review(payload):
-            rows = payload['proposal']['dispositions']
-            excluded = [r for r in rows if r['status'] != 'delivered']
-            self.assertEqual(len(excluded), 1)
-            self.assertEqual(len(rows), 2)
+            self.assertNotIn('proposal', payload)
+            self.assertEqual(len(payload['delivered_ids']), 1)
             self.assertEqual(len(payload['observations']), 4)
-            identity = excluded[0]['observation_id']
+            identity = payload['omitted_id']
             index = next(i for i, row in enumerate(payload['observations']) if row['id'] == identity)
             if index == 1:
-                return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'reject'}]})
+                return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'reject', 'target_id': None}]})
             if index == 2:
-                return json.dumps({'decisions': [{'observation_id': 'foreign', 'decision': 'accept'}]})
-            return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'accept'}]})
+                return json.dumps({'decisions': [{'observation_id': 'foreign', 'decision': 'outside_request', 'target_id': None}]})
+            return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'outside_request', 'target_id': None}]})
 
         adapter = Adapter(select, review)
         selected = await select_facts(adapter, evidence)
@@ -255,12 +253,20 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
         async def choose_duplicate(payload):
             left, right = [o['id'] for o in payload['observations']]
             return json.dumps({'dispositions': [
-                {'observation_id': left, 'status': 'delivered', 'target_id': None},
-                {'observation_id': right, 'status': 'duplicate_of', 'target_id': left}]})
+                {'observation_id': left, 'status': 'delivered'},
+                {'observation_id': right, 'status': 'omitted'}]})
 
-        duplicate = await select_facts(Adapter(select=choose_duplicate), evidence)
+        async def classify_duplicate(payload):
+            self.assertNotIn('proposal', payload)
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'covered_by', 'target_id': payload['delivered_ids'][0]}]})
+
+        duplicate = await select_facts(Adapter(select=choose_duplicate, review=classify_duplicate), evidence)
         final = await audited(evidence, pack, duplicate.candidate)
         receipt = duplicate.bind_final(evidence, final)
+        self.assertEqual(receipt['version'], 2)
+        self.assertEqual(receipt['dispositions'][1]['status'], 'omitted')
+        self.assertEqual(receipt['reviews'][0]['decision'], 'covered_by')
         self.assertTrue(receipt['complete'])
         self.assertEqual(receipt['summary'], {'total': 2, 'preserved': 1, 'excluded': 1,
                                              'unresolved': 0, 'unavailable': 0})
@@ -277,7 +283,100 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
             "The sentence 'Cedar is pending.' was recorded.",)))
         lost = duplicate.bind_final(evidence, rewritten)
         self.assertEqual(lost['summary']['unresolved'], 2)
-        self.assertEqual(lost['mappings'][1]['reason'], 'missing_duplicate_target')
+        self.assertEqual(lost['mappings'][1]['reason'], 'missing_covered_target')
+
+    async def test_only_reviewer_classifies_omission_and_targets_are_bound_to_actual_selection(self):
+        from app.answer_fact_selection import select_facts, parse_exclusion, restore_fact_conservation
+        evidence, pack = await prepared([['Cedar is pending.', 'Cedar is pending.', 'A signature is recorded.'], []])
+
+        async def select(payload):
+            return json.dumps({'dispositions': [{'observation_id': row['id'],
+                'status': 'omitted' if index == 1 else 'delivered'}
+                for index, row in enumerate(payload['observations'])]})
+
+        async def covered(payload):
+            self.assertEqual(set(payload), {'original_question', 'evaluated_at', 'source_documents',
+                'observations', 'delivered_ids', 'omitted_id'})
+            self.assertEqual(payload['omitted_id'], payload['observations'][1]['id'])
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'covered_by', 'target_id': payload['delivered_ids'][0]}]})
+
+        adapter = Adapter(select=select, review=covered)
+        selection = await select_facts(adapter, evidence)
+        self.assertEqual(len(adapter.exclusions), 1)
+        final = await audited(evidence, pack, selection.candidate)
+        receipt = selection.bind_final(evidence, final)
+        final['finalization']['fact_conservation'] = receipt
+        self.assertEqual(restore_fact_conservation(final), receipt)
+        for mutate in (lambda r: r.update(version=1),
+                       lambda r: r['reviews'][0].update(decision='outside_request'),
+                       lambda r: r['reviews'][0].update(target_id=selection.inventory[2]['id']),
+                       lambda r: r['reviews'][0].update(status='unavailable'),
+                       lambda r: r['dispositions'][1].update(status='outside_request')):
+            changed = copy.deepcopy(final)
+            mutate(changed['finalization']['fact_conservation'])
+            self.assertIsNone(restore_fact_conservation(changed))
+
+        # A supported sibling does not stand in for the declared target removed
+        # by the final audit; the proposal and reviewer decision are not changed.
+        retained_sibling = await audited(evidence, pack, ObservationCandidate(('A signature is recorded.',)))
+        lost = selection.bind_final(evidence, retained_sibling)
+        self.assertEqual(lost['summary']['preserved'], 1)
+        self.assertEqual(lost['summary']['unresolved'], 2)
+        self.assertEqual(lost['mappings'][1]['reason'], 'missing_covered_target')
+
+        # A model-mutated delivered-ID copy cannot expand parser authority.
+        async def mutate_targets(payload):
+            payload['delivered_ids'].append('foreign')
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'covered_by', 'target_id': 'foreign'}]})
+        rejected = await select_facts(Adapter(select=select, review=mutate_targets), evidence)
+        self.assertEqual(rejected.reviews[0]['status'], 'unavailable')
+        self.assertIsNone(rejected.reviews[0]['target_id'])
+
+        # Either valid single target is mechanically allowed. The model and
+        # frozen semantic gold, not this parser, establish complete equivalence.
+        for target in ('first', 'second'):
+            row = parse_exclusion(json.dumps({'decisions': [{'observation_id': 'omitted',
+                'decision': 'covered_by', 'target_id': target}]}), 'omitted', ['first', 'second'])
+            self.assertEqual(row['target_id'], target)
+
+    async def test_exclusion_protocol_rejects_legacy_malformed_and_nonselected_targets_without_retry(self):
+        from app.answer_fact_selection import parse_exclusion, select_facts
+        row = {'observation_id': 'omitted', 'decision': 'covered_by', 'target_id': 'selected'}
+        valid = json.dumps({'decisions': [row]})
+        invalid = [None, '', 'null', 'false', '{}', '[]', 'prefix ' + valid, valid + ' suffix',
+                   '```json\n' + valid + '\n```', '{"decisions":[],"decisions":[]}',
+                   json.dumps({'decisions': []}), json.dumps({'decisions': [row, row]}),
+                   json.dumps({'decisions': [{**row, 'extra': 'not permitted'}]})]
+        invalid.extend(json.dumps({'decisions': [{**row, 'target_id': target}]})
+                       for target in (None, False, [], ['selected'], 'omitted', 'other-omission', 'foreign'))
+        invalid.extend(json.dumps({'decisions': [{**row, 'decision': decision}]})
+                       for decision in ('accept', 'reject', 'outside_request', None, False))
+        invalid.append(json.dumps({'decisions': [{'observation_id': 'omitted', 'decision': 'reject'}]}))
+        invalid.append(json.dumps({'decisions': [{**row, 'observation_id': 'foreign'}]}))
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises(QuestionEvidenceError):
+                parse_exclusion(text, 'omitted', ['selected'])
+        for decision, status in (('outside_request', 'accepted'), ('reject', 'rejected')):
+            result = parse_exclusion(json.dumps({'decisions': [
+                {**row, 'decision': decision, 'target_id': None}]}), 'omitted', ['selected'])
+            self.assertEqual(result['status'], status)
+        for delivered in ([], None, False, ['selected', 'selected'], ['omitted'], [False]):
+            with self.subTest(delivered=delivered), self.assertRaises(QuestionEvidenceError):
+                parse_exclusion(valid, 'omitted', delivered)
+
+        evidence, _ = await prepared()
+        async def select(payload):
+            return json.dumps({'dispositions': [{'observation_id': row['id'],
+                'status': 'delivered' if index == 0 else 'omitted'}
+                for index, row in enumerate(payload['observations'])]})
+        async def malformed(payload): return 'null'
+        adapter = Adapter(select=select, review=malformed)
+        selection = await select_facts(adapter, evidence)
+        self.assertEqual(len(adapter.exclusions), 1)
+        self.assertEqual(selection.reviews[0]['status'], 'unavailable')
+        self.assertIsNone(selection.reviews[0]['decision'])
 
     async def test_source_ownership_and_changed_reading_are_checked_before_binding(self):
         from app.answer_fact_selection import select_facts
@@ -316,14 +415,13 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         async def invalid_rows(payload, variant):
             a, b = [row['id'] for row in payload['observations']]
-            row = lambda identity, status='delivered', target=None: {
-                'observation_id': identity, 'status': status, 'target_id': target}
+            row = lambda identity, status='delivered': {'observation_id': identity, 'status': status}
             variants = [[row(a)], [row(a), row(a)], [row(a), row('foreign')],
-                [row(a, 'duplicate_of', b), row(b, 'duplicate_of', a)],
-                [row(a, 'outside_request'), row(b, 'duplicate_of', a)],
-                [row(a, 'outside_request'), row(b, 'outside_request')]]
+                [row(a, 'duplicate_of'), row(b)],
+                [{**row(a), 'target_id': None}, row(b)],
+                [row(a, 'omitted'), row(b, 'omitted')], [row(a, 'outside_request'), row(b)]]
             return json.dumps({'dispositions': variants[variant]})
-        for variant in range(6):
+        for variant in range(7):
             async def respond(payload, variant=variant): return await invalid_rows(payload, variant)
             adapter = Adapter(select=respond)
             with self.subTest(variant=variant), self.assertRaises(QuestionEvidenceError):
@@ -349,14 +447,14 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         async def select(payload):
             return json.dumps({'dispositions': [{'observation_id': row['id'],
-                'status': 'delivered' if i == 0 else 'outside_request', 'target_id': None}
+                'status': 'delivered' if i == 0 else 'omitted'}
                 for i, row in enumerate(payload['observations'])]})
 
         async def review(payload):
             nonlocal active, peak, maximum_tasks
-            identity = payload['proposal']['dispositions'][-1]['observation_id']
+            identity = payload['omitted_id']
             if identity == payload['observations'][1]['id']:
-                return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'reject'}]})
+                return json.dumps({'decisions': [{'observation_id': identity, 'decision': 'reject', 'target_id': None}]})
             active += 1
             peak = max(peak, active)
             maximum_tasks = max(maximum_tasks, len(asyncio.all_tasks()) - baseline_tasks)
@@ -396,7 +494,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         async def select(payload):
             return json.dumps({'dispositions': [{'observation_id': row['id'],
-                'status': 'delivered' if i == 0 else 'outside_request', 'target_id': None}
+                'status': 'delivered' if i == 0 else 'omitted'}
                 for i, row in enumerate(payload['observations'])]})
 
         async def review(payload):

@@ -55,8 +55,8 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
                 {'text': 'The statement records a monthly premium of $321.00 USD.',
                  'references': [{'span_id': d['windows'][0]['span']['span_id']}]}], 'limitations': []}]})
         if name == 'fact_selector':
-            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered',
-                'target_id': None} for row in payload['observations']]})
+            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'delivered'}
+                for row in payload['observations']]})
         if name == 'source_auditor':
             handle = payload['source_documents'][0]['windows'][0]['span']['span_id']
             return json.dumps({'assessments': [decision(unit_id=u['id'], references=[{'span_id': handle}])

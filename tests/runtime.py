@@ -18,6 +18,7 @@ def configure_test_environment():
         "POSTGRES_PASSWORD": "synthetic-test-password",
         "REDIS_URL": "memory://",
         "STRANDS_ENABLED": "false",
+        "QUESTION_PIPELINE_ENABLED": "false",
         "LITELLM_LOCAL_MODEL_COST_MAP": "True",
         "OWNER_NAME": "Synthetic document owner",
         "OWNER_CONTEXT": "Synthetic test corpus only",

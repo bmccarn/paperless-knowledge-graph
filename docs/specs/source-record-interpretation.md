@@ -3,8 +3,10 @@
 Status: first model-free inventory/binding slice implemented, independently reviewed
 and locally validated. The reader adapter/projection and reader-only SDK preflight
 and full comparison runner are implemented and independently reviewed. The exact
-comparison is admitted but its native execution requires the specific provider
-transfer approval described in the linked diagnostic. This
+comparison executed after specific transfer approval: ten pairs completed and two
+reader calls timed out. Both independent all-output grades reject the candidate;
+completed final required-meaning retention is unchanged and three unsupported
+assertions survive. This
 spec is not a passing semantic result or production activation decision.
 
 ## Evidence and choice

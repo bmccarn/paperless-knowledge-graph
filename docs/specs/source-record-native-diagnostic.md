@@ -2,9 +2,10 @@
 
 Status: complete comparison runner, both audit arms and SDK preflight implemented
 and independently reviewed at 2e28074. Exact package passed both independent admission
-reviews and remote validation. Native execution is blocked by automatic approval
-review pending explicit approval for this experiment payload and provider destination;
-no native calls have run under this protocol.
+reviews and remote validation. The user explicitly approved this experiment payload
+and provider destination after the automatic-review rejection. The exact native
+comparison finished with ten completed pairs and two reader timeouts; independent
+semantic grading is pending. The all-pairs execution acceptance criterion failed.
 
 ## Hypothesis and fixed comparison
 
@@ -180,3 +181,54 @@ remote directory. Do not bypass the rejection or change routes. After the requir
 authorization, revalidate the exact admitted package, execute once into the still-absent
 results directory, freeze outputs and independently grade both raw and final answers.
 All later whole-query, held-out, visual UI and GitOps gates remain open.
+
+The user subsequently explicitly approved the frozen twelve-case experiment and
+private source/prompt transfer through LiteLLM to Google Gemini gemini-3.8-flash,
+with the declared 1,536-call/four-hour ceilings. The exact remote package was
+revalidated and its output directory confirmed absent before execution started.
+The earlier rejection is preserved as history; it no longer blocks this run.
+Do not change its code, inputs, budget, route or labels during execution.
+
+## Native execution receipt
+
+The approved run completed its fixed schedule in 2,020.397 seconds with 133 native
+attempts: ten pairs completed and two failed during reading. Pair 10 completed 48
+source blocks and left 275 pending; pair 11 completed eight and left 27 pending.
+Each failed reader call reached the 90-second adapter limit without any captured
+response chunks. Captured transport outcomes were cancellation at 90.006 seconds
+and API timeout at 90.085 seconds. No failed case was resumed or rerun.
+
+All 821 result artifacts are retained. Verification checked 755 registered capture
+hashes and all 133 raw SDK request-body hashes. Run SHA:
+17beffbcd897ddbb62ecacf3de370cb2da5d6fb2d076d5acad601648e983b159.
+Result inventory SHA:
+179ac3d6eabc7f1085ef95cda4d380278fd91b8e84cc1c5025f43162c6720595.
+
+The inspected LiteLLM container was running since September 9 with zero restarts.
+Logs around the failed calls did not show a context-window error, rate-limit response
+or worker restart. This confirms the local timeout failure, not the cause of the
+upstream delay. The run is not an accuracy pass, regardless of completed-case gains.
+Both independent all-output grades reject the candidate. They examined all 131
+reader observations and 249 raw assessments, including partial failed executions.
+Completed final answers retain 34/37 required meanings in each arm: no net gain.
+Seven required opportunities per arm remain unobserved in the two failed pairs.
+Three unsupported assertions survive into the new reader's delivered answers.
+
+Reconciliation separates seven definite false factual raw approval occurrences,
+three calendar-policy approvals and one disputed wording judgment. The disputed
+judgment remains uncertain; it does not change the rejection. Six source-readable
+assertions were withheld by deterministic value/date checks. They are a separate
+representation problem, not proof that relaxing those checks is safe while false
+arithmetic and scope judgments survive the raw verifier. Both reviewers found zero
+wrong raw model rejections in the observed assessments.
+
+Spec grade SHA:
+8c85434953d8f17c544b0c8965ae1f21245a8ab09453acc7b983da6a23fa46b5.
+Standards grade SHA:
+e051083362fa11ed7c002185ba716d17108067da1de7312ec9f4917424348540.
+Reconciled adjudication SHA:
+9654745526916063d71b3ff6cf255fa7048dd90ed73ac385c3f7f914f94b534c.
+Original grades and artifacts remain frozen privately; no private source facts are
+published here. More source-block reading alone is rejected as the solution. The
+[next model-capability diagnostic](reader-verifier-model-diagnostic.md) isolates
+reader/verifier route behavior before any further production design decision.

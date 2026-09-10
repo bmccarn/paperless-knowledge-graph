@@ -984,3 +984,32 @@ The utility assembly full offline suite passed 830 tests in 26.656 seconds with
 Strict case06 also passed both original-source reviews with all error and
 underreporting counts zero (four native calls, 12.395 seconds, 7,268 tokens).
 The frozen application and fixed-original evaluation harness remain unchanged.
+
+## September 10 continuation: native v6 stopped, live bridge reviewed
+
+All twelve initial Strict cases finished once: eleven passed both grades and case11
+failed both. Seventy native calls used 255.306 active seconds and 188,924 reported
+tokens. The failing result SHA256 is
+`9f8016b5e13fb59ac3bae84db7e25d95e8acbf7b5877cf48a757eedf83a09e73`.
+Both grades report three missing required aspects and zero other hard error counts.
+Six raw factual approvals were source-correct, but the final current-status gate
+withheld all facts. Actual coverage/conservation restoration returns None. The
+failure and dual aggregate receipt are frozen; all-mode, live and holdout execution
+remain unstarted. No source-reporting improvement is claimed as qualification.
+
+A captured-response replay reproduces the actual withheld answer without native
+calls. A minimized temporal-gate control isolates a source field containing current
+and none/none temporal metadata. Changing only that word removes the gate; explicit
+source-observation metadata qualifies the unit; adding a separate non-temporal unit
+makes the whole answer unresolved again. The proposed general contract correction
+is in source-relative-temporal-acceptance.md and is under review before app changes.
+
+The independent local/remote process and frontend utility reviews are clear. They
+closed forced-exit/local-cleanup races, swallowed deadlines and an oversized-output
+pipe deadlock. Twelve process controls and four local-child controls pass. The
+optional actual Node24 standalone frontend smoke also passes through an owned
+synthetic loopback backend, including denial of a mutation route and joined children.
+The full offline suite passed 847 tests in 31.611 seconds, with 49 expected opt-in
+skips; the standalone smoke was then run explicitly and passed. This is process and
+HTTP validation, not actual native browser-query qualification. Concrete admission,
+CLI/browser execution and result packaging remain unfinished.

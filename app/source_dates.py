@@ -23,11 +23,15 @@ MONTHS = {name.casefold(): index for index, name in enumerate(
 MONTHS.update({name[:3]: value for name, value in list(MONTHS.items())})
 MONTHS["sept"] = 9
 _MONTH = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
+_HORIZONTAL = r"[ \t\u00a0\u202f]*"
+_SLASH_SEPARATOR = _HORIZONTAL + '/' + _HORIZONTAL
 _PATTERN = re.compile(
     r"(?<![\w/+.,-])(?:"
     r"(?P<year_range>\d{4}[-–]\d{4})(?![-–]\d)"
     r"|(?P<iso>\d{4}-(?:\d+[-.])*\d+)"
-    r"|(?P<slash>\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))"
+    # Consume the entire numeric chain before validating its calendar shape;
+    # otherwise a malformed longer chain could donate a valid suffix/year.
+    rf"|(?P<slash>\d+(?:{_SLASH_SEPARATOR}\d+){{2,}})"
     rf"|(?P<named>{_MONTH}\s+(?:\d{{1,2}}(?:st|nd|rd|th)?(?:,\s*|\s+))?\d{{4}})"
     rf"|(?P<day_first>\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}\s+\d{{4}})"
     r"|(?P<year>\d{4}))"
@@ -75,6 +79,12 @@ def source_dates(text: str, date_order: str = "mdy", *, context_before: str = ""
         prefix = date_context(context_before + text[:match.start()])
         if _IDENTIFIER_PREFIX.search(prefix):
             continue
+        # Horizontal spacing cannot detach a prefix or suffix from an adjoining
+        # slash token, including alphanumeric IDs and regex backtracking cases.
+        if ((match['slash'] or match['year'] or match['year_range'])
+                and (re.search('/' + _HORIZONTAL + r'$', context_before + text[:match.start()])
+                     or re.match(_SLASH_SEPARATOR + r'\d', text[match.end():]))):
+            continue
         value, precision, reason = None, None, None
         try:
             if match["year_range"]:
@@ -94,7 +104,13 @@ def source_dates(text: str, date_order: str = "mdy", *, context_before: str = ""
                 precision = "day" if len(parts) == 3 else "month"
                 value = parsed.isoformat() if precision == "day" else parsed.strftime("%Y-%m")
             elif match["slash"]:
-                first, second, year = match["slash"].split("/")
+                fields = re.split(_SLASH_SEPARATOR, match['slash'])
+                if (len(fields) != 3 or any(len(field) not in {1, 2} for field in fields[:2])
+                        or len(fields[2]) not in {2, 4}):
+                    # A non-calendar chain remains scalar text. Consume it as
+                    # one token without certifying a date-shaped substring.
+                    continue
+                first, second, year = fields
                 a, b = int(first), int(second)
                 if date_order == "reject_ambiguous" and a <= 12 and b <= 12 and a != b:
                     reason = "ambiguous_date_order"
@@ -133,7 +149,7 @@ def date_supported(expected: SourceDate, actual: SourceDate) -> bool:
     if expected.value is None or actual.value is None:
         # Literal short-year dates can be repeated, but never expanded to a century.
         return (expected.reason == actual.reason == "unspecified_century"
-                and expected.text == actual.text)
+                and re.split(_SLASH_SEPARATOR, expected.text) == re.split(_SLASH_SEPARATOR, actual.text))
     precision = {"year": 0, "month": 1, "day": 2}
     return (precision[actual.precision] >= precision[expected.precision]
             and (actual.value == expected.value or actual.value.startswith(expected.value + "-")))

@@ -26,6 +26,186 @@ def plan(question,aspects,context=''):
 
 
 class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovered_reader_assertion_still_requires_original_audit_and_new_editor_audit(self):
+        question = 'What balance and refund activity are recorded?'
+        good = 'The Cedar invoice records a balance of $20 USD.'
+        source = 'The Cedar refund request for $10 USD is pending.'
+        invented = 'The Cedar refund of $10 USD was paid.'
+        pack = {'items': [item(1, good), item(2, source)]}
+        p = plan(question, ['Recorded balance', 'Refund activity'])
+        orchestrator = StrandsQueryOrchestrator(); orchestrator.enabled = True
+        calls, audited_candidates = [], []
+
+        async def model(**kwargs):
+            name = kwargs['name']; calls.append(name)
+            if name == 'answer_editor':
+                self.assertIn(invented, kwargs['prompt'])
+                self.assertIn(source, kwargs['prompt'])
+                return json.dumps({'observations': [good]})
+            x = json.loads(kwargs['prompt'])
+            if name == 'source_reader':
+                doc = x['source_documents'][0]
+                return json.dumps({'documents': [{'document_id': doc['document_id'], 'observations': [
+                    {'text': good if doc['document_id'] == 1 else invented,
+                     'references': [{'span_id': doc['windows'][0]['span']['span_id']}]}], 'limitations': []}]})
+            if name == 'fact_selector':
+                return json.dumps({'dispositions': [{'observation_id': row['id'],
+                    'status': 'delivered' if i == 0 else 'omitted'} for i, row in enumerate(x['observations'])]})
+            if name == 'fact_exclusion':
+                return json.dumps({'decisions': [{'observation_id': x['omitted_id'],
+                    'decision': 'reject', 'target_id': None}]})
+            if name == 'source_auditor':
+                audited_candidates.append([u['text'] for u in x['units']])
+                self.assertEqual({d['document_id'] for d in x['source_documents']}, {1, 2})
+                assessments = []
+                for unit in x['units']:
+                    wrong = unit['text'] == '- ' + invented
+                    doc = next(d for d in x['source_documents'] if d['document_id'] == (2 if wrong else 1))
+                    assessments.append(decision(unit_id=unit['id'], status='unsupported' if wrong else 'supported',
+                        references=[{'span_id': doc['windows'][0]['span']['span_id']}]))
+                return json.dumps({'assessments': assessments})
+            if name == 'answer_coverage':
+                return json.dumps({'requirements': [
+                    {'requirement_id': 'r1', 'status': 'answered', 'observation_ids': ['u1']},
+                    {'requirement_id': 'r2', 'status': 'unresolved', 'observation_ids': []}],
+                    'omitted_requested_aspects': False})
+            self.fail('Unexpected extra stage ' + name)
+
+        with patch.object(orchestrator, '_text_agent', side_effect=model):
+            final = await finalize_question(orchestrator, question, pack, p, 'strict')
+        final.update(question=question, query_plan=p)
+        self.assertEqual(audited_candidates, [['- ' + good, '- ' + invented], ['- ' + good]])
+        self.assertTrue(final['finalization']['answer_verified'])
+        self.assertNotIn(invented, final['answer'])
+        self.assertIn(good, final['answer'])
+        facts = final['finalization']['fact_conservation']
+        self.assertEqual(facts['reviews'][0]['decision'], 'reject')
+        self.assertEqual(facts['mappings'][1]['status'], 'unresolved')
+        self.assertEqual(facts['mappings'][1]['reason'], 'missing_final_fact')
+        self.assertFalse(restore_question_coverage(final)['complete'])
+        self.assertEqual(calls.count('answer_editor'), 1)
+        self.assertEqual(calls.count('source_auditor'), 2)
+        self.assertNotIn('answer_completion', calls)
+
+    async def test_zero_retained_facts_preserve_reviews_without_a_verified_answer_or_audit(self):
+        question = 'What payment is recorded?'
+        text = 'The form names Cedar as the operator.'
+        pack = {'items': [item(1, text)]}
+        p = plan(question, ['Recorded payment'])
+        for mode in ('quick', 'deep', 'timeline', 'strict'):
+            for review in ('outside_request', 'unavailable'):
+                with self.subTest(mode=mode, review=review):
+                    orchestrator = StrandsQueryOrchestrator(); orchestrator.enabled = True
+                    calls = []
+
+                    async def model(**kwargs):
+                        name = kwargs['name']; x = json.loads(kwargs['prompt']); calls.append(name)
+                        if name == 'source_reader':
+                            doc = x['source_documents'][0]
+                            return json.dumps({'documents': [{'document_id': 1, 'observations': [
+                                {'text': text, 'references': [{'span_id': doc['windows'][0]['span']['span_id']}]}],
+                                'limitations': []}]})
+                        if name == 'fact_selector':
+                            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'omitted'}
+                                                                for row in x['observations']]})
+                        if name == 'fact_exclusion':
+                            self.assertEqual(x['delivered_ids'], [])
+                            if review == 'unavailable': return 'null'
+                            return json.dumps({'decisions': [{'observation_id': x['omitted_id'],
+                                'decision': 'outside_request', 'target_id': None}]})
+                        self.fail('No audit or coverage is permitted: ' + name)
+
+                    with patch.object(orchestrator, '_text_agent', side_effect=model):
+                        final = await finalize_question(orchestrator, question, pack, p, mode)
+                    self.assertEqual(calls, ['source_reader', 'fact_selector', 'fact_exclusion'])
+                    state = final['finalization']
+                    self.assertIs(state['answer_verified'], False)
+                    self.assertIs(state['complete'], False)
+                    self.assertEqual(state['pipeline_failure'], 'no_retained_facts')
+                    self.assertEqual(state['pipeline_version'], PIPELINE_VERSION)
+                    self.assertEqual(state['request_identity_digest'], p['request_identity_digest'])
+                    self.assertEqual(final['evidence']['score'], 0)
+                    self.assertEqual(final['claim_ledger']['claims'], [])
+                    self.assertNotIn(text, final['answer'])
+                    facts = state['fact_conservation']
+                    self.assertEqual(facts['version'], 3)
+                    self.assertEqual(facts['dispositions'][0]['status'], 'omitted')
+                    self.assertEqual(facts['reviews'][0]['status'],
+                                     'accepted' if review == 'outside_request' else 'unavailable')
+                    self.assertEqual(facts['status'], 'unavailable')
+                    self.assertFalse(state['question_coverage']['complete'])
+
+    async def test_rejected_omissions_reach_audit_and_delivery_despite_narrowed_coverage(self):
+        question = 'How did scheduled hours change, and what do the latest records establish?'
+        texts = {
+            1: ['Robin records weekly scheduled hours of 24.'],
+            2: ['Robin has an approved change to weekly scheduled hours of 32.'],
+            3: ['Robin is permitted 8 additional hours only if training is completed.',
+                'Robin completed training; no overtime attendance is recorded.'],
+        }
+        pack = {'items': [item(k, ' '.join(v)) for k, v in texts.items()]}
+        p = plan(question, ['Earlier scheduled hours', 'Latest scheduled hours'])
+        p['resolved_question'] = 'How did scheduled hours change?'
+        for mode in ('quick', 'deep', 'timeline', 'strict'):
+            with self.subTest(mode=mode):
+                orchestrator = StrandsQueryOrchestrator(); orchestrator.enabled = True
+                calls, audited_texts = [], []
+
+                async def model(**kwargs):
+                    name = kwargs['name']; x = json.loads(kwargs['prompt']); calls.append(name)
+                    if name == 'source_reader':
+                        doc = x['source_documents'][0]
+                        span = doc['windows'][0]['span']['span_id']
+                        return json.dumps({'documents': [{'document_id': doc['document_id'],
+                            'observations': [{'text': value, 'references': [{'span_id': span}]}
+                                             for value in texts[doc['document_id']]], 'limitations': []}]})
+                    if name == 'fact_selector':
+                        return json.dumps({'dispositions': [{'observation_id': row['id'],
+                            'status': 'delivered' if i < 2 else 'omitted'}
+                            for i, row in enumerate(x['observations'])]})
+                    if name == 'fact_exclusion':
+                        return json.dumps({'decisions': [{'observation_id': x['omitted_id'],
+                            'decision': 'reject', 'target_id': None}]})
+                    if name == 'source_auditor':
+                        self.assertEqual({d['document_id'] for d in x['source_documents']}, {1, 2, 3})
+                        audited_texts.extend(u['text'] for u in x['units'])
+                        assessments = []
+                        for unit in x['units']:
+                            owner = next(k for k, values in texts.items() if unit['text'][2:] in values)
+                            doc = next(d for d in x['source_documents'] if d['document_id'] == owner)
+                            assessments.append(decision(unit_id=unit['id'],
+                                references=[{'span_id': doc['windows'][0]['span']['span_id']}],
+                                temporal_scope='historical', temporal_assertion='source_observation'))
+                        return json.dumps({'assessments': assessments})
+                    if name == 'answer_coverage':
+                        # Reproduce the false-negative gap detection: the narrowed
+                        # planner is satisfied and would not trigger completion.
+                        return json.dumps({'requirements': [
+                            {'requirement_id': 'r1', 'status': 'answered', 'observation_ids': ['u1']},
+                            {'requirement_id': 'r2', 'status': 'answered', 'observation_ids': ['u2']}],
+                            'omitted_requested_aspects': False})
+                    self.fail('Unexpected stage ' + name)
+
+                with patch.object(orchestrator, '_text_agent', side_effect=model):
+                    final = await finalize_question(orchestrator, question, pack, p, mode)
+                final.update(question=question, query_plan=p)
+                expected = [text for values in texts.values() for text in values]
+                self.assertEqual(audited_texts, ['- ' + text for text in expected])
+                self.assertEqual([c['claim'] for c in final['claim_ledger']['claims']], audited_texts)
+                self.assertTrue(final['finalization']['answer_verified'], final['claim_ledger'])
+                self.assertTrue(restore_question_coverage(final)['complete'])
+                facts = final['finalization']['fact_conservation']
+                self.assertEqual([row['status'] for row in facts['dispositions']],
+                                 ['delivered', 'delivered', 'omitted', 'omitted'])
+                self.assertEqual([row['decision'] for row in facts['reviews']], ['reject', 'reject'])
+                self.assertEqual(facts['summary']['preserved'], 4)
+                self.assertEqual(calls.count('source_reader'), 3)
+                self.assertEqual(calls.count('fact_selector'), 1)
+                self.assertEqual(calls.count('fact_exclusion'), 2)
+                self.assertEqual(calls.count('source_auditor'), 1)
+                self.assertEqual(calls.count('answer_coverage'), 1)
+                self.assertNotIn('answer_completion', calls)
+
     async def test_followup_context_resolves_subject_without_narrowed_plan_authority(self):
         question='What charge does it record?'
         context='User: Tell me about account Alpha.'
@@ -35,7 +215,7 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
                2:'Account Beta records a monthly charge of $200 USD.'}
         pack={'items':[item(k,v) for k,v in texts.items()]}
         orchestrator=StrandsQueryOrchestrator();orchestrator.enabled=True
-        for exclusion_decision in ('outside_request','reject'):
+        for exclusion_decision in ('outside_request','unavailable'):
             payloads=[]
             async def model(**kwargs):
                 name=kwargs['name'];x=json.loads(kwargs['prompt']);payloads.append((name,x))
@@ -52,6 +232,7 @@ class FactPipelineTests(unittest.IsolatedAsyncioTestCase):
                         'status':'delivered' if 'Alpha' in r['text'] else 'omitted'} for r in x['observations']]})
                 if name=='fact_exclusion':
                     self.assertEqual(x['conversation_context'],context)
+                    if exclusion_decision == 'unavailable': return 'null'
                     return json.dumps({'decisions':[{'observation_id':x['omitted_id'],
                         'decision':exclusion_decision,'target_id':None}]})
                 if name=='source_auditor':

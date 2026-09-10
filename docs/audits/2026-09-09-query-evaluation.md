@@ -830,3 +830,54 @@ contradictory aggregate-grade admission and skipped Strict schedule validation.
 The full offline suite passed 802 tests in 25.096 seconds with 48 expected
 opt-in datastore skips; 38 focused checks passed and all 62 app/script files parsed.
 Application and prompt files remain identical to the failed v4 probe candidate.
+
+
+Fresh v4 development run (published harness `36ca251`) stopped after case01 FAIL.
+Case00 capacity-history passed both independent reviews, with all counts zero.
+Case01 hours-history omitted one required aspect: conditional overtime, completed
+training and absence of recorded attendance. Original-source reader attempt003
+captured it in two observations; selector004 omitted both; exclusion reviews005/006
+correctly rejected both omissions. Candidate construction still used only selected
+rows. Coverage008 accepted narrowed requirements and did not trigger completion.
+Public conservation correctly stayed partial, but required meaning was missing.
+This is ineligible for the duplicate exception. Both grades and aggregate are FAIL;
+cases02-11 and the v4 all-mode run are unstarted and must not resume.
+
+Manifest canonical SHA256:
+`6db1b0e79a276a7808703dc9fd531e5f67db24119065ce02489764dc2e1607b8`;
+package SHA256:
+`e1f9688bdf008364f7f44cd9da05ce50b63cf039fee1c367127f53eddba679af`;
+failed case01 result SHA256:
+`6cfb72f9442b7e012e8d8e4acda7ac8dec7d97fb5f0eca80b0aa1624f8d4e897`.
+The two cases used 17 native calls, 47.291 active seconds and 30,497 reported tokens.
+One missing required aspect, zero factual/exclusion false approvals, unsupported
+extras, public false completeness or conservative duplicate rejections were found.
+The new proposed correction is documented in
+`docs/specs/question-reviewed-retention.md`: a rejected omission must affect the
+candidate before factual audit, not only the post-delivery coverage label.
+No activation or deployment occurred.
+
+
+The reviewed v5 correction is implemented: valid rejected omissions join the exact
+candidate before the existing factual audit. One retained-ID rule also drives final
+conservation. Original proposals/reviews remain intact; approved exclusions still
+require their original selected target. Empty retained sets are explicit unverified
+failures with zero trust in every mode. Receipt version3 and question-evidence-v5
+prevent old saved judgments from certifying the new behavior. Both model prompts
+are unchanged; no extra stage/pass/retry was added, though more retained units can
+increase existing audit batches.
+
+The public narrowed-planner regression fails against frozen v4 in all four modes
+and passes v5: both wrongly omitted units now reach the auditor and final answer.
+Focused controls cover two real audit batches for six retained units, zero dispatch
+and no truncation at 81 units, source-unsupported recovery followed by editor/fresh
+audit, source substitution, rewritten/removed units, original duplicate targets,
+all-omitted recovery, zero-retained saved failures, cancellation and tampering.
+Both final reviews are clear. The full offline suite passed 811 tests in 25.179
+seconds with 48 expected datastore skips; the independent app review ran 53 focused
+tests and the v5 harness slice passed 39. All 62 app/script files parsed.
+
+Fresh manifests now bind the v5 contract and grading version2; complete raw/dual
+review bindings, aggregate zero-error/coverage agreement and scheduled identities
+apply without the v4 exception. That old receipt cannot admit changed application
+code. No v5 native execution, activation or deployment has occurred yet.

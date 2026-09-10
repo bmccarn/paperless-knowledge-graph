@@ -25,7 +25,7 @@ class FactCoverageTests(unittest.TestCase):
                 'planning_status': 'complete', 'binding': {'snapshot_digest': 'original'}}
 
     def conservation(self, status='complete'):
-        return {'version': 2, 'status': status, 'complete': status == 'complete',
+        return {'version': 3, 'status': status, 'complete': status == 'complete',
                 'inventory': [{'id': 'f1', 'text': 'Private reader interpretation.'}],
                 'reviews': [], 'binding': {'snapshot_digest': 'original'},
                 'summary': {'total': 1, 'preserved': int(status == 'complete'), 'excluded': 0,
@@ -157,7 +157,7 @@ class FactCoverageRestorationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(restored, final['finalization']['question_coverage'])
                     self.assertEqual(restored['assessment_status'], assessment)
                     self.assertEqual(restored['requirements'], base['requirements'])
-                    self.assertIs(restored['complete'], review == 'accepted' and assessment == 'complete')
+                    self.assertIs(restored['complete'], review != 'unavailable' and assessment == 'complete')
                     self.assertEqual(final, before)
 
     async def test_fact_and_final_candidate_tampering_invalidates_saved_success(self):

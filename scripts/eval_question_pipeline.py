@@ -50,6 +50,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
         raise ValueError('Unknown evaluation stage')
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
         'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
+        'scripts/conservative_query_admission.py', 'docs/specs/question-reviewed-retention.md',
         'docs/specs/question-pipeline-development-evaluation.md',
         'docs/specs/question-coverage-recovery.md',
         'docs/specs/question-fact-conservation-integration.md',
@@ -57,13 +58,11 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
     if stage == 'all-modes':
         paths.append(ROOT / 'docs/specs/question-all-mode-evaluation.md')
     if conservative_admission is not None:
-        paths.extend(ROOT / name for name in (
-            'scripts/conservative_query_admission.py',
-            'docs/specs/question-conservative-coverage-admission.md'))
+        paths.append(ROOT / 'docs/specs/question-conservative-coverage-admission.md')
     runtime = runtime_snapshot()
     if runtime['packages']['strands-agents'] != '1.55.0':
         raise ValueError('Qualification requires locked Strands 1.55.0 runtime')
-    manifest = {'version': 1, 'stage': 'fixed_originals_question_pipeline_development',
+    manifest = {'version': 1, 'grading_version': 2, 'stage': 'fixed_originals_question_pipeline_development',
         'dataset_sha256': digest(payload),
         'code_sha256': {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths},
         'runtime': runtime, 'mode': 'strict', 'cases': 12, 'max_native_calls': 300,
@@ -137,9 +136,9 @@ def validate_scheduled_result(result, manifest, case, index, mode):
 def initial_admission(root, current, cases):
     if root is None:
         raise ValueError('All-mode execution requires the passing initial slice')
-    conservative = 'conservative_admission' in current
+    bound_grades = current.get('grading_version') == 2 or 'conservative_admission' in current
     snapshots = [read_run(root / f'case-{i:02d}', bind_attempts=True, bind_grades=True)
-                 if conservative else read_run(root / f'case-{i:02d}') for i in range(12)]
+                 if bound_grades else read_run(root / f'case-{i:02d}') for i in range(12)]
     original = json.loads(snapshots[0]['manifest.json'])
     expected = {key: value for key, value in current.items()
                 if key not in {'code_sha256', 'schedule', 'initial_admission'}}
@@ -166,7 +165,7 @@ def previous_runs(output, case_index, manifest, cases, *, snapshots=None, modes=
         directory = output / f'case-{index:02d}'
         if snapshots is not None:
             snapshot = snapshots[index]
-        elif 'conservative_admission' in manifest:
+        elif manifest.get('grading_version') == 2 or 'conservative_admission' in manifest:
             snapshot = read_run(directory, bind_attempts=True, bind_grades=True)
         elif manifest.get('mode') == 'all-modes':
             snapshot = read_run(directory, bind_attempts=True)
@@ -191,12 +190,13 @@ def previous_runs(output, case_index, manifest, cases, *, snapshots=None, modes=
                 or review.get('spec') != 'pass' or review.get('standards') != 'pass'
                 or result['error'] is not None):
             raise ValueError('Prior case lacks passing independent review')
-        if 'conservative_admission' in manifest:
+        if manifest.get('grading_version') == 2 or 'conservative_admission' in manifest:
             from scripts.conservative_query_admission import validate_case_grades
             validate_case_grades(snapshot, result, review)
-        if modes is not None or 'conservative_admission' in manifest:
-            validate_scheduled_result(result, manifest, cases[index], index,
-                                      modes[index] if modes is not None else 'strict')
+        if modes is not None or manifest.get('grading_version') == 2 or 'conservative_admission' in manifest:
+            mode = (modes[index] if modes is not None else
+                    manifest['schedule'][index]['mode'] if manifest.get('mode') == 'all-modes' else 'strict')
+            validate_scheduled_result(result, manifest, cases[index], index, mode)
         calls += result['native_call_count']
         elapsed += result['elapsed_seconds']
     return calls, elapsed
@@ -214,7 +214,7 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
     if type(case_index) is not int or not 0 <= case_index < len(cases):
         raise ValueError('Invalid case index')
     prior_calls, prior_elapsed = previous_runs(output, case_index, manifest, cases,
-        modes=modes if stage == 'all-modes' or 'conservative_admission' in manifest else None)
+        modes=modes if stage == 'all-modes' or manifest.get('grading_version') == 2 or 'conservative_admission' in manifest else None)
     remaining_calls = manifest['max_native_calls'] - prior_calls
     remaining_seconds = manifest['elapsed_seconds'] - prior_elapsed
     if remaining_calls <= 0 or remaining_seconds <= 0:

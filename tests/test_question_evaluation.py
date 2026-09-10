@@ -9,6 +9,25 @@ configure_test_environment()
 from scripts.eval_question_pipeline import manifest_for, previous_runs, digest, execute, ROOT
 
 
+def graded_result(result):
+    """Bound synthetic semantic grades for admission-only tests."""
+    result['final'].setdefault('claim_ledger', {'claims': []})
+    result['final']['finalization'].setdefault('fact_conservation',
+        {'dispositions': [], 'reviews': [], 'mappings': []})
+    payload = json.dumps(result).encode()
+    counts = dict(raw_false_approvals=0, delivered_false_approvals=0,
+                  missing_required_aspects=0, false_complete_coverage=0,
+                  unsupported_extras=0, false_exclusion_approvals=0,
+                  coverage_underreported_aspects=0, conservative_duplicate_rejections=0,
+                  conservative_duplicate_targets=[])
+    grade = json.dumps(dict(verdict='pass', result_sha256=digest(payload), **counts)).encode()
+    review = dict(spec='pass', standards='pass', result_sha256=digest(payload),
+                  reviewers=['spec', 'standards'],
+                  grade_sha256={a: digest(grade) for a in ('spec', 'standards')}, **counts)
+    return {'result.json': payload, 'review.json': json.dumps(review).encode(),
+            'grade-spec.json': grade, 'grade-standards.json': grade}
+
+
 class EvaluationAdmissionTests(unittest.IsolatedAsyncioTestCase):
     def runtime(self):
         return {'packages': {'strands-agents': '1.55.0'}, 'model': 'synthetic'}
@@ -94,16 +113,42 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
                     'query_plan': {'mode': 'strict', 'original_question': case['question'],
                                    'request_identity_digest': identity},
                     'finalization': {'request_identity_digest': identity}}}
-            payload = json.dumps(result).encode()
             for name, value in {'manifest': self.original, 'case': case,
-                    'review': {'spec': 'pass', 'standards': 'pass', 'result_sha256': digest(payload)},
                     'attempt-000-input': {'index': 0, 'prompt': 'original'},
                     'attempt-000-output': {'index': 0, 'response': 'approved'}}.items():
                 (directory / f'{name}.json').write_text(json.dumps(value))
-            (directory / 'result.json').write_bytes(payload)
+            result['attempt_sha256'] = {p.name: digest(p.read_bytes()) for p in directory.glob('attempt-*.json')}
+            for name, payload in graded_result(result).items():
+                (directory / name).write_bytes(payload)
 
     def manifest(self):
         return manifest_for(self.dataset, stage='all-modes', initial_output=self.root)
+
+    async def test_fresh_contract_requires_bound_grades_and_strict_identity_without_exception(self):
+        self.assertEqual(self.original['grading_version'], 2)
+        self.assertNotIn('conservative_admission', self.original)
+        self.assertIn('docs/specs/question-reviewed-retention.md', self.original['code_sha256'])
+        directory = self.root / 'case-00'
+        original = {p.name: p.read_bytes() for p in directory.glob('*.json')}
+        grade = directory / 'grade-spec.json'
+        grade.unlink()
+        with self.assertRaises(FileNotFoundError):
+            await execute(self.dataset, self.original, self.root, 1)
+        for name, payload in original.items(): (directory / name).write_bytes(payload)
+        for field, value in [('question', 'Another question'), ('mode', 'quick')]:
+            result = json.loads(original['result.json'])
+            result['final'][field] = value
+            for name, payload in graded_result(result).items(): (directory / name).write_bytes(payload)
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                previous_runs(self.root, 1, self.original, self.cases)
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                await execute(self.dataset, self.original, self.root, 1)
+            for name, payload in original.items(): (directory / name).write_bytes(payload)
+        result = json.loads(original['result.json'])
+        result['final']['finalization']['request_identity_digest'] = 'other'
+        for name, payload in graded_result(result).items(): (directory / name).write_bytes(payload)
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            await execute(self.dataset, self.original, self.root, 1)
 
     def test_schedule_and_raw_artifact_identity_are_frozen(self):
         from scripts.eval_question_pipeline import request_identity, MODES
@@ -111,12 +156,13 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(manifest['schedule']), 48)
         self.assertEqual(manifest['schedule'][:4], [
             {'case_id': self.cases[0]['id'], 'mode': mode} for mode in MODES])
-        self.assertEqual(len(manifest['initial_admission']), 72)
+        self.assertEqual(len(manifest['initial_admission']), 96)
         self.assertEqual(len({request_identity(manifest, self.cases[0], i, mode)
                               for i, mode in enumerate(MODES)}), 4)
         raw = self.root / 'case-00/attempt-000-output.json'
         raw.write_text('{"index":0,"response":"changed"}')
-        self.assertNotEqual(manifest['initial_admission'], self.manifest()['initial_admission'])
+        with self.assertRaisesRegex(ValueError, 'Raw attempt bytes'):
+            self.manifest()
         raw.unlink()
         with self.assertRaisesRegex(ValueError, 'raw'):
             self.manifest()
@@ -125,7 +171,7 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
         manifest = self.manifest()
         output = self.root / 'all-mode'; output.mkdir()
         (self.root / 'case-00/attempt-000-input.json').write_text('{"index":0,"prompt":"changed"}')
-        with self.assertRaisesRegex(ValueError, 'Frozen'):
+        with self.assertRaisesRegex(ValueError, 'Raw attempt bytes'):
             await execute(self.dataset, manifest, output, 0, initial_output=self.root)
         self.assertEqual(list(output.iterdir()), [])
 
@@ -160,8 +206,8 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
             snapshot = copy.deepcopy(original)
             manifest = json.loads(snapshot['manifest.json']); manifest[key] = value
             snapshot['manifest.json'] = json.dumps(manifest).encode()
-            def captured(path):
-                return snapshot if path.name == 'case-00' else read_run(path)
+            def captured(path, **kwargs):
+                return snapshot if path.name == 'case-00' else read_run(path, **kwargs)
             with patch('scripts.eval_question_pipeline.read_run', side_effect=captured):
                 with self.assertRaisesRegex(ValueError, 'full frozen Strict contract'):
                     self.manifest()
@@ -208,12 +254,11 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
         result['final']['mode'] = 'quick'
         result['final']['query_plan'].update(mode='quick', request_identity_digest=identity)
         result['final']['finalization']['request_identity_digest'] = identity
-        payload = json.dumps(result).encode()
-        (directory / 'result.json').write_bytes(payload)
+        for name, payload in graded_result(result).items():
+            (directory / name).write_bytes(payload)
         (directory / 'manifest.json').write_text(json.dumps(manifest))
-        (directory / 'review.json').write_text(json.dumps({
-            'spec': 'pass', 'standards': 'pass', 'result_sha256': digest(payload)}))
         self.assertEqual(previous_runs(root, 1, manifest, [case], modes=['quick']), (1, 2))
+        self.assertEqual(previous_runs(root, 1, manifest, [case]), (1, 2))
         for name in ('attempt-000-input.json', 'attempt-000-output.json'):
             path = directory / name; saved = path.read_bytes(); path.unlink()
             with self.assertRaisesRegex(ValueError, 'raw'):
@@ -233,12 +278,10 @@ class AllModeAdmissionTests(unittest.IsolatedAsyncioTestCase):
             snapshot = {name: (directory / name).read_bytes() for name in
                         ('manifest.json', 'case.json', 'result.json', 'review.json',
                          'attempt-000-input.json', 'attempt-000-output.json')}
-            snapshot['result.json'] = json.dumps(result).encode()
-            snapshot['review.json'] = json.dumps({'spec': 'pass', 'standards': 'pass',
-                'result_sha256': digest(snapshot['result.json'])}).encode()
+            snapshot.update(graded_result(result))
             from scripts.eval_question_pipeline import read_run
-            def captured(path):
-                return snapshot if path.name == 'case-00' else read_run(path)
+            def captured(path, **kwargs):
+                return snapshot if path.name == 'case-00' else read_run(path, **kwargs)
             with patch('scripts.eval_question_pipeline.read_run', side_effect=captured):
                 with self.assertRaisesRegex(ValueError, 'budget'): self.manifest()
 

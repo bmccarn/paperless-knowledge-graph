@@ -78,6 +78,38 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(execution['native_call_ceiling'], 7)
             self.assertFalse(result['cached'])
 
+    async def test_zero_retained_answer_preserves_requested_mode_and_saved_failure(self):
+        original = self.model
+        async def omit(**kwargs):
+            name = kwargs['name']
+            if name == 'fact_selector':
+                self.calls.append(name); record_native_stage(name)
+                payload = json.loads(kwargs['prompt'])
+                return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'omitted'}
+                                                    for row in payload['observations']]})
+            if name == 'fact_exclusion':
+                self.calls.append(name); record_native_stage(name)
+                payload = json.loads(kwargs['prompt'])
+                return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                    'decision': 'outside_request', 'target_id': None}]})
+            return await original(**kwargs)
+        for mode in ('quick', 'deep', 'timeline', 'strict'):
+            with self.subTest(mode=mode), patch.object(self.orchestrator, '_text_agent', side_effect=omit):
+                self.calls.clear()
+                result = await self.engine.query('What monthly premium is recorded?', mode=mode)
+                self.assertEqual(result['mode'], mode)
+                self.assertEqual(result['query_plan']['mode'], mode)
+                self.assertEqual(result['finalization']['pipeline_failure'], 'no_retained_facts')
+                self.assertFalse(result['finalization']['answer_verified'])
+                self.assertEqual(result['evidence']['score'], 0)
+                self.assertEqual(result['verification']['status'], 'incomplete')
+                self.assertEqual(restore_pipeline_metadata(result, result['answer']), result)
+                self.assertIsNone(restore_question_coverage(result))
+                self.assertFalse(self.engine._cacheable_answer(result, mode,
+                    request_identity=result['query_plan']['request_identity_digest']))
+                self.assertEqual(self.calls, ['query_planner', 'source_reader', 'fact_selector', 'fact_exclusion'])
+                self.assertEqual(result['finalization']['pipeline_execution']['audit_batches'], 0)
+
     async def test_http_style_and_sse_deliver_identical_final_state_without_drafts(self):
         ordinary = await self.engine.query('What monthly premium is recorded?', mode='quick')
         events = [e async for e in self.engine.query_stream('What monthly premium is recorded?', mode='quick')]

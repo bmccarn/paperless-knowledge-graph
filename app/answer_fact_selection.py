@@ -141,7 +141,7 @@ def _dispositions(raw, inventory):
 def parse_exclusion(text, omitted_id, delivered_ids):
     """One authoritative classification, constrained to actual selected targets."""
     if (not isinstance(omitted_id, str) or not omitted_id
-            or not isinstance(delivered_ids, list) or not delivered_ids
+            or not isinstance(delivered_ids, list)
             or any(not isinstance(identity, str) or not identity for identity in delivered_ids)
             or len(set(delivered_ids)) != len(delivered_ids) or omitted_id in delivered_ids):
         raise QuestionEvidenceError('invalid_exclusion_review')
@@ -273,6 +273,15 @@ def _validate_reviews(reviews, inventory, dispositions):
             raise QuestionEvidenceError('invalid_exclusion_review')
 
 
+def _retained_ids(inventory, dispositions, reviews):
+    """Preserve selected order, then valid rejected omissions in source order."""
+    _dispositions({'dispositions': dispositions}, inventory)
+    _validate_reviews(reviews, inventory, dispositions)
+    selected = [row['observation_id'] for row in dispositions if row['status'] == 'delivered']
+    rejected = {row['observation_id'] for row in reviews if row['status'] == 'rejected'}
+    return selected + [row['id'] for row in inventory if row['id'] in rejected]
+
+
 def _source_compatible(fact, claim, spans):
     for proposed in fact['references']:
         span = spans[proposed['span_id']]
@@ -289,15 +298,12 @@ def _receipt(inventory, dispositions, reviews, final, bound):
     final_candidate(final)
     spans = _source_manifest(final['claim_ledger']['spans'])
     _validate_inventory(inventory, spans)
-    _dispositions({'dispositions': dispositions}, inventory)
-    _validate_reviews(reviews, inventory, dispositions)
+    retained = _retained_ids(inventory, dispositions, reviews)
     by_id = {row['id']: row for row in inventory}
     claims = final['claim_ledger']['claims']
     mapped, used = {}, set()
-    for row in dispositions:
-        if row['status'] != 'delivered':
-            continue
-        fact = by_id[row['observation_id']]
+    for identity in retained:
+        fact = by_id[identity]
         found = next((claim for claim in claims if claim['id'] not in used
                       and claim['claim'] == '- ' + fact['text']
                       and _source_compatible(fact, claim, spans)), None)
@@ -308,7 +314,7 @@ def _receipt(inventory, dispositions, reviews, final, bound):
                              'reason': None if found else 'missing_final_fact'}
     by_review = {row['observation_id']: row for row in reviews}
     for row in dispositions:
-        if row['status'] == 'delivered':
+        if row['observation_id'] in mapped:
             continue
         identity = row['observation_id']
         review = by_review[identity]
@@ -327,7 +333,7 @@ def _receipt(inventory, dispositions, reviews, final, bound):
     summary = {'total': len(inventory), **{status: sum(row['status'] == status for row in mappings)
                for status in ('preserved', 'excluded', 'unresolved', 'unavailable')}}
     status = ('unavailable' if summary['unavailable'] else 'partial' if summary['unresolved'] else 'complete')
-    return {'version': 2, 'status': status, 'complete': status == 'complete', 'inventory': inventory,
+    return {'version': 3, 'status': status, 'complete': status == 'complete', 'inventory': inventory,
             'dispositions': dispositions, 'reviews': reviews, 'mappings': mappings,
             'summary': summary, 'binding': bound}
 
@@ -346,7 +352,7 @@ def _failure_receipt(inventory, dispositions, reviews, final, bound):
         raise QuestionEvidenceError('invalid_final_coverage_candidate')
     _dispositions({'dispositions': dispositions}, inventory)
     _validate_reviews(reviews, inventory, dispositions)
-    return {'version': 2, 'status': 'unavailable', 'complete': False,
+    return {'version': 3, 'status': 'unavailable', 'complete': False,
             'inventory': inventory, 'dispositions': dispositions, 'reviews': reviews,
             'mappings': [{'observation_id': row['id'], 'unit_id': None, 'status': 'unavailable',
                           'reason': 'no_verified_final_candidate'} for row in inventory],
@@ -375,9 +381,12 @@ class FactSelection:
 
     @property
     def candidate(self):
-        by_id = {row['id']: row for row in self.inventory}
-        texts = [by_id[row['observation_id']]['text'] for row in self.dispositions if row['status'] == 'delivered']
-        return ObservationCandidate.from_response({'observations': texts})
+        inventory = self.inventory
+        by_id = {row['id']: row for row in inventory}
+        retained = _retained_ids(inventory, self.dispositions, self.reviews)
+        if not retained:
+            return None
+        return ObservationCandidate.from_response({'observations': [by_id[identity]['text'] for identity in retained]})
 
     def bind_final(self, evidence, final):
         """Bind retained meaning to exact final units and their original sources."""
@@ -433,7 +442,7 @@ def restore_fact_conservation(result):
         saved = final['fact_conservation']
         if (not isinstance(saved, dict) or set(saved) != {'version', 'status', 'complete', 'inventory',
                 'dispositions', 'reviews', 'mappings', 'summary', 'binding'}
-                or type(saved['version']) is not int or saved['version'] != 2
+                or type(saved['version']) is not int or saved['version'] != 3
                 or type(saved['complete']) is not bool or saved['binding'] != bound
                 or not isinstance(saved['summary'], dict)
                 or any(type(v) is not int or v < 0 for v in saved['summary'].values())):
@@ -452,10 +461,14 @@ async def select_facts(orchestrator, evidence):
     raw = await orchestrator.select_question_facts(json.loads(frozen_payload))
     dispositions = _dispositions(strict_object(raw), inventory)
     selected = FactSelection(snapshot, canonical_json(inventory), canonical_json(dispositions), '[]')
-    if not any(row['status'] == 'delivered' for row in dispositions):
-        raise QuestionEvidenceError('empty_fact_selection')
-    selected.candidate  # Reject incompatible observation text before any exclusion work.
+    by_id = {row['id']: row for row in inventory}
+    selected_texts = [by_id[row['observation_id']]['text'] for row in dispositions if row['status'] == 'delivered']
+    if selected_texts:
+        # Invalid selected text cannot trigger exclusion work or a repaired draft.
+        ObservationCandidate.from_response({'observations': selected_texts})
     reviews = await _review_exclusions(orchestrator, frozen_payload, inventory, dispositions)
     if evidence.digest != snapshot or canonical_json(selection_payload(evidence)) != frozen_payload:
         raise QuestionEvidenceError('evidence_snapshot_mismatch')
-    return FactSelection(snapshot, selected._inventory, selected._dispositions, canonical_json(reviews))
+    selection = FactSelection(snapshot, selected._inventory, selected._dispositions, canonical_json(reviews))
+    selection.candidate  # Recovered interpretations must meet the same atomic-text contract.
+    return selection

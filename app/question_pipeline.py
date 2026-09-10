@@ -18,12 +18,40 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
             conversation_context=plan.get('conversation_context', ''))
         stage = 'fact_selector'
         composition = await select_facts(orchestrator, evidence)
+        candidate = composition.candidate
+        if candidate is None:
+            # A completed exclusion phase can retain nothing. Preserve its raw
+            # judgments, but never treat an empty answer as factual success.
+            final = await AnswerFinalizer(None).finalize(question, '', evidence_pack,
+                plan=plan, mode=mode, evaluated_at=plan['evaluated_at'])
+            final['answer'] = 'No source observations could be retained for a verified answer.'
+            final['finalization'].update(pipeline_version=PIPELINE_VERSION,
+                pipeline_failure='no_retained_facts', request_identity_digest=plan['request_identity_digest'],
+                evidence_snapshot_digest=evidence.digest,
+                disposition='incomplete', complete=False, answer_verified=False,
+                answer_digest=hashlib.sha256(final['answer'].encode()).hexdigest())
+            # Empty Quick strings normally take the legacy unaudited path. This
+            # explicit pipeline failure has no facts and must never inherit its score.
+            final['verification']['status'] = 'incomplete'
+            final['verification']['missing_evidence'] = [final['answer']]
+            final['evidence'].update(score=0.0, level='low', audit_status='incomplete',
+                                     penalties=[final['answer']])
+            if mode == 'timeline':
+                from app.timeline import project_timeline
+                final['timeline_events'], final['finalization']['timeline'] = project_timeline(
+                    final['answer'], final['claim_ledger'], final['finalization'], settings.source_date_order)
+            conservation = composition.bind_final(evidence, final)
+            final['finalization']['fact_conservation'] = conservation
+            final['finalization']['question_coverage'] = augment_fact_coverage(
+                unavailable_coverage(evidence, final, planning_status=plan['requirements_status']), conservation)
+            final['evidence']['coverage']['requested_aspects_complete'] = False
+            return final
         stage = 'source_audit'
         final = await AnswerFinalizer(evidence.auditor(orchestrator), orchestrator,
             timeout_seconds=settings.answer_audit_timeout_seconds,
             concurrency=settings.strands_max_concurrent_calls,
             date_order=settings.source_date_order).finalize(
-                question, composition.candidate, evidence_pack, plan=plan,
+                question, candidate, evidence_pack, plan=plan,
                 mode=mode, evaluated_at=plan['evaluated_at'])
         final['finalization']['request_identity_digest'] = plan['request_identity_digest']
         stage = 'answer_coverage'

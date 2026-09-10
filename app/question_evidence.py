@@ -12,7 +12,7 @@ from app import source_reading
 from app.answer_finalization import evidence_spans
 from app.query_metrics import CURRENT_QUERY_METRICS
 
-PIPELINE_VERSION = 'question-evidence-v4'
+PIPELINE_VERSION = 'question-evidence-v5'
 CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 
 class QuestionEvidenceError(ValueError):

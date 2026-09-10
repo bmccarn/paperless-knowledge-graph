@@ -86,6 +86,147 @@ async def audited(evidence, pack, candidate, *, all_sources=False):
 
 
 class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovered_occurrences_keep_order_and_exact_final_source_bindings(self):
+        from app.answer_fact_selection import select_facts, restore_fact_conservation
+        evidence, pack = await prepared([['Cedar is pending.', 'Cedar requires authorization.'],
+                                         ['Maple is pending.', 'Maple requires a review.']])
+        async def choose(payload):
+            rows = payload['observations']
+            return json.dumps({'dispositions': [{'observation_id': rows[i]['id'],
+                'status': 'delivered' if i in (2, 0) else 'omitted'} for i in (2, 0, 3, 1)]})
+        async def reject(payload):
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'reject', 'target_id': None}]})
+        selected = await select_facts(Adapter(choose, reject), evidence)
+        expected = ('Maple is pending.', 'Cedar is pending.',
+                    'Cedar requires authorization.', 'Maple requires a review.')
+        self.assertEqual(selected.candidate.observations, expected)
+        final = await audited(evidence, pack, selected.candidate, all_sources=True)
+        receipt = selected.bind_final(evidence, final)
+        self.assertEqual([m['unit_id'] for m in receipt['mappings']], ['u2', 'u3', 'u1', 'u4'])
+        self.assertTrue(receipt['complete'])
+        final['finalization']['fact_conservation'] = receipt
+        self.assertEqual(restore_fact_conservation(final), receipt)
+        for change in (lambda r: r.update(version=2),
+                       lambda r: r['mappings'][1].update(status='excluded', unit_id=None),
+                       lambda r: r['dispositions'][3].update(status='delivered'),
+                       lambda r: r['reviews'][0].update(decision='outside_request'),
+                       lambda r: r['inventory'][1]['references'][0].update(span_id='foreign')):
+            bad = copy.deepcopy(final)
+            change(bad['finalization']['fact_conservation'])
+            self.assertIsNone(restore_fact_conservation(bad))
+
+        rewritten = await audited(evidence, pack, ObservationCandidate.from_response({'observations': [
+            expected[0], expected[1], 'Authorization is required for Cedar.', expected[3]]}), all_sources=True)
+        rewritten_receipt = selected.bind_final(evidence, rewritten)
+        self.assertEqual(rewritten_receipt['mappings'][1]['status'], 'unresolved')
+        self.assertEqual(rewritten_receipt['summary']['preserved'], 3)
+        rewritten['finalization']['fact_conservation'] = rewritten_receipt
+        self.assertEqual(restore_fact_conservation(rewritten), rewritten_receipt)
+
+        substituted = await audited(evidence, pack, selected.candidate, all_sources=False)
+        substituted_receipt = selected.bind_final(evidence, substituted)
+        self.assertEqual([m['status'] for m in substituted_receipt['mappings']],
+                         ['preserved', 'preserved', 'unresolved', 'unresolved'])
+        substituted['finalization']['fact_conservation'] = substituted_receipt
+        self.assertEqual(restore_fact_conservation(substituted), substituted_receipt)
+
+    async def test_recovered_rows_cannot_become_implicit_duplicate_targets(self):
+        from app.answer_fact_selection import select_facts
+        evidence, pack = await prepared([['Cedar is pending.', 'Cedar is pending.', 'Cedar is pending.'], []])
+        async def choose(payload):
+            return json.dumps({'dispositions': [{'observation_id': row['id'],
+                'status': 'delivered' if i == 0 else 'omitted'} for i, row in enumerate(payload['observations'])]})
+        async def classify(payload):
+            first, second, third = [row['id'] for row in payload['observations']]
+            self.assertEqual(payload['delivered_ids'], [first])
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'reject' if payload['omitted_id'] == second else 'covered_by',
+                'target_id': None if payload['omitted_id'] == second else second}]})
+        selected = await select_facts(Adapter(choose, classify), evidence)
+        self.assertEqual([r['status'] for r in selected.reviews], ['rejected', 'unavailable'])
+        self.assertEqual(selected.candidate.observations, ('Cedar is pending.', 'Cedar is pending.'))
+        final = await audited(evidence, pack, selected.candidate)
+        self.assertEqual(selected.bind_final(evidence, final)['summary'],
+                         {'total': 3, 'preserved': 2, 'excluded': 0, 'unresolved': 0, 'unavailable': 1})
+
+    async def test_retained_candidate_controls_real_audit_batches_and_capacity_without_truncation(self):
+        from app.answer_fact_selection import select_facts
+        from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics, record_native_stage
+        for size in (6, 81):
+            with self.subTest(size=size):
+                texts = [f'The record contains observation {i}.' for i in range(size)]
+                evidence, pack = await prepared([texts, []])
+
+                async def select(payload):
+                    return json.dumps({'dispositions': [{'observation_id': row['id'],
+                        'status': 'delivered' if i == 0 else 'omitted'}
+                        for i, row in enumerate(payload['observations'])]})
+                async def reject(payload):
+                    return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                        'decision': 'reject', 'target_id': None}]})
+
+                adapter = Adapter(select, reject)
+                selected = await select_facts(adapter, evidence)
+                self.assertEqual(selected.candidate.observations, tuple(texts))
+                calls = []
+                class Auditor:
+                    async def audit_answer_units(inner, question, units, spans, plan):
+                        record_native_stage('source_auditor')
+                        calls.append([unit['text'] for unit in units])
+                        return {'assessments': [{'unit_id': unit['id'], 'status': 'supported',
+                            'temporal_scope': 'historical', 'temporal_assertion': 'source_observation',
+                            'references': [{'span_id': spans[0]['span_id']}]} for unit in units]}
+
+                metrics = QueryMetrics(); token = CURRENT_QUERY_METRICS.set(metrics)
+                try:
+                    final = await AnswerFinalizer(Auditor()).finalize(
+                        QUESTION, selected.candidate, pack, evaluated_at='2026-09-09')
+                finally:
+                    CURRENT_QUERY_METRICS.reset(token)
+                if size == 6:
+                    self.assertEqual([len(batch) for batch in calls], [4, 2])
+                    self.assertEqual([text for batch in calls for text in batch], ['- ' + text for text in texts])
+                    self.assertTrue(final['finalization']['answer_verified'])
+                    self.assertEqual(metrics.report()['audit_batches'], 2)
+                    self.assertEqual(metrics.report()['native_call_ceiling'], 4)
+                else:
+                    self.assertEqual(calls, [])
+                    self.assertFalse(final['finalization']['answer_verified'])
+                    self.assertEqual(final['finalization']['disposition'], 'incomplete')
+                    self.assertEqual(final['claim_ledger']['summary']['total'], 81)
+                    self.assertEqual(selected.bind_final(evidence, final)['summary']['unavailable'], 81)
+                    self.assertEqual(metrics.report()['audit_batches'], 0)
+
+    async def test_all_omitted_observations_can_be_retained_by_independent_rejection(self):
+        from app.answer_fact_selection import select_facts, restore_fact_conservation
+        evidence, pack = await prepared([['Cedar was requested.', 'Cedar remains conditional.'],
+                                         ['Maple was delivered.']])
+
+        async def omit_all(payload):
+            return json.dumps({'dispositions': [{'observation_id': row['id'], 'status': 'omitted'}
+                                                for row in reversed(payload['observations'])]})
+
+        async def reject_all(payload):
+            self.assertEqual(payload['delivered_ids'], [])
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                                              'decision': 'reject', 'target_id': None}]})
+
+        adapter = Adapter(omit_all, reject_all)
+        selection = await select_facts(adapter, evidence)
+        self.assertIsNotNone(selection.candidate)
+        self.assertEqual(selection.candidate.observations,
+                         ('Cedar was requested.', 'Cedar remains conditional.', 'Maple was delivered.'))
+        self.assertEqual(len(adapter.exclusions), 3)
+        final = await audited(evidence, pack, selection.candidate, all_sources=True)
+        receipt = selection.bind_final(evidence, final)
+        self.assertTrue(receipt['complete'])
+        self.assertEqual(receipt['summary']['preserved'], 3)
+        self.assertTrue(all(row['status'] == 'omitted' for row in receipt['dispositions']))
+        self.assertTrue(all(row['decision'] == 'reject' for row in receipt['reviews']))
+        final['finalization']['fact_conservation'] = receipt
+        self.assertEqual(restore_fact_conservation(final), receipt)
+
     async def test_direct_context_bound_is_enforced_before_selection(self):
         from app.answer_fact_selection import select_facts
         from app.question_evidence import CONVERSATION_CONTEXT_MAX_CHARS
@@ -206,7 +347,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         adapter = Adapter(select, review)
         selected = await select_facts(adapter, evidence)
-        self.assertEqual(selected.candidate.observations, ('Cedar is pending.',))
+        self.assertEqual(selected.candidate.observations, ('Cedar is pending.', 'A signature is recorded.'))
         self.assertEqual([r['status'] for r in selected.reviews], ['rejected', 'unavailable', 'accepted'])
         self.assertEqual(len(adapter.exclusions), 3)
         copied = selected.reviews
@@ -216,7 +357,14 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_identical_text_for_two_documents_cannot_share_one_subset_survivor(self):
         from app.answer_fact_selection import select_facts, restore_fact_conservation
         evidence, pack = await prepared([['Status is pending.'], ['Status is pending.']])
-        selected = await select_facts(Adapter(), evidence)
+        async def select(payload):
+            return json.dumps({'dispositions': [{'observation_id': row['id'],
+                'status': 'delivered' if i == 0 else 'omitted'}
+                for i, row in enumerate(payload['observations'])]})
+        async def reject(payload):
+            return json.dumps({'decisions': [{'observation_id': payload['omitted_id'],
+                'decision': 'reject', 'target_id': None}]})
+        selected = await select_facts(Adapter(select, reject), evidence)
 
         class Auditor:
             async def audit_answer_units(self, question, units, spans, plan):
@@ -264,7 +412,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
         duplicate = await select_facts(Adapter(select=choose_duplicate, review=classify_duplicate), evidence)
         final = await audited(evidence, pack, duplicate.candidate)
         receipt = duplicate.bind_final(evidence, final)
-        self.assertEqual(receipt['version'], 2)
+        self.assertEqual(receipt['version'], 3)
         self.assertEqual(receipt['dispositions'][1]['status'], 'omitted')
         self.assertEqual(receipt['reviews'][0]['decision'], 'covered_by')
         self.assertTrue(receipt['complete'])
@@ -402,7 +550,7 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(QuestionEvidenceError): await select_facts(adapter, bad)
             self.assertEqual(adapter.selections, [])
 
-    async def test_malformed_and_empty_selections_never_start_exclusion_review(self):
+    async def test_malformed_selections_and_empty_inventory_never_start_exclusion_review(self):
         from app.answer_fact_selection import select_facts
         evidence, _ = await prepared()
         for invalid in (None, '', 'null', 'false', '{}', '[]',
@@ -419,9 +567,9 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
             variants = [[row(a)], [row(a), row(a)], [row(a), row('foreign')],
                 [row(a, 'duplicate_of'), row(b)],
                 [{**row(a), 'target_id': None}, row(b)],
-                [row(a, 'omitted'), row(b, 'omitted')], [row(a, 'outside_request'), row(b)]]
+                [row(a, 'outside_request'), row(b)]]
             return json.dumps({'dispositions': variants[variant]})
-        for variant in range(7):
+        for variant in range(6):
             async def respond(payload, variant=variant): return await invalid_rows(payload, variant)
             adapter = Adapter(select=respond)
             with self.subTest(variant=variant), self.assertRaises(QuestionEvidenceError):
@@ -481,6 +629,8 @@ class FactSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cleanups, [1, 1])
         self.assertEqual(len(adapter.exclusions), 3)
         self.assertEqual(selected.reviews[0]['status'], 'rejected')
+        self.assertEqual(selected.candidate.observations,
+                         ('Keep the requested fact.', 'Additional source observation 0.'))
         self.assertTrue(all(row['status'] == 'unavailable' and row['reason'] == 'review_timeout'
                             for row in selected.reviews[1:]))
 

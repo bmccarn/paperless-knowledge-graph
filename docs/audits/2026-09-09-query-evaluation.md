@@ -1570,3 +1570,24 @@ calls were made. The source-record-native-diagnostic spec records the exact repo
 and inventory hashes. This does not prepare or qualify the complete comparison:
 audit-side serialization/capture, complete-run ownership and exact budget/runtime
 admission remain next. No claim of improved semantic accuracy or deployment is made.
+
+## Source-record comparison ready; native execution approval blocked
+
+At 2e28074 the complete comparison runner and both audit arms are implemented and
+independently reviewed. Both arms receive the same full originals with empty prior
+reading notes. All interpreted observations and their source mappings, raw audit
+ledgers and final subset decisions remain captured. Full backend suite: 1,009 tests,
+58 expected skips, 42.923 seconds; exact-head CI 34499836068 passed.
+
+The actual pinned-SDK localhost preflight serialized 304 requests (100 reader,
+16 baseline audit, 188 synthetic fresh-record audit), largest 109,411 bytes. Two
+independent admissions bind the exact code and 1,711 private input artifacts; remote
+validation passed. Automatic approval review then rejected native execution because
+it requires specific approval for this experiment's private source text/prompts to
+Google Gemini through the existing LiteLLM route. No native calls or result artifacts
+exist. This is no new semantic result, improvement or production release.
+
+The exact package hashes, scope, budgets, blocker and continuation command contract
+are recorded in [source-record diagnostic](../specs/source-record-native-diagnostic.md).
+The next step remains that admitted native comparison followed by two independent
+all-output grades. Previous failed results and all later release gates are unchanged.

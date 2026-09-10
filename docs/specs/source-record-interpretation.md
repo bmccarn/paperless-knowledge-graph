@@ -2,7 +2,9 @@
 
 Status: first model-free inventory/binding slice implemented, independently reviewed
 and locally validated. The reader adapter/projection and reader-only SDK preflight
-are now implemented; complete native comparison admission remains next. This
+and full comparison runner are implemented and independently reviewed. The exact
+comparison is admitted but its native execution requires the specific provider
+transfer approval described in the linked diagnostic. This
 spec is not a passing semantic result or production activation decision.
 
 ## Evidence and choice

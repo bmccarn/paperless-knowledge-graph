@@ -1,8 +1,10 @@
 # Source-record reader and verifier diagnostic
 
-Status: reader adapter, source projection and reader-only SDK preflight implemented
-and independently reviewed. Complete comparison audits, runner and native admission
-remain pending; no native calls have run under this protocol.
+Status: complete comparison runner, both audit arms and SDK preflight implemented
+and independently reviewed at 2e28074. Exact package passed both independent admission
+reviews and remote validation. Native execution is blocked by automatic approval
+review pending explicit approval for this experiment payload and provider destination;
+no native calls have run under this protocol.
 
 ## Hypothesis and fixed comparison
 
@@ -147,3 +149,34 @@ All input bytes are hash-verified and frozen before awaiting or native calls; su
 execution consumes those buffers. Admission binds the exact code, runtime, protocol,
 originals, gold, frozen primaries, evidence packs, complete preflight and schedule.
 Two independent admission receipts are required before execution.
+
+## Complete comparison readiness and execution blocker
+
+Revision 2e280748bfaef42a5dfb2bb09467877454b12fb1 passes both implementation review
+axes, 1,009 backend tests (58 expected skips, 42.923 seconds), and exact-head
+CI run 34499836068. The reviews reproduced and closed incomplete-preflight admission
+and setup-deadline accounting defects before any native calls. Regressions cover
+missing known bodies, missing fresh-audit evidence, prepared-input drift, aggregate
+expiry during setup, isolated failure continuation and shared capture failure.
+
+The full pinned-SDK localhost preflight captured 304 requests: 100 reader, 16 initial
+baseline audit, and 188 synthetic fresh-record audit requests. Largest body: 109,411
+bytes; total: 22,250,856 bytes. Synthetic audit counts are not a native-output forecast.
+
+Private package: /private/tmp/kg-source-record-comparison-v2-20260910.
+Input manifest SHA: d8443b0131050e949a0ca2c87d531c854cf10def8d4b720458ecf216f20e703a.
+Admission subject: d8a8203ee66f01af3b8ebb902ecf94ae2c3e6dca94277b39ed333905aa60fc3f.
+Preflight report SHA: be4c13127c3df860d50e4d1b8c5a848f0fdcd4a9694a08d07d2a2a21c247f1c7.
+Both independent receipts bind 1,711 input artifacts and 87 code files. The uploaded
+isolated package passed exact runtime, code, input and dual-receipt validation in
+the existing API pod. Provider route remains the existing LiteLLM alias to Google
+Gemini gemini-3.8-flash. No production activation occurred.
+
+Automatic approval review rejected the execution command because this experiment's
+private source text and prompts require specific authorization for that destination.
+The rejection is an external execution blocker, not a failed semantic comparison.
+Read-only confirmation found neither results nor native log artifacts in the isolated
+remote directory. Do not bypass the rejection or change routes. After the required
+authorization, revalidate the exact admitted package, execute once into the still-absent
+results directory, freeze outputs and independently grade both raw and final answers.
+All later whole-query, held-out, visual UI and GitOps gates remain open.

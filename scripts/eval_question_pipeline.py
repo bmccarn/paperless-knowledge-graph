@@ -43,7 +43,7 @@ EXTENSION_PATHS = {
 }
 
 
-def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None):
+def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None, conservative_admission=None):
     payload = dataset.read_bytes() if payload is None else payload
     data = load_data(payload)
     if stage not in {'initial', 'all-modes'}:
@@ -56,6 +56,10 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None)
         'docs/specs/question-exclusion-authority.md')]
     if stage == 'all-modes':
         paths.append(ROOT / 'docs/specs/question-all-mode-evaluation.md')
+    if conservative_admission is not None:
+        paths.extend(ROOT / name for name in (
+            'scripts/conservative_query_admission.py',
+            'docs/specs/question-conservative-coverage-admission.md'))
     runtime = runtime_snapshot()
     if runtime['packages']['strands-agents'] != '1.55.0':
         raise ValueError('Qualification requires locked Strands 1.55.0 runtime')
@@ -67,6 +71,11 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None)
         'sdk_retry_policy': 'single_attempt', 'proxy_cache_policy': 'bypass',
         'retrieval': 'fixed case originals; live retrieval not evaluated',
         'grading': 'independent original-source review of each case before continuing'}
+    if conservative_admission is not None:
+        from scripts.conservative_query_admission import load_admission
+        manifest['conservative_admission'] = load_admission(conservative_admission,
+            code_sha256=manifest['code_sha256'], runtime=runtime,
+            policy_bytes=(ROOT / 'docs/specs/question-conservative-coverage-admission.md').read_bytes())
     if stage == 'all-modes':
         manifest.update(mode='all-modes', cases=48, max_native_calls=900,
                         elapsed_seconds=3600, estimated_total_tokens=5000000,
@@ -83,10 +92,12 @@ def request_identity(manifest, case, index, mode):
     return digest(json.dumps(identity, sort_keys=True).encode())
 
 
-def read_run(directory, *, bind_attempts=False):
+def read_run(directory, *, bind_attempts=False, bind_grades=False):
     # Each byte snapshot supplies both validation and hashing. Never re-open an
     # artifact after grading it within one admission operation.
     names = ['manifest.json', 'case.json', 'result.json', 'review.json']
+    if bind_grades:
+        names.extend(('grade-spec.json', 'grade-standards.json'))
     snapshot = {name: (directory / name).read_bytes() for name in names}
     result = json.loads(snapshot['result.json'])
     count = result.get('native_call_count')
@@ -126,7 +137,9 @@ def validate_scheduled_result(result, manifest, case, index, mode):
 def initial_admission(root, current, cases):
     if root is None:
         raise ValueError('All-mode execution requires the passing initial slice')
-    snapshots = [read_run(root / f'case-{i:02d}') for i in range(12)]
+    conservative = 'conservative_admission' in current
+    snapshots = [read_run(root / f'case-{i:02d}', bind_attempts=True, bind_grades=True)
+                 if conservative else read_run(root / f'case-{i:02d}') for i in range(12)]
     original = json.loads(snapshots[0]['manifest.json'])
     expected = {key: value for key, value in current.items()
                 if key not in {'code_sha256', 'schedule', 'initial_admission'}}
@@ -153,6 +166,8 @@ def previous_runs(output, case_index, manifest, cases, *, snapshots=None, modes=
         directory = output / f'case-{index:02d}'
         if snapshots is not None:
             snapshot = snapshots[index]
+        elif 'conservative_admission' in manifest:
+            snapshot = read_run(directory, bind_attempts=True, bind_grades=True)
         elif manifest.get('mode') == 'all-modes':
             snapshot = read_run(directory, bind_attempts=True)
         else:
@@ -176,17 +191,22 @@ def previous_runs(output, case_index, manifest, cases, *, snapshots=None, modes=
                 or review.get('spec') != 'pass' or review.get('standards') != 'pass'
                 or result['error'] is not None):
             raise ValueError('Prior case lacks passing independent review')
-        if modes is not None:
-            validate_scheduled_result(result, manifest, cases[index], index, modes[index])
+        if 'conservative_admission' in manifest:
+            from scripts.conservative_query_admission import validate_case_grades
+            validate_case_grades(snapshot, result, review)
+        if modes is not None or 'conservative_admission' in manifest:
+            validate_scheduled_result(result, manifest, cases[index], index,
+                                      modes[index] if modes is not None else 'strict')
         calls += result['native_call_count']
         elapsed += result['elapsed_seconds']
     return calls, elapsed
 
 
-async def execute(dataset, manifest, output, case_index, *, initial_output=None):
+async def execute(dataset, manifest, output, case_index, *, initial_output=None, conservative_admission=None):
     payload = dataset.read_bytes()
     stage = 'all-modes' if manifest.get('mode') == 'all-modes' else 'initial'
-    if manifest != manifest_for(dataset, payload=payload, stage=stage, initial_output=initial_output):
+    if manifest != manifest_for(dataset, payload=payload, stage=stage, initial_output=initial_output,
+                                conservative_admission=conservative_admission):
         raise ValueError('Frozen code, dataset or runtime changed')
     data = load_data(payload)
     cases = data['cases'] if stage == 'initial' else [case for case in data['cases'] for _ in MODES]
@@ -194,7 +214,7 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None)
     if type(case_index) is not int or not 0 <= case_index < len(cases):
         raise ValueError('Invalid case index')
     prior_calls, prior_elapsed = previous_runs(output, case_index, manifest, cases,
-                                               modes=modes if stage == 'all-modes' else None)
+        modes=modes if stage == 'all-modes' or 'conservative_admission' in manifest else None)
     remaining_calls = manifest['max_native_calls'] - prior_calls
     remaining_seconds = manifest['elapsed_seconds'] - prior_elapsed
     if remaining_calls <= 0 or remaining_seconds <= 0:
@@ -315,14 +335,17 @@ def main():
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--stage', choices=('initial', 'all-modes'), default='initial')
     parser.add_argument('--initial-output', type=Path)
+    parser.add_argument('--conservative-admission', type=Path)
     args = parser.parse_args()
     if not args.execute:
-        write_private(args.manifest, manifest_for(args.dataset, stage=args.stage, initial_output=args.initial_output))
+        write_private(args.manifest, manifest_for(args.dataset, stage=args.stage,
+                      initial_output=args.initial_output, conservative_admission=args.conservative_admission))
         return
     if args.output is None:
         parser.error('--execute requires --output')
     print(json.dumps(asyncio.run(execute(args.dataset, json.loads(args.manifest.read_bytes()),
-                                         args.output, args.case_index, initial_output=args.initial_output))))
+                                         args.output, args.case_index, initial_output=args.initial_output,
+                                         conservative_admission=args.conservative_admission))))
 
 
 if __name__ == '__main__':

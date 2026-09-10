@@ -68,6 +68,18 @@ class LiveManifestTests(unittest.TestCase):
         self.assertIn('scripts/live_query_manifest.py', first['live_code_sha256'])
         self.assertEqual(first['all_mode_admission'], {'reviewed': 'synthetic'})
 
+    def test_conservative_exception_is_revalidated_before_live_inputs(self):
+        receipt = self.root / 'admission.json'
+        with patch('scripts.live_query_manifest.admit_all_modes',
+                   side_effect=ValueError('Admission bytes changed')) as admit, \
+             patch('scripts.live_query_manifest.private_inputs') as read_inputs:
+            with self.assertRaisesRegex(ValueError, 'Admission bytes changed'):
+                prepare_manifest(dataset='dataset', initial_output='initial', all_mode_output='all',
+                                 inputs=self.root, configuration={}, corpus_snapshot={},
+                                 evaluated_at='2026-09-09', conservative_admission=receipt)
+            admit.assert_called_once_with('dataset', 'initial', 'all', conservative_admission=receipt)
+            read_inputs.assert_not_called()
+
     def test_mutating_nested_runtime_inputs_cannot_rewrite_the_frozen_snapshot(self):
         configuration = {'models': ['frozen'], 'timeouts': {'audit': 120}}
         corpus = {'generation': 'g1', 'documents': [42]}

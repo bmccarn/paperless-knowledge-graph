@@ -62,14 +62,16 @@ def private_inputs(directory):
 
 
 def prepare_manifest(*, dataset, initial_output, all_mode_output, inputs,
-                     configuration, corpus_snapshot, evaluated_at):
+                     configuration, corpus_snapshot, evaluated_at, conservative_admission=None):
     """No readers or models open here. Repeat and compare before each live case.
 
     Configuration contains only explicitly selected non-secret settings. Corpus
     snapshot and date must be freshly read by the separately reviewed runtime;
     accepting a caller value here is not a claim that freshness was established.
     """
-    admission = admit_all_modes(dataset, initial_output, all_mode_output)
+    admission_options = ({'conservative_admission': conservative_admission}
+                         if conservative_admission is not None else {})
+    admission = admit_all_modes(dataset, initial_output, all_mode_output, **admission_options)
     snapshot = json.loads(json.dumps({'configuration': configuration,
                                      'corpus_snapshot': corpus_snapshot}, allow_nan=False))
     files = sorted((ROOT / 'scripts').glob('live_query_*.py'))

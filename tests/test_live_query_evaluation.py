@@ -120,6 +120,23 @@ class RequestBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PrerequisiteTests(unittest.TestCase):
+    def test_changed_exception_is_rejected_before_case_reads(self):
+        from tests.runtime import configure_test_environment
+        configure_test_environment()
+        from scripts.eval_question_pipeline import ROOT
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'manifest.json').write_text('{}')
+            receipt = root / 'admission.json'
+            with patch('scripts.eval_question_pipeline.manifest_for',
+                       side_effect=ValueError('Admission changed')) as expected, \
+                 patch('scripts.eval_question_pipeline.read_run') as read:
+                with self.assertRaisesRegex(ValueError, 'Admission changed'):
+                    admit_all_modes(ROOT / 'evals/reliability/question-development-r2.json',
+                                    root, root, conservative_admission=receipt)
+                self.assertEqual(expected.call_args.kwargs['conservative_admission'], receipt)
+                read.assert_not_called()
+
     def test_different_candidate_rejected_before_reading_case_or_opening_clients(self):
         # The existing harness owns full code/runtime policy validation; this
         # boundary must compare its complete expected manifest before case reads.

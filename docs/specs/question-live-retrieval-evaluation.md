@@ -132,3 +132,41 @@ Distinguish public-result/browser delivery from replayed history and separately
 validated real conversation persistence. Retained native-output replay does not
 qualify live retrieval. The independent holdout and exact-head GitOps release gate
 remain required after development; no passing subset closes the production issue.
+
+
+## Executable assembly plan
+
+The existing boundary modules need one executable owner; they are not yet a
+completed live runner. Implement these slices without changing application code:
+
+1. Add separate prepare/run-case commands. Bind independently reviewed private
+   requests, rubric and originals, all-mode prerequisites, conservative admission
+   when present, and the built frontend/source/lock identities. Revalidate prior
+   live grades and raw artifacts before any next case; preserve existing/failed
+   directories and enforce the aggregate call/time budget.
+2. Use a fresh isolated process for each invocation. Static admission and route
+   checks precede reader attachment. Read the real corpus generation and inventory
+   through an independent client; compare date, configuration and source/index
+   snapshot to the frozen manifest before admitting browser submission. Imported
+   embedding clients are closed by reader teardown and must not be reused across
+   cases.
+3. Own the direct engine client, native stage capture, read-only readers, delivery
+   session, loopback server, standalone frontend and Chromium in nested lifetimes.
+   Stop the browser/server and join route/query workers before detaching dependencies.
+   All model paths share the remaining experiment deadline and capture budget.
+   Preserve failure artifacts even if cleanup also fails.
+4. Submit each frozen request exactly once through the built frontend. Select its
+   exact mode/model and private history. Inspect actual desktop/mobile answer,
+   source drawers and Timeline controls; retained history inspection cannot start
+   a second query. Do not substitute rubric originals for live retrieval.
+5. Require conserved SSE/engine final payloads, complete captures, unchanged
+   post-delivery corpus and fetched originals, no denied store operations, restored
+   coverage and complete planning. Retain model/stage captures, fetched originals,
+   SSE bytes, private history and screenshots with exact result hash inventories.
+   Both grades record any conservative duplicate rejection and surviving target.
+6. Before production readers, run assembled offline controls for changed admission,
+   duplicate submission, incomplete/truncated model output, corpus drift, stream
+   cancellation, browser startup failure, tampered delivery, and aggregate budget
+   exhaustion. Include a built-frontend success exercising source inspection,
+   contextual history and mobile restoration. Independent review precedes native
+   execution; this assembly plan grants no release approval.

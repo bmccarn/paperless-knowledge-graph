@@ -53,7 +53,7 @@ def reviewed_snapshot(directory, snapshot):
     return captured
 
 
-def admit_all_modes(dataset, initial_output, all_mode_output):
+def admit_all_modes(dataset, initial_output, all_mode_output, *, conservative_admission=None):
     """Read-only admission; a partial or differently configured run cannot pass."""
     from scripts.eval_question_pipeline import (
         MODES, load_data, manifest_for, previous_runs, read_run,
@@ -63,8 +63,10 @@ def admit_all_modes(dataset, initial_output, all_mode_output):
     root = Path(all_mode_output)
     manifest_bytes = (root / 'manifest.json').read_bytes()
     manifest = json.loads(manifest_bytes)
+    admission_options = ({'conservative_admission': conservative_admission}
+                         if conservative_admission is not None else {})
     expected = manifest_for(Path(dataset), payload=dataset_bytes, stage='all-modes',
-                            initial_output=Path(initial_output))
+                            initial_output=Path(initial_output), **admission_options)
     if manifest != expected:
         raise ValueError('All-mode candidate, runtime or prerequisite artifacts changed')
     cases = [case for case in data['cases'] for _ in MODES]

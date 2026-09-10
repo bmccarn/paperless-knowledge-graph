@@ -782,3 +782,51 @@ qualified code later. Explicit constructor booleans override the setting; invali
 values fail before client construction. Configuration controls were red before the
 change and green afterward. The final full suite passed 789 tests in 24.907 seconds,
 with 48 expected datastore skips. Serving configuration is unchanged.
+
+
+V4 candidate `e90ce0e` passed full CI run `34427811841`. The frozen nine-call
+Gemini authority probe failed: eight correct decisions and one conservative false
+rejection of a full balance-history duplicate; zero false exclusion approvals,
+wrong targets or transport failures. Both independent grades are FAIL. The full
+requested March balance meaning survives in the selected March transaction target.
+Primary manifest SHA256:
+`699e1dafe263cc84f9e3bce8f11ba0804db46ec6c065348ad5b344f5432cbd01`;
+result SHA256:
+`56a87799e8ab6bff3f7248366f064097d041e67fa6c34fb081931f426c26ff6d`.
+Nine native calls took 25.747 active seconds and reported 18,065 tokens.
+
+A separately frozen matched GPT-5.5 comparison changed only the model route and
+produced the same nine classifications: also FAIL, one false rejection and no
+false approval, wrong target or transport failure. No model superiority was
+measured. Comparison manifest SHA256:
+`8bf7324f987cd7bfc8cf7782eb1a64a88facc4befe4811f4d2a32157b7a4d852`;
+result SHA256:
+`faba70380b0395bba57f7c074dd5623eb7f546a4aec598da0d110c36e138b838`.
+Nine calls took 29.065 active seconds and reported 12,382 tokens. Both reviewers
+verified identical inputs/code and complete captures; both failed results and
+all grades remain preserved. No further model or prompt arm is authorized by
+that comparison contract.
+
+Both reviewers accepted the separately documented prospective post-hoc development
+admission in `docs/specs/question-conservative-coverage-admission.md`. This relaxes
+only the internal zero-false-rejection prerequisite for fresh whole-query
+measurement, not the meaning/accuracy gates or release criteria. Its policy and
+failed-probe evidence must be immutably bound before execution. Conservative
+rejection counts and exact surviving targets must be independently graded.
+The existing Gemini route remains selected. No v4 whole-query run, activation or
+deployment has occurred; baseline improvement remains unproven.
+
+
+The development exception is frozen as private receipt SHA256
+`a00d96d4446928bfec5f7df3a7026bdf84da52f1293d4fc11318fe5b0bdc2d19`,
+binding 113 artifacts, both failed probes and two independent policy approvals.
+The new admission loader checks the raw capture chains, sole known duplicate
+rejection, unchanged application/lock/runtime and exact policy. Initial/all-mode
+manifests retain the exception; continuation binds individual grades, scheduled
+identity, aggregate zero-error counts, coverage-underreporting counts and exact
+supported surviving duplicate targets. Live admission threads the same receipt.
+Both final reviews are clear. Review caught and closed the claim-key mismatch,
+contradictory aggregate-grade admission and skipped Strict schedule validation.
+The full offline suite passed 802 tests in 25.096 seconds with 48 expected
+opt-in datastore skips; 38 focused checks passed and all 62 app/script files parsed.
+Application and prompt files remain identical to the failed v4 probe candidate.

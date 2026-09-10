@@ -29,7 +29,7 @@ from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v27"
+POLICY_VERSION = "source-audit-v28"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -870,13 +870,12 @@ def subset_source_reservations(candidate, ledger, revised_units, retained_ids):
 
 
 class AnswerFinalizer:
-    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
+    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60,
                  concurrency: int = 4, date_order: str = "mdy", allow_subset: bool = True):
         self.date_order = date_order
         self.auditor = auditor
         self.repairer = repairer
         self.timeout_seconds = timeout_seconds
-        self.max_units = max_units
         self.allow_subset = allow_subset
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or type(concurrency) is not int or concurrency < 1:
             raise ValueError("Audit timeout and concurrency must be positive")
@@ -884,7 +883,7 @@ class AnswerFinalizer:
 
     def _audit_timeout(self, candidate, observations=None):
         units = observations.units() if observations else answer_units(candidate)
-        batches = math.ceil(min(len(units), self.max_units) / 4)
+        batches = math.ceil(len(units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
     async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None, progress=None):
@@ -914,7 +913,9 @@ class AnswerFinalizer:
         checked = 0
         results = []
         context = '' if observations else audit_context(answer)
-        complete = bool(units) and len(units) <= self.max_units and len(context) <= self.max_units * 1200 and bool(spans)
+        # Batch size and worker concurrency bound execution. Candidate size is
+        # not an admission filter: a complete audit must examine every unit.
+        complete = bool(units) and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
@@ -1131,9 +1132,6 @@ class AnswerFinalizer:
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations,
                                                    diagnostics=diagnostics, observations=observations, progress=ledger)
                     summary = ledger["summary"]
-                    if attempt > 0 and summary['total'] > self.max_units:
-                        repair_diagnostic = {'reason': 'audit_unit_limit',
-                                             'unit_count': summary['total'], 'unit_limit': self.max_units}
                     if ledger["complete"] and summary["supported"] == summary["total"]:
                         disposition, temporal = temporal_acceptance(
                             question, candidate, ledger, plan, evidence_pack, evaluated_at)
@@ -1146,7 +1144,7 @@ class AnswerFinalizer:
                         # candidate with invalid attribution can still be repaired.
                         error = "The source audit did not complete."
                         break
-                    if attempt == 0 and self.repairer and len(candidate) <= 96000:
+                    if attempt == 0 and self.repairer:
                         repair_in_progress = True
                         async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(

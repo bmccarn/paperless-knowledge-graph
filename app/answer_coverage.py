@@ -251,11 +251,31 @@ def restored_sources(metadata):
             for doc_id in dict.fromkeys(r['document_id'] for r in refs)]
 
 
+def question_followups():
+    """Source-review prompts make no unaudited factual presupposition."""
+    return ['Which source documents should I review?',
+            'What information could not be established from the sources?']
+
+
+def question_presentation(metadata):
+    """Normalize present UI fields without adding them to lower-level receipts."""
+    restored = dict(metadata)
+    if 'source_summary' in metadata:
+        summary = metadata['source_summary']
+        restored['source_summary'] = {**(summary if isinstance(summary, dict) else {}),
+            'latest_source_date': None, 'latest_supporting_source_date': None,
+            'latest_retrieved_source_date': None}
+    if 'follow_up_suggestions' in metadata:
+        restored['follow_up_suggestions'] = question_followups()
+    return restored
+
+
 def restore_pipeline_metadata(metadata, answer):
     """Keep saved text, but never display an invalid new-pipeline receipt as verified."""
     final = metadata.get('finalization')
     if not has_question_pipeline_metadata(metadata):
         return metadata
+    metadata = question_presentation(metadata)
     # Preserve an identifiable, consistently unverified execution failure.
     if (isinstance(final, dict) and final.get('pipeline_version') == PIPELINE_VERSION
             and final.get('answer_verified') is False and final.get('complete') is False

@@ -52,7 +52,7 @@ from app.question_evidence import (PIPELINE_VERSION, validate_requirements, coar
                                    QuestionEvidenceError, CONVERSATION_CONTEXT_MAX_CHARS)
 from app.question_pipeline import finalize_question
 from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
-from app.answer_coverage import restore_question_coverage, restored_sources
+from app.answer_coverage import restore_question_coverage, restored_sources, question_presentation
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
@@ -433,7 +433,7 @@ class QueryEngine:
                 item["excerpt"] = "\n…\n".join(dict.fromkeys(r["quote"] for r in refs))
         # Keep source titles and excerpts tied to validated source membership.
         cited = final["finalization"]["cited_document_ids"]
-        if cited:
+        if cited or self.question_pipeline:
             sources = [{"document_id": doc_id, "title": next(r["source_title"] for r in references if r["document_id"] == doc_id),
                         "excerpt": "\n…\n".join(dict.fromkeys(r["quote"] for r in references if r["document_id"] == doc_id))}
                        for doc_id in cited]
@@ -509,7 +509,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         cached = await cache_get(query_cache, cache_key)
         if self._cacheable_answer(cached, mode, request_identity=cache_key):
             if self.question_pipeline:
-                cached['sources'] = restored_sources(cached)
+                cached = question_presentation({**cached, 'sources': restored_sources(cached)})
             cached["cached"] = True
             return cached
 
@@ -605,6 +605,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         }
 
         metrics = CURRENT_QUERY_METRICS.get()
+        if self.question_pipeline:
+            result = question_presentation(result)
         if metrics is not None:
             result['finalization']['pipeline_execution'] = metrics.report()
         if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode, request_identity=cache_key):

@@ -145,20 +145,16 @@ class FactInventoryTests(unittest.IsolatedAsyncioTestCase):
                         QUESTION, inventory.candidate, source_pack, evaluated_at='2026-09-09')
                 finally:
                     CURRENT_QUERY_METRICS.reset(token)
-                if size == 6:
-                    self.assertEqual([len(batch) for batch in calls], [4, 2])
-                    self.assertEqual(sum(calls, []), ['- ' + text for text in texts])
-                    self.assertTrue(final['finalization']['answer_verified'])
-                    self.assertEqual(metrics.report()['audit_batches'], 2)
-                    self.assertEqual(metrics.report()['native_call_ceiling'], 4)
-                else:
-                    final['finalization']['reader_inventory_digest'] = inventory.inventory_digest
-                    self.assertEqual(calls, [])
-                    self.assertFalse(final['finalization']['answer_verified'])
-                    self.assertEqual(final['finalization']['disposition'], 'incomplete')
-                    self.assertEqual(final['claim_ledger']['summary']['total'], 81)
-                    self.assertEqual(inventory.bind_final(evidence, final)['summary']['unavailable'], 81)
-                    self.assertEqual(metrics.report()['audit_batches'], 0)
+                self.assertEqual([len(batch) for batch in calls],
+                                 [4, 2] if size == 6 else [4] * 20 + [1])
+                self.assertEqual(sum(calls, []), ['- ' + text for text in texts])
+                self.assertTrue(final['finalization']['answer_verified'])
+                batches = 2 if size == 6 else 21
+                self.assertEqual(metrics.report()['audit_batches'], batches)
+                self.assertEqual(metrics.report()['native_call_ceiling'], batches * 2)
+                final['finalization']['reader_inventory_digest'] = inventory.inventory_digest
+                self.assertEqual(final['claim_ledger']['summary']['audited'], size)
+                self.assertEqual(inventory.bind_final(evidence, final)['summary']['preserved'], size)
 
     async def test_context_and_narrowed_planner_never_delete_inventory(self):
         from app.question_evidence import CONVERSATION_CONTEXT_MAX_CHARS

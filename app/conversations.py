@@ -10,7 +10,8 @@ from typing import Optional
 import httpx
 from app.config import settings
 from app.timeline import restore_timeline
-from app.answer_coverage import restore_pipeline_metadata, has_question_pipeline_metadata, restore_question_coverage, restored_sources
+from app.answer_coverage import (restore_pipeline_metadata, has_question_pipeline_metadata,
+                                restore_question_coverage, restored_sources, question_followups)
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,8 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                                metadata['finalization'].get('disposition') == 'stored_binding_unavailable' else m["confidence"]),
                 "query_time_ms": m["query_time_ms"],
                 "cached": m["cached"],
-                "follow_ups": json.loads(m["follow_ups"]) if m["follow_ups"] else None,
+                "follow_ups": (question_followups() if has_question_pipeline_metadata(metadata)
+                               else json.loads(m["follow_ups"]) if m["follow_ups"] else None),
                 "source_summary": metadata.get("source_summary"),
                 "query_plan": metadata.get("query_plan"),
                 "trace": metadata.get("trace"),

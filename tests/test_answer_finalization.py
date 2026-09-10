@@ -290,10 +290,12 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["finalization"]["attempts"], 2)
         self.assertEqual(result["finalization"]["disposition"], "supported")
 
-    async def test_budget_overflow_is_explicit(self):
-        result = await AnswerFinalizer(SupportedAuditor(), max_units=1).finalize("Premium?", "One. Two.", PACK)
-        self.assertEqual(result["finalization"]["disposition"], "incomplete")
-        self.assertFalse(result["claim_ledger"]["complete"])
+    async def test_large_prose_candidate_is_audited_completely(self):
+        result = await AnswerFinalizer(SupportedAuditor()).finalize(
+            "Premium?", "The recorded monthly premium is $321.00 USD. " * 81, PACK)
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertTrue(result["claim_ledger"]["complete"])
+        self.assertEqual(result["claim_ledger"]["summary"]["audited"], 81)
 
     async def test_flagged_source_cannot_certify_derived_fact(self):
         pack = copy.deepcopy(PACK)

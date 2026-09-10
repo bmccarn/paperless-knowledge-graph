@@ -90,14 +90,15 @@ class ObservationDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 pack('Cedar records an adjustment of -$40 USD.'), mode='quick')
             self.assertEqual(result['finalization']['answer_verified'], accepted)
 
-    async def test_initial_candidate_cannot_hide_units_beyond_audit_capacity(self):
+    async def test_initial_candidate_cannot_hide_units_beyond_former_audit_capacity(self):
         text = 'Cedar records $20.'
         auditor = HandleAuditor()
-        result = await AnswerFinalizer(auditor, max_units=1).finalize(
-            'What is recorded?', ObservationCandidate((text, text)), pack(text), mode='quick')
-        self.assertFalse(result['finalization']['answer_verified'])
-        self.assertEqual(result['claim_ledger']['summary']['total'], 2)
-        self.assertFalse(result['claim_ledger']['complete'])
+        result = await AnswerFinalizer(auditor).finalize(
+            'What is recorded?', ObservationCandidate((text,) * 81), pack(text), mode='quick')
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertEqual(result['claim_ledger']['summary']['total'], 81)
+        self.assertEqual(result['claim_ledger']['summary']['audited'], 81)
+        self.assertTrue(result['claim_ledger']['complete'])
 
     async def test_failed_replacement_audit_cannot_restore_initial_candidate_ledger(self):
         original = ObservationCandidate(('Cedar invoice is REJECT.',))

@@ -1135,3 +1135,69 @@ native accuracy evidence. The broader backend suite passed 903 tests with 53 exp
 skips in 36.807 seconds. The new regression module subsequently passed all 12 tests,
 including the added deadline and cancellation control. New native qualification,
 live corpus/browser qualification, heldout evaluation and release remain pending.
+
+## v27 development passes and live failure (September 10)
+
+Published candidate `75ada6d` passed exact-head CI. Fresh twelve-case Strict
+qualification passed both independent original-based reviews: 73 calls, 316.729
+active seconds and 205,173 reported tokens. Fresh forty-eight-case all-mode
+qualification also passed both reviews: 272 calls, 1,434.876 active seconds and
+780,332 tokens. Both runs had zero hard failures; coverage was conservatively
+under-reported for two and ten aspects respectively. These fixed-original results
+do not establish real retrieval completeness.
+
+The first real-corpus built-browser request then failed. It used 61 native calls
+and 195.886 active seconds. All transports completed normally, and the browser
+completed desktop/mobile source inspection and conversation restoration, but the
+delivered answer was the generic fallback. Thirty-five source readers retained
+155 observations; the hard eighty-unit ceiling prevented all audit dispatches.
+The reconstructed candidate digest matches the retained result and has 38,576
+characters with 209 eligible source windows. Runtime SHA is
+`2956b80fd0344354845fa9f83fc10d9e0c4a3473ae991ffadeefd42d49baef9f`.
+No passing `result.json` was emitted. Both failure reviews bind the runtime and all
+226 retained artifacts; the remaining five scheduled cases were not run.
+
+Original review separately found required records absent from source reading,
+missing later sections of a retrieved document, and a material qualification lost
+by a reader that had received its source text. The captures cannot distinguish
+never-discovered from later-dropped documents in every case; those remain explicit
+diagnostic limits. The rendered UI also leaked an incorrect indexed date and
+unaudited draft follow-ups presupposing completed cancellation/current coverage.
+Root visually inspected the actual mobile answer and desktop source/follow-up
+capture. Browser transport success is not factual acceptance.
+
+The reviewed next work is [large-evidence query execution](../specs/large-evidence-query-execution.md).
+Its scheduling slice removes total-unit and total-repair-input eligibility gates,
+retains four-unit batches/bounded workers and scales the deadline to actual work.
+The new regressions first failed on the reproduced cliff and then passed; both
+review axes cleared implementation. Seventy-four focused checks passed. The first
+full suite ran 914 tests with 53 expected skips and two failures in legacy tests
+that explicitly expected the retired size ceilings. Those tests now assert full
+audit/conservation and preserved prose context; all 28 checks in their two modules
+pass. Full validation after the remaining changes is still required.
+
+Retrieval coverage and public presentation changes remain separate gates. No new
+native qualification or GitOps activation is admitted while known omissions remain.
+
+Slices A and C subsequently passed both independent implementation reviews. The
+presentation fix removes unaudited date authority and draft follow-up presuppositions
+from fresh, cached and saved pipeline responses; failed fresh source lists now
+match restoration instead of exposing raw indexed headers. Successful source quotes
+remain tied to validated references. Lower-level receipts retain their original
+shape when no presentation fields are present.
+
+Two actual built-browser controls passed in 6.667 seconds, exercising successful
+source inspection and failed-answer presentation on desktop/mobile and private
+conversation restoration. Root and the spec reviewer visually inspected the
+captures. A separate production conversation-read control checks the stored
+follow-up column; private browser history is not represented as that database test.
+An initial browser control incorrectly expected background controls to remain
+accessible through an open modal; that test expectation was corrected while
+retaining the forbidden-content checks. All attempts remain in private artifacts.
+
+Final backend validation ran 920 tests in 38.094 seconds: zero failures, 55 expected
+opt-in skips. Earlier full-suite restoration equality failures exposed unwanted UI
+fields being added to lower-level receipts; the implementation now normalizes only
+existing presentation fields, and those original regression assertions pass unchanged.
+The new execution spec is bound by evaluation manifests. No production activation
+or fresh model qualification has followed the retained live failure.

@@ -1079,3 +1079,31 @@ cannot execute: identity capture, the frontend and the browser all use the same
 minimal OS environment, with explicit application listener settings. Cluster
 context, namespace, pod and UID are also bound to the frozen manifest. The six real-corpus questions, all-mode native admission, sealed
 holdout and GitOps release remain uncompleted gates. No deployment was performed.
+
+## Fresh source-relative temporal qualification (September 10)
+
+Candidate 9e79182f66f2a1289554e37527457ffd87d02823 completed all twelve Strict
+development cases once, with independent specification and standards passes for
+every exact result. All six failure counts are zero. Two requested aspects have
+conservatively under-reported coverage despite their meaning being delivered;
+these remain recorded separately. Total execution was 73 native calls, 299.914
+active seconds and 217,214 reported tokens. The formerly failing hours case now
+delivers all three source-supported meanings with complete restored coverage and
+conservation. The failed predecessor remains failed and preserved.
+
+The initial manifest is 601d40fcd314107c7f77ae83b1ff4a091e528bdd0b8199fcd644742a177ed442.
+The unchanged application and initial 52 bound files, plus the all-mode spec,
+are frozen for the separate 48-case all-mode run: manifest
+c08af3c78a9856be3608a82777348d60cdd5a4bb2847743e4a25d4b0d38c60d8,
+package a5921e0742c6b436ed2b89fe047ce55a51aaaa0d615330b5711a2f4617950920.
+Its first Quick case passed both independent reviews; broader qualification remains pending. This is
+synthetic fixed-original evidence, not real-corpus retrieval qualification.
+
+Both reviewers approved the expanded live preparation: 135 originals and 139
+input artifacts, canonical input-map hash
+9c7554ce90467ad0f14f6a83ebaf6cd7551f436f561e4f7edac09b0714e53a9e.
+The extra source review closes category omissions without requiring incidental
+claim-administration detail. A fresh real corpus/index snapshot and all-mode
+qualification are still required before live admission. The legacy 60-second
+stream-verification setting is unused by the current query path; the actual SSE
+loop emits status while awaiting the owned query task. No serving setting changed.

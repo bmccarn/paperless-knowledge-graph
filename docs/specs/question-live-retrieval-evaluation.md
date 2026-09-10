@@ -41,9 +41,16 @@ must independently retrieve the earlier invoice and treat conversation text only
 as antecedent context, never source proof. Private originals also supply the later
 invoice, so any comparison must be independently supported on both sides.
 
-Private preparation captured 128 original documents matching the inventory's OCR
-hash and modification timestamp: insurance-tagged records, Starlink records and
-the two Duke bills. These are rubric inputs only, never a retrieval allowlist or
+Private preparation captured 135 original documents matching the inventory's OCR
+hash and modification timestamp: insurance-tagged records, Starlink records,
+the two Duke bills, and additional insurance records identified during independent
+original-source review. The broad history rubric includes historical life coverage,
+spouse health eligibility, trip-specific travel coverage and a vision billing notice.
+It distinguishes elections from processed changes, eligibility from claim handling,
+and planned billing from completed payments or termination. Individual medical-claim
+details remain optional; their originals can qualify descriptions of later evidence
+without turning routine claim administration into a policy change.
+These are rubric inputs only, never a retrieval allowlist or
 preloaded candidate evidence. Keep unrelated corpus documents searchable. Evaluate
 retrieval against known necessary records or equivalent original evidence; an
 alternative valid source is not a failure merely for having a different document ID.

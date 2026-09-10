@@ -194,6 +194,15 @@ class StrandsQueryOrchestrator:
         return await self._read_source_documents(payload, payload['source_documents'],
                                                  strategy='document_local_corrected')
 
+    async def review_source_omissions(self, payload):
+        """Diagnostic-only adapter; callers own validation, attempts and receipts."""
+        from app.source_interpretation import RECOVERY_PROMPT, response_format
+        if not self.enabled:
+            return None
+        return await self._text_agent(name='source_omission_review', system_prompt=RECOVERY_PROMPT,
+            prompt=json.dumps(payload, ensure_ascii=False),
+            response_format=response_format(payload['source_documents']))
+
     async def select_question_facts(self, payload):
         from app.answer_fact_selection import SELECTION_PROMPT
         if not self.enabled:
@@ -501,10 +510,16 @@ Rules:
             except asyncio.TimeoutError:
                 outcome = 'timeout'
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
+                # This diagnostic stage owns explicit failure receipts; legacy
+                # query stages keep their existing unavailable fallback.
+                if name == 'source_omission_review':
+                    raise
                 return None
             except Exception as exc:
                 outcome = 'provider_failure'
                 logger.warning("Strands %s failed: %s", name, type(exc).__name__)
+                if name == 'source_omission_review':
+                    raise
                 return None
             finally:
                 logger.info('Strands stage=%s outcome=%s queue_ms=%d elapsed_ms=%d input_message_chars=%d input_message_bytes=%d usage=%s',

@@ -1314,3 +1314,79 @@ the existing Kubernetes pod without explicit destination permission. That upload
 did not run. Only code and non-secret runtime observation were subsequently sent;
 no original, gold, prompt or wire payload was included in that allowed operation.
 Native accuracy and downstream release gates remain open.
+
+### Approved B2 native execution (September 10)
+
+After explicit user approval, the exact independently reviewed package was uploaded
+and executed in an isolated process. All 24 scheduled invocations completed in
+124.217115 seconds with 24 native attempts, no corrections and no failed transport.
+146 artifacts are frozen at /private/tmp/kg-reader-retention-native-v1-20260910.
+Manifest SHA: 210ab31749914bf9b4ea2af97f91ed46b860a12e35d3ed933bdc6e3265107acf.
+Run SHA: 3cafc99007d31af780fc27e9fe4c022777e66f69a56b93b71e66394b3324d14e.
+Inventory SHA: 2293bcc8682b46d5467c2037f68447bf2576be85f7b5550ac5487192d8b53021.
+Reported usage totals 99,994 input and 23,747 output tokens. Provider-reported
+cache-read input tokens do not establish response-cache reuse; the configured
+LiteLLM response-cache bypass remained bound in the requests.
+
+Both completed independent semantic grades FAIL. Every one of the 106 observations
+and 129 references was reviewed. Both full-source readings omit the supplied
+coverage-summary replacement qualification; both arms lose its required
+effective-time association. Further findings include a dropped condition,
+misassociated record status, incomplete supporting references and unreconciled
+printed arithmetic. Classification differences are being adjudicated separately;
+the exclusive grade files and frozen gold remain unchanged. This keeps the
+retention gate closed, regardless of transport success.
+The unchanged failed v27 query and earlier measurement are not reclassified.
+No deployment occurred. Published candidate 4262b01 passed CI run 34477375082.
+
+The 24 captured native request bodies exactly match their frozen SDK wire
+preflights, and all capture hashes validate. The omitted replacement qualification
+is present in the first window of both arms at the same offset; the full-source
+prompt is smaller. This is demonstrated interpretation loss, not a reproduced
+context-window overflow or omitted tail transfer. Private grade hashes:
+- Spec: 4b5f2cccb85f671b57514bab84f18178808c810c43adf34ac104442567dba6bc.
+- Standards: c25d895f72a46cd1bbdc1994eac2095e5cd73f07e9a899cec86c9020a0eb5604.
+
+### B2 grade reconciliation
+
+The separate adjudication preserves both original grades and accepts the union of
+source-grounded defects. Four effective-time losses and two summary-replacement
+losses are six incompletely preserved required instances. The worksheet amount
+itself survives; the dropped condition is classified as an extra assertion error.
+The extra worksheet date is present in the original but absent from its cited
+window, so reference support fails while ownership passes. Two outputs copy
+printed figures but assert arithmetic relationships that those figures do not
+satisfy; preserving individual numbers does not support the asserted sum.
+
+Adjudicated R: 9/12 cells pass; F: 8/12 cells pass. All four short cross-domain
+controls pass in both repetitions and arms. F preserves 40/44 required instances;
+R preserves 40/42 supplied instances, with two separate transfer limitations.
+Neither arm passes the fixed diagnostic. Adjudication SHA:
+93517dc7abf16917f94b7680af6da6b54907266ee5f6b5d10c6f2439c5897fd2.
+No new model output was obtained to settle a disagreement.
+
+### Diagnostic-only interpretation recovery implementation
+
+The independent design reviews selected addition-only review followed by the
+unchanged source auditor. Implemented app/source_interpretation.py and a narrow
+Strands omission-review adapter. No live pipeline flag, query routing, cache identity
+or source-audit acceptance changed. Primary occurrences remain immutable and are
+followed by referenced additions; receipts bind exact input/primary/additions,
+attempts and implementation/prompt/schema identities. Execution success confers no
+factual-support or source-completeness authority.
+
+Review reproduced and closed nested metadata leakage and exception swallowing in
+the actual native adapter. Canonical nested source shapes now reject extra metadata,
+and omission review preserves timeout versus shared integrity failure while legacy
+stages retain their existing fallback. Below-adapter regressions exercise these
+failures. An adversarial false-primary/correct-addition test confirms that the false
+primary still reaches audit, is rejected, and the surviving subset gets a fresh
+audit; the final result remains explicitly partial.
+
+Both reviewers cleared the slice. Thirty-one focused reader/recovery tests passed;
+the full backend suite ran 972 tests in 37.970 seconds with 58 expected opt-in skips.
+All frozen F canonical windows remained admitted unchanged in independent review.
+No new native model calls occurred. The next matched recovery diagnostic is drafted
+in docs/specs/source-interpretation-recovery-diagnostic.md; its runner, exact package,
+wire preflight and admission remain outstanding. This is implementation evidence,
+not a measured accuracy improvement or a release qualification.

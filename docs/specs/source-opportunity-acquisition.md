@@ -264,7 +264,10 @@ Do not deploy partial candidates or substitute local passes for native accuracy.
   changes, pin the immutable image via the homelab GitOps repo, verify Flux and
   production UI behavior. Review paused processing schedules before closure.
 
-Current status: G3 admission prepared; specific input-upload permission is pending.
+Current status: the approved G3 experiment and both independent grades completed.
+Both grades FAIL reader retention. Reconciliation is complete; the reviewed
+diagnostic-only recovery slice is implemented and locally tested. Its new matched
+native experiment remains unadmitted; execution completion does not close G3.
 G1 transfer checks and G2 source-size measurement passed. Later-stage feasibility
 and native accuracy remain unproved; no deployment is claimed. Prepared reader inputs retain the exact
 previous preparation hash after that change.
@@ -317,3 +320,29 @@ existing Kubernetes pod because that destination requires explicit user permissi
 No sensitive input upload or native call ran. Code-only runtime inspection was
 allowed and completed separately. Complete exact-package review before requesting
 the final specific upload/execution authorization; do not bypass the rejection.
+
+### G3 approved execution
+
+The user explicitly approved the reviewed sensitive package upload and the fixed
+reader experiment. All 24 scheduled invocations completed normally in 124.217
+seconds, using 24 native attempts with no protocol corrections. The 146-artifact
+inventory is frozen under the approved subject
+7e3c71c4c6d58ce8299afa1d3f2d333431d11c05e04174d7ce4f316f58567007.
+The earlier approval rejection is historical and resolved for this experiment.
+
+Execution success is not accuracy success. Both full-source replacement readings
+omit a supplied material replacement qualification. Both independent grades FAIL.
+They also identify lost effective-time association, dropped conditions and a
+misassociated record status; grading classifications are being reconciled without
+changing either original grade. G3 cannot advance on this result. The next general design is recorded
+in [source interpretation recovery](source-interpretation-recovery.md); no new
+recovery implementation or native experiment is authorized by that draft alone.
+
+### G3 recovery slice
+
+The separately reviewed addition-only recovery module is implemented locally with
+immutable primary/addition occurrences and execution receipts. Both code reviews
+are clear and the backend suite passes (972 tests, 58 expected opt-in skips).
+The [matched recovery diagnostic](source-interpretation-recovery-diagnostic.md) is
+drafted; its runner, frozen package, wire preflight and native admission remain
+outstanding. No live query activation or new native run is claimed.

@@ -42,6 +42,32 @@ class StructuralQuantityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(evidence, before)
                 self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['quote'], original)
 
+    async def test_compact_currency_separator_survives_finalization(self):
+        for symbol in ('$', '€', '£', 'USD ', 'CAD '):
+            for separator in ('/', ' / '):
+                with self.subTest(symbol=symbol, separator=separator):
+                    original = f'Record limits: {symbol}200 per person{separator}{symbol}600 per event.'
+                    claim = f'The record shows a limit of {symbol}600 per event.'
+                    evidence = pack(original)
+                    spans = evidence_spans(evidence, citation_safe=True)
+                    auditor = StrandsQueryOrchestrator()
+                    auditor.enabled = True
+                    row = decision(references=[{'span_id': spans[0]['span_id']}])
+                    with patch.object(auditor, '_text_agent', AsyncMock(return_value=json.dumps({'assessments': [row]}))):
+                        result = await AnswerFinalizer(auditor).finalize('What limits does the record show?', claim, evidence)
+                    self.assertTrue(result['finalization']['answer_verified'], result['claim_ledger'])
+                    self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['quote'], original)
+
+    def test_compact_currency_separator_preserves_sign_identity_and_token_boundaries(self):
+        for separator in ('/', ' / '):
+            refs = references('Charges: USD 200 each person' + separator + 'CAD -600 each event.')
+            self.assertTrue(values_match('Charge: CAD -600.', refs))
+            for claim in ('Charge: CAD 600.', 'Charge: CAD -601.', 'Charge: USD -600.', 'Charge: €600.'):
+                self.assertFalse(values_match(claim, refs), claim)
+        for original in ('Ratio: 12 mg/$600.', 'Identifier: ref/$600ABC.', 'Identifier: ref/$600_identifier.'):
+            self.assertFalse(values_match('Charge: $600.', references(original)), original)
+        self.assertFalse(values_match('Dose: 12 mg.', references('Dose: 12 mg/USD.')))
+
     def test_wrong_amount_sign_currency_and_scale_remain_rejected(self):
         refs = references(TABLE)
         self.assertTrue(values_match('Charge: $100 USD. Balance: $500 USD.', refs))

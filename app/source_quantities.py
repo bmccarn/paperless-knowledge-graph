@@ -31,7 +31,18 @@ def _unit_tokens(text):
     tokens, consumed = [], 0
     for match in _BASE_PATTERN.finditer(text):
         first, last = match.span()
-        if first < consumed or (first and (text[first - 1].isalpha() or text[first - 1] in "_/'’")):
+        # A slash may separate two explicitly prefixed currency amounts. Keep
+        # consumed compound units intact and require the complete amount here.
+        currency_after_separator = False
+        if first and text[first - 1] == '/' and match.group() in _CURRENCIES:
+            amount_start = last
+            while amount_start < len(text) and text[amount_start].isspace():
+                amount_start += 1
+            compound_denominator = bool(tokens and tokens[-1][1] == first and tokens[-1][2].endswith('/'))
+            currency_after_separator = (not compound_denominator
+                and _CURRENCY_AMOUNT.match(text, amount_start) is not None)
+        if first < consumed or (first and (text[first - 1].isalpha()
+                or text[first - 1] in "_'’" or (text[first - 1] == '/' and not currency_after_separator))):
             continue
         following = text[last:last + 1]
         if following and following.isalpha() and unicodedata.category(following) != 'Lm':

@@ -2,7 +2,8 @@
 
 Status: proposed next diagnostic after the reconciled failed source-record comparison;
 independent Spec/design and Standards plan reviews cleared the acceptance contract.
-Diagnostic runner implementation is in progress; no native admission under this plan.
+The diagnostic runner is implemented, reviewed and technically admitted. Native
+execution awaits specific authorization for the new OpenAI source/prompt transfer.
 
 ## Decision to test
 
@@ -192,3 +193,39 @@ audit has one inherited deadline, and every occurrence origin is reconstructed a
 compared. Both timeout regressions failed before their fixes. The complete backend
 suite passes 1,014 tests with 58 expected skips (49.330 seconds). These checks are
 execution-contract evidence, not model accuracy measurements.
+
+## Exact technical admission and transfer boundary
+
+Final code revision: 6d72699e48c806cf4ec6d384eaebf96b0e0e48ba. Both implementation
+review axes are clear. CI run 34515185837 passed backend offline and disposable
+integration checks plus frontend and production browser regressions. The final
+focused byte-preservation suite passes five tests (6.876 seconds).
+
+Private package: /private/tmp/kg-model-comparison-v3-20260910.
+Admission subject:
+c7f0af1d6f7cd3758310cbe5937d2e6556bf78489dbb933de6b3d649b1f86331.
+Final manifest SHA:
+e81469fbc1eba43578f81ceca23aa9d1093a2be4a2b112dd4add7c2de580d588.
+Complete preflight SHA:
+4cd00328385a796ef8026f50c144c843d96fa43747c7cf3842265cfdc444e103.
+
+Both independent technical receipts bind 1,605 input files and 90 code files.
+The 22 separately reviewed appendix entries retain 12 supported, five unsupported,
+three calendar-policy and two uncertain judgments. Exact original label bytes are
+preserved. All 228 actual SDK bodies are unchanged from the prior local measurement.
+The rejected earlier package and original native grades remain preserved privately.
+
+The isolated remote package passed full dual-receipt validation, exact runtime and
+known-body checks, and a fresh read-only provider metadata comparison. Runtime is
+Python 3.12.14 with Strands 1.55.0, OpenAI SDK 2.54.0 and httpx 0.28.1. Local SDK
+serialization used Python 3.12.13 with identical packages; this microversion difference
+is explicit. Both routes retain cache bypass, zero SDK retries and no output-token cap.
+No results directory or native comparison calls exist.
+
+The comparison route resolves to OpenAI gpt-5.6-sol with no custom API base; the
+control resolves to Google Gemini gemini-3.8-flash. Prior explicit transfer approval
+covered Google Gemini. Technical admission does not authorize a new provider transfer.
+Before execution, obtain the new destination approval, then reverify the exact package,
+unchanged live route metadata and absent results. Run once under the frozen shared
+1,536-attempt/four-hour ceilings and independently grade every output. No production
+activation, complete-query pass or release approval follows from this readiness state.

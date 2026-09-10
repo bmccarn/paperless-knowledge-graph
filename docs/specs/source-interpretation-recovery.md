@@ -1,11 +1,10 @@
 # Source interpretation recovery
 
 Status: the diagnostic-only module and runner are implemented and independently
-reviewed. The exact v2 package has both technical admission receipts; native
-execution is blocked on explicit downstream model-provider approval. The user
-approved transfer to the pod and the remote package passed validation. No recovery
-model calls have run. B2 grades completed FAIL. The completed B2 run remains immutable;
-this design cannot relabel any of its failures.
+reviewed. The admitted v2 native comparison completed all twelve pairs but failed
+to restore the required omissions; all delivered answers match baseline. Both complete
+independent semantic grades FAIL. B2 remains failed and live activation
+remains closed.
 
 ## Problem and scope
 
@@ -101,7 +100,7 @@ restoration cannot mix stages or promote an incomplete execution.
    add held-out cases before production activation.
 
 The review resolution below fixes primary-error treatment and receipt authority for
-the isolated slice. Additive recovery benefit remains unmeasured. Live integration
+the isolated slice. The completed diagnostic found no delivered-answer improvement. Live integration
 of coverage/restoration and G4's large-source audit strategy remain separate work.
 
 ## Alternatives to resolve during review
@@ -223,9 +222,7 @@ control where corrected and incorrect versions coexist. Grade all new assertions
 all rejections and all raw attempts; preserve B2's failure unchanged. This is a
 recovery-mechanism test, not whole-query, all-mode, held-out or deployment evidence.
 
-The next native protocol is [recovery diagnostic](source-interpretation-recovery-diagnostic.md).
-Its exact v2 package is technically admitted but has not executed. After explicit
-user approval, private inputs were uploaded and remote validation passed. Automatic
-approval review separately rejected model execution pending authorization to send
-the source text through the configured LiteLLM route to Google Gemini. Unused B2 attempts are not its budget.
-See the evaluation report for the frozen identities and remaining execution steps.
+The completed native protocol is [recovery diagnostic](source-interpretation-recovery-diagnostic.md).
+Its exact v2 package completed once after explicit user approval for pod transfer
+and downstream model processing. Required omissions remain, so it does not advance
+the design gate. See the evaluation report for frozen identities and grades.

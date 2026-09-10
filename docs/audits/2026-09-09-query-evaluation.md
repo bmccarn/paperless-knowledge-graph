@@ -1453,3 +1453,68 @@ Read-only route inspection confirmed litellm.tools.svc.cluster.local, alias
 upstream base URL reported. Only selected routing metadata was output; credentials
 and source text were not displayed. Explicit downstream authorization is the next
 step; the same frozen package remains ready and must not be resumed or replaced.
+
+
+### Approved recovery native execution (September 10)
+
+After explicit downstream-provider approval, the exact admitted v2 package ran
+once through the configured LiteLLM route to Google Gemini. All twelve pairs and
+all scheduled stages completed in 454.269106 seconds using 55 native calls.
+There were no failed pairs. The 441 result artifacts are frozen under
+/private/tmp/kg-source-recovery-v2-20260910/results. Run SHA:
+0c82c224ca56393d985e7d19170d27305b62e263a0d2ff66206a11bd69e66c38.
+Result inventory SHA:
+693d552b167d297a134f1e988928e06bdccf052eec4697d3eac3ed3c38976358.
+All 307 registered artifact hashes and all 55 raw SDK body hashes validated.
+
+Eleven recoveries returned no additions; one returned two. All twelve final
+answer strings exactly match their corresponding baseline. Both replacement
+recoveries left the known required omissions untouched, establishing diagnostic
+failure. Both complete independent semantic grades FAIL; no success is inferred
+from clean execution or the count of supported claims. CI 34486493350 passed at
+a37ceae, which contains the frozen cf2c8c3 runner code plus status documentation.
+
+A separate model-free reproduction isolates explicit currency amounts after compact
+slash separators being dropped by the quantity tokenizer. Adding whitespace alone
+makes the same amount pass. The proposed bounded correction is specified in
+source-quantity-token-boundaries.md. Short-year date refusal is an explicit
+unspecified-century rule and requires a separate context policy; it is not being
+silently removed. Neither observation changes the frozen run or authorizes live
+recovery activation, reindexing, or deployment.
+
+
+Both grades agree that each arm delivers 36/44 required meanings and passes eight
+of twelve pairs, with zero newly recovered required meanings and no unsupported
+final assertions. Both find one unsupported new addition and seven false factual
+raw approvals. The spec review additionally identifies two initial approvals whose
+single cited window cannot support a whole-package absence assertion; the subsequent
+subset rejection is classified differently by the original standards grade.
+Reconciliation resolved this difference against the original claim/reference scope:
+both initial absence approvals are false reference approvals, and the subset
+rejections are not established wrongful rejections. All twelve windows remained
+available; reduced source transfer is not the mechanism. Two short-year expansion
+rejections are separately classified as explicit policy limitations, not proven
+parser defects. Agreed totals are nine false raw approvals (seven factual, two
+reference-scope), fourteen wrong primary deterministic rejections, one wrong
+addition rejection and six collateral correct primary occurrences withheld after
+subset failure. Both original grade files remain immutable. Adjudication SHA:
+d8a5fa552aaa31738fa882ac6daba53861e1e6917f8166bdc245d160b9bd2645.
+Grade hashes:
+- Spec: 195c88eb824f520aaa108506bf1033d25f970c9642eb921b7ae62245a8312202.
+- Standards: 34a9b892930dadfd8f3bc0b44f74c5f98d450d7cb0d6dbbff5f8bccecec6ba16.
+
+The separately specified currency-boundary fix is implemented at 5238bd1. Both
+independent implementation reviews are clear. Nineteen structural quantity tests
+and the full 984-test backend suite pass (58 expected opt-in skips). An offline
+replay of the frozen source-correct coverage claims removes eight slash-related
+false value rejections; it does not run models, change native artifacts, correct
+other unit/date policy boundaries or qualify the failed recovery approach.
+
+The next interpretation design must address the demonstrated loss and false raw
+approvals before live integration. Addition-only review of a prior summary has no
+measured delivered benefit here. Evaluate source-local structured observations and
+verification against original record sections as a separate design alternative,
+with explicit qualification/date/action roles and retained rejected dispositions.
+This remains an architecture candidate requiring spec/review and a fresh controlled
+comparison, not a measured solution. G4 large-source payload design, whole-query and
+held-out evaluation, visual UI acceptance and GitOps release remain open.

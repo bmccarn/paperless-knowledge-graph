@@ -1201,3 +1201,38 @@ fields being added to lower-level receipts; the implementation now normalizes on
 existing presentation fields, and those original regression assertions pass unchanged.
 The new execution spec is bound by evaluation manifests. No production activation
 or fresh model qualification has followed the retained live failure.
+
+## Source acquisition implementation (2026-09-10, not deployed)
+
+Implemented the independently reviewed [source opportunity contract](../specs/source-opportunity-acquisition.md):
+all emitted planned/gap/decomposition searches, both observed keyword samples,
+paginated full-index lexical matches, and typed graph provenance retain their
+discovered IDs. Full Paperless originals replace ranked document/window quotas
+in the inactive question pipeline. Eligibility, completion, OCR/fingerprint freshness,
+post-filter original interval coverage and the full reader-visible context are bound
+before reading. Missing work prevents complete question coverage, while independently
+verified facts remain deliverable. Acquisition identity is mandatory in coverage
+and conservation bindings, including saved/cache restoration. Cancellation joins
+workers and exposes retained completed/pending diagnostics to the capture owner.
+
+Review reproduced and closed partial-context binding mutations, loss of completed
+timeout diagnostics, stripping all acquisition metadata to upgrade saved coverage,
+swallowed datastore/model failures, malformed gap planning defaulted to success, and
+truncation of the already-observed union of two successful keyword searches. These
+are deterministic transfer/delivery fixes, not evidence of improved model accuracy.
+
+Validation: 940 offline backend tests passed in 39.188 seconds with 58 expected
+opt-in skips. A unique disposable PostgreSQL schema exercised 521 synthetic
+documents with lexical matches after character 4,000: 519 originals transferred,
+one feedback-blocked and one unindexed lead retained as gaps. Desktop/mobile/source
+inspection/reload browser tests passed twice, then passed again after the UI gained
+a source-gap explanation. Visual inspection caught and corrected zero evidence-item
+counts in the new pack. Webpack production build and lint passed; the default
+Turbopack build hit a local port permission error. No production deployment or new
+native model run occurred. The failed v27 live attempt remains failed.
+
+Fresh production resource measurement is blocked by automatic approval review of
+the diagnostic code upload and full production-document reads, including a revised
+helper retaining only aggregate sizes/hashes. Neither rejected helper ran. The
+unchanged-reader B2 diagnostic can still be prepared from already retained local
+originals, with separate plan/runner review and native admission required.

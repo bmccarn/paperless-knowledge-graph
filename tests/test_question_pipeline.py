@@ -120,9 +120,9 @@ class QuestionPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolved_followup_guides_the_actual_quick_retrieval(self):
         plan, _ = await self.engine._build_query_plan('What about that value?', 'quick')
         retrieve = AsyncMock(return_value={'vector_results': [], 'graph_nodes': []})
-        with patch.object(self.engine, '_retrieve', retrieve):
+        with patch('app.source_discovery.SourceDiscovery.search', retrieve):
             await QueryEngine._execute_retrieval_plan(self.engine, 'What about that value?', plan, 'quick')
-        retrieve.assert_awaited_once_with('What monthly premium is recorded?')
+        retrieve.assert_awaited_once_with('What monthly premium is recorded?', 'planned:0')
         self.assertEqual(plan['original_question'], 'What about that value?')
 
     async def test_cache_and_saved_receipts_bind_question_sources_and_final_ledger(self):

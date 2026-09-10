@@ -66,7 +66,10 @@ async def query_runtime(request, directory, *, max_calls, seconds, expected_corp
             stack.push_async_callback(main.query_engine.close)
             if cache._corpus_generation._redis is not None:
                 stack.push_async_callback(asyncio.to_thread, cache._corpus_generation._redis.close)
-            engine = query.QueryEngine(question_pipeline=True)
+            def retain_acquisition(progress):
+                state['acquisition'] = _freeze(progress)
+            engine = query.QueryEngine(question_pipeline=True, acquisition_deadline=capture.deadline,
+                                       acquisition_observer=retain_acquisition)
             stack.push_async_callback(engine.close)
             engine.client.max_retries = 0
             engine.client = CapturedClient(engine.client, capture, label='query', bypass_cache=True)

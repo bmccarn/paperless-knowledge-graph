@@ -75,6 +75,7 @@ def binding(evidence, final):
     return {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(source['question']),
             'evaluated_at': source['evaluated_at'], 'source_date_order': source['source_date_order'],
             'request_identity_digest': final['finalization'].get('request_identity_digest'),
+            'acquisition_inventory_digest': source.get('acquisition_inventory_digest'),
             'resolved_question_digest': digest(source['resolved_question']),
             'requirements_digest': digest(source['requirements']), 'snapshot_digest': evidence.digest,
             'candidate_digest': final['finalization']['candidate_digest'],
@@ -196,6 +197,17 @@ def restore_question_coverage(result):
         if not isinstance(snapshot, str) or len(snapshot) != 64 or any(c not in '0123456789abcdef' for c in snapshot):
             return None
         receipt = result['finalization']['question_coverage']
+        acquisition = None
+        if (plan.get('acquisition_required') or 'source_acquisition' in final
+                or 'acquisition_inventory_digest' in final):
+            from app.source_acquisition import validate_receipt
+            acquisition = validate_receipt(final['source_acquisition'], final['acquisition_inventory_digest'])
+            if acquisition['request_digest'] != plan.get('acquisition_request_digest'):
+                return None
+            if (receipt.get('acquisition_digest') != acquisition['digest']
+                    or receipt.get('acquisition_complete') is not acquisition['complete']):
+                return None
+            receipt = {k: v for k, v in receipt.items() if k not in {'acquisition_digest', 'acquisition_complete'}}
         if not isinstance(receipt, dict) or set(receipt) != {
                 'status', 'complete', 'requirements', 'omitted_requested_aspects', 'planning_status', 'binding',
                 'assessment_status', 'conservation_status', 'conservation_summary'} or type(receipt['complete']) is not bool:
@@ -204,6 +216,7 @@ def restore_question_coverage(result):
         expected_binding = {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(question),
             'evaluated_at': plan['evaluated_at'], 'source_date_order': plan['source_date_order'],
             'request_identity_digest': request_identity,
+            'acquisition_inventory_digest': final.get('acquisition_inventory_digest'),
             'resolved_question_digest': digest(requested['resolved_question']),
             'requirements_digest': digest(requested['requirements']), 'snapshot_digest': snapshot,
             'candidate_digest': final['candidate_digest'], 'answer_digest': final['answer_digest'],
@@ -228,6 +241,10 @@ def restore_question_coverage(result):
             expected = {**coverage_assessment(raw, requested['requirements'], candidate.units(), plan['requirements_status']),
                         'binding': expected_binding}
         expected = augment_fact_coverage(expected, conservation)
+        if acquisition is not None:
+            from app.source_acquisition import augment_acquisition_coverage
+            expected = augment_acquisition_coverage(expected, acquisition)
+            return expected if expected == final['question_coverage'] else None
         return expected if expected == receipt else None
     except (KeyError, TypeError, ValueError, AttributeError):
         return None

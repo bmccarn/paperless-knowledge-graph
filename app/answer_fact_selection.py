@@ -327,6 +327,7 @@ def restore_fact_conservation(result):
         bound = {'pipeline_version': PIPELINE_VERSION, 'question_digest': digest(question),
             'evaluated_at': evaluated, 'source_date_order': plan['source_date_order'],
             'request_identity_digest': plan['request_identity_digest'],
+            'acquisition_inventory_digest': final.get('acquisition_inventory_digest'),
             'resolved_question_digest': digest(requested['resolved_question']),
             'requirements_digest': digest(requested['requirements']),
             'snapshot_digest': final['evidence_snapshot_digest'],

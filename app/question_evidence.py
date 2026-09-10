@@ -12,7 +12,7 @@ from app import source_reading
 from app.answer_finalization import evidence_spans
 from app.query_metrics import CURRENT_QUERY_METRICS
 
-PIPELINE_VERSION = 'question-evidence-v6'
+PIPELINE_VERSION = 'question-evidence-v7'
 CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 
 class QuestionEvidenceError(ValueError):
@@ -65,6 +65,16 @@ class QuestionEvidence:
         if not isinstance(conversation_context, str) or len(conversation_context) > CONVERSATION_CONTEXT_MAX_CHARS:
             raise QuestionEvidenceError('invalid_conversation_context')
         requested = validate_requirements(requirements)
+        acquisition = evidence_pack.get('_acquisition')
+        if acquisition is not None:
+            from app.source_acquisition import validate_bundle
+            validate_bundle(evidence_pack, acquisition['receipt'], acquisition['inventory_digest'], acquisition['request'])
+            original_request = acquisition['request']
+            if any(original_request[k] != v for k, v in {
+                    'question': question, 'resolved_question': requested['resolved_question'],
+                    'conversation_context': conversation_context, 'evaluated_at': evaluated_at,
+                    'source_date_order': source_date_order}.items()):
+                raise QuestionEvidenceError('acquisition_request_mismatch')
         spans = [s for s in evidence_spans(evidence_pack, citation_safe=True) if not s.get('feedback_open')]
         documents = source_reading.group_sources(spans)
         metrics = CURRENT_QUERY_METRICS.get()
@@ -73,7 +83,8 @@ class QuestionEvidence:
         snapshot = canonical_json({'pipeline_version': PIPELINE_VERSION,
                                    'question': question, **requested, 'evaluated_at': evaluated_at,
                                    'source_date_order': source_date_order, 'source_documents': documents,
-                                   'conversation_context': conversation_context})
+                                   'conversation_context': conversation_context,
+                                   **({'acquisition_inventory_digest': acquisition['inventory_digest']} if acquisition else {})})
         # The reader gets copies, before there is a candidate to anchor its reading.
         payload = json.loads(snapshot)
         reading = await orchestrator.read_question_sources(payload)

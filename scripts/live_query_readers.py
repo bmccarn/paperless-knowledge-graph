@@ -11,14 +11,14 @@ from scripts.live_query_evaluation import sha256
 GRAPH_READS = frozenset({
     'get_all_document_ids', 'get_document_dates', 'get_document_entities', 'get_documents_by_entity_types',
     'get_recent_docs_per_organization', 'get_recent_docs_per_organization_filtered',
-    'get_subgraph', 'search_nodes',
+    'get_subgraph', 'search_nodes', 'get_node',
 })
 VECTOR_READS = frozenset({
     'get_document_embedding_ids', 'get_document_hash_ids', 'get_ingestion_fingerprints',
     'entity_keyword_search', 'entity_vector_search', 'get_chunks_for_documents',
     'get_incomplete_document_ids', 'get_open_feedback_document_ids',
     'historical_document_candidates', 'keyword_search', 'vector_search',
-    'vector_search_by_doc_ids',
+    'vector_search_by_doc_ids', 'get_doc_hash', 'acquisition_document_page',
 })
 
 
@@ -52,6 +52,18 @@ class CapturedDocuments:
         self.hashes = {}
         self.changed = False
         self._seen = set()
+
+    async def get_skip_tag_ids(self):
+        ids = await self._client.get_skip_tag_ids()
+        path = self.directory / 'skip-tag-ids.json'
+        value = sorted(ids)
+        if path.exists():
+            if json.loads(path.read_text()) != value:
+                self.changed = True
+                raise ValueError('Eligibility tags changed during retrieval')
+        else:
+            write_private(path, value)
+        return set(ids)
 
     async def get_document(self, document_id):
         if type(document_id) is not int or document_id <= 0:

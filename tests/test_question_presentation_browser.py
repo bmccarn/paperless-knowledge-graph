@@ -52,7 +52,9 @@ class QuestionPresentationBrowserTests(unittest.IsolatedAsyncioTestCase):
                         options = directory/'options.json'
                         options.write_text(json.dumps({'base': f'http://127.0.0.1:{port}',
                             'directory': str(directory), 'question': request['question'],
-                            'failed': failed, 'neutral': controls.NEUTRAL}))
+                            'failed': failed, 'neutral': controls.NEUTRAL,
+                            **({'acquisition_complete': self.expected_acquisition_complete}
+                               if hasattr(self, 'expected_acquisition_complete') else {})}))
                         options.chmod(0o600)
                         with (directory/'browser.log').open('xb') as log:
                             process = await asyncio.create_subprocess_exec(node,

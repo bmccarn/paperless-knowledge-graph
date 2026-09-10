@@ -21,6 +21,13 @@ try {
     const body = await page.locator('body').innerText();
     for (const forbidden of ['Latest source:', 'Wrong index header', 'March 9, 2026',
       'following the completed cancellation']) assert.ok(!body.includes(forbidden), forbidden);
+    if (followupsVisible && Object.hasOwn(options, 'acquisition_complete')) {
+      const coverage = page.getByRole('region', { name: 'Question coverage', exact: true });
+      if (!options.acquisition_complete) assert.ok((await coverage.innerText()).includes(
+        'Some source searches or document reads could not finish. Coverage remains partial.'));
+      assert.ok((await coverage.innerText()).includes(options.acquisition_complete
+        ? 'Requested aspects answered' : 'Partly answered'));
+    }
     if (followupsVisible) for (const text of options.neutral)
       await page.getByRole('button', { name: text, exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
@@ -37,6 +44,11 @@ try {
   assert.equal(final.type, 'complete');
   assert.deepEqual(final.follow_up_suggestions, options.neutral);
   assert.equal(final.finalization.answer_verified, !options.failed);
+  if (Object.hasOwn(options, 'acquisition_complete')) {
+    assert.equal(final.evidence_pack.coverage.evidence_item_count, 1);
+    assert.equal(final.finalization.source_acquisition.complete, options.acquisition_complete);
+    assert.equal(final.finalization.question_coverage.complete, options.acquisition_complete);
+  }
   await page.waitForFunction(() => !document.querySelector('textarea[placeholder="Ask a question..."]').disabled);
   await page.locator('[id^="answer-"]').last().waitFor();
   await safe(); await capture('desktop-answer.png');
@@ -57,6 +69,10 @@ try {
   await page.getByRole('dialog').getByRole('button', { name: options.question, exact: true }).click();
   await page.locator('[id^="answer-"]').last().waitFor();
   await safe(); await capture('mobile-restored.png');
+  if (Object.hasOwn(options, 'acquisition_complete')) {
+    await page.getByRole('region', { name: 'Question coverage', exact: true }).scrollIntoViewIfNeeded();
+    await capture('mobile-restored-coverage.png');
+  }
   assert.equal(submissions, 1);
   assert.deepEqual(errors, []);
   await writeFile(path.join(options.directory, 'browser.json'), JSON.stringify({

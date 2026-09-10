@@ -37,7 +37,7 @@ def load_data(payload):
 
 MODES = ('quick', 'deep', 'timeline', 'strict')
 EXTENSION_PATHS = {
-    'scripts/eval_question_pipeline.py',
+    'scripts/eval_question_pipeline.py', 'scripts/acquisition_measurement.py',
     'docs/specs/question-pipeline-development-evaluation.md',
     'docs/specs/question-all-mode-evaluation.md',
 }
@@ -49,11 +49,12 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
     if stage not in {'initial', 'all-modes'}:
         raise ValueError('Unknown evaluation stage')
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
-        'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
+        'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'scripts/acquisition_measurement.py', 'requirements.lock',
         'scripts/conservative_query_admission.py', 'docs/specs/question-reader-inventory.md',
         'docs/specs/source-relative-temporal-acceptance.md',
         'docs/specs/audit-contract-consistency.md',
         'docs/specs/large-evidence-query-execution.md',
+        'docs/specs/source-opportunity-acquisition.md',
         'docs/specs/question-pipeline-development-evaluation.md',
         'docs/specs/question-coverage-recovery.md',
         'docs/specs/question-fact-conservation-integration.md',

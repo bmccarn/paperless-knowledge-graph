@@ -250,6 +250,13 @@ def table_header_chunks(content: str, raw_chunks: list[str]) -> dict[int, int | 
     return result
 
 
+class SearchUnavailable(RuntimeError):
+    """A failed sampled search retains any rows already returned by the store."""
+    def __init__(self, partial_results=()):
+        super().__init__('search_unavailable')
+        self.partial_results = [dict(row) for row in partial_results]
+
+
 class EmbeddingsStore:
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
@@ -310,17 +317,19 @@ class EmbeddingsStore:
             self.pool = None
         await self.openai.close()
 
-    async def generate_embedding(self, text: str) -> list[float]:
+    async def generate_embedding(self, text: str, *, strict: bool = False) -> list[float]:
         """Generate embedding via LiteLLM proxy."""
         try:
             async def _call():
                 resp = await self.openai.embeddings.create(
                     model=self.model,
-                    input=text[:24000],
+                    input=text if strict else text[:24000],
                 )
                 return resp.data[0].embedding
-            return await retry_with_backoff(_call, operation='generate_embedding')
+            return await _call() if strict else await retry_with_backoff(_call, operation='generate_embedding')
         except Exception as e:
+            if strict:
+                raise SearchUnavailable() from None
             logger.error(f"Embedding generation failed: {e}")
             return []
 
@@ -418,6 +427,39 @@ class EmbeddingsStore:
                 for r in rows
             ]
 
+    async def acquisition_document_page(self, terms: list[str], *, after: int, limit: int) -> dict:
+        """Page distinct lexical leads, including blocked/incomplete derived records.
+
+        Eligibility is checked against originals during acquisition. Searching full
+        stored OCR retains late matches; summaries remain retrieval hints only.
+        Counts cover the whole matching set, even on an empty terminal page.
+        """
+        if (not isinstance(terms, list) or any(not isinstance(t, str) or not t for t in terms)
+                or type(after) is not int or after < 0 or type(limit) is not int or limit < 1):
+            raise ValueError('invalid_acquisition_page_request')
+        if not terms:
+            return {'document_ids': [], 'candidate_count': 0, 'next_after': None}
+        pattern = r"\m(?:" + "|".join(re.escape(t) for t in terms) + r")\M"
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                WITH matching AS MATERIALIZED (
+                    SELECT DISTINCT document_id FROM document_embeddings
+                    WHERE document_id > 0 AND
+                        (coalesce(title, '') || ' ' || coalesce(doc_type, '') || ' ' ||
+                         coalesce(source_content, content, '')) ~* $1
+                ), page AS (
+                    SELECT document_id FROM matching WHERE document_id > $2
+                    ORDER BY document_id LIMIT $3
+                )
+                SELECT ARRAY(SELECT document_id FROM page ORDER BY document_id) AS ids,
+                    (SELECT count(*) FROM matching) AS total,
+                    EXISTS(SELECT 1 FROM matching WHERE document_id >
+                        coalesce((SELECT max(document_id) FROM page), $2)) AS has_more
+                """, pattern, after, limit)
+        ids = list(row['ids'])
+        return {'document_ids': ids, 'candidate_count': int(row['total']),
+                'next_after': ids[-1] if ids and row['has_more'] else None}
+
     async def historical_document_candidates(self, terms: list[str], limit: int = 500) -> dict:
         """Bounded per-document index discovery independent of vector top-k.
 
@@ -494,10 +536,11 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings WHERE document_id = $1", doc_id)
 
-    async def vector_search(self, query: str, limit: int = 10, *, approximate: bool = False) -> list[dict]:
+    async def vector_search(self, query: str, limit: int = 10, *, approximate: bool = False, strict: bool = False) -> list[dict]:
         """Exact by default; optionally rerank approximate halfvec candidates."""
-        embedding = await self.generate_embedding(query)
+        embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
         if not embedding:
+            if strict: raise SearchUnavailable()
             return []
         async with self.pool.acquire() as conn:
             if approximate:
@@ -577,10 +620,11 @@ class EmbeddingsStore:
             )
             return [dict(r) for r in rows]
 
-    async def entity_vector_search(self, query: str, limit: int = 10) -> list[dict]:
+    async def entity_vector_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Search entity embeddings by vector similarity."""
-        embedding = await self.generate_embedding(query)
+        embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
         if not embedding:
+            if strict: raise SearchUnavailable()
             return []
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -595,8 +639,9 @@ class EmbeddingsStore:
             )
             return [dict(r) for r in rows]
 
-    async def entity_keyword_search(self, query: str, limit: int = 10) -> list[dict]:
+    async def entity_keyword_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Search entity embeddings by keyword (trigram similarity + exact match)."""
+        trgm_rows = []
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute("SET pg_trgm.similarity_threshold = 0.1")
@@ -630,13 +675,16 @@ class EmbeddingsStore:
                     if r["entity_uuid"] not in seen:
                         seen.add(r["entity_uuid"])
                         results.append(dict(r))
-                return results[:limit]
+                return results if strict else results[:limit]
         except Exception as e:
+            if strict:
+                raise SearchUnavailable(trgm_rows) from None
             logger.warning(f"Entity keyword search failed: {e}")
             return []
 
-    async def keyword_search(self, query: str, limit: int = 10) -> list[dict]:
+    async def keyword_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Keyword search using trigram similarity + exact substring match."""
+        trgm_rows = []
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute("SET pg_trgm.similarity_threshold = 0.1")
@@ -671,8 +719,10 @@ class EmbeddingsStore:
                     if key not in seen:
                         seen.add(key)
                         results.append(dict(r))
-                return results[:limit]
+                return results if strict else results[:limit]
         except Exception as e:
+            if strict:
+                raise SearchUnavailable(trgm_rows) from None
             logger.warning(f"Keyword search failed: {e}")
             return []
 

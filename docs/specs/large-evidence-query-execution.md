@@ -74,6 +74,9 @@ conservation only; they do not establish model accuracy.
 
 ### B. Retrieval coverage diagnosis and design
 
+The concrete acquisition design is recorded in
+[source opportunity acquisition](source-opportunity-acquisition.md), under review.
+
 Trace independently identified missing meanings through discovery, ranking,
 reservation, original-window construction and source reading. Distinguish a
 document never retrieved from one retrieved then dropped or read without retaining

@@ -3,6 +3,7 @@ export interface QuestionCoverageReceipt {
   complete: boolean;
   planning_status?: string;
   conservation_status?: string;
+  acquisition_complete?: boolean;
   omitted_requested_aspects?: boolean | null;
   requirements?: Array<{
     requirement_id: string;
@@ -38,6 +39,8 @@ export function QuestionCoverage({ receipt }: { receipt?: QuestionCoverageReceip
           <span className="text-muted-foreground">{labels[row.status] || "Not assessed"}</span>
         </li>)}
       </ul>}
+      {receipt.acquisition_complete === false &&
+        <p className="text-amber-700 dark:text-amber-400">Some source searches or document reads could not finish. Coverage remains partial.</p>}
       {receipt.conservation_status === "partial" &&
         <p className="text-amber-700 dark:text-amber-400">Some source information may be missing from this answer.</p>}
       {receipt.conservation_status === "unavailable" &&

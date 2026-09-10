@@ -62,6 +62,7 @@ class QueryRuntimeTests(unittest.IsolatedAsyncioTestCase):
     @contextmanager
     def stages(self, orchestrator, capture, directory, *, reader_inventory):
         self.assertTrue(reader_inventory)
+        self.capture_deadline = capture.deadline
         self.events.append('capture-open')
         try: yield {'hashes': {}, 'attempts': []}
         finally: self.events.append('capture-close')
@@ -100,7 +101,11 @@ class QueryRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await self.finish_request()
         self.assertIs(query.strands_orchestrator, previous)
         self.assertEqual(self.events[-5:], ['server-close', 'workers-joined', 'readers-close', 'capture-close', 'engine-close'])
-        self.construct.assert_called_once_with(question_pipeline=True)
+        self.construct.assert_called_once()
+        controls = self.construct.call_args.kwargs
+        self.assertTrue(controls['question_pipeline'])
+        self.assertEqual(controls['acquisition_deadline'], self.capture_deadline)
+        self.assertTrue(callable(controls['acquisition_observer']))
         self.client.close.assert_awaited_once(); self.imported.close.assert_awaited_once()
         self.orchestrator.close.assert_awaited_once()
         self.documents.get_document.assert_awaited_once_with(1)

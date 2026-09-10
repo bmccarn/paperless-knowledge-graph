@@ -9,7 +9,7 @@ from app.answer_fact_selection import prepare_facts
 from app.answer_completion import recover_coverage, PriorSupportRevoked
 
 
-async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
+async def _finalize_question(orchestrator, question, evidence_pack, plan, mode):
     stage = 'source_reader'
     try:
         evidence = await QuestionEvidence.prepare(orchestrator, question,
@@ -93,3 +93,26 @@ async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
             final['finalization']['coverage_recovery'] = exc.diagnostic
         final['verification']['missing_evidence'] = [messages[stage]]
         return final
+
+
+async def finalize_question(orchestrator, question, evidence_pack, plan, mode):
+    acquisition = evidence_pack.get('_acquisition')
+    if plan.get('acquisition_required') and acquisition is None:
+        raise ValueError('missing_required_acquisition')
+    if acquisition is not None:
+        from app.source_acquisition import validate_bundle, acquisition_digest
+        validate_bundle(evidence_pack, acquisition['receipt'], acquisition['inventory_digest'], acquisition['request'])
+        if (plan.get('acquisition_request_digest') != acquisition_digest(acquisition['request'])
+                or acquisition['request']['mode'] != mode):
+            raise ValueError('acquisition_plan_mismatch')
+    final = await _finalize_question(orchestrator, question, evidence_pack, plan, mode)
+    if acquisition is not None:
+        from app.source_acquisition import augment_acquisition_coverage
+        final['finalization']['acquisition_inventory_digest'] = acquisition['inventory_digest']
+        final['finalization']['source_acquisition'] = acquisition['receipt']
+        coverage = final['finalization'].get('question_coverage')
+        if coverage is not None:
+            coverage = augment_acquisition_coverage(coverage, acquisition['receipt'])
+            final['finalization']['question_coverage'] = coverage
+            final['evidence']['coverage']['requested_aspects_complete'] = coverage['complete']
+    return final

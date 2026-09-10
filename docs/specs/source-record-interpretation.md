@@ -1,7 +1,8 @@
 # Source record interpretation
 
 Status: first model-free inventory/binding slice implemented, independently reviewed
-and locally validated; model adapter and controlled native protocol remain next. This
+and locally validated. The reader adapter/projection and reader-only SDK preflight
+are now implemented; complete native comparison admission remains next. This
 spec is not a passing semantic result or production activation decision.
 
 ## Evidence and choice
@@ -108,3 +109,6 @@ this slice; the next admission must measure the full serialized requests and cos
 
 Both independent implementation reviews cleared the first slice. No new model calls
 or production routing changes were made.
+
+Reader adapter progress and exact remaining admission work are tracked in
+[source-record native diagnostic](source-record-native-diagnostic.md).

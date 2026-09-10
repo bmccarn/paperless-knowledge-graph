@@ -27,7 +27,7 @@ def synthetic_response(body):
 
 
 @asynccontextmanager
-async def mock_sdk(model, responder=synthetic_response):
+async def mock_sdk(model, responder=synthetic_response, *, raw_bodies=None):
     import httpx
     from openai import AsyncOpenAI
     from strands import Agent
@@ -37,6 +37,7 @@ async def mock_sdk(model, responder=synthetic_response):
     async def handle(request):
         if request.url.host != '127.0.0.1': raise ValueError('Mock transport must use localhost')
         body = json.loads(request.content); bodies.append(body)
+        if raw_bodies is not None: raw_bodies.append(bytes(request.content))
         result = responder(body)
         if isinstance(result, BaseException): raise result
         text = result if isinstance(result, str) else json.dumps(result)

@@ -1545,3 +1545,28 @@ All six frozen full originals reconstruct exactly from 362 blocks; largest block
 protocol and schema overhead must be bound with the next adapter admission.
 The failed B2 and recovery runs remain immutable. The prior parser-fix revision
 1e08f25 passed CI 34490163999. No deployment occurred.
+
+
+### Source-record reader adapter and reader-only wire preflight
+
+Implemented the separately reviewed source-record reader protocol: eight focus
+blocks per sequential call, full owning original context, no previous interpretation
+or answer, exact per-focus output accounting and no retries. Unresolved blocks remain
+visible without semantic coverage credit. A source-bound projection maps every
+interpreted occurrence to all overlapping admitted original citation windows and
+fails before audit on changed identity, missing coverage or foreign references.
+No observation is rewritten or silently discarded during projection.
+
+Independent review reproduced and closed repeated/nested cancellation interrupting
+cleanup, unbound citation identities, adapter errors being misclassified as parse
+errors, and preflight rereads after hash validation. Tests cover the actual Strands
+exception boundary and pinned-SDK MockTransport file-mutation case. The shared
+owned-call helper is reused by the earlier diagnostic runner. Both review axes are
+clear for this slice. The full suite passes 1,002 tests (58 expected skips, 40.502s).
+
+The fresh reader-only preflight has 100 requests across all twelve cases, largest
+109,369 bytes, total 9,142,590 bytes. All original projections validate. Zero native
+calls were made. The source-record-native-diagnostic spec records the exact report
+and inventory hashes. This does not prepare or qualify the complete comparison:
+audit-side serialization/capture, complete-run ownership and exact budget/runtime
+admission remain next. No claim of improved semantic accuracy or deployment is made.

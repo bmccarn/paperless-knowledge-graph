@@ -203,6 +203,19 @@ class StrandsQueryOrchestrator:
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=response_format(payload['source_documents']))
 
+    async def read_source_record_blocks(self, payload):
+        """Inactive source-record diagnostic adapter; callers own all scheduling."""
+        from openai import OpenAIError
+        from app.source_record_reader import PROMPT, response_format, SourceRecordTransportError
+        if not self.enabled:
+            return None
+        try:
+            return await self._text_agent(name='source_record_reader', system_prompt=PROMPT,
+                prompt=json.dumps(payload, ensure_ascii=False),
+                response_format=response_format(payload['focus_block_ids']))
+        except (httpx.HTTPError, OpenAIError):
+            raise SourceRecordTransportError('source_record_transport_failed') from None
+
     async def select_question_facts(self, payload):
         from app.answer_fact_selection import SELECTION_PROMPT
         if not self.enabled:
@@ -493,7 +506,12 @@ Rules:
                     callback_handler=None,
                 )
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
-                result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
+                if name == 'source_record_reader':
+                    from app.async_ownership import owned_call
+                    result = await owned_call(agent.invoke_async(prompt),
+                        deadline=asyncio.get_running_loop().time() + timeout)
+                else:
+                    result = await asyncio.wait_for(agent.invoke_async(prompt), timeout=timeout)
                 reported_usage = getattr(getattr(result, 'metrics', None), 'accumulated_usage', {})
                 if isinstance(reported_usage, dict):
                     usage = {key: value for key, value in reported_usage.items()
@@ -512,13 +530,13 @@ Rules:
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
                 # This diagnostic stage owns explicit failure receipts; legacy
                 # query stages keep their existing unavailable fallback.
-                if name == 'source_omission_review':
+                if name in {'source_omission_review', 'source_record_reader'}:
                     raise
                 return None
             except Exception as exc:
                 outcome = 'provider_failure'
                 logger.warning("Strands %s failed: %s", name, type(exc).__name__)
-                if name == 'source_omission_review':
+                if name in {'source_omission_review', 'source_record_reader'}:
                     raise
                 return None
             finally:

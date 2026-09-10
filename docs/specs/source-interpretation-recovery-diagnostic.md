@@ -57,8 +57,12 @@ against the same pair budget. Valid semantic failures never earn retries. Budget
 exhaustion fails the affected pair and preserves all artifacts; do not truncate
 observations, drop a batch, resume a package or repurpose unused attempts.
 
-Individual transport, protocol, deadline and budget failures are recorded, then
-scheduled controls continue within the remaining aggregate budget. Shared integrity
+A terminal individual transport, uncorrected protocol, deadline or budget failure
+stops the current pair and marks its remaining stages not run. Later scheduled
+pairs continue within the remaining aggregate budget. A completed negative semantic
+verdict is not an execution failure and does not stop its pair. A permitted
+structural correction runs before classifying protocol execution as failed; semantic
+grading never decides whether another scheduled stage runs. Shared integrity
 or capture failure and external cancellation stop execution, join owned work and
 mark unrun pairs explicitly. A capture failure must not become an empty response.
 Record pending pair/stage state before dispatch; account spent calls before cleanup.
@@ -72,10 +76,11 @@ budgets. Two independent reviewers sign that exact admission subject.
 
 Serialize every known recovery request and baseline audit request through the pinned
 SDK with local MockTransport before native admission. Measure system/schema/context
-and complete request bytes; verify closure of every mock client. Candidate audit
-bodies depend on real additions, so they cannot be predeclared as measured. Freeze
-and validate their deterministic construction, measure/hash each actual request
-before dispatch and preserve it. Provider capacity stays explicitly unknown unless
+and complete request bytes; verify closure of every mock client. Combined audit bodies depend on real additions; baseline and combined corrections
+and subset audit bodies also depend on native outputs. They cannot be predeclared
+as measured. Freeze and validate their deterministic construction, then measure
+and hash the complete SDK-serialized body actually dispatched for every such call,
+not just the application arguments. Preserve every actual request. Provider capacity stays explicitly unknown unless
 verified. An oversized/unaccepted request is a recorded feasibility failure, never
 permission to summarize or omit source text. No 25 MB global inventory is sent in
 this document-local diagnostic; G4 remains separate.
@@ -99,10 +104,16 @@ errors as immutable known inputs. Separately score:
 4. Correct primary facts retained or wrongly rejected; all occurrence dispositions.
 5. Final meaning retention and support, distinct from execution and conservation.
 
-Combined delivery passes only if every supplied required meaning survives with owned
-supporting references, no unsupported assertion survives, no new addition introduces
-a semantic defect and no raw auditor falsely approves a claim. Protocol correction
-cannot erase an earlier semantic defect. Rejecting a false primary keeps its
+Aggregate success requires all twelve pairs to complete both arms and all twelve
+combined deliveries to pass. Every supplied required meaning must survive with owned
+supporting references; no unsupported assertion may survive; no new addition may
+introduce a semantic defect; and no raw auditor in either baseline or combined arm
+may falsely approve a claim. Wrong source rejection of a correct primary observation
+is also a hard failure in either arm, even when required meaning survives elsewhere.
+Record every such lost occurrence separately. Baseline omissions are the permitted
+comparator failure; execution failure, false approval and wrong rejection are not. Protocol correction cannot erase an earlier semantic defect. An uninterpretable
+earlier recovery or audit response is explicit semantic uncertainty and prevents
+a clean pass even if a correction succeeds; never score it as zero defects. Rejecting a false primary keeps its
 occurrence conservation partial, even when an addition recovers the requested
 meaning. The unchanged baseline may reproduce omissions; it is never relabelled.
 

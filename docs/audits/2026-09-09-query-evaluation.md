@@ -1390,3 +1390,14 @@ No new native model calls occurred. The next matched recovery diagnostic is draf
 in docs/specs/source-interpretation-recovery-diagnostic.md; its runner, exact package,
 wire preflight and admission remain outstanding. This is implementation evidence,
 not a measured accuracy improvement or a release qualification.
+
+Implementation commit 6dc7d143261f8207b5379860609236a11f6f11c7 passed CI
+34481420307 (frontend and backend validation; image publication skipped on the
+unmerged branch). Both reviewers also cleared the amended recovery diagnostic
+protocol for runner/package preparation. It now explicitly requires all twelve
+pairs, zero false raw approvals and wrong primary rejections in either arm,
+uncertainty retention for uninterpretable raw attempts, pair-local execution stops,
+and actual SDK-body capture for conditional baseline/combined calls. Protocol SHA:
+c1f98867fb756320df6e6d0b307ccf58ebb27960bc00c1eaaa949a4db0ea4835.
+This clears protocol review only; no runner/package admission or new native result
+is claimed.

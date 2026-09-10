@@ -116,6 +116,16 @@ class RecoveryRunnerTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(runner.IntegrityFailure):
                     await self.execute(Path(name))
 
+    async def test_pre_subset_ledger_write_failure_is_shared_integrity(self):
+        native_write = runner.ModelCapture.write
+        def failing(capture, name, payload):
+            if name == 'baseline-audit-00.json': raise OSError('synthetic ledger write failure')
+            return native_write(capture, name, payload)
+        with tempfile.TemporaryDirectory() as name:
+            with patch.object(runner.ModelCapture, 'write', failing):
+                with self.assertRaises(runner.IntegrityFailure):
+                    await self.execute(Path(name))
+
     async def test_source_request_mismatch_prevents_any_dispatch(self):
         pair = self.pair(); pair['evidence_pack']['items'][0]['source_content'] = 'Different original.'
         with tempfile.TemporaryDirectory() as name:
@@ -135,6 +145,80 @@ class RecoveryRunnerTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0); release.set()
         with self.assertRaises(asyncio.CancelledError): await task
         self.assertEqual(done, [True])
+
+    async def package(self, root):
+        from scripts.source_recovery_preflight import prepare
+        from scripts.eval_source_audit import write_private
+        def write(name, value):
+            write_private(root/name, value)
+            return name
+        pair = self.pair(); names = runner.CASE_ORDER
+        gold = write('gold.json', {})
+        requests = {c: write(c+'-request.json', pair['request']) for c in names}
+        originals = {c: write(c+'-original.json', {'id': 1, 'content': 'Synthetic original.'}) for c in names}
+        b2 = {'gold': gold, 'originals': originals, 'payloads': {c: {'F': requests[c]} for c in names}}
+        b2['sha256'] = {p.name: runner.digest(p) for p in root.iterdir()}
+        b2_manifest = write('b2-manifest.json', b2)
+        rows, old, inventory = [], [], {}
+        for index, row in enumerate(runner.schedule()):
+            primary = write(f'primary-{index:02d}.json', pair['primary'])
+            rows.append({**row, 'input': write(f'pair-{index:02d}.json', pair), 'primary': primary, 'b2_index': index})
+            old.append({'case': row['case'], 'repetition': row['repetition'], 'arm': 'F', 'index': index, 'status': 'completed'})
+            inventory[f'invocation-{index:02d}/reading.json'] = runner.digest(root/primary)
+        b2_run = write('b2-run.json', {'rows': old})
+        b2_inventory = write('b2-inventory.json', inventory)
+        protocol = write('protocol.json', {'synthetic': True})
+        grade = write('grade.json', {'synthetic': True})
+        manifest = {'kind': 'source-recovery-v1', 'status': 'admitted', 'limits': runner.LIMITS,
+            'schedule': runner.schedule(), 'pairs': rows, 'requests': requests, 'originals': originals,
+            'failure_policy': 'stop_pair_continue_controls_stop_shared', 'provider_capacity': 'unknown',
+            'b2_manifest': b2_manifest, 'b2_run': b2_run, 'b2_inventory': b2_inventory,
+            'b2_grade_spec': grade, 'b2_grade_standards': grade, 'b2_adjudication': grade,
+            'gold': gold, 'protocol': protocol, 'runtime': None, 'code_sha256': runner.code_identity()}
+        write('manifest-prepared.json', manifest)
+        await prepare(root, root/'preflight', 'synthetic')
+        manifest['runtime'] = runner.runtime_identity()
+        manifest['preflight'] = 'preflight/preflight.json'
+        manifest['sha256'] = {str(p.relative_to(root)): runner.digest(p) for p in root.rglob('*') if p.is_file()}
+        manifest['review_receipts'] = [{'reviewer': name, 'status': 'approved',
+            'subject_sha256': runner.admission_subject(manifest)} for name in ('synthetic-a', 'synthetic-b')]
+        write('manifest.json', manifest)
+        return manifest
+
+    async def test_full_runner_continues_individual_failure_but_stops_shared_failure(self):
+        from app import strands_orchestrator as native
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            with patch.object(native.settings, 'strands_enabled', True), patch.object(native, 'STRANDS_AVAILABLE', True), \
+                    patch.object(native.settings, 'strands_model', 'synthetic'):
+                manifest = await self.package(root)
+                calls = [0]
+                def failing_first(body):
+                    calls[0] += 1
+                    return TimeoutError('synthetic transport') if calls[0] == 1 else synthetic_response(body)
+                async with mock_sdk('synthetic', failing_first):
+                    await runner.run(root/'manifest.json', root/'individual')
+                result = json.loads((root/'individual/run.json').read_bytes())
+                self.assertEqual(result['rows'][0]['status'], 'failed')
+                self.assertTrue(all(r['status'] == 'completed' for r in result['rows'][1:]))
+                self.assertEqual(result['native_attempts'], 34)
+                native_write = runner.ModelCapture.write
+                def broken_ledger(capture, name, payload):
+                    if name == 'baseline-audit-00.json': raise OSError('synthetic ledger write failure')
+                    return native_write(capture, name, payload)
+                async with mock_sdk('synthetic'):
+                    with patch.object(runner.ModelCapture, 'write', broken_ledger):
+                        with self.assertRaises(runner.IntegrityFailure):
+                            await runner.run(root/'manifest.json', root/'shared')
+                result = json.loads((root/'shared/run.json').read_bytes())
+                self.assertEqual(result['native_attempts'], 1)
+                self.assertEqual(result['rows'][0]['status'], 'failed')
+                self.assertTrue(all(r['status'] == 'not_run' for r in result['rows'][1:]))
+                # Validating the hash and consuming the same bytes prevents an input swap.
+                (root/manifest['pairs'][0]['input']).write_text('{}')
+                with self.assertRaises(runner.IntegrityFailure):
+                    await runner.run(root/'manifest.json', root/'changed')
+                self.assertFalse((root/'changed').exists())
 
     def test_schedule_preserves_twelve_pairs_and_reverses_second_repetition(self):
         rows = runner.schedule()

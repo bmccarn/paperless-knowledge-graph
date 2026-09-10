@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.eval_source_audit import write_private
-from scripts.run_source_recovery import RecoveryCapture, execute_pair, native_capture
+from scripts.run_source_recovery import RecoveryCapture, execute_pair, native_capture, code_identity, runtime_identity
 
 
 def synthetic_response(body):
@@ -66,7 +66,14 @@ async def prepare(inputs, output, model):
     manifest = json.loads((inputs/'manifest-prepared.json').read_bytes())
     output.mkdir(mode=0o700, exist_ok=False)
     rows = []
-    async with mock_sdk(model):
+    correction = [False]
+    def responder(body):
+        if correction[0]:
+            correction[0] = False
+            return {}
+        return synthetic_response(body)
+    async with mock_sdk(model, responder):
+        serialization_runtime = runtime_identity()
         for index, row in enumerate(manifest['pairs']):
             pair = json.loads((inputs/row['input']).read_bytes())
             directory = output/f'pair-{index:02d}'; directory.mkdir(mode=0o700)
@@ -81,8 +88,28 @@ async def prepare(inputs, output, model):
                              'model_sha256': capture.hashes, 'stage_sha256': stages['hashes']})
             finally:
                 await orchestrator.close(); capture.close_pending()
+            # Recovery's content-free protocol correction is also precomputable.
+            from app.source_interpretation import recover
+            extra = directory/'correction'; extra.mkdir(mode=0o700)
+            orchestrator = StrandsQueryOrchestrator(); orchestrator.enabled = True
+            capture = RecoveryCapture(extra, max_calls=2, seconds=300)
+            capture.operation = 'recovery'
+            correction[0] = True
+            try:
+                with native_capture(orchestrator, capture, extra) as stages:
+                    result = await recover(pair['request'], pair['primary'], orchestrator)
+                capture.require_complete()
+                if not result.record['receipt']['execution_complete'] or len(capture.attempts) != 2:
+                    raise ValueError('Recovery correction preflight incomplete')
+                rows[-1].update(correction_model_sha256=capture.hashes, correction_stage_sha256=stages['hashes'])
+                rows[-1]['requests'] += 2
+                rows[-1]['largest_bytes'] = max(rows[-1]['largest_bytes'], *[
+                    json.loads(p.read_bytes())['bytes'] for p in extra.glob('wire-*-input.json')])
+            finally:
+                await orchestrator.close(); capture.close_pending()
     result = {'scope': 'SDK localhost MockTransport serialization only', 'native_model_calls': 0,
-              'rows': rows, 'provider_capacity': 'unknown'}
+              'rows': rows, 'provider_capacity': 'unknown', 'code_sha256': code_identity(),
+              'serialization_runtime': serialization_runtime, 'effective_model': model}
     write_private(output/'preflight.json', result)
     return {'pairs': len(rows), 'requests': sum(r['requests'] for r in rows),
             'largest_bytes': max(r['largest_bytes'] for r in rows), 'native_model_calls': 0}

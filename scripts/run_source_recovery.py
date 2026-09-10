@@ -99,7 +99,41 @@ def validate_manifest(manifest, root):
         prepared_inputs(pair)
     if manifest.get('runtime') != runtime_identity() or manifest.get('code_sha256') != code_identity():
         raise IntegrityFailure('Runtime or code changed')
+    for index in range(12): preflight_wires(manifest, root, index)
     return manifest
+
+
+def preflight_wires(manifest, root, index):
+    preflight = read_bound(root, manifest['preflight'], manifest['sha256'])
+    if (preflight.get('scope') != 'SDK localhost MockTransport serialization only'
+            or type(preflight.get('native_model_calls')) is not int or preflight['native_model_calls'] != 0
+            or len(preflight.get('rows', [])) != 12
+            or preflight.get('code_sha256') != manifest['code_sha256']
+            or preflight.get('effective_model') != manifest['runtime']['model']
+            or preflight.get('serialization_runtime', {}).get('packages') != manifest['runtime']['packages']):
+        raise IntegrityFailure('Incomplete wire preflight')
+    row = preflight['rows'][index]
+    if row.get('index') != index: raise IntegrityFailure('Preflight pair mismatch')
+    base = Path(manifest['preflight']).parent/f'pair-{index:02d}'
+    bodies, recovery_correction, baseline = [], False, False
+    for folder, fields in ((base, ('model_sha256', 'stage_sha256')),
+                           (base/'correction', ('correction_model_sha256', 'correction_stage_sha256'))):
+        for field in fields:
+            for name, expected in row[field].items():
+                relative = str(folder/name)
+                if manifest['sha256'].get(relative) != expected:
+                    raise IntegrityFailure('Unbound preflight artifact')
+                artifact = read_bound(root, relative, manifest['sha256'])
+                if name.startswith('wire-'):
+                    raw = artifact['body'].encode()
+                    if len(raw) != artifact['bytes'] or hashlib.sha256(raw).hexdigest() != artifact['sha256']:
+                        raise IntegrityFailure('Preflight wire body changed')
+                    body = json.loads(raw); bodies.append(body)
+                    recovery_correction |= folder.name == 'correction' and artifact['model_index'] == 1
+                    baseline |= artifact.get('operation') == 'baseline' and artifact.get('audit_generation') == 0
+    if not recovery_correction or not baseline or len(bodies) != row['requests']:
+        raise IntegrityFailure('Required preflight stages missing')
+    return bodies
 
 
 def prepared_inputs(pair):
@@ -129,6 +163,8 @@ class RecoveryCapture(ModelCapture):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.wires = {}
+        self.operation, self.audit_generation = None, None
+        self.expected_wires = None
 
     def write(self, name, payload):
         try: super().write(name, payload)
@@ -162,9 +198,15 @@ class RecoveryCapture(ModelCapture):
             if set(extra) & set(expected): raise ValueError('Ambiguous native body')
             expected.update(extra)
             if body != expected: raise ValueError('SDK body differs from captured call')
+            payload = json.loads(stage['prompt'])
+            known = self.operation == 'recovery' or (self.operation == 'baseline'
+                and self.audit_generation == 0 and payload.get('protocol_correction') is None)
+            if known and self.expected_wires is not None and body not in self.expected_wires:
+                raise ValueError('Known SDK body differs from preflight')
             artifact = {'model_index': index, 'stage_index': stage['index'],
                         'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
-                        'body': raw.decode('utf-8')}
+                        'body': raw.decode('utf-8'), 'operation': self.operation,
+                        'audit_generation': self.audit_generation}
             self.write(f'wire-{index:03d}-input.json', artifact)
             self.wires[index] = artifact['sha256']
         except Exception as exc:
@@ -245,9 +287,10 @@ async def audit(reading, pair, evidence, plan, orchestrator, directory, arm, cap
     native_audit = finalizer._audit
     receipts = []
     async def observed_audit(*args, **kwargs):
+        capture.audit_generation = len(receipts)
         ledger = await native_audit(*args, **kwargs)
         name = f'{arm}-audit-{len(receipts):02d}.json'
-        write_private(directory/name, ledger); receipts.append(name)
+        capture.write(name, ledger); receipts.append(name)
         return ledger
     finalizer._audit = observed_audit
     result = await finalizer.finalize(pair['request']['question'], candidate,
@@ -270,6 +313,7 @@ async def execute_pair(pair, order, orchestrator, directory, capture):
         for number, arm in enumerate(order):
             write_private(directory/f'stage-{number}-pending.json', {'stage': arm, 'status': 'pending'})
             result[arm] = {'status': 'running'}
+            capture.operation, capture.audit_generation = arm, None
             if arm == 'recovery':
                 recovered = await recover(request, primary, orchestrator)
                 write_private(directory/'recovery.json', recovered.record)
@@ -314,6 +358,7 @@ async def run(manifest_path, output):
             write_private(directory/'pending.json', row)
             capture = RecoveryCapture(directory, max_calls=min(LIMITS['pair_attempts'], LIMITS['native_attempts'] - calls),
                 seconds=min(LIMITS['pair_seconds'], deadline-time.monotonic()))
+            capture.expected_wires = preflight_wires(manifest, root, index)
             orchestrator = StrandsQueryOrchestrator(); stages = None
             try:
                 with native_capture(orchestrator, capture, directory) as stages:

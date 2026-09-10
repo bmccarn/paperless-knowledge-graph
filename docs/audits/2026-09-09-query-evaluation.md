@@ -1518,3 +1518,30 @@ with explicit qualification/date/action roles and retained rejected dispositions
 This remains an architecture candidate requiring spec/review and a fresh controlled
 comparison, not a measured solution. G4 large-source payload design, whole-query and
 held-out evaluation, visual UI acceptance and GitOps release remain open.
+
+
+### Source-record candidate: first model-free slice
+
+After the failed recovery result, three independently proposed interfaces were
+compared: source-record compiler, relationship algebra and passage dossier. The
+chosen source-record candidate keeps exhaustive exact-source accounting plus
+explicit original anchors for later relationships. This is a new G2 hypothesis;
+no semantic or production gate has passed. The implementation plan is
+[Source record interpretation](../specs/source-record-interpretation.md).
+
+Implemented an immutable source-block inventory and strict all-block reading
+binder. Markdown block maps guide segmentation but never filter original text.
+Every character remains represented once; large blocks are never truncated.
+Binding requires every inventory block, unique source-owned IDs, own-block
+references on interpreted observations and explicit unresolved reasons. Same-document
+qualification references are permitted; foreign-document references are rejected.
+Accounting completion never establishes support, question or archive completeness.
+No external client, model stage, routing, storage or ingestion behavior changed.
+
+Both plan/implementation reviews cleared the slice. Six public tests and the
+full 990-test backend suite pass (58 expected opt-in skips, 39.644 seconds).
+All six frozen full originals reconstruct exactly from 362 blocks; largest block
+2,217 characters/bytes. Actual model requests remain unmeasured because context,
+protocol and schema overhead must be bound with the next adapter admission.
+The failed B2 and recovery runs remain immutable. The prior parser-fix revision
+1e08f25 passed CI 34490163999. No deployment occurred.

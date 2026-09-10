@@ -106,3 +106,27 @@ class SourceScopeTests(unittest.TestCase):
         for changed in ({k: v for k, v in piece.items() if k != 'source_context'},
                         {**piece, 'source_context': {**piece['source_context'], 'start': 0}}):
             with self.assertRaises(SourceScopeError): SourceScope.bind([self.a], [changed])
+
+    def test_admitted_chunk_maps_only_actual_spans_without_hidden_parsing_context(self):
+        text = 'Visible prefix.\nHidden completion.'
+        source = original(51, text)
+        prefix = text[:16]
+        local = original(51, prefix)
+        pieces = [span(local, 0, 7, 'first')]
+        chunk = dict(document_id=51, content_digest=digest(prefix), start=0, end=16)
+        view = SourceScope.bind([source], pieces, chunks=[chunk]).view(pieces)
+        doc = view.documents[0]
+        self.assertEqual(doc['source_scope']['supplied_intervals'], [dict(start=0, end=7)])
+        self.assertEqual(doc['source_scope']['missing_intervals'], [[7, len(text)]])
+        self.assertEqual(doc['source_scope']['coverage'], 'partial_original')
+        self.assertIsNone(doc['source_scope']['complete_original_reference'])
+        self.assertNotIn('Hidden completion', str(doc))
+        for changes in (dict(start=True), dict(end=17), dict(document_id=52),
+                        dict(content_digest='0' * 64)):
+            with self.assertRaises(SourceScopeError):
+                SourceScope.bind([source], pieces, chunks=[{**chunk, **changes}])
+        for chunks, spans in (([chunk, chunk], pieces), ([chunk], [])):
+            with self.assertRaises(SourceScopeError): SourceScope.bind([source], spans, chunks=chunks)
+        context = dict(document_id=51, digest=source['content_digest'], start=0, end=16)
+        with self.assertRaises(SourceScopeError):
+            SourceScope.bind([source], [{**pieces[0], 'source_context': context}], chunks=[chunk])

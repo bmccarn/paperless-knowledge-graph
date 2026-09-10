@@ -46,15 +46,18 @@ def _identity(value):
     return type(value) is int and value > 0
 
 
-def _span_position(span, original):
+def _span_position(span, original, chunk=None):
     """Return original coordinates only after exact chunk and slice binding."""
     content = original['content']
     context = span.get('source_context')
     if context is None:
-        _require(span['content_digest'] == original['content_digest'])
-        offset, end = 0, len(content)
+        if chunk is None:
+            _require(span['content_digest'] == original['content_digest'])
+            offset, end = 0, len(content)
+        else:
+            offset, end = chunk['start'], chunk['end']
     else:
-        _require(isinstance(context, dict) and _identity(context.get('document_id'))
+        _require(chunk is None and isinstance(context, dict) and _identity(context.get('document_id'))
                  and context['document_id'] == original['document_id']
                  and context.get('digest') == original['content_digest'])
         offset, end = context.get('start'), context.get('end')
@@ -70,11 +73,11 @@ class SourceScope:
     _snapshot: str
 
     @classmethod
-    def bind(cls, originals, spans):
+    def bind(cls, originals, spans, *, chunks=()):
         """Admitted expected identities come from acquisition/diagnostic owners."""
         try:
-            originals, spans = json.loads(_json(originals)), json.loads(_json(spans))
-            _require(isinstance(originals, list) and isinstance(spans, list))
+            originals, spans, chunks = json.loads(_json([originals, spans, chunks]))
+            _require(isinstance(originals, list) and isinstance(spans, list) and isinstance(chunks, list))
             sources, identities = {}, {}
             for original in originals:
                 _require(isinstance(original, dict) and set(original) == {
@@ -86,6 +89,19 @@ class SourceScope:
                          and original['content_digest'] == _digest(content))
                 sources[doc_id] = original
                 identities[doc_id] = {k: original[k] for k in ('document_id', 'content_digest', 'extent')}
+            bindings, used = {}, set()
+            for chunk in chunks:
+                _require(isinstance(chunk, dict) and set(chunk) == {
+                    'document_id', 'content_digest', 'start', 'end'}
+                    and _identity(chunk['document_id']) and chunk['document_id'] in sources
+                    and isinstance(chunk['content_digest'], str))
+                key = (chunk['document_id'], chunk['content_digest'])
+                content = sources[chunk['document_id']]['content']
+                start, end = chunk['start'], chunk['end']
+                _require(key not in bindings and type(start) is int and type(end) is int
+                         and 0 <= start < end <= len(content)
+                         and _digest(content[start:end]) == chunk['content_digest'])
+                bindings[key] = chunk
             entries, handles = [], set()
             for ordinal, span in enumerate(spans):
                 _require(isinstance(span, dict) and _identity(span.get('document_id'))
@@ -101,8 +117,12 @@ class SourceScope:
                 original = sources.get(span['document_id'])
                 # A claimed original context cannot be quietly demoted to legacy.
                 _require(original is not None or span.get('source_context') is None)
-                position = _span_position(span, original) if original else None
+                key = (span['document_id'], span['content_digest'])
+                chunk = bindings.get(key)
+                if chunk is not None: used.add(key)
+                position = _span_position(span, original, chunk) if original else None
                 entries.append({'ordinal': ordinal, 'span': span, 'original_interval': position})
+            _require(used == set(bindings))
             return cls(_json({'version': VERSION, 'originals': list(identities.values()), 'entries': entries}))
         except (KeyError, TypeError, ValueError, UnicodeError, RecursionError):
             raise SourceScopeError('invalid_source_scope') from None

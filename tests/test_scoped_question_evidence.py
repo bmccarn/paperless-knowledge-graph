@@ -173,3 +173,28 @@ class ScopedQuestionTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaisesRegex(QuestionEvidenceError, '^scope_reading_mismatch$'):
                         await self.prepare()
         self.assertTrue(all(k['name'] == 'source_reader' for k, _ in self.calls))
+
+    async def test_partial_pack_guards_and_model_sources_use_only_admitted_prefix(self):
+        from tests.test_source_scopes import digest
+        prefix = 'Vendor completed a refund of $125.\n'
+        hidden = 'WITHHELD_SUFFIX_MARKER: A different action was completed.'
+        self.pack['items'] = [{**self.pack['items'][0], 'content': prefix, 'source_content': prefix}]
+        self.spans = evidence_spans(self.pack, citation_safe=True)
+        chunk = dict(document_id=17, content_digest=digest(prefix), start=0, end=len(prefix))
+        self.scope = SourceScope.bind([original(17, prefix + hidden)], self.spans, chunks=[chunk])
+        self.passage_only = True
+        with patch.object(self.auditor, '_text_agent', side_effect=self.model):
+            evidence = await self.prepare()
+            result = await AnswerFinalizer(evidence.auditor(self.auditor)).finalize(
+                'What do the records establish?', ObservationCandidate(('Vendor completed a refund of $125.',)),
+                self.pack, evaluated_at='2026-09-09', mode='quick')
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertEqual(self.spans, evidence_spans(self.pack, citation_safe=True))
+        for kwargs, payload in self.calls:
+            self.assertNotIn(hidden, json.dumps(kwargs))
+            doc = payload['source_documents'][0]
+            self.assertEqual(doc['source_scope']['coverage'], 'partial_original')
+            self.assertIsNone(doc['source_scope']['complete_original_reference'])
+            self.assertEqual([w['span'] for w in doc['windows']], self.spans)
+            self.assertEqual(doc['windows'][0]['span']['boundary_after'], '')
+            self.assertEqual(doc['source_scope']['missing_intervals'], [[len(prefix), len(prefix + hidden)]])

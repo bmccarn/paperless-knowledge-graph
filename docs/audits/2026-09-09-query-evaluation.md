@@ -1643,3 +1643,20 @@ binding refinements passed thirteen focused regressions. Twelve synthetic actual
 localhost requests exercised both existing model profiles with control/scoped wire
 schemas, with no provider calls. Native accuracy remains unmeasured for this change;
 both previous route grades remain FAIL. See the [concrete contract and validation](../specs/source-grounded-interpretation-contract.md).
+
+
+## Matched scope diagnostic: local implementation and SDK probe
+
+The [matched diagnostic](../specs/source-scope-diagnostic.md) now has independently
+cleared code and challenge reviews. It reuses the existing runner with a closed
+profile and preserves source text, questions and fixed assertions within 48 pairs
+(96 executions). Two partial controls use prefix-only canonical packs, with separate
+validated chunk coordinates; withheld suffix context cannot enter parsing guards.
+
+The full suite passed 1,038 tests with 58 expected skips. Five new SDK/profile tests
+and five legacy comparison tests pass, including final admission-hardening regressions.
+The local actual-SDK probe made 744 localhost requests, largest 78,215 bytes and total
+19,086,210 bytes, with no provider calls. All unchanged captures pass the stricter
+candidate/subset coverage checker. Native remote preflight/admission remains pending;
+no new accuracy conclusion, model-route activation or deployment follows from these
+mechanical checks. Both completed native route grades remain FAIL.

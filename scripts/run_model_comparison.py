@@ -100,6 +100,10 @@ class ComparisonCapture(recovery.RecoveryCapture):
 
 async def execute_pair(pair, original, order, orchestrator, directory, capture):
     request, primary, evidence, plan, *_ = original_inputs(pair, original)
+    return await execute_stages(pair, request, primary, evidence, plan, order, orchestrator, directory, capture)
+
+
+async def execute_stages(pair, request, primary, evidence, plan, order, orchestrator, directory, capture, *, source_scope=None):
     result = {arm: {'status': 'not_run'} for arm in order}
     fresh = None
     try:
@@ -108,7 +112,16 @@ async def execute_pair(pair, original, order, orchestrator, directory, capture):
             result[arm] = {'status': 'running'}
             capture.operation, capture.audit_generation = arm, None
             if arm == 'reader':
-                fresh = await orchestrator.read_question_sources(request)
+                if source_scope is None:
+                    fresh = await orchestrator.read_question_sources(request)
+                else:
+                    from app.source_scopes import ScopedReading
+                    result_reading = await orchestrator.read_question_sources(request, source_scope=source_scope)
+                    if not isinstance(result_reading, ScopedReading):
+                        raise IntegrityFailure('Missing scoped reading receipt')
+                    result_reading.validate(source_scope, request['source_documents'])
+                    capture.write('reading-scope-receipt.json', result_reading.receipt)
+                    fresh = result_reading.reading
                 fresh = parse_reading(canonical_json(fresh), request['source_documents'])
                 capture.write('reading.json', fresh)
                 details = {}
@@ -127,6 +140,39 @@ async def execute_pair(pair, original, order, orchestrator, directory, capture):
     return result
 
 
+def preflight_artifacts(manifest, frozen, row, base):
+    artifacts = {}
+    for field in ('model_sha256', 'stage_sha256'):
+        if not isinstance(row.get(field), dict) or not row[field]:
+            raise IntegrityFailure('Missing preflight capture inventory')
+        for name, expected in row[field].items():
+            if Path(name).name != name or manifest['sha256'].get(base+name) != expected:
+                raise IntegrityFailure('Unbound preflight capture artifact')
+            artifacts[name] = bound(frozen, base+name)
+    return artifacts
+
+
+def preflight_wire(wire, artifact, route):
+    raw = wire['body'].encode()
+    if len(raw) != wire['bytes'] or hashlib.sha256(raw).hexdigest() != wire['sha256']:
+        raise IntegrityFailure('Preflight body changed')
+    body = json.loads(raw)
+    if body.get('model') != route: raise IntegrityFailure('Preflight model route changed')
+    model_index, stage_index = wire['model_index'], wire['stage_index']
+    model = artifact(f'model-{model_index:03d}-input.json')
+    expected = dict(model['request']); expected.update(expected.pop('extra_body', {}))
+    if body != expected or model.get('kind') != f'stage-{stage_index:03d}:chat':
+        raise IntegrityFailure('Preflight SDK ownership changed')
+    stage = artifact(f'stage-{stage_index:03d}-input.json')
+    if (artifact(f'model-{model_index:03d}-output.json').get('status') != 'completed'
+            or artifact(f'stage-{stage_index:03d}-output.json').get('native_result', {}).get('stop_reason') != 'end_turn'):
+        raise IntegrityFailure('Incomplete preflight native result')
+    content = body['messages'][-1]['content']
+    payload = json.loads(content if isinstance(content, str) else ''.join(p['text'] for p in content))
+    if payload != json.loads(stage['prompt']): raise IntegrityFailure('Preflight stage payload changed')
+    return body, payload, stage
+
+
 def known_wires(manifest, frozen, index):
     """Admit complete known and synthetic dynamic stages before creating clients."""
     from app.answer_observations import ObservationCandidate
@@ -143,14 +189,7 @@ def known_wires(manifest, frozen, index):
     pair, original = execution_inputs(manifest, frozen, binding)
     request, primary, _, _, _, question, _ = original_inputs(pair, original)
     base = f'preflight/execution-{index:02d}/'
-    artifacts = {}
-    for field in ('model_sha256', 'stage_sha256'):
-        if not isinstance(row.get(field), dict) or not row[field]:
-            raise IntegrityFailure('Missing preflight capture inventory')
-        for name, expected in row[field].items():
-            if Path(name).name != name or manifest['sha256'].get(base+name) != expected:
-                raise IntegrityFailure('Unbound preflight capture artifact')
-            artifacts[name] = bound(frozen, base+name)
+    artifacts = preflight_artifacts(manifest, frozen, row, base)
     def artifact(name):
         if name not in artifacts: raise IntegrityFailure('Missing preflight capture artifact')
         return artifacts[name]
@@ -170,23 +209,8 @@ def known_wires(manifest, frozen, index):
             or [w['model_index'] for w in wires] != list(range(len(wires)))):
         raise IntegrityFailure('Incomplete preflight native schedule')
     for wire in wires:
-        raw = wire['body'].encode()
-        if len(raw) != wire['bytes'] or hashlib.sha256(raw).hexdigest() != wire['sha256']:
-            raise IntegrityFailure('Preflight body changed')
-        body = json.loads(raw)
-        if body.get('model') != binding['route']: raise IntegrityFailure('Preflight model route changed')
-        model_index, stage_index = wire['model_index'], wire['stage_index']
-        model = artifact(f'model-{model_index:03d}-input.json')
-        expected = dict(model['request']); expected.update(expected.pop('extra_body', {}))
-        if body != expected or model.get('kind') != f'stage-{stage_index:03d}:chat':
-            raise IntegrityFailure('Preflight SDK ownership changed')
-        stage = artifact(f'stage-{stage_index:03d}-input.json')
-        if (artifact(f'model-{model_index:03d}-output.json').get('status') != 'completed'
-                or artifact(f'stage-{stage_index:03d}-output.json').get('native_result', {}).get('stop_reason') != 'end_turn'):
-            raise IntegrityFailure('Incomplete preflight native result')
-        content = body['messages'][-1]['content']
-        payload = json.loads(content if isinstance(content, str) else ''.join(p['text'] for p in content))
-        if payload != json.loads(stage['prompt']): raise IntegrityFailure('Preflight stage payload changed')
+        body, payload, stage = preflight_wire(wire, artifact, binding['route'])
+        model_index = wire['model_index']
         operation = wire['operation']
         if operation == 'reader':
             if stage['name'] != 'source_reader': raise IntegrityFailure('Wrong preflight reader stage')
@@ -220,8 +244,8 @@ def known_wires(manifest, frozen, index):
     return bodies
 
 
-def validate_manifest(manifest, frozen):
-    if (manifest.get('kind') != 'reader-verifier-model-v1' or manifest.get('status') != 'admitted'
+def validate_admission(manifest, frozen, *, kind, artifacts):
+    if (manifest.get('kind') != kind or manifest.get('status') != 'admitted'
             or manifest.get('failure_policy') != 'stop_pair_continue_controls_stop_shared'
             or manifest.get('code_sha256') != recovery.code_identity()):
         raise IntegrityFailure('Unreviewed model comparison contract')
@@ -234,16 +258,21 @@ def validate_manifest(manifest, frozen):
             or any(not isinstance(r.get('reviewer'), str) or not r['reviewer'].strip()
                 or r.get('status') != 'approved' or r.get('subject_sha256') != admission_subject(manifest) for r in receipts)):
         raise IntegrityFailure('Two exact independent admission receipts required')
-    for key in ('protocol', 'source_manifest', 'appendix', 'appendix_labels', 'preflight', 'destinations'):
+    for key in artifacts:
         bound(frozen, manifest[key]) if key != 'protocol' else frozen[manifest[key]]
     destinations = bound(frozen, manifest['destinations'])
     if set(destinations) != set(ROUTES) or any(not d.get('provider') or not d.get('model')
             or not d.get('destination') for d in destinations.values()):
         raise IntegrityFailure('Exact route destinations required')
-    validate_sources(manifest, frozen)
     for route in ROUTES:
         with route_profile(route):
             if recovery.runtime_identity() != manifest['runtimes'][route]: raise IntegrityFailure('Runtime changed')
+
+
+def validate_manifest(manifest, frozen):
+    validate_admission(manifest, frozen, kind='reader-verifier-model-v1', artifacts=(
+        'protocol', 'source_manifest', 'appendix', 'appendix_labels', 'preflight', 'destinations'))
+    validate_sources(manifest, frozen)
     for index in range(len(schedule())): known_wires(manifest, frozen, index)
 
 
@@ -256,7 +285,14 @@ async def run(manifest_path, output):
     manifest_path = Path(manifest_path)
     manifest = json.loads(manifest_path.read_bytes())
     frozen = freeze(manifest, manifest_path.parent)
-    validate_manifest(manifest, frozen)
+    scoped = None
+    prepared = None
+    if manifest.get('kind') == 'source-scope-diagnostic-v1':
+        from scripts import source_scope_diagnostic as scoped
+        prepared = scoped.prepare(manifest, frozen)
+        scoped.validate_admission(manifest, frozen, prepared)
+    else:
+        validate_manifest(manifest, frozen)
     output = Path(output); output.mkdir(mode=0o700, exist_ok=False)
     write_private(output/'manifest.json', manifest)
     started = time.monotonic(); limits = manifest['limits']; deadline = started + limits['total_seconds']
@@ -267,8 +303,11 @@ async def run(manifest_path, output):
                 stopped = 'aggregate_budget_exhausted'; break
             if recovery.code_identity() != manifest['code_sha256']:
                 raise IntegrityFailure('Code changed')
-            pair, original = execution_inputs(manifest, frozen, binding)
-            expected_wires = known_wires(manifest, frozen, index)
+            if scoped is None:
+                pair, original = execution_inputs(manifest, frozen, binding)
+                expected_wires = known_wires(manifest, frozen, index)
+            else:
+                expected_wires = scoped.known_wires(manifest, frozen, prepared[index])
             admitted_at = time.monotonic()
             if admitted_at >= deadline:
                 stopped = 'aggregate_budget_exhausted'; break
@@ -288,8 +327,9 @@ async def run(manifest_path, output):
                     raise IntegrityFailure('Runtime changed')
                 native = StrandsQueryOrchestrator()
                 with recovery.native_capture(native, capture, directory, allowed_stages=STAGES) as stages:
-                    row['stages'] = await owned_call(execute_pair(pair, original, binding['order'], native,
-                        directory, capture), deadline=capture.deadline)
+                    execution = (execute_pair(pair, original, binding['order'], native, directory, capture)
+                                 if scoped is None else scoped.execute(prepared[index], native, capture, directory))
+                    row['stages'] = await owned_call(execution, deadline=capture.deadline)
                 if capture.integrity_error: raise IntegrityFailure(capture.integrity_error)
                 capture.require_complete(); row['status'] = 'completed'
             except BaseException as exc:

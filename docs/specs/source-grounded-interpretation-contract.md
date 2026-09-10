@@ -320,3 +320,10 @@ with chain controls. The final backend suite passes 1,018 tests with 58 expected
 skips (50.823 seconds). Commit 35f6460 passed exact-head CI 34522789737, including
 disposable datastore checks and production browser contracts. No native result was
 regraded and no production deployment occurred.
+
+
+The [matched source-scope diagnostic](source-scope-diagnostic.md) now implements the
+next evaluation step. Its reviewed constructor extension certifies explicit admitted
+chunk coordinates while keeping partial canonical evidence and parsing context
+strictly local to supplied text. The runner and challenge set are reviewed; local SDK
+preflight is complete. Exact remote admission and native accuracy grading remain open.

@@ -116,3 +116,34 @@ the manifest; a file change afterward cannot enter the serialized requests.
 
 The full backend suite passes 1,002 tests in 40.502 seconds with 58 expected opt-in
 skips. These checks establish the exercised contracts, not native model accuracy.
+
+## Full comparison runner admission contract
+
+The comparison uses twelve unchanged B2 full-original primaries. Repetition one
+runs baseline audit, fresh reader, fresh-record audit; repetition two reverses case
+order and runs fresh reader, fresh-record audit, baseline audit. Each audit receives
+empty prior observations and limitations with the same complete original sources.
+The projected reader observations are the candidate, not verifier context.
+
+Proposed execution ceilings are 256 native attempts and 3,600 seconds per pair,
+1,536 attempts and 14,400 seconds for the run. Effective pair deadline is the
+minimum of the global deadline and pair start plus 3,600 seconds; every descendant
+is owned within that deadline. Counters include failed attempts and existing audit
+protocol corrections and subset audits. They never authorize dropping observations
+or truncating output. Pair exhaustion fails the pair; aggregate exhaustion stops
+dispatch and marks remaining work not run. These ceilings do not guarantee completion
+and their worst-case monetary cost and provider capacity are unknown. In particular,
+41 reader calls at their maximum timeout exceed the pair allowance.
+
+The complete preflight runs both audit arms through the actual SDK on localhost
+MockTransport, using one explicitly synthetic observation per source block to exercise
+audit serialization. Freeze all known reader and initial baseline bodies; native
+dispatch verifies those against preflight. Fresh-record audits, protocol corrections
+and subset audits depend on actual responses and are captured at dispatch; their
+size is not predicted by synthetic preflight. Model output must satisfy the existing
+plain-text observation contract without rewriting or salvaging invalid observations.
+
+All input bytes are hash-verified and frozen before awaiting or native calls; subsequent
+execution consumes those buffers. Admission binds the exact code, runtime, protocol,
+originals, gold, frozen primaries, evidence packs, complete preflight and schedule.
+Two independent admission receipts are required before execution.

@@ -193,6 +193,10 @@ class RecoveryCapture(ModelCapture):
             self.integrity_error = 'capture_admission_failed'
             raise IntegrityFailure(self.integrity_error) from exc
 
+    def is_preflight_known(self, payload):
+        return self.operation == 'recovery' or (self.operation == 'baseline'
+            and self.audit_generation == 0 and payload.get('protocol_correction') is None)
+
     async def wire(self, request):
         try:
             stage = CURRENT_ATTEMPT.get()
@@ -209,8 +213,7 @@ class RecoveryCapture(ModelCapture):
             expected.update(extra)
             if body != expected: raise ValueError('SDK body differs from captured call')
             payload = json.loads(stage['prompt'])
-            known = self.operation == 'recovery' or (self.operation == 'baseline'
-                and self.audit_generation == 0 and payload.get('protocol_correction') is None)
+            known = self.is_preflight_known(payload)
             if known and self.expected_wires is not None and body not in self.expected_wires:
                 raise ValueError('Known SDK body differs from preflight')
             artifact = {'model_index': index, 'stage_index': stage['index'],
@@ -245,7 +248,8 @@ def validate_call(capture, stages, stage_index):
 
 
 @contextmanager
-def native_capture(orchestrator, capture, directory):
+def native_capture(orchestrator, capture, directory, *, allowed_stages=None):
+    allowed_stages = {'source_omission_review', 'source_auditor'} if allowed_stages is None else frozenset(allowed_stages)
     with capture_stages(orchestrator, capture, directory, reader_inventory=True) as stages:
         captured_model, captured_text = orchestrator._model, orchestrator._text_agent
         def model(**kwargs):
@@ -261,7 +265,7 @@ def native_capture(orchestrator, capture, directory):
             instance._get_client = client
             return instance
         async def text(name, *args, **kwargs):
-            if name not in {'source_omission_review', 'source_auditor'}:
+            if name not in allowed_stages:
                 capture.integrity_error = 'unexpected_model_stage'
                 raise IntegrityFailure(capture.integrity_error)
             if capture.integrity_error: raise IntegrityFailure(capture.integrity_error)

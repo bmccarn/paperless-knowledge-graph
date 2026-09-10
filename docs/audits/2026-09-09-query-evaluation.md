@@ -947,3 +947,40 @@ truncation, and timeout/cancellation. Frozen v5 loses granted approval in all fo
 controlled modes; v6 retains and audits it. The earlier hours repair remains intact
 while its model selection/exclusion calls are removed. Fresh native qualification,
 actual-corpus/browser work and release gates are still pending.
+
+
+V6 candidate `f207cc8` passed exact-revision CI (`34433188788`). Its fresh Strict
+manifest canonical SHA256 is
+`3e7989373682ac80f132ac5ad11c78e709fbb17e023ca2cbd4662135e53e76f0`;
+package SHA256 is
+`a56416e583104a71e36c42a99076b995327a2baf67a4a606ac134f6c2ffa4a35`.
+Cases00-05 have now passed both independent original-source grades, including
+capacity approval, conditional hours, conflicting latest balances, treatment/sample
+roles, posted credit and distinct refund action stages. Each case has zero raw or
+delivered false approvals, missing required aspects, false completeness, unsupported
+extras and false exclusion approvals; no retired filter calls occurred. Three
+aspects were conservatively underreported. Some exact-text conservation remains
+partial after editing even though all requested meaning survived. In the hours case,
+a source-label number triggered the existing value guard and an unnecessary edit;
+this limitation is recorded without modifying the frozen candidate mid-run.
+Six cases used 45 calls, 157.664 active seconds and 134,472 reported tokens. These
+passing cases do not qualify the unfinished twelve-case or all-mode runs, much less
+live retrieval or release. No activation or deployment occurred.
+
+Separately reviewed live utility assembly now owns remote control entry/body/exit,
+read-only readers, captured native/direct model clients, real delivery/server scopes,
+original rechecks and before/after corpus identity. Readiness exposes only port/url;
+admitted request and corpus values are detached immutable JSON snapshots. Exact SSE
+bytes and content-free exception chains survive failures. Review reproductions closed
+second-cancellation cleanup races, successful-entry cancellation leaks, mutable-corpus
+admission and cleanup masking of primary errors. Ten control and seven runtime
+ownership tests passed independently. An additional date-rollover control checks
+that midnight during corpus preflight prevents browser readiness and model start;
+all eight runtime tests pass. These utilities grant no admission: concrete CLI,
+process supervision, frontend assembly and live browser qualification remain pending.
+
+The utility assembly full offline suite passed 830 tests in 26.656 seconds with
+48 expected datastore skips. Both reviewers cleared the date-rollover regression.
+Strict case06 also passed both original-source reviews with all error and
+underreporting counts zero (four native calls, 12.395 seconds, 7,268 tokens).
+The frozen application and fixed-original evaluation harness remain unchanged.

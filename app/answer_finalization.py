@@ -20,7 +20,7 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
-from app.source_audit import PROTOCOL_ERRORS
+from app.source_audit import PROTOCOL_ERRORS, VALID_TEMPORAL_PAIRS
 from app.answer_observations import ObservationCandidate, ObservationValidationError
 from app.query_metrics import CURRENT_QUERY_METRICS
 from app.timeline import project_timeline
@@ -29,7 +29,7 @@ from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v26"
+POLICY_VERSION = "source-audit-v27"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -1039,9 +1039,7 @@ class AnswerFinalizer:
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "documented", "current", "none", "unknown"} else "unknown"
                     if assertion is not None:
-                        if isinstance(assertion, str) and (scope, assertion) in {
-                                ("historical", "source_observation"), ("documented", "retrieved_comparison"),
-                                ("current", "present_world"), ("none", "none"), ("none", "source_observation")}:
+                        if isinstance(assertion, str) and (scope, assertion) in VALID_TEMPORAL_PAIRS:
                             claims[-1]["temporal_assertion"] = assertion
                         else:
                             claims[-1]["status"] = "unsupported"

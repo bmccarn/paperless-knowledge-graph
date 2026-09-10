@@ -1107,3 +1107,31 @@ claim-administration detail. A fresh real corpus/index snapshot and all-mode
 qualification are still required before live admission. The legacy 60-second
 stream-verification setting is unused by the current query path; the actual SSE
 loop emits status while awaiting the owned query task. No serving setting changed.
+
+
+## All-mode rejection and audit-contract correction (September 10)
+
+The temporal-v1 all-mode run stopped permanently at case 12 (treatment history,
+Quick). Cases 00–11 passed both reviews; case 12 failed both because all three
+required meanings were withheld. No raw or delivered false approvals occurred.
+The 35 remaining cases were not executed. Aggregate execution: 109 native calls,
+428.458 active seconds and 343,938 reported tokens. The exact failed result hash is
+901952e63c03a82aeaeb29a56cf52a238083a4fc5bede7647bca2d890433ebe4.
+
+The reproduced cause and independently reviewed plan are in
+[audit contract consistency](../specs/audit-contract-consistency.md). An affirmative
+historical comparison returned incompatible temporal scope and assertion fields.
+The parser rejected this metadata but did not route it through the existing single
+protocol correction. The implementation now checks cross-field coherence after
+whole-batch negative precedence, shares valid temporal pairs with the finalizer,
+clarifies the native instructions and changes the finalization policy to v27.
+It does not normalize a contradictory response into acceptance or retry a negative
+factual verdict.
+
+The unchanged captured run still fails closed. A separate controlled replay retains
+the original bad response, then supplies a coherent correction and coverage response;
+it delivers all three requested meanings. This is an offline causal control, not
+native accuracy evidence. The broader backend suite passed 903 tests with 53 expected
+skips in 36.807 seconds. The new regression module subsequently passed all 12 tests,
+including the added deadline and cancellation control. New native qualification,
+live corpus/browser qualification, heldout evaluation and release remain pending.

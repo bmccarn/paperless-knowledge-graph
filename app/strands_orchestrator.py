@@ -137,7 +137,7 @@ class StrandsQueryOrchestrator:
                 "references for disjoint passages; never splice quotes. Dated policy terms are historical "
                 "document observations unless the assertion claims current real-world validity. "
                 "Use temporal_scope=documented only for an explicit comparison among the retrieved documents, "
-                "such as the latest dated record for the same subject. Check all supplied relevant dated records "
+                "including historical changes and the latest dated record for the same subject. Check all supplied relevant dated records "
                 "and conflicts. This scope never establishes current real-world validity or archive completeness. "
                 "You receive all eligible original-source windows in this retrieved evidence pack. "
                 "That pack is not a complete archive. Inclusion and admission counts are not proof of "
@@ -152,9 +152,12 @@ class StrandsQueryOrchestrator:
                 "for genuinely nontemporal assertions without source-report framing. Do not use none merely "
                 "because a source report lacks a date. Assess what the answer itself "
                 "asserts, not words quoted from a past source. The assertion must agree with temporal_scope. "
+                "The only valid temporal_scope/temporal_assertion pairs are historical/source_observation, "
+                "none/source_observation, none/none, documented/retrieved_comparison and current/present_world. "
+                "Every retrieved-record comparison uses documented/retrieved_comparison, even historical changes. "
                 "Include comparison_scope=retrieved_documents and comparison_document_ids listing the supplied "
                 "documents compared, including the cited documents. Use current for present-world assertions; "
-                "historical for individual dated observations without a latest comparison; none otherwise. "
+                "historical for individual dated observations without a retrieved-record comparison; none otherwise. "
                 "Return only the complete JSON object required by the response schema, with no extra prose." +
                 (source_reading.VERIFIER_NOTE if 'source_reading' in payload else '')),
             prompt=json.dumps(payload, ensure_ascii=False),

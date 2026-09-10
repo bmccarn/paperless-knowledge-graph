@@ -12,6 +12,28 @@ CHECK_STATUSES = ('supported', 'not_established', 'contradicted', 'not_applicabl
 VERDICTS = ('supported', 'unsupported', 'missing', 'conflicting')
 SCOPES = ('historical', 'documented', 'current', 'none')
 ASSERTIONS = ('source_observation', 'retrieved_comparison', 'present_world', 'none')
+VALID_TEMPORAL_PAIRS = frozenset({
+    ('historical', 'source_observation'), ('none', 'source_observation'),
+    ('none', 'none'), ('documented', 'retrieved_comparison'),
+    ('current', 'present_world'),
+})
+
+
+def metadata_rejections(row):
+    """Contract coherence only; references and factual support remain separate gates."""
+    pair = (row['temporal_scope'], row['temporal_assertion'])
+    reasons = [] if pair in VALID_TEMPORAL_PAIRS else ['semantic_temporal']
+    compared = row['comparison_document_ids']
+    active = (row['comparison_scope'] is not None or compared
+              or row['temporal_scope'] == 'documented'
+              or row['temporal_assertion'] == 'retrieved_comparison')
+    if active and (pair != ('documented', 'retrieved_comparison')
+                   or row['comparison_scope'] != 'retrieved_documents'
+                   or not compared or not all(type(doc) is int for doc in compared)):
+        reasons.append('semantic_comparison')
+    return reasons
+
+
 MAX_BASIS_CHARS = 1200
 MAX_ASSUMPTIONS = 6
 MAX_ASSUMPTION_CHARS = 240
@@ -131,12 +153,7 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
                 and (row['temporal_scope'] == 'documented' or row['temporal_assertion'] == 'retrieved_comparison'
                      or row['comparison_scope'] is not None or row['comparison_document_ids'])):
             reasons.append('semantic_comparison')
-        comparison_active = (row['comparison_scope'] is not None or row['comparison_document_ids']
-                             or row['temporal_scope'] == 'documented'
-                             or row['temporal_assertion'] == 'retrieved_comparison')
-        if (comparison_active and (row['temporal_scope'], row['temporal_assertion'])
-                != ('documented', 'retrieved_comparison') and 'semantic_comparison' not in reasons):
-            reasons.append('semantic_comparison')
+        reasons.extend(reason for reason in metadata_rejections(row) if reason not in reasons)
         normalized.append({
             **{key: row[key] for key in ('unit_id', 'references', 'temporal_scope', 'temporal_assertion',
                                         'comparison_scope', 'comparison_document_ids')},
@@ -159,7 +176,7 @@ def validate_scope_consistency(parsed):
             return
     for row in rows:
         semantic = row['semantic_decision']
-        if any(semantic['checks'][facet] == 'not_applicable'
+        if metadata_rejections(row) or any(semantic['checks'][facet] == 'not_applicable'
                and 'semantic_' + facet in semantic['rejection_reasons']
                for facet in ('temporal', 'comparison')):
             raise SourceAuditProtocolError('inconsistent_scope_checks')

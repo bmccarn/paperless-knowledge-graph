@@ -168,7 +168,8 @@ class SourceRelativeTemporalTests(unittest.IsolatedAsyncioTestCase):
             row['checks']['comparison']='supported'
             result,calls=await self.final([REPORT],[row])
             self.assertFalse(result['finalization']['answer_verified'],(scope,ids))
-            self.assertEqual(calls,1)
+            # Contradictory metadata gets one correction, never automatic acceptance.
+            self.assertEqual(calls,2)
 
     async def test_documented_comparison_still_requires_actual_compared_sources(self):
         for ids,accepted in (([17],True),([999],False),([],False)):

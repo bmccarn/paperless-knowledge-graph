@@ -1013,3 +1013,28 @@ The full offline suite passed 847 tests in 31.611 seconds, with 49 expected opt-
 skips; the standalone smoke was then run explicitly and passed. This is process and
 HTTP validation, not actual native browser-query qualification. Concrete admission,
 CLI/browser execution and result packaging remain unfinished.
+
+The source-relative temporal contract is implemented and both reviews are clear.
+An undated source report now retains its explicit source_observation assertion frame
+without inventing a calendar date. Current-bearing units require that frame; other
+units cannot lend it. Current-question demand stays conservative: an unscoped unit
+remains unresolved even beside a source report. Active comparison metadata outside
+the documented comparison contract is rejected at parser and finalizer boundaries.
+Unit IDs and fixed temporal failure codes reach repair and public current-state
+metadata, with an accurate status explanation instead of falsely claiming missing
+source support. Finalization policy is source-audit-v26; query cache identity derives
+from that version. The fresh evaluation manifest also binds the reviewed temporal spec.
+
+Both review reproductions first failed new controls, then passed after correction.
+Fourteen new tests cover the native parser, all-mode finalization, complete question
+pipeline, saved success/failure restoration, current-question laundering, and foreign
+or missing comparison IDs. Root's 69 focused tests and independent 25/67 focused
+runs passed. The final full offline suite passed 861 tests in 31.652 seconds, with
+49 expected opt-in skips. The prior bridge commit passed exact CI (34436837545).
+
+A controlled intervention in the captured hours replay changes only ambiguous audit
+scope to explicit source reporting and supplies a controlled coverage result. All
+three original observations then survive with complete restored conservation. This
+is a causal code-path control, not native model evidence. Unchanged captured none/none
+responses still withhold the current-bearing unit; the original v6 result stays failed.
+No fresh model call, activation or deployment has occurred for this new contract.

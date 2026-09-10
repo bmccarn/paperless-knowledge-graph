@@ -44,7 +44,8 @@ def response_format(unit_ids):
         'references': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
                        'required': ['span_id'], 'properties': {'span_id': {'type': 'string'}}}},
         'temporal_scope': {'type': 'string', 'enum': list(SCOPES)},
-        'temporal_assertion': {'type': 'string', 'enum': list(ASSERTIONS)},
+        'temporal_assertion': {'type': 'string', 'enum': list(ASSERTIONS),
+                               'description': 'source_observation reports what an original records, with or without a date; none is a non-temporal assertion without source-report framing. Neither proves present-world validity.'},
         'comparison_scope': {'type': ['string', 'null'], 'enum': ['retrieved_documents', None]},
         'comparison_document_ids': {'type': 'array', 'items': {'type': 'integer'}},
         'status': {'type': 'string', 'enum': list(VERDICTS)},
@@ -123,11 +124,18 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None):
         if assumptions:
             reasons.append('semantic_assumptions')
         if (checks['temporal'] == 'not_applicable'
-                and (row['temporal_scope'] != 'none' or row['temporal_assertion'] != 'none')):
+                and (row['temporal_scope'] != 'none'
+                     or row['temporal_assertion'] not in {'none', 'source_observation'})):
             reasons.append('semantic_temporal')
         if (checks['comparison'] == 'not_applicable'
                 and (row['temporal_scope'] == 'documented' or row['temporal_assertion'] == 'retrieved_comparison'
                      or row['comparison_scope'] is not None or row['comparison_document_ids'])):
+            reasons.append('semantic_comparison')
+        comparison_active = (row['comparison_scope'] is not None or row['comparison_document_ids']
+                             or row['temporal_scope'] == 'documented'
+                             or row['temporal_assertion'] == 'retrieved_comparison')
+        if (comparison_active and (row['temporal_scope'], row['temporal_assertion'])
+                != ('documented', 'retrieved_comparison') and 'semantic_comparison' not in reasons):
             reasons.append('semantic_comparison')
         normalized.append({
             **{key: row[key] for key in ('unit_id', 'references', 'temporal_scope', 'temporal_assertion',

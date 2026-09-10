@@ -51,6 +51,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
         'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
         'scripts/conservative_query_admission.py', 'docs/specs/question-reader-inventory.md',
+        'docs/specs/source-relative-temporal-acceptance.md',
         'docs/specs/question-pipeline-development-evaluation.md',
         'docs/specs/question-coverage-recovery.md',
         'docs/specs/question-fact-conservation-integration.md',

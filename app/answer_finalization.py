@@ -29,7 +29,7 @@ from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v25"
+POLICY_VERSION = "source-audit-v26"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -769,23 +769,48 @@ def empty_ledger(candidate: str, observations: ObservationCandidate | None = Non
 
 
 def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evaluated_at):
-    # Keywords only identify claims that need a temporal assessment. An explicit
-    # source-relative assessment can establish a documented comparison, never
-    # the completeness of the archive or present real-world validity.
+    # Lexical cues request assessment; only an audited source frame can resolve
+    # a current-bearing unit. Qualification never transfers to its siblings.
     current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
     claims = ledger["claims"]
-    required = bool(plan.get("requires_current")) or bool(
-        re.search(current_words, question + " " + candidate, re.I)
-        or any(c["temporal_scope"] in {"current", "documented"} for c in claims))
+    question_current = bool(plan.get("requires_current")) or bool(re.search(current_words, question, re.I))
+    required = question_current or bool(
+        re.search(current_words, candidate, re.I)
+        or any(c.get("temporal_scope") in {"current", "documented"}
+               or c.get("temporal_assertion") in {"present_world", "retrieved_comparison"} for c in claims))
     current = current_state({**plan, "requires_current": required}, evidence_pack, evaluated_at)
     if not required:
         return "supported", current
-    source_relative = bool(claims) and all(
-        c["temporal_scope"] == "documented" or (
-            c["temporal_scope"] == "historical" and (
-                c.get("temporal_assertion") == "source_observation" or not re.search(current_words, c["claim"], re.I)))
-        for c in claims)
-    if not source_relative:
+    failures, source_relative = [], []
+    for claim in claims:
+        scope, assertion = claim.get('temporal_scope'), claim.get('temporal_assertion')
+        current_bearing = bool(re.search(current_words, claim['claim'], re.I))
+        report = ((scope in {'none', 'historical'} and assertion == 'source_observation')
+                  or (scope == 'historical' and assertion is None and not current_bearing))
+        comparison = scope == 'documented' and assertion in {None, 'retrieved_comparison'}
+        ancillary = scope == 'none' and assertion in {None, 'none'} and not current_bearing
+        if scope == 'current' or assertion == 'present_world':
+            reason = 'present_world_unestablished'
+        elif report or comparison:
+            source_relative.append(claim['id'])
+            continue
+        elif ancillary and not question_current:
+            continue
+        elif ancillary:
+            # The question can supply present tense even when the answer omits
+            # its keywords. Another unit cannot establish this unit's frame.
+            reason = 'current_question_not_source_scoped'
+        elif current_bearing and scope == 'none' and assertion in {None, 'none'}:
+            reason = 'unscoped_current_assertion'
+        else:
+            reason = 'unresolved_temporal_scope'
+        failures.append({'unit_id': claim['id'], 'reason': reason})
+    if not failures and not source_relative:
+        failures = [{'unit_id': claim['id'], 'reason': 'current_question_not_source_scoped'} for claim in claims]
+        if not failures:
+            failures = [{'unit_id': None, 'reason': 'current_question_not_source_scoped'}]
+    if failures:
+        current['temporal_failures'] = failures
         return "current_unresolved", current
     compared = sorted({doc for c in claims for doc in c.get("comparison_document_ids", [])})
     if compared:
@@ -1016,11 +1041,15 @@ class AnswerFinalizer:
                     if assertion is not None:
                         if isinstance(assertion, str) and (scope, assertion) in {
                                 ("historical", "source_observation"), ("documented", "retrieved_comparison"),
-                                ("current", "present_world"), ("none", "none")}:
+                                ("current", "present_world"), ("none", "none"), ("none", "source_observation")}:
                             claims[-1]["temporal_assertion"] = assertion
                         else:
                             claims[-1]["status"] = "unsupported"
                             claims[-1]["rejection_reasons"].append("invalid_temporal_assertion")
+                    if scope != 'documented' and (assessment.get('comparison_scope') is not None
+                                                  or assessment.get('comparison_document_ids')):
+                        claims[-1]['status'] = 'unsupported'
+                        claims[-1]['rejection_reasons'].append('invalid_comparison_scope')
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
@@ -1108,7 +1137,7 @@ class AnswerFinalizer:
                         repair_diagnostic = {'reason': 'audit_unit_limit',
                                              'unit_count': summary['total'], 'unit_limit': self.max_units}
                     if ledger["complete"] and summary["supported"] == summary["total"]:
-                        disposition, _ = temporal_acceptance(
+                        disposition, temporal = temporal_acceptance(
                             question, candidate, ledger, plan, evidence_pack, evaluated_at)
                         if disposition in {"supported", "qualified"}:
                             break
@@ -1125,7 +1154,9 @@ class AnswerFinalizer:
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
                                 {"status": disposition, "claims": ledger["claims"],
-                                 "rejection_reasons": ledger.get("rejection_reasons", [])})
+                                 "rejection_reasons": ledger.get("rejection_reasons", []),
+                                 "temporal_failures": temporal.get("temporal_failures", [])
+                                     if disposition == "current_unresolved" else []})
                         repair_in_progress = False
                         revised_observations = (ObservationCandidate.from_response(repaired)
                                                 if isinstance(repaired, dict) and 'observations' in repaired else None)
@@ -1223,6 +1254,8 @@ class AnswerFinalizer:
             question, candidate, ledger, plan, evidence_pack, evaluated_at)
         if disposition in {"supported", "qualified", "current_unresolved"}:
             disposition = temporal_disposition
+        if disposition == "current_unresolved":
+            error = "The audited claims do not establish current-world status or a sufficiently scoped source report."
         complete = disposition in {"supported", "qualified"}
         supported = complete or disposition == "partial"
         public_answer = candidate if supported else ABSTENTION

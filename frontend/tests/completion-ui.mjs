@@ -173,6 +173,9 @@ for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex r
   await page.getByText("151 matching indexed documents", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Next page", exact: true }).first().click();
   await page.getByText("2 / 7", { exact: true }).waitFor();
+  // The cursor renders before the page request commits its rows. Capture the
+  // actual second page, not the previous rows while its effect is still pending.
+  await page.getByRole("row").filter({ hasText: "Synthetic archive 050" }).waitFor();
   const before = await page.getByRole("row").allTextContents();
   const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/documents");
   held.resolve();
@@ -368,4 +371,59 @@ test("legacy timeline prose is not displayed as verified dates", async t => {
   await page.getByText("Timeline unavailable for this answer.", { exact: true }).waitFor();
   assert.equal(await page.getByText("Unsupported service completion", { exact: true }).count(), 0);
   await record(page, "legacy-timeline-unavailable");
+});
+
+for (const [question, status, count] of [
+  ["Show complete coverage", "Requested aspects answered", "2 of 2 requested aspects answered"],
+  ["Show partial coverage", "Partly answered", "1 of 2 requested aspects answered"],
+  ["Show unavailable coverage", "Coverage unavailable", "no complete coverage assessment"],
+  ["Show source gap coverage", "Partly answered", "Some source information may be missing"],
+  ["Show unfinished source check coverage", "Coverage unavailable", "check for missing source information could not finish"],
+]) {
+  test(`question coverage stays separate from source support: ${status}`, async t => {
+    const { context, page } = await fixturePage(t);
+    await page.goto(`${base}/query`);
+    const input = page.getByPlaceholder("Ask a question...");
+    await input.fill(question); await input.press("Enter");
+    const coverage = page.getByRole("region", { name: "Question coverage" });
+    await coverage.waitFor();
+    assert.ok((await coverage.innerText()).includes(status));
+    assert.ok((await coverage.innerText()).includes(count));
+    await page.getByText("Source checks", { exact: true }).waitFor();
+    assert.equal(await page.getByText(/medium trust.*65%/).count(), 0);
+    const conversations = await (await context.request.get(`${base}/api/conversations`)).json();
+    const saved = await (await context.request.get(`${base}/api/conversations/${conversations[0].id}`)).json();
+    await page.reload();
+    await page.getByRole("button", { name: saved.title, exact: true }).click();
+    await coverage.waitFor();
+    assert.ok((await coverage.innerText()).includes(count));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await coverage.scrollIntoViewIfNeeded();
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    await record(page, question.toLowerCase().replaceAll(" ", "-"));
+  });
+}
+
+test("invalid saved verification preserves text without positive certification panels", async t => {
+  const { context, page } = await fixturePage(t);
+  const saved = await (await context.request.post(`${base}/api/conversations`, { data: { title: "Invalid saved receipt" } })).json();
+  await page.route(`**/api/conversations/${saved.id}`, route => route.fulfill({ json: {
+    ...saved, messages: [{ role: "assistant", content: "Historical answer text retained for review.", confidence: 0,
+      sources: [], claim_ledger: { claims: [], summary: {} },
+      finalization: { pipeline_version: "question-evidence-v1", answer_verified: false, complete: false,
+        disposition: "stored_binding_unavailable", question_coverage: { status: "unavailable", complete: false, requirements: [] } },
+      verification: { status: "unavailable", missing_evidence: ["Saved verification could not be validated."] },
+      source_summary: { verification_status: "unavailable", audit_status: "unavailable", trust_score: 0,
+        claim_summary: {}, trust_dimensions: {}, trust_reasons: [], evidence_coverage: {} },
+    }],
+  } }));
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: saved.title, exact: true }).click();
+  await page.getByText("Historical answer text retained for review.", { exact: true }).waitFor();
+  await page.getByText("Coverage unavailable", { exact: true }).waitFor();
+  assert.equal(await page.getByText("supported", { exact: true }).count(), 0);
+  assert.equal(await page.getByText(/Claim ledger \(/).count(), 0);
+  assert.equal(await page.getByText("All answer units have validated source references.", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("100%", { exact: true }).count(), 0);
+  await record(page, "restored-invalid-receipt");
 });

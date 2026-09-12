@@ -200,11 +200,14 @@ class SubjectContextTests(unittest.IsolatedAsyncioTestCase):
             result, auditor = await self.finalize(answer)
             self.assertTrue(result['finalization']['answer_verified'])
             self.assertLess(len(auditor.calls[0][1]), 100)
-        # Huge indentation that cannot be removed without changing structure
-        # must fail closed before any provider call, at the existing prose bound.
-        result, auditor = await self.finalize('The invoice records $30.\n' + ' ' * 200000 + 'The invoice records $20.')
-        self.assertFalse(result['finalization']['answer_verified'])
-        self.assertEqual(auditor.calls, [])
+        # Meaningful indentation must survive provider input, regardless of
+        # total context size. A permissive controlled auditor proves only that
+        # the full context is retained; it is not a semantic model evaluation.
+        answer = 'The invoice records $30.\n' + ' ' * 200000 + 'The invoice records $20.'
+        result, auditor = await self.finalize(answer)
+        self.assertTrue(result['finalization']['answer_verified'])
+        self.assertTrue(auditor.calls)
+        self.assertEqual(auditor.calls[0][1], answer)
 
     async def test_all_assertions_of_a_plain_parent_paragraph_govern_its_fields(self):
         answer = ('Invoice Cedar REJECT records delivery. A parcel is recorded.\n\n'

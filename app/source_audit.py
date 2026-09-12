@@ -12,6 +12,28 @@ CHECK_STATUSES = ('supported', 'not_established', 'contradicted', 'not_applicabl
 VERDICTS = ('supported', 'unsupported', 'missing', 'conflicting')
 SCOPES = ('historical', 'documented', 'current', 'none')
 ASSERTIONS = ('source_observation', 'retrieved_comparison', 'present_world', 'none')
+VALID_TEMPORAL_PAIRS = frozenset({
+    ('historical', 'source_observation'), ('none', 'source_observation'),
+    ('none', 'none'), ('documented', 'retrieved_comparison'),
+    ('current', 'present_world'),
+})
+
+
+def metadata_rejections(row):
+    """Contract coherence only; references and factual support remain separate gates."""
+    pair = (row['temporal_scope'], row['temporal_assertion'])
+    reasons = [] if pair in VALID_TEMPORAL_PAIRS else ['semantic_temporal']
+    compared = row['comparison_document_ids']
+    active = (row['comparison_scope'] is not None or compared
+              or row['temporal_scope'] == 'documented'
+              or row['temporal_assertion'] == 'retrieved_comparison')
+    if active and (pair != ('documented', 'retrieved_comparison')
+                   or row['comparison_scope'] != 'retrieved_documents'
+                   or not compared or not all(type(doc) is int for doc in compared)):
+        reasons.append('semantic_comparison')
+    return reasons
+
+
 MAX_BASIS_CHARS = 1200
 MAX_ASSUMPTIONS = 6
 MAX_ASSUMPTION_CHARS = 240
@@ -19,7 +41,7 @@ PROTOCOL_ERRORS = frozenset({
     'invalid_json', 'duplicate_key', 'invalid_object', 'invalid_assessments',
     'invalid_assessment', 'invalid_unit_ids', 'invalid_source_basis',
     'invalid_checks', 'invalid_assumptions', 'invalid_references',
-    'invalid_temporal_metadata', 'invalid_status',
+    'invalid_temporal_metadata', 'invalid_status', 'unknown_source_handle', 'inconsistent_scope_checks',
 })
 
 
@@ -29,7 +51,7 @@ class SourceAuditProtocolError(ValueError):
         super().__init__(self.reason)
 
 
-def response_format(unit_ids):
+def response_format(unit_ids, *, reference_schema=None):
     """A fresh schema belongs to one native audit request, including corrections."""
     properties = {
         'unit_id': {'type': 'string', 'enum': list(unit_ids)},
@@ -41,10 +63,12 @@ def response_format(unit_ids):
         'unresolved_assumptions': {'type': 'array', 'maxItems': MAX_ASSUMPTIONS,
                                    'items': {'type': 'string', 'minLength': 1, 'maxLength': MAX_ASSUMPTION_CHARS},
                                    'description': 'Any inference required to make the assertion true that the source does not establish. Empty only if none.'},
-        'references': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+        'references': {'type': 'array', 'items': reference_schema if reference_schema is not None else
+                      {'type': 'object', 'additionalProperties': False,
                        'required': ['span_id'], 'properties': {'span_id': {'type': 'string'}}}},
         'temporal_scope': {'type': 'string', 'enum': list(SCOPES)},
-        'temporal_assertion': {'type': 'string', 'enum': list(ASSERTIONS)},
+        'temporal_assertion': {'type': 'string', 'enum': list(ASSERTIONS),
+                               'description': 'source_observation reports what an original records, with or without a date; none is a non-temporal assertion without source-report framing. Neither proves present-world validity.'},
         'comparison_scope': {'type': ['string', 'null'], 'enum': ['retrieved_documents', None]},
         'comparison_document_ids': {'type': 'array', 'items': {'type': 'integer'}},
         'status': {'type': 'string', 'enum': list(VERDICTS)},
@@ -68,7 +92,7 @@ def _bounded_text(value, limit):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
 
 
-def parse_decisions(text, unit_ids):
+def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None):
     """Reject malformed protocols; downgrade semantic inconsistency without retry."""
     def unique_object(pairs):
         result = {}
@@ -103,25 +127,42 @@ def parse_decisions(text, unit_ids):
         _require(isinstance(assumptions, list) and len(assumptions) <= MAX_ASSUMPTIONS
                  and all(_bounded_text(value, MAX_ASSUMPTION_CHARS) for value in assumptions), 'invalid_assumptions')
         refs = row['references']
+        resolution = None
+        if source_scope is not None:
+            from app.source_scopes import SourceScopeError
+            try:
+                resolution = source_scope.resolve(refs)
+                refs = row['references'] = resolution.references
+            except SourceScopeError:
+                raise SourceAuditProtocolError('invalid_references') from None
         _require(isinstance(refs, list) and all(isinstance(ref, dict) and set(ref) == {'span_id'}
                  and isinstance(ref['span_id'], str) and bool(ref['span_id']) for ref in refs), 'invalid_references')
+        if allowed_span_ids is not None:
+            _require(all(ref['span_id'] in allowed_span_ids for ref in refs), 'unknown_source_handle')
         _require(isinstance(row['temporal_scope'], str) and row['temporal_scope'] in SCOPES
                  and isinstance(row['temporal_assertion'], str) and row['temporal_assertion'] in ASSERTIONS
                  and row['comparison_scope'] in ('retrieved_documents', None)
                  and isinstance(row['comparison_document_ids'], list)
                  and all(type(doc) is int for doc in row['comparison_document_ids']), 'invalid_temporal_metadata')
         _require(isinstance(row['status'], str) and row['status'] in VERDICTS, 'invalid_status')
+        if (checks['comparison'] == 'not_applicable' and row['comparison_scope'] is None
+                and row['temporal_scope'] == 'historical'
+                and row['temporal_assertion'] == 'source_observation'):
+            # Inert metadata cannot turn a historical observation into a comparison.
+            row['comparison_document_ids'] = []
         reasons = ['semantic_' + facet for facet in FACETS
                    if checks[facet] in ('not_established', 'contradicted')]
         if assumptions:
             reasons.append('semantic_assumptions')
         if (checks['temporal'] == 'not_applicable'
-                and (row['temporal_scope'] != 'none' or row['temporal_assertion'] != 'none')):
+                and (row['temporal_scope'] != 'none'
+                     or row['temporal_assertion'] not in {'none', 'source_observation'})):
             reasons.append('semantic_temporal')
         if (checks['comparison'] == 'not_applicable'
                 and (row['temporal_scope'] == 'documented' or row['temporal_assertion'] == 'retrieved_comparison'
                      or row['comparison_scope'] is not None or row['comparison_document_ids'])):
             reasons.append('semantic_comparison')
+        reasons.extend(reason for reason in metadata_rejections(row) if reason not in reasons)
         normalized.append({
             **{key: row[key] for key in ('unit_id', 'references', 'temporal_scope', 'temporal_assertion',
                                         'comparison_scope', 'comparison_document_ids')},
@@ -130,5 +171,23 @@ def parse_decisions(text, unit_ids):
             'semantic_decision': {'checks': dict(checks), 'rejection_reasons': reasons,
                                   'source_basis': row['source_basis'], 'unresolved_assumptions': list(assumptions)},
         })
+        if resolution is not None:
+            normalized[-1]['semantic_decision']['reference_scope_resolution'] = resolution.receipt
     _require(set(seen) == set(unit_ids), 'invalid_unit_ids')
     return {'assessments': normalized}
+
+
+def validate_scope_consistency(parsed):
+    """Allow bounded metadata correction only when no semantic rejection can reroll."""
+    rows = parsed['assessments']
+    for row in rows:
+        semantic = row['semantic_decision']
+        if (row['model_status'] != 'supported' or semantic['unresolved_assumptions']
+                or any(value in {'not_established', 'contradicted'} for value in semantic['checks'].values())):
+            return
+    for row in rows:
+        semantic = row['semantic_decision']
+        if metadata_rejections(row) or any(semantic['checks'][facet] == 'not_applicable'
+               and 'semantic_' + facet in semantic['rejection_reasons']
+               for facet in ('temporal', 'comparison')):
+            raise SourceAuditProtocolError('inconsistent_scope_checks')

@@ -1,0 +1,234 @@
+# Source-record reader and verifier diagnostic
+
+Status: complete comparison runner, both audit arms and SDK preflight implemented
+and independently reviewed at 2e28074. Exact package passed both independent admission
+reviews and remote validation. The user explicitly approved this experiment payload
+and provider destination after the automatic-review rejection. The exact native
+comparison finished with ten completed pairs and two reader timeouts; independent
+semantic grading is pending. The all-pairs execution acceptance criterion failed.
+
+## Hypothesis and fixed comparison
+
+Mandatory source-block records may preserve meaning omitted by summary reading.
+Compare the twelve frozen B2 full-original primary readings with fresh source-record
+readings of the same six originals in both repetitions. Audit both arms using the
+same original question, requirements, evaluation date, date order and complete
+original evidence. Neither audit receives prior reading notes or prior verdicts.
+This tests source-record reading as a combined candidate mechanism; it does not
+attribute differences between individual prompt and representation changes.
+
+Preserve all cases and their unchanged gold. Keep historical B2/recovery grades.
+No retrieval, ingestion, writer, editor, graph expansion, coverage model, source
+selection or production query routing executes in this diagnostic.
+
+## Reader adapter contract
+
+The immutable SourceRecordInventory owns the full source inventory. Prepare one
+request per contiguous group of eight source blocks within a document. All blocks
+are scheduled once; a final short group is retained. Every request includes the
+complete original document as its source-block inventory, the exact focus block
+IDs, question, resolved question, requirements, evaluated date and date-order policy.
+There is no prior reading, proposed answer, evaluator gold or other document.
+This deliberately measures attention/accounting before reducing source context.
+Full request bytes, not focus-block size, govern feasibility.
+
+The model returns one record for each focus block. It may describe question-relevant
+source meaning or mark a block unresolved with a reason. No relevant fact may exist
+only in an unresolved reason; unresolved records confer no semantic coverage credit.
+Every observation must cite its own focus block and any same-document blocks needed
+for subject, qualification, date/action role or relationship. Original quantities
+remain printed observations; no invented reconciliation of inconsistent totals.
+The complete inventory is bound only after every scheduled response is assembled.
+
+The reader owns a sequential initial implementation: no background or detached work.
+A caller supplies one inherited absolute monotonic deadline. Before each dispatch
+and after return, check remaining time; no call may reset the deadline. A failed
+transport/empty/invalid protocol response stops reading and retains completed and
+pending records explicitly. This first protocol permits no retries or protocol
+corrections; malformed output is a failed measured attempt, not an invitation to
+reinterpret source meaning. Cancellation propagates after the awaited adapter joins.
+Unexpected programming/integrity failures propagate rather than become successful
+empty records. The native adapter uses the existing selected model/client and no
+output-token cap; it creates no persistent client outside orchestrator ownership.
+
+## Audit and outcome
+
+Convert all interpreted observations to the existing owned-reference reading format
+without rewriting, deduplicating or dropping occurrences. Resolve each source-block
+range to all overlapping admitted original citation windows in the same document;
+verify exact source-character coverage before allowing audit. The caller must supply
+the independently retained digest of the admitted citation inventory; projection
+validates and consumes the same serialized bytes and retains a source-bound
+block-to-window mapping receipt. Keep the original
+block references and this projection in the private receipt. Valid unresolved block records remain accounted and earn no semantic coverage
+credit; audit all interpreted observations. Original text remains citable even
+when its block has no independent interpretation. Foreign/missing source handles
+or incomplete citation projection fail candidate execution; no observation is
+silently removed.
+
+Use the unchanged AnswerFinalizer and its independently re-audited supported subset,
+repairer=None and allow_subset=True. Preserve original audit ledgers before subset
+replacement, all raw attempts and every rejected occurrence. Empty candidate output
+is a diagnostic failure. All twelve pairs must complete. Every fresh-reader arm must preserve every
+required meaning and introduce no unsupported assertion. Frozen-baseline omissions
+remain measured comparator failures, not an impossible completeness requirement.
+False raw approval and wrongful rejection in either audit arm are hard failures. Existing independently adjudicated false primary inputs stay in baseline;
+report them separately and preserve the strict two-arm diagnostic failure rule.
+This deliberately cannot redeem an unchanged baseline false approval.
+
+## Admission sequence
+
+1. Independently review this adapter/projection contract and implement regressions
+   through the source-record reading interface and real native adapter boundary.
+2. Build all twelve immutable inputs from unchanged originals/gold/primaries. Measure
+   schedule sizes, actual pinned-SDK MockTransport bodies, and maximum request bytes.
+3. Select explicit attempt/elapsed ceilings after these measurements, preserving
+   sequential deadline ownership. Freeze model/runtime/code/inputs, schedule and
+   budgets in a new package with two independent admission receipts. Provider capacity
+   and monetary cost stay explicitly unknown unless verified; do not invent prices.
+4. Execute only that admitted package once; capture every actual SDK body/terminal
+   result and all raw source/audit records. Stop on shared integrity failures; isolated
+   pair failures retain later fixed controls within the remaining global budget.
+5. Independently grade all new observations, raw approvals, rejected facts, final
+   answers and required meaning retention. No semantic reruns. Later source-context
+   reduction, whole-query, held-out, visual UI and GitOps gates remain separate.
+
+
+## Reader-only implementation and preflight
+
+The adapter schedules 100 reader requests across the twelve frozen cases: five per
+replacement case, 41 per long application case, and one per short control. Actual
+pinned-SDK MockTransport serialization measured 9,142,590 total request bytes and
+109,369 bytes for the largest request. These are reader-only measurements; the
+conditional audit requests and full comparison budgets are still pending.
+
+The replacement package is /private/tmp/kg-source-record-preflight-v2-20260910.
+Report SHA: a5571c1cdfa634bd93a7287762ff0ca44462cb00b9873fa8f7cf2ab82c2e5c28.
+Inventory SHA: d0a0af781db6a489fc3111d36bc933003477d4942a0f0e1825b4a6c0d697198a.
+No native model calls occurred. Both reviewers cleared the reader/projection and
+preflight after reproduced cleanup, identity and byte-binding failures were closed.
+
+The shared owned-call helper now drains already-cancelling tasks without cancelling
+their cleanup again. The source-record native stage also owns its inner model task,
+so provider and request-owner timeouts cannot interrupt each other's cleanup.
+Legacy query stages keep their existing timeout behavior. Projection rejects changed
+handles, booleans masquerading as document IDs, original hash drift and source gaps.
+Protocol parse errors are separate from adapter integrity and timeout failures.
+Preflight freezes the exact verified input buffers before awaited work, including
+the manifest; a file change afterward cannot enter the serialized requests.
+
+The full backend suite passes 1,002 tests in 40.502 seconds with 58 expected opt-in
+skips. These checks establish the exercised contracts, not native model accuracy.
+
+## Full comparison runner admission contract
+
+The comparison uses twelve unchanged B2 full-original primaries. Repetition one
+runs baseline audit, fresh reader, fresh-record audit; repetition two reverses case
+order and runs fresh reader, fresh-record audit, baseline audit. Each audit receives
+empty prior observations and limitations with the same complete original sources.
+The projected reader observations are the candidate, not verifier context.
+
+Proposed execution ceilings are 256 native attempts and 3,600 seconds per pair,
+1,536 attempts and 14,400 seconds for the run. Effective pair deadline is the
+minimum of the global deadline and pair start plus 3,600 seconds; every descendant
+is owned within that deadline. Counters include failed attempts and existing audit
+protocol corrections and subset audits. They never authorize dropping observations
+or truncating output. Pair exhaustion fails the pair; aggregate exhaustion stops
+dispatch and marks remaining work not run. These ceilings do not guarantee completion
+and their worst-case monetary cost and provider capacity are unknown. In particular,
+41 reader calls at their maximum timeout exceed the pair allowance.
+
+The complete preflight runs both audit arms through the actual SDK on localhost
+MockTransport, using one explicitly synthetic observation per source block to exercise
+audit serialization. Freeze all known reader and initial baseline bodies; native
+dispatch verifies those against preflight. Fresh-record audits, protocol corrections
+and subset audits depend on actual responses and are captured at dispatch; their
+size is not predicted by synthetic preflight. Model output must satisfy the existing
+plain-text observation contract without rewriting or salvaging invalid observations.
+
+All input bytes are hash-verified and frozen before awaiting or native calls; subsequent
+execution consumes those buffers. Admission binds the exact code, runtime, protocol,
+originals, gold, frozen primaries, evidence packs, complete preflight and schedule.
+Two independent admission receipts are required before execution.
+
+## Complete comparison readiness and execution blocker
+
+Revision 2e280748bfaef42a5dfb2bb09467877454b12fb1 passes both implementation review
+axes, 1,009 backend tests (58 expected skips, 42.923 seconds), and exact-head
+CI run 34499836068. The reviews reproduced and closed incomplete-preflight admission
+and setup-deadline accounting defects before any native calls. Regressions cover
+missing known bodies, missing fresh-audit evidence, prepared-input drift, aggregate
+expiry during setup, isolated failure continuation and shared capture failure.
+
+The full pinned-SDK localhost preflight captured 304 requests: 100 reader, 16 initial
+baseline audit, and 188 synthetic fresh-record audit requests. Largest body: 109,411
+bytes; total: 22,250,856 bytes. Synthetic audit counts are not a native-output forecast.
+
+Private package: /private/tmp/kg-source-record-comparison-v2-20260910.
+Input manifest SHA: d8443b0131050e949a0ca2c87d531c854cf10def8d4b720458ecf216f20e703a.
+Admission subject: d8a8203ee66f01af3b8ebb902ecf94ae2c3e6dca94277b39ed333905aa60fc3f.
+Preflight report SHA: be4c13127c3df860d50e4d1b8c5a848f0fdcd4a9694a08d07d2a2a21c247f1c7.
+Both independent receipts bind 1,711 input artifacts and 87 code files. The uploaded
+isolated package passed exact runtime, code, input and dual-receipt validation in
+the existing API pod. Provider route remains the existing LiteLLM alias to Google
+Gemini gemini-3.8-flash. No production activation occurred.
+
+Automatic approval review rejected the execution command because this experiment's
+private source text and prompts require specific authorization for that destination.
+The rejection is an external execution blocker, not a failed semantic comparison.
+Read-only confirmation found neither results nor native log artifacts in the isolated
+remote directory. Do not bypass the rejection or change routes. After the required
+authorization, revalidate the exact admitted package, execute once into the still-absent
+results directory, freeze outputs and independently grade both raw and final answers.
+All later whole-query, held-out, visual UI and GitOps gates remain open.
+
+The user subsequently explicitly approved the frozen twelve-case experiment and
+private source/prompt transfer through LiteLLM to Google Gemini gemini-3.8-flash,
+with the declared 1,536-call/four-hour ceilings. The exact remote package was
+revalidated and its output directory confirmed absent before execution started.
+The earlier rejection is preserved as history; it no longer blocks this run.
+Do not change its code, inputs, budget, route or labels during execution.
+
+## Native execution receipt
+
+The approved run completed its fixed schedule in 2,020.397 seconds with 133 native
+attempts: ten pairs completed and two failed during reading. Pair 10 completed 48
+source blocks and left 275 pending; pair 11 completed eight and left 27 pending.
+Each failed reader call reached the 90-second adapter limit without any captured
+response chunks. Captured transport outcomes were cancellation at 90.006 seconds
+and API timeout at 90.085 seconds. No failed case was resumed or rerun.
+
+All 821 result artifacts are retained. Verification checked 755 registered capture
+hashes and all 133 raw SDK request-body hashes. Run SHA:
+17beffbcd897ddbb62ecacf3de370cb2da5d6fb2d076d5acad601648e983b159.
+Result inventory SHA:
+179ac3d6eabc7f1085ef95cda4d380278fd91b8e84cc1c5025f43162c6720595.
+
+The inspected LiteLLM container was running since September 9 with zero restarts.
+Logs around the failed calls did not show a context-window error, rate-limit response
+or worker restart. This confirms the local timeout failure, not the cause of the
+upstream delay. The run is not an accuracy pass, regardless of completed-case gains.
+Both independent all-output grades reject the candidate. They examined all 131
+reader observations and 249 raw assessments, including partial failed executions.
+Completed final answers retain 34/37 required meanings in each arm: no net gain.
+Seven required opportunities per arm remain unobserved in the two failed pairs.
+Three unsupported assertions survive into the new reader's delivered answers.
+
+Reconciliation separates seven definite false factual raw approval occurrences,
+three calendar-policy approvals and one disputed wording judgment. The disputed
+judgment remains uncertain; it does not change the rejection. Six source-readable
+assertions were withheld by deterministic value/date checks. They are a separate
+representation problem, not proof that relaxing those checks is safe while false
+arithmetic and scope judgments survive the raw verifier. Both reviewers found zero
+wrong raw model rejections in the observed assessments.
+
+Spec grade SHA:
+8c85434953d8f17c544b0c8965ae1f21245a8ab09453acc7b983da6a23fa46b5.
+Standards grade SHA:
+e051083362fa11ed7c002185ba716d17108067da1de7312ec9f4917424348540.
+Reconciled adjudication SHA:
+9654745526916063d71b3ff6cf255fa7048dd90ed73ac385c3f7f914f94b534c.
+Original grades and artifacts remain frozen privately; no private source facts are
+published here. More source-block reading alone is rejected as the solution. The
+[next model-capability diagnostic](reader-verifier-model-diagnostic.md) isolates
+reader/verifier route behavior before any further production design decision.

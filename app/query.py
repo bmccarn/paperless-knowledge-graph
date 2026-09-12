@@ -48,16 +48,33 @@ from app.evidence import (
     structured_fact_count,
 )
 from app.strands_orchestrator import strands_orchestrator
+from app.question_evidence import (PIPELINE_VERSION, validate_requirements, coarse_requirements,
+                                   QuestionEvidenceError, CONVERSATION_CONTEXT_MAX_CHARS)
+from app.question_pipeline import finalize_question
+from app.query_metrics import CURRENT_QUERY_METRICS, QueryMetrics
+from app.answer_coverage import restore_question_coverage, restored_sources, question_presentation
 
 logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
-CONVERSATION_CONTEXT_MAX_CHARS = 12_000
 _REQUEST_MODEL = ContextVar("query_model", default=None)
 _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 
 
 class QueryEngine:
-    def __init__(self):
+    question_pipeline = False
+
+    def __init__(self, *, question_pipeline: bool | None = None, acquisition_deadline: float | None = None,
+                 acquisition_observer=None):
+        if question_pipeline is not None and type(question_pipeline) is not bool:
+            raise ValueError('question_pipeline must be a boolean or None')
+        from app.source_acquisition import Execution
+        Execution(deadline=acquisition_deadline).validate()
+        if acquisition_observer is not None and not callable(acquisition_observer):
+            raise ValueError('invalid_acquisition_observer')
+        self.acquisition_observer = acquisition_observer
+        self.acquisition_deadline = acquisition_deadline
+        self.question_pipeline = (settings.question_pipeline_enabled
+                                  if question_pipeline is None else question_pipeline)
         self.client = AsyncOpenAI(
             base_url=settings.litellm_url,
             api_key=settings.litellm_api_key,
@@ -167,6 +184,30 @@ class QueryEngine:
         mode = normalize_mode(mode)
         trace = [trace_step("mode", "ok", f"{mode} query strategy selected", {"mode": mode})]
 
+        if self.question_pipeline:
+            agent_plan = await strands_orchestrator.plan_query(question, mode,
+                conversation_context=self._conversation_context(conversation_history), include_requirements=True)
+            try:
+                aspects = validate_requirements({key: (agent_plan if isinstance(agent_plan, dict) else {}).get(key)
+                                                 for key in ('resolved_question', 'requirements')})
+                planning_status = 'complete'
+            except QuestionEvidenceError:
+                aspects, planning_status = coarse_requirements(question), 'coarse'
+            plan = merge_agent_plan(aspects['resolved_question'], mode, agent_plan)
+            # Preserve every emitted proposal before the legacy eight-query helper.
+            raw_queries = agent_plan.get('subqueries', []) if isinstance(agent_plan, dict) else []
+            if isinstance(raw_queries, list):
+                plan['subqueries'] = [{'role': 'primary', 'query': aspects['resolved_question']}] + [
+                    {'role': str(q.get('role') or 'planned'), 'query': q['query']}
+                    if isinstance(q, dict) else {'role': 'planned', 'query': q}
+                    for q in raw_queries if (isinstance(q, str) and q.strip()) or
+                        (isinstance(q, dict) and isinstance(q.get('query'), str) and q['query'].strip())]
+            plan.update(aspects, original_question=question, requirements_status=planning_status,
+                        pipeline_version=PIPELINE_VERSION)
+            trace.append(trace_step('planner', 'ok' if planning_status == 'complete' else 'fallback',
+                                   'Requested-aspect planning', {'requirements_status': planning_status}))
+            return plan, trace
+
         if mode == "quick":
             plan = heuristic_plan(question, mode)
             trace.append(trace_step(
@@ -200,6 +241,33 @@ class QueryEngine:
     async def _execute_retrieval_plan(self, question: str, plan: dict, mode: str) -> tuple[dict, list[str], bool, list[dict]]:
         mode = normalize_mode(mode)
         trace = []
+        if self.question_pipeline:
+            from app.source_discovery import SourceDiscovery
+            search = SourceDiscovery(embeddings_store, graph_store)
+            queries = list(plan.get('subqueries') or [])
+            if plan.get('requires_current') and not any(q.get('role') == 'current_state' for q in queries):
+                queries.append({'role': 'current_state', 'query':
+                    f"{plan['resolved_question']} latest current final most recent updated revised effective expiration"})
+            if not queries:
+                queries = [{'role': 'primary', 'query': question}]
+            context = {}
+            for number, item in enumerate(queries):
+                found = await search.search(item['query'], f'planned:{number}')
+                context = self._merge_context(context, found)
+            broad_queries = []
+            if plan.get('broad_query') and mode != 'quick':
+                context = self._merge_context(context, await search.broad(await self._get_relevant_entity_types(question)))
+                try:
+                    broad_queries = await self._decompose_query(question)
+                    for number, proposal in enumerate(broad_queries):
+                        context = self._merge_context(context, await search.search(proposal, f'decomposed:{number}'))
+                except Exception as exc:
+                    context.setdefault('_discovery', []).append({'id': 'broad_planning', 'status': 'failed',
+                        'sampling': 'sampled', 'document_ids': [], 'error': type(exc).__name__})
+            return context, [q['query'] for q in queries[1:]] + broad_queries, any(
+                q['role'] == 'current_state' for q in queries), [trace_step(
+                'retrieval', 'ok', 'Declared searches retained for original acquisition',
+                {'query_count': len(queries), 'retrieval_is_exhaustive': False})]
         max_queries = 1 if mode == "quick" else 8 if mode == "strict" else 6
         queries = retrieval_queries(plan, max_queries=max_queries)
         if mode != "quick" and self._requires_latest_check(question) and not any(q.get("role") == "current_state" for q in queries):
@@ -307,6 +375,22 @@ class QueryEngine:
             entities = context.get("entity_names", [])
             return {"draft_answer": "", "confidence": 0.55, "entities_found": entities, "follow_up_suggestions": []}, context, [], trace
 
+        if self.question_pipeline:
+            from app.source_discovery import SourceDiscovery
+            try:
+                first_pass = await self._synthesize_with_gaps(question, context, conversation_history)
+                proposals = first_pass.get('follow_up_queries')
+                if not isinstance(proposals, list) or any(not isinstance(q, str) or not q.strip() for q in proposals):
+                    raise ValueError('invalid_gap_proposals')
+            except Exception as exc:
+                context.setdefault('_discovery', []).append({'id': 'gap_planning', 'status': 'failed',
+                    'sampling': 'sampled', 'document_ids': [], 'error': type(exc).__name__})
+                return {}, context, [], [trace_step('gap_review', 'unavailable', 'Gap planning unavailable')]
+            search = SourceDiscovery(embeddings_store, graph_store)
+            for number, proposal in enumerate(proposals):
+                context = self._merge_context(context, await search.search(proposal, f'gap:{number}'))
+            return first_pass, context, proposals, [trace_step('gap_review', 'ok',
+                'Every proposed search retained for acquisition', {'query_count': len(proposals)})]
         first_pass = await self._synthesize_with_gaps(question, context, conversation_history)
         follow_ups_used = []
         follow_up_queries = first_pass.get("follow_up_queries", [])[:5 if broad else 3]
@@ -363,6 +447,11 @@ class QueryEngine:
             if name:
                 entity_candidates.append(str(name))
         entity_candidates.extend(str(e) for e in context.get("entity_names", []) if e)
+        if self.question_pipeline:
+            from app.source_discovery import SourceDiscovery
+            expanded = await SourceDiscovery(embeddings_store, graph_store).entities(entity_candidates, 'expanded')
+            return self._merge_context(context, expanded), [trace_step('graph_expansion', 'ok',
+                'Graph provenance retained for original acquisition', {'entity_count': len(set(entity_candidates))})]
         entity_candidates = list(dict.fromkeys(entity_candidates))[:12]
 
         if entity_candidates:
@@ -388,11 +477,14 @@ class QueryEngine:
         flagged = await embeddings_store.get_open_feedback_document_ids(doc_ids)
         for item in evidence_pack.get("items", []):
             item["feedback_open"] = item.get("document_id") in flagged
-        final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
-                                      timeout_seconds=settings.answer_audit_timeout_seconds,
-                                      concurrency=settings.strands_max_concurrent_calls,
-                                      date_order=settings.source_date_order).finalize(
-            question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
+        if self.question_pipeline:
+            final = await finalize_question(strands_orchestrator, question, evidence_pack, plan, mode)
+        else:
+            final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
+                                          timeout_seconds=settings.answer_audit_timeout_seconds,
+                                          concurrency=settings.strands_max_concurrent_calls,
+                                          date_order=settings.source_date_order).finalize(
+                question, answer, evidence_pack, plan=plan, mode=mode, evaluated_at=plan.get("evaluated_at"))
         verification = final["verification"]
         verification["finalization"] = final["finalization"]
         verification["current_state"] = final["current_state"]
@@ -404,7 +496,7 @@ class QueryEngine:
                 item["excerpt"] = "\n…\n".join(dict.fromkeys(r["quote"] for r in refs))
         # Keep source titles and excerpts tied to validated source membership.
         cited = final["finalization"]["cited_document_ids"]
-        if cited:
+        if cited or self.question_pipeline:
             sources = [{"document_id": doc_id, "title": next(r["source_title"] for r in references if r["document_id"] == doc_id),
                         "excerpt": "\n…\n".join(dict.fromkeys(r["quote"] for r in references if r["document_id"] == doc_id))}
                        for doc_id in cited]
@@ -445,42 +537,57 @@ Question: {question}
 
 Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             result = await self._llm_json(prompt)
-            queries = result.get("sub_queries", [])
+            queries = result.get("sub_queries") if self.question_pipeline else result.get("sub_queries", [])
+            if self.question_pipeline:
+                if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() for q in queries):
+                    raise ValueError('invalid_decomposition_proposals')
+                return queries
             if isinstance(queries, list) and len(queries) >= 3:
                 return queries[:8]
         except Exception as e:
             logger.warning(f"Query decomposition failed: {e}")
+            if self.question_pipeline:
+                raise
         return []
 
     async def query(self, question: str, conversation_history: list = None, model_override: str = None, mode: str = "strict") -> dict:
         token = _REQUEST_MODEL.set(model_override or self.model)
         generation = await get_corpus_generation_async()
         generation_token = _REQUEST_GENERATION.set(generation)
+        metrics = QueryMetrics() if self.question_pipeline else None
+        metrics_token = CURRENT_QUERY_METRICS.set(metrics)
         try:
             result = await self._query(question, conversation_history, mode)
             await self._check_delivery_snapshot(result)
             return result
         finally:
+            CURRENT_QUERY_METRICS.reset(metrics_token)
             _REQUEST_MODEL.reset(token)
             _REQUEST_GENERATION.reset(generation_token)
 
     async def _query(self, question, conversation_history, mode):
         mode = self._normalize_mode(mode)
         evaluated_at = datetime.now(timezone.utc).date().isoformat()
-        identity = {"policy": QUERY_CACHE_VERSION, "mode": mode, "question": question,
+        identity = {"policy": f'{QUERY_CACHE_VERSION}:{PIPELINE_VERSION}' if self.question_pipeline else QUERY_CACHE_VERSION,
+                    "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
                     "strands_model": settings.strands_model or settings.gemini_model,
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at,
                     "source_date_order": settings.source_date_order}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = await cache_get(query_cache, cache_key)
-        if self._cacheable_answer(cached, mode):
+        if self._cacheable_answer(cached, mode, request_identity=cache_key):
+            if self.question_pipeline:
+                cached = question_presentation({**cached, 'sources': restored_sources(cached)})
             cached["cached"] = True
             return cached
 
         is_broad = mode != "quick" and self._is_broad_query(question)
         plan, trace = await self._build_query_plan(question, mode, conversation_history)
         plan["evaluated_at"] = evaluated_at
+        if self.question_pipeline:
+            plan['source_date_order'] = settings.source_date_order
+            plan['request_identity_digest'] = cache_key
         plan["conversation_context"] = self._conversation_context(conversation_history)
         if is_broad:
             plan["broad_query"] = True
@@ -500,7 +607,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
         sources = self._build_sources(all_context, question=question)
         evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        final = await self._final_synthesis(
+        final = {} if self.question_pipeline else await self._final_synthesis(
             question,
             all_context,
             first_pass.get("draft_answer", ""),
@@ -566,17 +673,28 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             "cached": False,
         }
 
-        if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode):
+        metrics = CURRENT_QUERY_METRICS.get()
+        if self.question_pipeline:
+            result = question_presentation(result)
+        if metrics is not None:
+            result['finalization']['pipeline_execution'] = metrics.report()
+        if await self._check_delivery_snapshot(result) and self._cacheable_answer(result, mode, request_identity=cache_key):
             await cache_set(query_cache, cache_key, result)
         return result
 
-    @staticmethod
-    def _cacheable_answer(result, mode):
+    def _cacheable_answer(self, result, mode, *, request_identity=None):
         if not isinstance(result, dict):
             return False
         final = result.get("finalization")
         if not isinstance(final, dict):
             return False
+        if self.question_pipeline:
+            receipt = restore_question_coverage(result)
+            if (receipt is None or receipt['complete'] is not True
+                    or request_identity is None
+                    or final.get('request_identity_digest') != request_identity
+                    or result.get('mode') != mode):
+                return False
         if mode == "timeline" and restore_timeline(result)[1]["status"] not in {"ready", "no_dates"}:
             return False
         return (final.get("complete") is True and final.get("disposition") in {"supported", "qualified"}) or (
@@ -586,6 +704,8 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         """One snapshot check for cached and newly audited public results."""
         source_ids = [i["document_id"] for i in result.get("evidence_pack", {}).get("items", [])
                       if type(i.get("document_id")) is int]
+        if self.question_pipeline and restore_question_coverage(result) is not None:
+            source_ids = list(dict.fromkeys(s['document_id'] for s in result['claim_ledger']['spans']))
         incomplete = await embeddings_store.get_incomplete_document_ids(source_ids)
         # Check generation after the datastore read, which may itself overlap a
         # mutation. No await separates this last observation and the verdict.
@@ -609,6 +729,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
                 item["support_spans"] = []
             result["finalization"].update(disposition="corpus_changed", complete=False, answer_verified=False, cited_document_ids=[],
                 answer_digest=hashlib.sha256(result["answer"].encode()).hexdigest())
+            if result['finalization'].get('pipeline_version'):
+                result['finalization']['question_coverage'] = {
+                    'status': 'unavailable', 'complete': False, 'requirements': [], 'reason': 'corpus_changed'}
             result["verification"].pop("partial", None)
             current.pop("comparison_scope", None)
             current.pop("comparison_document_ids", None)
@@ -957,6 +1080,10 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 
         try:
             result = await self._llm_json(prompt)
+            if self.question_pipeline and (not isinstance(result, dict)
+                    or not isinstance(result.get('follow_up_queries'), list)
+                    or any(not isinstance(q, str) or not q.strip() for q in result['follow_up_queries'])):
+                raise ValueError('invalid_gap_proposals')
             return {
                 "draft_answer": result.get("draft_answer", ""),
                 "confidence": float(result.get("confidence", 0.5)),
@@ -966,6 +1093,8 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
             }
         except Exception as e:
             logger.warning(f"Gap analysis failed: {e}")
+            if self.question_pipeline:
+                raise
             return {"draft_answer": "", "confidence": 0.0, "follow_up_queries": [], "entities_found": []}
 
     # ── Graph expansion (TUNED: wider, deeper) ──────────────────────
@@ -1210,6 +1339,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
             chunks = {(chunk["document_id"], chunk.get("chunk_index", 0)): chunk
                       for chunk in ctx1.get(f"{scope}_chunks", []) + ctx2.get(f"{scope}_chunks", [])}
             merged[f"{scope}_chunks"] = list(chunks.values())[:MAX_DOCUMENTS * 3]
+        merged['_discovery'] = ctx1.get('_discovery', []) + ctx2.get('_discovery', [])
         return merged
 
     # ── Formatting (TUNED: more context to LLM) ────────────────────
@@ -1223,6 +1353,28 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         mode: str,
         broad: bool = False,
     ) -> dict:
+        if self.question_pipeline:
+            from app.source_acquisition import SourceAcquisition, Execution
+            request = {'question': question, 'resolved_question': plan['resolved_question'],
+                'conversation_context': plan.get('conversation_context', ''), 'mode': mode,
+                'evaluated_at': plan['evaluated_at'], 'source_date_order': settings.source_date_order,
+                'corpus_generation': _REQUEST_GENERATION.get()}
+            collector = SourceAcquisition(embeddings_store, paperless_client, get_corpus_generation_async)
+            try:
+                bundle = await collector.collect(request, context.get('_discovery', []),
+                    Execution(concurrency=settings.strands_max_concurrent_calls,
+                              deadline=getattr(self, 'acquisition_deadline', None)))
+            finally:
+                observer = getattr(self, 'acquisition_observer', None)
+                if observer is not None:
+                    observer({'request_identity_digest': plan.get('request_identity_digest'),
+                              'progress': collector.progress})
+            plan['acquisition_required'] = True
+            plan['acquisition_request_digest'] = bundle.receipt['request_digest']
+            pack = bundle.evidence_pack
+            pack['_acquisition'] = {'request': request, 'receipt': bundle.receipt,
+                                    'inventory_digest': bundle.inventory_digest}
+            return pack
         combined = self._merge_and_rank(
             context.get("vector_results", []),
             context.get("keyword_results", []),

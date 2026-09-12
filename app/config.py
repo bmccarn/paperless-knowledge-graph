@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     litellm_api_key: str = ""
     embedding_model: str = "text-embedding-3-large"
     strands_enabled: bool = True
+    question_pipeline_enabled: bool = False
     strands_model: str = ""
     strands_call_timeout_seconds: float = 45
     strands_max_concurrent_calls: int = Field(default=4, ge=1, le=16)

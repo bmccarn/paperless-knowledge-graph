@@ -20,14 +20,16 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
-from app.source_audit import PROTOCOL_ERRORS
+from app.source_audit import PROTOCOL_ERRORS, VALID_TEMPORAL_PAIRS
 from app.answer_observations import ObservationCandidate, ObservationValidationError
+from app.query_metrics import CURRENT_QUERY_METRICS
 from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
+from app import source_quantities
 from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v25"
+POLICY_VERSION = "source-audit-v28"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -326,6 +328,36 @@ def _value_context(text: str, markers: list = ()) -> str:
     return re.sub(r"[^\S\r\n]+", " ", re.sub(r"[*_`\[\]]", "", _without_presentation_ranges(text, markers)))
 
 
+
+def _value_edge(text: str, markers: list, start: int, end: int, *, width: int, tail: bool) -> str:
+    """Exact normalized edge; expand past ignored runs rather than scanning interiors.
+
+    A retained edge longer than width cannot depend on normalization at the
+    opposite cut. Include entire removable markers crossing that cut, while
+    preserving markers not wholly contained in the caller's requested interval.
+    """
+    relevant = [(a, b) for a, b in markers if start <= a < b <= end]
+    # Preserve even the legacy transform's positional behavior for overlapping
+    # ranges; edge independence requires disjoint presentation removals.
+    if any(a < previous_end for (_, previous_end), (a, _) in zip(relevant, relevant[1:])):
+        value = _value_context(text[start:end], _slice_markers(relevant, start, end))
+        return value[-width:] if tail else value[:width]
+    size = max(64, width * 2)
+    while True:
+        first, last = (max(start, end - size), end) if tail else (start, min(end, start + size))
+        while True:
+            expanded_first, expanded_last = first, last
+            for a, b in relevant:
+                if a < first < b: expanded_first = min(expanded_first, a)
+                if a < last < b: expanded_last = max(expanded_last, b)
+            if (expanded_first, expanded_last) == (first, last): break
+            first, last = expanded_first, expanded_last
+        value = _value_context(text[first:last], _slice_markers(relevant, first, last))
+        if len(value) > width or (first == start and last == end):
+            return value[-width:] if tail else value[:width]
+        size *= 2
+
+
 def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict | None = None) -> list[dict]:
     spans = []
     seen = {}
@@ -361,25 +393,39 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
             key = (item['document_id'], item['source_context']['digest'])
             if key not in source_structures:
                 parsed = _MARKDOWN.parse(document_text)
-                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed), _field_leader_ranges(document_text, parsed=parsed))
-            lists, fields = source_structures[key]
+                source_structures[key] = (_list_marker_ranges(document_text, parsed=parsed),
+                                          _field_leader_ranges(document_text, parsed=parsed),
+                                          source_quantities.table_ranges(document_text))
+            lists, fields, tables = source_structures[key]
             list_markers = _slice_markers(lists, offset, offset + len(content))
             field_leaders = _slice_markers(fields, offset, offset + len(content))
+            quantity_tables = _slice_markers(tables, offset, offset + len(content))
         else:
             # A failed full-source binding never falls back to chunk-local
             # authority. Unknown continuation context also stays conservative.
             known_start = item.get('chunk_index', 0) == 0 and item.get('source_context') is None and '_source_document_content' not in item
             list_markers = _list_marker_ranges(content, known_start=known_start)
             field_leaders = _field_leader_ranges(content, known_start=known_start)
+            quantity_tables = source_quantities.table_ranges(content) if known_start else []
         presentation_ranges = sorted(list_markers + field_leaders)
         guard_content, guard_offset, guard_ranges = content, 0, presentation_ranges
         if context:
             guard_content, guard_offset = context
             guard_ranges = sorted(lists + fields)
-        for start in range(0, len(content), window - 200):
-            text = content[start:start + window]
-            guard_start, guard_end = guard_offset + start, guard_offset + start + len(text)
-            spans.append({"span_id": f"{item['id']}:{digest[:16]}:{start}",
+        for nominal_start in range(0, len(content), window - 200):
+            start, end = nominal_start, min(len(content), nominal_start + window)
+            if not content[start:end].strip():
+                # Blank OCR is context, never a standalone factual citation.
+                # Neighboring nonblank windows retain the entire blank run.
+                continue
+            while start > 0 and content[start - 1].isspace(): start -= 1
+            while end < len(content) and content[end].isspace(): end += 1
+            text = content[start:end]
+            guard_start, guard_end = guard_offset + start, guard_offset + end
+            handle = f"{item['id']}:{digest[:16]}:{nominal_start}"
+            if start != nominal_start or end != min(len(content), nominal_start + window):
+                handle += f":context:{start}:{end}"
+            spans.append({"span_id": handle,
                           "evidence_id": item["id"], "document_id": item.get("document_id"),
                           "history_reserved": item.get("history_reserved") is True,
                           "recent_reserved": item.get("recent_reserved") is True,
@@ -388,14 +434,15 @@ def evidence_spans(pack: dict, *, citation_safe: bool = False, diagnostics: dict
                           "content": text, "content_digest": digest,
                           **({'source_context': item['source_context']} if context else {}),
                           "boundary_before": guard_content[max(0, guard_start - 2):guard_start],
-                          "date_context_before": date_context(guard_content[:guard_start]),
+                          "date_context_before": date_context(guard_content, end=guard_start),
                           "boundary_after": guard_content[guard_end:guard_end + 2],
                           # Bounded guard context is computed from the whole
                           # certified chunk, so markup cannot hide a token tail.
                           "list_markers": _slice_markers(list_markers, start, start + len(text)),
+                          "quantity_tables": _slice_markers(quantity_tables, start, start + len(text)),
                           "field_leaders": _slice_markers(field_leaders, start, start + len(text)),
-                          "value_boundary_before": _value_context(guard_content[:guard_start], _slice_markers(guard_ranges, 0, guard_start))[-16:],
-                          "value_boundary_after": _value_context(guard_content[guard_end:], _slice_markers(guard_ranges, guard_end, len(guard_content)))[:2],
+                          "value_boundary_before": _value_edge(guard_content, guard_ranges, 0, guard_start, width=16, tail=True),
+                          "value_boundary_after": _value_edge(guard_content, guard_ranges, guard_end, len(guard_content), width=2, tail=False),
                           "feedback_open": bool(item.get("feedback_open"))})
     if not citation_safe:
         return spans
@@ -421,6 +468,7 @@ def citation_safe_span(span):
             'content': content[start:end], 'start': span['start'] + start, 'end': span['start'] + end,
             'list_markers': _slice_markers(span.get('list_markers', []), start, end),
             'field_leaders': _slice_markers(span.get('field_leaders', []), start, end),
+            'quantity_tables': _slice_markers(span.get('quantity_tables', []), start, end),
             'date_context_before': date_context(span.get('date_context_before', '') + content[:start]),
             'boundary_before': (span.get('boundary_before', '') + content[:start])[-2:],
             'boundary_after': (content[end:] + span.get('boundary_after', ''))[:2],
@@ -671,6 +719,7 @@ def validate_reference(reference: Any, spans: list[dict], *, diagnostics: list |
             "document_id": span["document_id"], "source_title": span["title"],
             "quote": source[start:end], "source_list_markers": source_list_markers,
             "source_field_leaders": source_field_leaders,
+            "source_quantity_tables": _slice_markers(span.get("quantity_tables", []), start, end),
             **({'source_context': span['source_context']} if span.get('source_context') else {}),
             "start": span["start"] + start,
             "date_context_before": date_context(span.get("date_context_before", "") + source[:start]),
@@ -698,7 +747,24 @@ def presentation_text(text: str, *, list_markers: list | None = None, field_lead
     return re.sub(r"(?<![\w.,])([+-])((?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*)(?=\d)", r"\2\1", text)
 
 
+def _without_source_attribution_id(text: str, references: list[dict]) -> str:
+    """Mask only an initial source-label ID owned by validated selected references."""
+    match = re.match(r"- In Document ([1-9][0-9]*), ", text)
+    if match is None:
+        return text
+    ids = {str(ref['document_id']) for ref in references
+           if type(ref.get('document_id')) is int and ref['document_id'] > 0}
+    if match.group(1) not in ids:
+        return text
+    start, end = match.span(1)
+    return text[:start] + ' ' * (end - start) + text[end:]
+
+
 def value_mismatches(text: str, references: list[dict], *, date_order: str = "mdy") -> dict:
+    return _value_mismatches(text, text, references, date_order=date_order)
+
+
+def _value_mismatches(text: str, scalar_text: str, references: list[dict], *, date_order: str) -> dict:
     # Supplement (never replace) semantic audit. Exact source values are needed
     # for generated precise numbers and named units. Computations need their own
     # explicit calculation evidence; the auditor cannot simply bless a new value.
@@ -706,6 +772,8 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     text = canonical_prose(text)
     text = re.sub(r"^\s*\d+\.(?:\s|$)", "", text, flags=re.MULTILINE)
     text = presentation_text(text)
+    scalar_text = presentation_text(re.sub(r"^\s*\d+\.(?:\s|$)", "",
+                                           canonical_prose(scalar_text), flags=re.MULTILINE))
     # A quote boundary is not source adjacency, even within the same document.
     sources = [r["quote"].replace("−", "-") for r in references]
     # Bare four-digit tokens remain scalars: identifiers and quantities may
@@ -715,7 +783,9 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
                           for source, ref in zip(sources, references)]
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
-    numeric_text = without_dates(text, dates)
+    scalar_dates = [found for found in source_dates(scalar_text, date_order)
+                    if not re.fullmatch(r"\d{4}", found.text)]
+    numeric_text = without_dates(scalar_text, scalar_dates)
     numeric_sources = [presentation_text(source, list_markers=ref.get("source_list_markers", []), field_leaders=ref.get("source_field_leaders", []))
                        for source, ref in zip(sources, references)]
     mismatches = {}
@@ -727,18 +797,17 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in numbers(source)}
     if missing_numbers:
         mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
-    units = VALUE_UNITS
-    unit_pattern = r"(?<![A-Za-z'’])" + units + r"(?![A-Za-z])"
-    missing_units = set(re.findall(unit_pattern, text)) - {unit for source in numeric_sources for unit in re.findall(unit_pattern, source)}
+    source_pairs = set()
+    available_units = set()
+    for source, reference in zip(numeric_sources, references):
+        source_pairs.update(source_quantities.prose_quantities(source))
+        source_pairs.update(source_quantities.table_quantities(
+            reference['quote'], reference.get('source_quantity_tables', [])))
+        available_units.update(source_quantities.unit_names(source))
+    missing_units = source_quantities.unit_names(text) - source_quantities.source_currency_units(available_units)
     if missing_units:
         mismatches["units"] = sorted(missing_units)[:30]
-    def quantities(value):
-        pairs = {(Decimal(amount.replace(",", "")), unit) for amount, unit in re.findall(
-            r"(?<![\w.,])(" + number + r")\s*(" + units + r")(?![A-Za-z])", value)}
-        for unit, amount in re.findall(r"(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*(" + number + r")(?!\w|[.,]\d)", value):
-            pairs.add((Decimal(amount.replace(",", "")), unit))
-        return pairs
-    missing_quantities = quantities(text) - {pair for source in numeric_sources for pair in quantities(source)}
+    missing_quantities = source_quantities.prose_quantities(text) - source_quantities.source_currency_quantities(source_pairs)
     if missing_quantities:
         mismatches["quantities"] = sorted(f"{amount} {unit}" for amount, unit in missing_quantities)[:30]
     return mismatches
@@ -761,23 +830,48 @@ def empty_ledger(candidate: str, observations: ObservationCandidate | None = Non
 
 
 def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evaluated_at):
-    # Keywords only identify claims that need a temporal assessment. An explicit
-    # source-relative assessment can establish a documented comparison, never
-    # the completeness of the archive or present real-world validity.
+    # Lexical cues request assessment; only an audited source frame can resolve
+    # a current-bearing unit. Qualification never transfers to its siblings.
     current_words = r"\b(?:currently|current|active|today|now|still|latest)\b"
     claims = ledger["claims"]
-    required = bool(plan.get("requires_current")) or bool(
-        re.search(current_words, question + " " + candidate, re.I)
-        or any(c["temporal_scope"] in {"current", "documented"} for c in claims))
+    question_current = bool(plan.get("requires_current")) or bool(re.search(current_words, question, re.I))
+    required = question_current or bool(
+        re.search(current_words, candidate, re.I)
+        or any(c.get("temporal_scope") in {"current", "documented"}
+               or c.get("temporal_assertion") in {"present_world", "retrieved_comparison"} for c in claims))
     current = current_state({**plan, "requires_current": required}, evidence_pack, evaluated_at)
     if not required:
         return "supported", current
-    source_relative = bool(claims) and all(
-        c["temporal_scope"] == "documented" or (
-            c["temporal_scope"] == "historical" and (
-                c.get("temporal_assertion") == "source_observation" or not re.search(current_words, c["claim"], re.I)))
-        for c in claims)
-    if not source_relative:
+    failures, source_relative = [], []
+    for claim in claims:
+        scope, assertion = claim.get('temporal_scope'), claim.get('temporal_assertion')
+        current_bearing = bool(re.search(current_words, claim['claim'], re.I))
+        report = ((scope in {'none', 'historical'} and assertion == 'source_observation')
+                  or (scope == 'historical' and assertion is None and not current_bearing))
+        comparison = scope == 'documented' and assertion in {None, 'retrieved_comparison'}
+        ancillary = scope == 'none' and assertion in {None, 'none'} and not current_bearing
+        if scope == 'current' or assertion == 'present_world':
+            reason = 'present_world_unestablished'
+        elif report or comparison:
+            source_relative.append(claim['id'])
+            continue
+        elif ancillary and not question_current:
+            continue
+        elif ancillary:
+            # The question can supply present tense even when the answer omits
+            # its keywords. Another unit cannot establish this unit's frame.
+            reason = 'current_question_not_source_scoped'
+        elif current_bearing and scope == 'none' and assertion in {None, 'none'}:
+            reason = 'unscoped_current_assertion'
+        else:
+            reason = 'unresolved_temporal_scope'
+        failures.append({'unit_id': claim['id'], 'reason': reason})
+    if not failures and not source_relative:
+        failures = [{'unit_id': claim['id'], 'reason': 'current_question_not_source_scoped'} for claim in claims]
+        if not failures:
+            failures = [{'unit_id': None, 'reason': 'current_question_not_source_scoped'}]
+    if failures:
+        current['temporal_failures'] = failures
         return "current_unresolved", current
     compared = sorted({doc for c in claims for doc in c.get("comparison_document_ids", [])})
     if compared:
@@ -837,20 +931,20 @@ def subset_source_reservations(candidate, ledger, revised_units, retained_ids):
 
 
 class AnswerFinalizer:
-    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60, max_units: int = 80,
-                 concurrency: int = 4, date_order: str = "mdy"):
+    def __init__(self, auditor, repairer=None, *, timeout_seconds: float = 60,
+                 concurrency: int = 4, date_order: str = "mdy", allow_subset: bool = True):
         self.date_order = date_order
         self.auditor = auditor
         self.repairer = repairer
         self.timeout_seconds = timeout_seconds
-        self.max_units = max_units
+        self.allow_subset = allow_subset
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or type(concurrency) is not int or concurrency < 1:
             raise ValueError("Audit timeout and concurrency must be positive")
         self.concurrency = concurrency
 
     def _audit_timeout(self, candidate, observations=None):
         units = observations.units() if observations else answer_units(candidate)
-        batches = math.ceil(min(len(units), self.max_units) / 4)
+        batches = math.ceil(len(units) / 4)
         return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
 
     async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None, progress=None):
@@ -880,13 +974,18 @@ class AnswerFinalizer:
         checked = 0
         results = []
         context = '' if observations else audit_context(answer)
-        complete = bool(units) and len(units) <= self.max_units and len(context) <= self.max_units * 1200 and bool(spans)
+        # Batch size and worker concurrency bound execution. Candidate size is
+        # not an admission filter: a complete audit must examine every unit.
+        complete = bool(units) and bool(spans)
         if complete:
             # Preserve surrounding dated/section context across batches. This
             # is bounded answer prose, not an additional source of evidence.
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
                           "unitization": observations.strategy if observations else 'prose_v1'}
             batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            metrics = CURRENT_QUERY_METRICS.get()
+            if metrics is not None:
+                metrics.audit_batches += len(batches)
             for unit_id, references in (source_reservations or {}).items():
                 if unit_id not in {u['id'] for u in units} or not references:
                     raise EvidenceReservationError('invalid_reserved_candidate')
@@ -981,7 +1080,12 @@ class AnswerFinalizer:
                     if not valid:
                         claim_rejections.append("missing_evidence" if not raw_refs else "invalid_reference")
                     else:
-                        mismatch_details = value_mismatches(unit["text"], refs, date_order=self.date_order)
+                        # Only the revalidated plain-text observation contract can
+                        # establish attribution before prose normalization loses markup.
+                        scalar_text = (_without_source_attribution_id(unit["text"], refs)
+                                       if observations is not None else unit["text"])
+                        mismatch_details = _value_mismatches(
+                            unit["text"], scalar_text, refs, date_order=self.date_order)
                         if mismatch_details:
                             claim_rejections.append("value_mismatch")
                     if status == "supported" and claim_rejections:
@@ -1002,13 +1106,15 @@ class AnswerFinalizer:
                     scope = assessment.get("temporal_scope", "unknown")
                     claims[-1]["temporal_scope"] = scope if isinstance(scope, str) and scope in {"historical", "documented", "current", "none", "unknown"} else "unknown"
                     if assertion is not None:
-                        if isinstance(assertion, str) and (scope, assertion) in {
-                                ("historical", "source_observation"), ("documented", "retrieved_comparison"),
-                                ("current", "present_world"), ("none", "none")}:
+                        if isinstance(assertion, str) and (scope, assertion) in VALID_TEMPORAL_PAIRS:
                             claims[-1]["temporal_assertion"] = assertion
                         else:
                             claims[-1]["status"] = "unsupported"
                             claims[-1]["rejection_reasons"].append("invalid_temporal_assertion")
+                    if scope != 'documented' and (assessment.get('comparison_scope') is not None
+                                                  or assessment.get('comparison_document_ids')):
+                        claims[-1]['status'] = 'unsupported'
+                        claims[-1]['rejection_reasons'].append('invalid_comparison_scope')
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
                         available = {span["document_id"] for span in selected if not span.get("feedback_open")}
@@ -1037,7 +1143,15 @@ class AnswerFinalizer:
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
             references = [reference for claim in claims for reference in claim["references"]]
-            if not values_match(answer, references, date_order=self.date_order):
+            scalar_text = answer
+            if observations is not None:
+                # Mask each occurrence using its own validated claim references;
+                # pooled references cannot authorize another observation's label.
+                for claim in reversed(claims):
+                    scalar_text = (scalar_text[:claim["start"]]
+                                   + _without_source_attribution_id(claim["claim"], claim["references"])
+                                   + scalar_text[claim["end"]:])
+            if _value_mismatches(answer, scalar_text, references, date_order=self.date_order):
                 for claim in claims:
                     claim["status"] = "unsupported"
                     claim["rejection_reasons"].append("answer_value_mismatch")
@@ -1055,7 +1169,7 @@ class AnswerFinalizer:
                 "selection_coverage": progress["selection_coverage"],
                 "audit_batches": diagnostics}
 
-    async def finalize(self, question: str, answer: str, evidence_pack: dict, *, plan: dict | None = None,
+    async def finalize(self, question: str, answer: str | ObservationCandidate, evidence_pack: dict, *, plan: dict | None = None,
                        mode: str = "strict", evaluated_at: str | None = None) -> dict:
         plan = dict(plan or {})
         evaluated_at = evaluated_at or datetime.now(timezone.utc).date().isoformat()
@@ -1065,10 +1179,20 @@ class AnswerFinalizer:
         disposition, attempts, error = "incomplete", 0, None
         repair_diagnostic = None
         repair_in_progress = False
-        candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
         observations = None
-        ledger = empty_ledger(candidate)
-        if mode == "quick":
+        if isinstance(answer, ObservationCandidate):
+            # Dataclass construction itself does not validate its fields. Re-enter
+            # the same contract used by model responses before making any call.
+            if not isinstance(answer.observations, tuple):
+                raise ObservationValidationError('invalid_observations')
+            observations = ObservationCandidate.from_response({'observations': list(answer.observations)})
+            candidate, declarations = canonical_candidate(observations.text, evidence_pack)
+            if candidate != observations.text or declarations:
+                raise ObservationValidationError('invalid_attribution')
+        else:
+            candidate, declarations = canonical_candidate(str(answer or ""), evidence_pack)
+        ledger = empty_ledger(candidate, observations)
+        if mode == "quick" and observations is None:
             disposition = "unaudited"
         else:
             try:
@@ -1082,11 +1206,8 @@ class AnswerFinalizer:
                         ledger = await self._audit(question, candidate, evidence_pack, plan, declarations,
                                                    diagnostics=diagnostics, observations=observations, progress=ledger)
                     summary = ledger["summary"]
-                    if attempt > 0 and summary['total'] > self.max_units:
-                        repair_diagnostic = {'reason': 'audit_unit_limit',
-                                             'unit_count': summary['total'], 'unit_limit': self.max_units}
                     if ledger["complete"] and summary["supported"] == summary["total"]:
-                        disposition, _ = temporal_acceptance(
+                        disposition, temporal = temporal_acceptance(
                             question, candidate, ledger, plan, evidence_pack, evaluated_at)
                         if disposition in {"supported", "qualified"}:
                             break
@@ -1097,13 +1218,15 @@ class AnswerFinalizer:
                         # candidate with invalid attribution can still be repaired.
                         error = "The source audit did not complete."
                         break
-                    if attempt == 0 and self.repairer and len(candidate) <= 96000:
+                    if attempt == 0 and self.repairer:
                         repair_in_progress = True
                         async with asyncio.timeout(self.timeout_seconds):
                             repaired = await self.repairer.repair_answer(
                                 question, candidate, json.dumps(ledger["spans"], ensure_ascii=False),
                                 {"status": disposition, "claims": ledger["claims"],
-                                 "rejection_reasons": ledger.get("rejection_reasons", [])})
+                                 "rejection_reasons": ledger.get("rejection_reasons", []),
+                                 "temporal_failures": temporal.get("temporal_failures", [])
+                                     if disposition == "current_unresolved" else []})
                         repair_in_progress = False
                         revised_observations = (ObservationCandidate.from_response(repaired)
                                                 if isinstance(repaired, dict) and 'observations' in repaired else None)
@@ -1137,7 +1260,7 @@ class AnswerFinalizer:
         # Only the final completed, nonconflicting audit is eligible. Never reuse
         # an earlier ledger after a failed repair/audit, or slice within a unit.
         summary = ledger["summary"]
-        if (disposition == "unsupported" and ledger["complete"]
+        if (self.allow_subset and disposition == "unsupported" and ledger["complete"]
                 and summary.get("audited") == summary.get("total")
                 and 0 < summary.get("supported", 0) < summary.get("total", 0)
                 and not ledger.get("rejection_reasons")
@@ -1201,6 +1324,8 @@ class AnswerFinalizer:
             question, candidate, ledger, plan, evidence_pack, evaluated_at)
         if disposition in {"supported", "qualified", "current_unresolved"}:
             disposition = temporal_disposition
+        if disposition == "current_unresolved":
+            error = "The audited claims do not establish current-world status or a sufficiently scoped source report."
         complete = disposition in {"supported", "qualified"}
         supported = complete or disposition == "partial"
         public_answer = candidate if supported else ABSTENTION

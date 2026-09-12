@@ -126,6 +126,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 | `GEMINI_MODEL` | Primary model for classification, extraction, query synthesis and entity helpers | `gemini-3.8-flash` |
 | `FALLBACK_MODEL` | Fallback LLM route used after rate limits/errors | `gpt-5.4-mini` |
 | `STRANDS_ENABLED` | Enable bounded Strands planner/verifier/editor helpers | `true` |
+| `QUESTION_PIPELINE_ENABLED` | Enable the new original-source question pipeline after qualification; keep disabled until reviewed GitOps activation | `false` |
 | `SOURCE_DATE_ORDER` | Numeric source date convention: `mdy`, `dmy`, or `reject_ambiguous`; short years never supply a century | `mdy` |
 | `ANSWER_AUDIT_TIMEOUT_SECONDS` | Allowance per concurrent audit wave and per repair; the audit deadline scales with required waves | `60` |
 | `STRANDS_MAX_CONCURRENT_CALLS` | Maximum active helper calls and audit workers per answer | `4` |

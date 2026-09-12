@@ -510,19 +510,18 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['finalization']['answer_verified'])
         self.assertEqual(self.requests, [])
 
-    async def test_valid_editor_over_audit_capacity_is_diagnosed_without_truncation(self):
+    async def test_valid_editor_over_former_capacity_is_audited_without_truncation(self):
         self.reject_first_audit = True
         self.editor_text = json.dumps({'observations': [QUOTE] * 81})
         result = await AnswerFinalizer(self.orchestrator, self.orchestrator).finalize(
             'What is recorded?', 'An unsupported draft.', PACK)
-        self.assertEqual(result['finalization']['disposition'], 'incomplete')
-        self.assertEqual(result['finalization']['repair_diagnostic'],
-                         {'reason': 'audit_unit_limit', 'unit_count': 81, 'unit_limit': 80})
-        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertEqual(result['finalization']['disposition'], 'supported')
+        self.assertNotIn('repair_diagnostic', result['finalization'])
+        self.assertTrue(result['finalization']['answer_verified'])
         self.assertEqual(result['claim_ledger']['summary']['total'], 81)
-        self.assertEqual(result['claim_ledger']['summary']['audited'], 0)
-        self.assertEqual(self.audit_count, 1)
-        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(result['claim_ledger']['summary']['audited'], 81)
+        self.assertEqual(self.audit_count, 22)
+        self.assertEqual(len(self.requests), 23)
         self.assertTrue(all(LIMIT_FIELDS.isdisjoint(r) for r in self.requests))
 
     async def test_unsupported_provider_schema_does_not_retry_without_constraints(self):

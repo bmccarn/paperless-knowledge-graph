@@ -3,6 +3,19 @@ import hashlib
 import re
 
 
+def missing_intervals(length, spans):
+    """Exact Unicode-offset union, including whitespace and interior gaps."""
+    cursor, missing = 0, []
+    for span in sorted(spans, key=lambda s: (s['start'], s['end'])):
+        start, end = span['start'], span['end']
+        if type(start) is not int or type(end) is not int or not 0 <= start < end <= length:
+            raise ValueError('invalid_acquisition_interval')
+        if start > cursor: missing.append([cursor, start])
+        cursor = max(cursor, end)
+    if cursor < length: missing.append([cursor, length])
+    return missing
+
+
 def certifying_text(item: dict) -> str | None:
     # Legacy generated summaries used a reserved slot in the OCR table. The
     # guard remains necessary until old indexes have been reconciled.

@@ -1,6 +1,7 @@
 "use client";
 
 import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/timeline-dates";
+import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question-coverage";
 import { formatAnswerInline } from "@/lib/answer-format";
 
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
@@ -165,7 +166,8 @@ interface Message {
   claim_ledger?: ClaimLedger;
   evidence_pack?: EvidencePack;
   timeline_events?: TimelineEvent[];
-  finalization?: { timeline?: TimelineReceipt };
+  finalization?: { timeline?: TimelineReceipt; pipeline_version?: string; answer_verified?: boolean;
+    question_coverage?: QuestionCoverageReceipt };
 }
 
 interface Conversation {
@@ -864,23 +866,25 @@ function QueryContent() {
                       {msg.cached && (
                         <Badge variant="outline" className="text-[8px] px-1 py-0">cached</Badge>
                       )}
-                      {msg.confidence != null && <ConfidenceBar value={msg.confidence} />}
+                      {msg.confidence != null && !msg.finalization?.pipeline_version && <ConfidenceBar value={msg.confidence} />}
                       <CopyButton text={msg.content} />
                     </div>
                   )}
+
+                  {msg.role === "assistant" && <QuestionCoverage receipt={msg.finalization?.question_coverage} />}
 
                   {msg.role === "assistant" && msg.source_summary && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium flex items-center gap-1">
-                          <ShieldCheck className="h-3 w-3" /> Trust check
+                          <ShieldCheck className="h-3 w-3" /> {msg.finalization?.pipeline_version ? "Source checks" : "Trust check"}
                         </span>
                         {msg.source_summary.latest_check_used ? (
                           <Badge variant="secondary" className="text-[9px]">latest-pass run</Badge>
                         ) : (
                           <Badge variant="outline" className="text-[9px]">latest-pass not needed</Badge>
                         )}
-                        {msg.source_summary.trust_level && (
+                        {msg.source_summary.trust_level && !msg.finalization?.pipeline_version && (
                           <Badge variant="outline" className="text-[9px]">
                             {msg.source_summary.trust_level} trust
                             {msg.source_summary.trust_score != null ? ` ${Math.round(msg.source_summary.trust_score * 100)}%` : ""}

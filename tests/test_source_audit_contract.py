@@ -85,10 +85,12 @@ class SourceAuditContractTests(unittest.IsolatedAsyncioTestCase):
             row = self.row()
             row.update(metadata)
             row['checks'][facet] = 'not_applicable'
+            self.assertIn('semantic_' + facet, self.parse(row)['semantic_decision']['rejection_reasons'])
             result, count = await self.run_finalizer(row)
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 2)
             self.assertFalse(result['finalization']['answer_verified'])
-            self.assertIn('semantic_' + facet, result['claim_ledger']['claims'][0]['rejection_reasons'])
+            self.assertEqual(result['claim_ledger']['audit_batches'][0]['final_errors'],
+                             ['semantic_protocol_inconsistent_scope_checks'])
 
     async def test_positive_facets_cannot_override_original_source_value_or_current_gates(self):
         for change, claim in (({'references': [{'span_id': 'invented'}]}, CLAIM),
@@ -100,7 +102,7 @@ class SourceAuditContractTests(unittest.IsolatedAsyncioTestCase):
             row.update(change)
             result, count = await self.run_finalizer(row, claim=claim)
             self.assertFalse(result['finalization']['answer_verified'], (change, claim))
-            self.assertEqual(count, 1)
+            self.assertEqual(count, 2 if 'references' in change else 1)
 
     async def test_completed_and_existing_state_observations_remain_eligible(self):
         for text in (CLAIM, 'The equipment record states current capacity of 400 units and selects a custodian update.'):

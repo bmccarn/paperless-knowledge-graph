@@ -1,6 +1,7 @@
 """Calendar equivalence preserves source precision, values and exact quotations."""
 import unittest
 from app.answer_finalization import AnswerFinalizer, evidence_spans, values_match
+from app.source_dates import source_dates, source_date_occurs
 
 
 class ExactAuditor:
@@ -20,6 +21,63 @@ def pack(text):
 
 
 class SourceDateTests(unittest.IsolatedAsyncioTestCase):
+    def test_horizontal_slash_spacing_preserves_calendar_precision(self):
+        for separator in (' / ', '\t/ ', '\u00a0/\u202f', '/\t'):
+            for order, fields in [('mdy', ('8', '4')), ('dmy', ('4', '8'))]:
+                for year in ('26', '2026'):
+                    written = separator.join((*fields, year))
+                    source = f'Service date: {written}.'
+                    compact = '/'.join((*fields, year))
+                    with self.subTest(written=written, order=order):
+                        found = source_dates(source, order)
+                        self.assertEqual(len(found), 1)
+                        self.assertEqual(found[0].text, written)
+                        self.assertEqual(source[found[0].start:found[0].end], written)
+                        self.assertTrue(source_date_occurs(compact, source, order))
+                        self.assertTrue(source_date_occurs(written, f'Date: {compact}', order))
+                        self.assertTrue(values_match(f'Service date {compact}.', [{'quote': source}], date_order=order))
+                        if year == '26':
+                            self.assertIsNone(found[0].value)
+                            self.assertEqual(found[0].reason, 'unspecified_century')
+                            self.assertFalse(source_date_occurs('2026-08-04', source, order))
+                        else:
+                            self.assertEqual(found[0].value, '2026-08-04')
+
+    def test_spaced_dates_do_not_gain_authority_from_invalid_tokens(self):
+        for source in ('Date: 8 / 5 / 26', 'Policy #8 / 4 / 26',
+                       'Date: 0 / 8 / 4 / 26', 'Date: 8 / 4 / 26 / 7'):
+            self.assertFalse(values_match('Service date 8/4/26.', [{'quote': source}]), source)
+        for source in ('Date: 0 / 8 / 4 / 2026', 'Date: 8 / 4 / 2026 / 7'):
+            self.assertFalse(any(d.value is not None for d in source_dates(source)), source)
+        for suffix in ('7.5', '7code', '7-9'):
+            source = f'Date: 8 / 4 / 2026 / {suffix}'
+            self.assertFalse(values_match('Service date August 4, 2026.', [{'quote': source}]))
+            self.assertFalse(any(d.value is not None for d in source_dates(source)))
+        self.assertFalse(values_match('Service date 8/4/26.', [{'quote': 'Date: 8 / 4 / 26 / 7code'}]))
+        self.assertFalse(source_date_occurs('2026-08-04', 'ID X / 8 / 4 / 2026'))
+        self.assertFalse(source_date_occurs('2026-08-04', '8 / 4 / 2026', context_before='ID X / '))
+        for scalar in ('Ratio 5 / 10 / 100', 'Record number 8 / 4 / 2026 / 7'):
+            self.assertTrue(values_match(scalar, [{'quote': scalar}]))
+        for newline in ('\n', '\r', '\r\n', '\u2028', '\u2029'):
+            self.assertFalse(source_date_occurs('8/4/26', f'Date: 8 /{newline}4 / 26'))
+        self.assertFalse(source_date_occurs('8/4/26', 'Date: 8 / 4 / 26', 'reject_ambiguous'))
+        self.assertFalse(source_date_occurs('2/30/26', 'Date: 2 / 30 / 26'))
+        self.assertFalse(values_match('Service date 2026-08-04.', [{'quote': 'Date: 8 / 4 / 26'}]))
+
+    def test_prose_slashes_preserve_named_and_iso_calendar_authority(self):
+        for date in ('August 4, 2026', '2026-08-04', '8/4/2026', '8 / 4 / 2026'):
+            self.assertTrue(values_match('Service date August 4, 2026.',
+                                        [{'quote': f'Service date: {date} / Status: completed'}]))
+        self.assertTrue(values_match('September 5, 2026',
+                                    [{'quote': 'August 4, 2026 / September 5, 2026'}]))
+
+    async def test_spaced_date_survives_finalization_with_original_quote(self):
+        source = 'Service date: 8 / 4 / 26. Conditional charge: $217 USD.'
+        result = await AnswerFinalizer(ExactAuditor()).finalize(
+            'What was recorded?', 'On 8/4/26 the record lists a conditional charge of $217 USD.', pack(source))
+        self.assertEqual(result['finalization']['disposition'], 'supported')
+        self.assertEqual(result['claim_ledger']['claims'][0]['references'][0]['quote'], source)
+
     def test_equivalent_calendar_formats_and_precision(self):
         for claim, source in [
             ("Service began 2026-09-01.", "Service began September 1, 2026."),

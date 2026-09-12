@@ -1,12 +1,11 @@
 # Source-grounded interpretation and verification
 
-Status: both native model-comparison grades and their reconciliation are complete;
-both routes FAIL. The deterministic date-spacing repair is reviewed and implemented.
-The source-scope interface review is complete and the diagnostic-only prototype is
-implemented. Both implementation reviews are clear; the matched native accuracy
-comparison has not run.
-This plan does not activate a route or change factual acceptance. Parent:
-[question evidence pipeline](question-evidence-answer-pipeline.md), issue #33.
+Status: the matched 96-execution source-scope diagnostic and both independent
+grades are complete; both routes FAIL acceptance. Scope metadata removed tested
+partial-original absence errors but lost supported positive answers. The current
+authorized execution checklist is in [query reliability evaluation](query-reliability-evaluation.md#current-bounded-closure-cycle--september-12).
+This document retains the existing contracts and prior implementation decisions;
+it does not qualify or activate a production route.
 
 ## Outcome
 
@@ -326,4 +325,71 @@ The [matched source-scope diagnostic](source-scope-diagnostic.md) now implements
 next evaluation step. Its reviewed constructor extension certifies explicit admitted
 chunk coordinates while keeping partial canonical evidence and parsing context
 strictly local to supplied text. The runner and challenge set are reviewed; local SDK
-preflight is complete. Exact remote admission and native accuracy grading remain open.
+preflight is complete. Exact remote admission and native grading completed; both routes failed. The bounded closure checklist above supersedes this historical next-step status.
+
+
+## Selected closure repair: source labels are metadata, not source values
+
+The unchanged captured execution 28 has a semantically supported observation
+beginning `In Document 5,` and a validated reference owned by document 5. The
+finalizer rejects scalar `5` because it compares every number only with source
+quote text. A local replay at `720e242` reproduces `{'values': ['5']}`; the minimized
+`In Document 5, payment requested.` against document 5 / `Payment requested.`
+fails, while removing the source label passes. The captured trace preserves the
+validated ID, so reference loss is not the cause. Two other frozen losses use
+`Document 112` inside an original-local absence assertion.
+
+The repair contract recognizes only an observation-leading `In Document N, `
+attribution frame in a revalidated `ObservationCandidate`, rendered with its exact
+canonical `- ` bullet. Legacy prose and direct value-check callers retain their
+existing behavior: normalization alone cannot establish metadata authority.
+Use canonical ASCII positive-integer spelling and an exact positive integer ID
+from a validated selected reference as metadata authority. Eligibility is decided
+at the plain-text observation boundary before presentation normalization;
+links, code and padding are rejected there. Quoted or embedded labels do
+not qualify. The separate mid-sentence `Document 112` failures remain unchanged. It must not add that number to the pool of factual source values. Mask
+only the matched identifier occurrence for scalar comparison, preserving the
+original candidate, offsets, references and semantic verdict. All other numeric
+occurrences, quantities, dates, signs and units retain their existing checks.
+
+Malformed/partial numeric labels, foreign IDs, boolean/string IDs, quantities,
+policy/account IDs and nearby repeated numbers must not acquire this authority.
+An unbound label receives no metadata exemption. Labels do not establish that the
+source content prints that identifier, any statement about another record, original
+completeness, or truth of the accompanying assertion. Literal quoted document
+identifiers remain source claims and cannot use metadata as their evidence.
+
+Validation must exercise actual finalizer/reference validation as well as the
+minimal value-check seam: supported source attribution survives; forged reference
+ownership, changed amounts and supported model verdicts with false values still
+fail. Replay all frozen audited claims to enumerate every changed guard result;
+separate an unchanged captured semantic verdict from any new accuracy conclusion.
+No new model call is required for that deterministic comparison.
+
+## Selected closure repair: meridiem markers are not measurement units
+
+Captured execution 06 / fresh u3 is model-supported but rejected only for missing
+unit `m`: the answer spells a time with `a.m.`, while the original uses `AM`.
+The minimized checker also rejects `12:01 a.m.` against `12:01 AM.` because
+`source_quantities._unit_tokens` recognizes the last letter of the abbreviation
+as metres. This is a lexical defect, separate from whether the cited time has the
+correct event role. A prose range separator also produces a scalar sign mismatch;
+that remains unresolved because distinguishing ranges from subtraction needs its
+own occurrence-level contract.
+
+At the existing quantity tokenizer, exclude the `m` inside a complete standalone
+`a.m.` or `p.m.` marker, case-insensitively. Do this equally for candidate and source
+text; an abbreviation must neither demand nor supply measurement authority.
+Keep real `m`, compound units, identifiers, adjacent tokens and numeric checks
+unchanged. No time-of-day equivalence, timezone, event role or new date precision
+is established by this lexical correction; semantic auditing remains mandatory.
+Test both AM/PM spellings, true metre claims and false measurements that formerly
+borrowed an abbreviation's `m`, then replay all captured guarded observations.
+
+Both selected lexical repairs are implemented and independently reviewed. The
+full backend suite passes 1,049 tests with 58 expected skips; 61 focused checks
+pass. Full captured replay changes eleven of 1,881 guard results, clearing five
+and preserving separate failures in six. No known false semantic approval is
+identified among those newly guard-clear observations, but the existing uncertain
+compound interpretation retains its status. This does not pass semantic closure.
+See the [evaluation record](../audits/2026-09-09-query-evaluation.md#september-12-deterministic-repair-slice-and-remaining-acceptance-boundary).

@@ -17,6 +17,7 @@ _CURRENCY_SYMBOL = {'USD': '$', 'CAD': '$', 'AUD': '$', 'EUR': '€', 'GBP': '£
 _CURRENCIES = {'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', '$', '€', '£'}
 _BASES = sorted({unit.split('/')[0] for unit in VALUE_UNIT_NAMES}, key=lambda unit: (-len(unit), unit))
 _BASE_PATTERN = re.compile('|'.join(re.escape(unit) for unit in _BASES))
+_MERIDIEM = re.compile(r'[ap]\.m\.', re.I)
 _POWERS = frozenset('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻')
 _SCALE_WORDS = re.compile(r'\b(?:hundreds?|thousands?|millions?|billions?|trillions?|scaled?|scaling|factor|times|multiple|per|x|k|m|b|t|bn|mn|mm|tn|kilo|mega|giga)\b', re.I)
 
@@ -29,8 +30,17 @@ def _unit_continuation(char):
 def _unit_tokens(text):
     """Consume maximal unit-like tokens without regex suffix backtracking."""
     tokens, consumed = [], 0
+    meridiem_letters = set()
+    for marker in _MERIDIEM.finditer(text):
+        first, last = marker.span()
+        if ((first and (_unit_continuation(text[first - 1]) or text[first - 1] == '.'))
+                or (last < len(text) and (_unit_continuation(text[last]) or text[last] == '.'))):
+            continue
+        meridiem_letters.add(first + 2)
     for match in _BASE_PATTERN.finditer(text):
         first, last = match.span()
+        if first in meridiem_letters:
+            continue
         # A slash may separate two explicitly prefixed currency amounts. Keep
         # consumed compound units intact and require the complete amount here.
         currency_after_separator = False

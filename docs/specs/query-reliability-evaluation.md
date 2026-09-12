@@ -4,6 +4,51 @@ Status: G0 and controlled G1 reproduction complete; G2 candidates tested without
 
 Requested September 9, 2026. Tracker: [issue #33](https://github.com/bmccarn/paperless-knowledge-graph/issues/33). Frozen starting revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`, answer policy `source-audit-v25`, delivered through GitOps PR164. This document replaces the execution sequence and stale status matrix in [the earlier reliability spec](evidence-query-reliability.md). That document remains a record of existing contracts, implementation history and failed experiments.
 
+
+## Current bounded closure cycle — September 12
+
+The user authorized one closure cycle after the 96-execution scope diagnostic
+failed both routes. This checklist is the authoritative execution status; prior
+experiments and thresholds remain immutable. See the final result in
+[the evaluation record](../audits/2026-09-09-query-evaluation.md#matched-scope-diagnostic-final-result-and-stopping-point).
+
+- [x] Complete and independently grade the matched source-scope diagnostic.
+- [ ] Reproduce captured finalizer losses locally, separating deterministic defects
+  from semantic rejections, missing reading content and incorrect model claims.
+- [x] Review the two selected lexical repair contracts and lock positive/negative regressions.
+- [x] Implement the two selected reproduced lexical repairs. Keep original ownership, numeric signs,
+  units, date precision, source scope and independent subset auditing intact.
+- [ ] Resolve the interpretation/calculation contract for the measured remaining
+  cases: preserve source roles/conditions and original precision; calculations
+  require exact source operands and deterministic evaluation. No guessed arithmetic
+  or prose-based removal of failed checks.
+- [ ] Freeze a focused positive/negative comparison at the repaired interface.
+  Pass only if required supported content is retained with correct attribution and
+  no false approval is introduced. Prior failures and uncertainty retain their status.
+- [ ] Only after that gate passes, run the broader matched and fresh held-out
+  whole-query qualification; preserve all modes and counterevidence requirements.
+- [ ] Complete actual browser UI acceptance and reviewed GitOps release/runtime checks.
+
+Stop rule: a failed focused accuracy gate ends this cycle with a report and an
+explicit architecture decision before further experiments. Engineering passes do
+not close issue #33. No model route, corpus reset, output cap, reindex or deployment
+change is implied by a local replay. New native dispatch must bind its exact
+payload, destinations and budgets to the applicable user authorization.
+
+Repair-slice checkpoint: source-label identity and meridiem/metre tokenization are
+implemented, independently reviewed and replayed against all 1,881 captured claims.
+The local regression checks pass; the semantic/interpretation and calculation
+items above remain open, and no native gate or release has advanced. Five guard
+results become clear, including one whose existing semantic uncertainty remains
+quarantined from clean accuracy credit. See the
+[evaluation record](../audits/2026-09-09-query-evaluation.md#september-12-deterministic-repair-slice-and-remaining-acceptance-boundary).
+
+Initial reproduced-candidate priorities from the frozen evidence are document
+metadata being treated as factual numeric content; valid supplied-entry observations
+being judged as assertions about a whole original; source/reader precision mismatch;
+and printed values conflated with calculations. Each needs a replay or matched
+control before it can be called a fix. No domain-specific exception is permitted.
+
 ## Outcome and scope
 
 Ordinary questions about a person's documents should receive useful, source-faithful answers. A history question should preserve meaningful earlier observations and the latest documented observations for each relevant subject. A current-state question should distinguish what dated records establish from unresolved present-world status. When an independent fact cannot be established, retain a useful, independently verified answer where possible and explain the specific remaining gap.

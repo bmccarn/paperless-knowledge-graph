@@ -747,7 +747,24 @@ def presentation_text(text: str, *, list_markers: list | None = None, field_lead
     return re.sub(r"(?<![\w.,])([+-])((?:USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*)(?=\d)", r"\2\1", text)
 
 
+def _without_source_attribution_id(text: str, references: list[dict]) -> str:
+    """Mask only an initial source-label ID owned by validated selected references."""
+    match = re.match(r"- In Document ([1-9][0-9]*), ", text)
+    if match is None:
+        return text
+    ids = {str(ref['document_id']) for ref in references
+           if type(ref.get('document_id')) is int and ref['document_id'] > 0}
+    if match.group(1) not in ids:
+        return text
+    start, end = match.span(1)
+    return text[:start] + ' ' * (end - start) + text[end:]
+
+
 def value_mismatches(text: str, references: list[dict], *, date_order: str = "mdy") -> dict:
+    return _value_mismatches(text, text, references, date_order=date_order)
+
+
+def _value_mismatches(text: str, scalar_text: str, references: list[dict], *, date_order: str) -> dict:
     # Supplement (never replace) semantic audit. Exact source values are needed
     # for generated precise numbers and named units. Computations need their own
     # explicit calculation evidence; the auditor cannot simply bless a new value.
@@ -755,6 +772,8 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     text = canonical_prose(text)
     text = re.sub(r"^\s*\d+\.(?:\s|$)", "", text, flags=re.MULTILINE)
     text = presentation_text(text)
+    scalar_text = presentation_text(re.sub(r"^\s*\d+\.(?:\s|$)", "",
+                                           canonical_prose(scalar_text), flags=re.MULTILINE))
     # A quote boundary is not source adjacency, even within the same document.
     sources = [r["quote"].replace("−", "-") for r in references]
     # Bare four-digit tokens remain scalars: identifiers and quantities may
@@ -764,7 +783,9 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
                           for source, ref in zip(sources, references)]
     missing_dates = [found.text for found in dates
                      if not any(date_supported(found, actual) for occurrences in source_occurrences for actual in occurrences)]
-    numeric_text = without_dates(text, dates)
+    scalar_dates = [found for found in source_dates(scalar_text, date_order)
+                    if not re.fullmatch(r"\d{4}", found.text)]
+    numeric_text = without_dates(scalar_text, scalar_dates)
     numeric_sources = [presentation_text(source, list_markers=ref.get("source_list_markers", []), field_leaders=ref.get("source_field_leaders", []))
                        for source, ref in zip(sources, references)]
     mismatches = {}
@@ -1059,7 +1080,12 @@ class AnswerFinalizer:
                     if not valid:
                         claim_rejections.append("missing_evidence" if not raw_refs else "invalid_reference")
                     else:
-                        mismatch_details = value_mismatches(unit["text"], refs, date_order=self.date_order)
+                        # Only the revalidated plain-text observation contract can
+                        # establish attribution before prose normalization loses markup.
+                        scalar_text = (_without_source_attribution_id(unit["text"], refs)
+                                       if observations is not None else unit["text"])
+                        mismatch_details = _value_mismatches(
+                            unit["text"], scalar_text, refs, date_order=self.date_order)
                         if mismatch_details:
                             claim_rejections.append("value_mismatch")
                     if status == "supported" and claim_rejections:
@@ -1117,7 +1143,15 @@ class AnswerFinalizer:
         # complete revision before certifying it; references remain separate quotes.
         if claims and all(claim["status"] == "supported" for claim in claims):
             references = [reference for claim in claims for reference in claim["references"]]
-            if not values_match(answer, references, date_order=self.date_order):
+            scalar_text = answer
+            if observations is not None:
+                # Mask each occurrence using its own validated claim references;
+                # pooled references cannot authorize another observation's label.
+                for claim in reversed(claims):
+                    scalar_text = (scalar_text[:claim["start"]]
+                                   + _without_source_attribution_id(claim["claim"], claim["references"])
+                                   + scalar_text[claim["end"]:])
+            if _value_mismatches(answer, scalar_text, references, date_order=self.date_order):
                 for claim in claims:
                     claim["status"] = "unsupported"
                     claim["rejection_reasons"].append("answer_value_mismatch")

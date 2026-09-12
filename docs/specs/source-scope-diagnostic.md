@@ -1,6 +1,6 @@
 # Matched source-scope diagnostic
 
-Status: implemented with independently cleared Standards and Spec reviews; no native executions. Exact remote-runtime preflight and package admission remain outstanding. Parent: [source-grounded interpretation](source-grounded-interpretation-contract.md), G2 in [query reliability evaluation](query-reliability-evaluation.md). The diagnostic-only application prototype is `d0fa079` on draft PR #50. Both previous model-route grades remain FAIL.
+Status: implemented; exact remote-runtime preflight and both independent package reviews passed. The user explicitly authorized the frozen private payload and Google/OpenAI destinations after the initial approval rejection; the bounded comparison and both independent grades are complete. Both routes FAIL acceptance: partial-source absence traps improve, but required positive delivery declines and factual/citation failures remain. Parent: [source-grounded interpretation](source-grounded-interpretation-contract.md), G2 in [query reliability evaluation](query-reliability-evaluation.md). The diagnostic-only application prototype is `d0fa079` on draft PR #50. Both previous model-route grades remain FAIL.
 
 ## Hypothesis and decision
 

@@ -1657,6 +1657,164 @@ The full suite passed 1,038 tests with 58 expected skips. Five new SDK/profile t
 and five legacy comparison tests pass, including final admission-hardening regressions.
 The local actual-SDK probe made 744 localhost requests, largest 78,215 bytes and total
 19,086,210 bytes, with no provider calls. All unchanged captures pass the stricter
-candidate/subset coverage checker. Native remote preflight/admission remains pending;
-no new accuracy conclusion, model-route activation or deployment follows from these
-mechanical checks. Both completed native route grades remain FAIL.
+candidate/subset coverage checker. These mechanical checks do not establish accuracy.
+Both completed native route grades remain FAIL.
+
+
+## Exact scope package admission and blocked native launch
+
+Frozen implementation `720e24233fe31d56d5496c598dac72034d97a7b7` passed
+CI run 34530785912, including offline/disposable backend and production browser
+regressions. The exact remote Python 3.12.14 runtime with Strands 1.55.0,
+OpenAI SDK 2.54.0 and httpx 0.28.1 completed a fresh localhost MockTransport
+preflight: 96 executions, 744 requests, zero provider calls. All 6,533 bound
+inputs, 456 known initial request bodies and exact runtime/code identities
+validated in the cluster. Both independent admission reviewers cleared the
+same package, subject
+`4ee7825d81d3bd29df7f0b65e9e4d34dd7eb95a0deed8d1ab4985fb7fda7baaa`.
+The final two-receipt manifest SHA is
+`fac430f3e5d4a643d77faa54b25c78483b28527eed74ddbd13edf77e377ba0a6`.
+
+Automatic approval review rejected the native launch before command execution:
+it judged prior broad approvals insufficiently specific to transmitting the
+private source payload to external Google and OpenAI destinations. No workaround
+or native retry was attempted. The prepared experiment remains unchanged, with
+96 scheduled executions, 1,536 aggregate attempts and a four-hour ceiling;
+explicit payload/destination authorization is the next dependency. No new model
+calls, semantic result, production activation or deployment occurred.
+
+
+The user subsequently explicitly approved that exact private-payload, destination
+and budget request. Before launch, the final manifest and launcher hashes matched,
+no existing result/process artifacts were present, and both live LiteLLM mappings
+still resolved to the approved Google and OpenAI models. The admitted runner
+launched successfully in its frozen temporary package. Execution and semantic
+grading remain pending; this is not an accuracy result or production activation.
+
+
+## Matched scope diagnostic: native execution complete
+
+The unchanged admitted package completed all 96 scheduled executions in
+5,717.442 seconds (95.3 minutes), with 669 native calls, zero execution failures
+and no unobserved executions. Its launcher also reported completed cleanup.
+All 4,147 registered file hashes and 669 raw request-body hashes validated;
+the full 4,725-file local output inventory exactly matches the remote inventory.
+Frozen code/runtime identities and both approved model-route mappings matched
+again after the run. This is execution/integrity evidence, not an accuracy pass.
+
+The terminal run SHA is
+`cb54fd60c950bc3d8fffd555c6a3971e7015797569aaa7293d853762da128e1c`;
+the output-inventory SHA is
+`dcb44e8415e2ac921f4048f755559ae9221af6aff193d4d7bb5e9b657e53e61e`.
+Raw sources, captures and per-occurrence grades remain in private temporary storage.
+Final independent grading and reconciliation are in progress. The user explicitly
+requested a performance/status report at the end of this comparison and then a
+stop, with no further implementation, experiment or deployment.
+
+
+## Matched scope diagnostic: final result and stopping point
+
+Both independent reviewers graded all 96 executions and all 1,908 raw audit
+assessment occurrences. The Standards review additionally records 423 fresh-reader
+observations. Both routes and their source-scope mechanism acceptance criteria
+are **FAIL**. The result does not qualify a production route or activate the prototype.
+
+The following are required **content points present in fresh final answers**, not
+accuracy percentages. A present point can still carry an incorrect modifier,
+insufficient citation or unresolved source-role ambiguity. Full-source and
+partial-source denominators remain separate.
+
+| Route | Full control | Full scoped | Partial control | Partial scoped |
+| --- | ---: | ---: | ---: | ---: |
+| Gemini | 58/66 | 58/66 | 9/9 | 4/9 |
+| OpenAI | 53/66 | 51/66 | 9/9 | 7/9 |
+
+For the fixed partial-original absence traps, control profiles delivered three
+false absence claims on Gemini and two on OpenAI; both scoped profiles delivered
+zero. Each scoped profile correctly rejected all six such trap opportunities.
+All four profiles preserved the nine fixed visible-positive controls, and no
+withheld meaning received retention credit. This narrower success does not erase
+the fresh-answer losses above. The fresh readers themselves found all nine available
+partial-source meanings in every group; subsequent judging/guards lost the scoped
+answers' positive information.
+
+Confirmed remaining defects include incorrect premium arithmetic/composition,
+field and date-role confusion, unproved submission/current-status language,
+insufficient selected citations, and rejection of valid observations by semantic
+or scalar checks. Some errors were blocked before delivery; others survived.
+A complete execution or a supported model verdict is not a clean factual grade.
+
+The independent grades are immutable. A separate two-item reconciliation distinguishes
+content presence from clean precision/role retention: the Spec grade initially
+reported Gemini scoped full retention as 56/66 because two compound assertions had
+date-role uncertainty or an unsupported annual-period modifier. Both reviewers agree
+that the two core content points are present, yielding 58/66 content coverage; their
+defects and original judgments remain preserved. Other compound-claim and citation
+judgments remain separately recorded by reviewer rather than merged into a single
+apparently exact false-approval total. Uncertainty never confers acceptance credit.
+
+Spec grade SHA:
+`7c9e04d8d5565bf7a41657689ebf4d2f8c57736ad2545f61915ac15e04f1642c`.
+Standards grade SHA:
+`c180ea5113ea37b650a07365814225c684838afbe8446584388bb80d2b89efff`.
+Spec content/precision reconciliation SHA:
+`42d7ac0fa44e5e0c2e9183f278ad499b9988dec59f75ef0d59f51f8ea29ded32`.
+All native responses completed, but provider-reported cache hits were present;
+application cache bypass does not establish independent provider trials.
+
+Implementation, engineering CI, exact-runtime preflight, source isolation and
+capture integrity passed their checks. Query accuracy remains unqualified; whole-query
+qualification, live visual UI acceptance and GitOps release gates remain open.
+The computer-control native pipe still failed when rechecked, so this run adds no
+live visual UI acceptance claim. Production configuration and deployment are unchanged.
+Per the user's explicit instruction, work stops after this performance/status report;
+no subsequent implementation, experiment or deployment has been started.
+
+### September 12: deterministic repair slice and remaining acceptance boundary
+
+Starting revision: `720e24233fe31d56d5496c598dac72034d97a7b7`. The bounded
+closure checklist remains authoritative; these results are local replay evidence,
+not a new native semantic accuracy result or permission to deploy.
+
+Two captured causes were minimized and repaired after contract review:
+
+- A validated observation's leading document ID was treated as a number that had
+  to appear in its original quote. The exemption now belongs only to revalidated
+  plain-text observations and each claim's own validated references. Factual
+  occurrences of the same number retain their checks. Review caught a Markdown
+  normalization boundary defect in the initial patch; legacy prose now receives
+  no exemption. Actual finalizer replay of the captured observation changes from
+  unsupported to supported with the same original references and semantic verdict.
+- The unit tokenizer treated `m` inside `a.m.`/`p.m.` as metres. It now excludes
+  only complete standalone meridiem markers on both sides of comparison. Real
+  measurements, compounds, identifiers, malformed abbreviations and changed
+  numeric times retain their checks. This establishes no time/event equivalence.
+
+Replaying 1,881 captured audited claims with validated references changes eleven
+value-check results: one source-label result and ten meridiem results. Five become
+clear of value mismatches; six retain their independent date/currency mismatches.
+The other 1,870 results are identical. Spec and Standards reviews both clear the
+implementation. Neither review identifies a known false approval among the four
+newly guard-clear meridiem claims. Spec retains the existing uncertainty for one
+compound application-period/bound-time observation; it receives no clean accuracy
+credit. No frozen source, model response, grade or acceptance threshold changed.
+
+Validation: 61 focused tests pass. The final full backend run passes 1,049 tests
+with 58 expected skips in 48.830 seconds. An initial focused invocation included
+an incorrect test-module name; the corrected invocation and full suite pass.
+No new provider call, ingestion work, production configuration change, UI
+acceptance or deployment occurred. Current-head CI has not yet been run.
+
+The closure requirement is still unmet. The completed native comparison retains
+both failed route judgments. These lexical repairs do not resolve inherited table
+currency context, range-versus-negative representation, unsupported calculations,
+short-year precision, semantic action/date roles or insufficient source references.
+In particular, a clean local guard result cannot certify the newly unblocked
+compound claim whose interpretation remains uncertain. The interpretation and
+calculation contract and focused semantic gate remain open. Do not advance to
+broader qualification or GitOps release on the strength of this repair slice.
+
+Private replay receipts: `/private/tmp/kg-finalizer-closure-before.json`,
+`/private/tmp/kg-finalizer-closure-after-v3.json`, and the content-free backend
+summary in `/private/tmp/kg-closure-backend-tests-v2.log`. These are regression
+artifacts derived from the already completed experiment, not fresh holdout evidence.

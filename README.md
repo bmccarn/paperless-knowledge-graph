@@ -6,9 +6,9 @@ A knowledge graph system that extracts structured entities and relationships fro
 
 Follow a document from OCR through classification and extraction, graph and search indexing, hybrid retrieval, and source-audited answers in this 40-second animation.
 
-[![Watch the Paperless Knowledge Graph data-flow animation](docs/media/paperless-data-flow.jpg)](docs/media/paperless-knowledge-graph-40s.mp4)
+https://github.com/user-attachments/assets/f7b28ffc-746a-4237-bc67-d10b57a2c045
 
-[Watch or download the video](docs/media/paperless-knowledge-graph-40s.mp4) · 1080p · 40 seconds · silent, with on-screen explanations.
+40 seconds · 1080p · silent, with on-screen explanations. [Download the original MP4](docs/media/paperless-knowledge-graph-40s.mp4?raw=true).
 
 The animation uses a fictional document and compresses processing time; it illustrates the data flow, not measured query latency.
 

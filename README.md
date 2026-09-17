@@ -4,13 +4,7 @@ A knowledge graph system that extracts structured entities and relationships fro
 
 ## How it works
 
-Follow a document from OCR through classification and extraction, graph and search indexing, hybrid retrieval, and source-audited answers in this 40-second animation.
-
 https://github.com/user-attachments/assets/f7b28ffc-746a-4237-bc67-d10b57a2c045
-
-40 seconds · 1080p · silent, with on-screen explanations. [Download the original MP4](docs/media/paperless-knowledge-graph-40s.mp4?raw=true).
-
-The animation uses a fictional document and compresses processing time; it illustrates the data flow, not measured query latency.
 
 History queries reserve a bounded set of indexed sources across recorded periods before synthesis. A latest documented observation is qualified as a comparison of retrieved records; it does not establish current real-world status or archive completeness. Written-month, ISO and configured numeric dates share calendar validation while citations preserve exact original text.
 

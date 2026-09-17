@@ -2,6 +2,16 @@
 
 A knowledge graph system that extracts structured entities and relationships from [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) documents. Uses LLM-powered document classification and type-aware extraction, stores results in Neo4j (graph) and pgvector (embeddings), and provides hybrid search with a visual graph explorer frontend.
 
+## How it works
+
+Follow a document from OCR through classification and extraction, graph and search indexing, hybrid retrieval, and source-audited answers in this 40-second animation.
+
+[![Watch the Paperless Knowledge Graph data-flow animation](docs/media/paperless-data-flow.jpg)](docs/media/paperless-knowledge-graph-40s.mp4)
+
+[Watch or download the video](docs/media/paperless-knowledge-graph-40s.mp4) · 1080p · 40 seconds · silent, with on-screen explanations.
+
+The animation uses a fictional document and compresses processing time; it illustrates the data flow, not measured query latency.
+
 History queries reserve a bounded set of indexed sources across recorded periods before synthesis. A latest documented observation is qualified as a comparison of retrieved records; it does not establish current real-world status or archive completeness. Written-month, ISO and configured numeric dates share calendar validation while citations preserve exact original text.
 
 When a complete audit and bounded repair leave unsupported claims, the system can re-audit the whole supported units as a new partial answer. “Verified partial answer” means every displayed claim passed source checks, with omitted counts and an explicit completeness limitation. Failed, conflicting, incomplete or changing-source audits remain withheld. Partial answers are not cached as completed successes. See the [query reliability specification](docs/specs/evidence-query-reliability.md).

@@ -109,7 +109,7 @@ def _wait_for_task(base_url: str, task_id: str, timeout_seconds: int) -> dict[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default=os.getenv("KG_URL", "https://example.com/api"), help="KG API base URL")
+    parser.add_argument("--base-url", default=os.getenv("KG_URL", "http://localhost:8484"), help="KG API base URL")
     parser.add_argument("--json", action="store_true", help="Print the raw freshness JSON")
     parser.add_argument("--no-strict", action="store_true", help="Exit 0 even when drift is present")
     parser.add_argument("--repair", action="store_true", help="Start targeted repair for the exact drift IDs reported by freshness")

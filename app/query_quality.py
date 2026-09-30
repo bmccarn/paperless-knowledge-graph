@@ -12,7 +12,7 @@ from app.evidence import exact_term_hits as evidence_exact_term_hits
 
 DOMAIN_TERMS: dict[str, tuple[str, ...]] = {
     "insurance": ("insurance", "policy", "coverage", "premium", "deductible", "carrier", "declaration"),
-    "tax": ("tax", "irs", "return", "w-2", "w2", "1099", "k-1", "schedule", "business"),
+    "tax": ("tax", "irs", "return", "w-2", "w2", "1099", "k-1", "schedule"),
     "mortgage": ("mortgage", "loan", "escrow", "servicer", "statement", "home loan"),
     "medical": ("medical", "doctor", "diagnosis", "medication", "lab", "provider", "prescription", "health"),
     "vehicle": ("vehicle", "auto", "car", "truck", "vin", "registration", "title"),

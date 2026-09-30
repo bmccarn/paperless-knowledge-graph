@@ -102,7 +102,7 @@ Release `cbdc610` is deployed through GitOps `ee2ebaa` with verified running ima
 
 ## Final original insurance query and source verification
 
-On `cbdc610`, used an actual Playwright-controlled Chromium browser at 1600x1100 against `https://example.com`, submitted the exact original question once in Strict mode with the existing gemini-3.8-flash route, and waited for the streamed completion. The native CUA surface was unavailable at this checkpoint; this browser-control fallback performed the actual interactions, and screenshots were visually inspected separately from assertions.
+On `cbdc610`, used an actual Playwright-controlled Chromium browser at 1600x1100 against the production deployment, submitted the exact original question once in Strict mode with the existing gemini-3.8-flash route, and waited for the streamed completion. The native CUA surface was unavailable at this checkpoint; this browser-control fallback performed the actual interactions, and screenshots were visually inspected separately from assertions.
 
 The answer completed in 164.9 seconds with four of four supported claims, 100% audit coverage, a usable composer and the explicit current-status qualification. Opened a cited source, reloaded and restored the exact saved conversation, and inspected the answer and ledger. Reopened that existing conversation without submitting another query to capture the fully settled source sheet after its opening animation. Its excerpt and Paperless destination were visible; the host equals the configured Paperless base and the path identifies the cited document. No uncaught page errors occurred. This does not claim authenticated viewing inside Paperless.
 

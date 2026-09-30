@@ -299,10 +299,10 @@ Valid entity types:
 === FEW-SHOT EXAMPLE ===
 
 DOCUMENT SNIPPET:
-"John Doe filed Form 1040 for tax year 2025, prepared by Example Tax Advisors, LLC in Springfield, IL. Total income of $182,400 from Acme Corporation ($121,500 W-2), Globex Inc. ($38,200 W-2), and Doe Consulting LLC ($22,700 S-Corp). Mortgage interest of $14,310 paid to First Example Bank. Federal tax liability: $27,845."
+"Jane Doe filed Form 1040 for tax year 2025, prepared by Example Tax Advisors, LLC in Springfield, IL. Total income of $182,400 from Acme Corporation ($121,500 W-2), Globex Inc. ($38,200 W-2), and Doe Consulting LLC ($22,700 S-Corp). Mortgage interest of $14,310 paid to First Example Bank. Federal tax liability: $27,845."
 
 CORRECT extractions:
-- "John Doe" (Person) — taxpayer/filer
+- "Jane Doe" (Person) — taxpayer/filer
 - "Example Tax Advisors, LLC" (Organization) — tax preparation firm
 - "Springfield, IL" (Location) — preparer location
 - "Acme Corporation" (Organization) — employer

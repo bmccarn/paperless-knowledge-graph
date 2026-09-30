@@ -256,14 +256,6 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
             await asyncio.to_thread(invalidate_on_sync)
 
 
-# Protected entity names - NEVER rejected by LLM validation or blocklist.
-# These are known-good entities that the LLM might not recognize (pets, nicknames, etc.)
-PROTECTED_ENTITY_NAMES = {
-    "rex", "rex doe", "rex doe", "rex doe",
-    "mwd rex", "mwd rex tattoo v234",
-    "rex x000 00-0000", "rex x000 00-0000 (canine)",
-}
-
 
 # Blocklist of generic terms that should not become entity nodes
 BLOCKED_ENTITY_NAMES = {

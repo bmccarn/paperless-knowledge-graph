@@ -3,8 +3,8 @@
     "id": "insurance-current-auto",
     "question": "What are my current auto insurance policies?",
     "required_terms": [
-      "Progressive",
-      "USAA"
+      "auto",
+      "insurance"
     ],
     "sensitive_domain": true,
     "mode": "deep",
@@ -28,9 +28,9 @@
   },
   {
     "id": "tax-business",
-    "question": "What tax documents mention Doe Consulting?",
+    "question": "What business tax documents are in the archive?",
     "required_terms": [
-      "Doe Consulting",
+      "business",
       "tax"
     ],
     "sensitive_domain": true,

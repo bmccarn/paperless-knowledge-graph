@@ -13,7 +13,7 @@ const DOMAINS = [
     id: "insurance",
     title: "Insurance",
     icon: Shield,
-    query: "insurance policy coverage premium deductible Progressive USAA homeowners auto",
+    query: "insurance policy coverage premium deductible homeowners auto",
     questions: [
       "What are my current insurance policies?",
       "Compare my current auto insurance coverage.",
@@ -24,10 +24,10 @@ const DOMAINS = [
     id: "tax",
     title: "Taxes",
     icon: Building,
-    query: "tax return W-2 1099 K-1 Doe Consulting IRS estimated payment",
+    query: "tax return W-2 1099 K-1 business IRS estimated payment",
     questions: [
       "What tax documents do I have for this year?",
-      "What documents mention Doe Consulting taxes?",
+      "What business tax documents do I have?",
       "What estimated payments or IRS notices are in the archive?",
     ],
   },

@@ -13,11 +13,11 @@ services:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       ALL_PROXY: ""
-      NO_PROXY: "localhost,127.0.0.1,example.com,example.com,example.com"
+      NO_PROXY: "localhost,127.0.0.1"
       http_proxy: ""
       https_proxy: ""
       all_proxy: ""
-      no_proxy: "localhost,127.0.0.1,example.com,example.com,example.com"
+      no_proxy: "localhost,127.0.0.1"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -28,8 +28,6 @@ services:
     restart: unless-stopped
     labels:
       - "autoheal=true"
-      - "kuma.paperless-kg.http.name=Paperless KG"
-      - "kuma.paperless-kg.http.url=http://localhost:8484/health"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=30)"]
       interval: 5m

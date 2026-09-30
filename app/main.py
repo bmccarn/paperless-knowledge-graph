@@ -1247,7 +1247,8 @@ async def list_models():
 
 
 # The error reaches browser users, so userinfo in a configured URL must not leak through it.
-_URL_CREDENTIALS = re.compile(r"(?<=//)[^/\s@]+@")
+# Greedy to the last "@" of the authority: urlsplit and HTTPX accept "user:pa@ss@host".
+_URL_CREDENTIALS = re.compile(r"(?<=//)[^/?#\s]*@")
 
 
 def _without_url_credentials(text: str) -> str:

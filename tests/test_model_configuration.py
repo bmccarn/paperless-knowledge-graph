@@ -209,20 +209,26 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
         import httpx
         from app import main
 
-        with patch.dict(os.environ, {"LLM_BASE_URL": "https://user:s3cret@gateway.example/v1"}, clear=True):
-            configured = Settings(_env_file=None)
-        request = httpx.Request("GET", "https://user:s3cret@gateway.example/v1/models")
-        failure = httpx.HTTPStatusError("Server error for url https://user:s3cret@gateway.example/v1/models",
-                                        request=request, response=httpx.Response(502, request=request))
-        for side_effect, reported in ((failure, "HTTP 502"), (httpx.ConnectError(
-                "cannot reach https://user:s3cret@gateway.example/v1/models"), "cannot reach")):
-            with self.subTest(error=type(side_effect).__name__), patch("app.config.settings", configured), \
-                 patch("httpx.AsyncClient") as client, self.assertLogs("app.main", "ERROR") as logs:
-                client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=side_effect)
-                result = await main.list_models()
-            self.assertIn(reported, result["error"])
-            self.assertNotIn("s3cret", result["error"])
-            self.assertNotIn("s3cret", "\n".join(logs.output))
+        # A literal "@" inside the password is legal; the last "@" separates userinfo from the host.
+        for userinfo, secrets in (("user:s3cret", ("s3cret",)), ("user:pa@ss", ("pa@ss", "ss@"))):
+            url = f"https://{userinfo}@gateway.example/v1"
+            with patch.dict(os.environ, {"LLM_BASE_URL": url}, clear=True):
+                configured = Settings(_env_file=None)
+            request = httpx.Request("GET", f"{url}/models")
+            failure = httpx.HTTPStatusError(f"Server error for url {url}/models",
+                                            request=request, response=httpx.Response(502, request=request))
+            for side_effect, reported in ((failure, "HTTP 502"), (httpx.ConnectError(f"cannot reach {url}/models"),
+                                                                  "cannot reach")):
+                with self.subTest(userinfo=userinfo, error=type(side_effect).__name__), \
+                     patch("app.config.settings", configured), patch("httpx.AsyncClient") as client, \
+                     self.assertLogs("app.main", "ERROR") as logs:
+                    client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=side_effect)
+                    result = await main.list_models()
+                self.assertIn(reported, result["error"])
+                self.assertIn("gateway.example", "\n".join(logs.output))
+                for secret in secrets:
+                    self.assertNotIn(secret, result["error"])
+                    self.assertNotIn(secret, "\n".join(logs.output))
 
 
 class EmbeddingDimensionTests(unittest.IsolatedAsyncioTestCase):

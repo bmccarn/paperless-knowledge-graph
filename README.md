@@ -292,7 +292,7 @@ python3 scripts/api_smoke_tests.py --base-url http://localhost:8484
 Run the exact Paperless/graph/vector/hash ID audit after restores or migrations:
 
 ```bash
-python3 scripts/kg_exact_drift_audit.py --base-url https://example.com/api
+python3 scripts/kg_exact_drift_audit.py --base-url http://localhost:8484
 ```
 
 The audit exits non-zero when drift exists. Add `--repair --wait` to start the targeted repair task and wait for completion.

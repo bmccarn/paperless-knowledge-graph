@@ -58,7 +58,7 @@ export default function DebugPage() {
 
   // Fetch initial logs + SSE
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
+    const API_URL = "/api";
 
     // Fetch history
     fetch(`${API_URL}/logs?limit=200`)

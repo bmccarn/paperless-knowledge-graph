@@ -5,6 +5,9 @@ import os
 def configure_test_environment():
     os.environ.update({
         "KG_ENV_FILE": "",
+        "KG_AUTH_MODE": "off",
+        "KG_READ_API_KEYS": "",
+        "KG_ADMIN_API_KEYS": "",
         "PAPERLESS_URL": "http://127.0.0.1:1",
         "PAPERLESS_TOKEN": "synthetic-test-token",
         "PAPERLESS_EXTERNAL_URL": "http://127.0.0.1:1",

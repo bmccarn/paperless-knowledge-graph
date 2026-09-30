@@ -32,7 +32,7 @@ def _api_url(base_url: str, path: str, params: dict[str, str] | None = None) -> 
 
 
 def _request_json(url: str, method: str = "GET", timeout: int = 60) -> dict[str, Any]:
-    req = urllib.request.Request(url, method=method)
+    req = urllib.request.Request(url, method=method, headers={"X-KG-API-Key": os.environ.get("KG_API_KEY", "")})
     if method != "GET":
         req.add_header("Content-Length", "0")
     try:

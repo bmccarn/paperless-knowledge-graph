@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import argparse
 import json
 import sys
@@ -10,7 +11,7 @@ from urllib import request
 
 
 def get_json(base_url: str, path: str) -> dict:
-    with request.urlopen(f"{base_url.rstrip('/')}{path}", timeout=20) as resp:
+    with request.urlopen(request.Request(f"{base_url.rstrip('/')}{path}", headers={"X-KG-API-Key": os.environ.get("KG_API_KEY", "")}), timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -19,7 +20,7 @@ def post_json(base_url: str, path: str, payload: dict | None = None, timeout: in
     req = request.Request(
         f"{base_url.rstrip('/')}{path}",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "X-KG-API-Key": os.environ.get("KG_API_KEY", "")},
         method="POST",
     )
     with request.urlopen(req, timeout=timeout) as resp:

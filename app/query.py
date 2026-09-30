@@ -398,7 +398,7 @@ class QueryEngine:
             q_lower = question.lower()
             injected = []
             if any(s in q_lower for s in ["mortgage", "payment", "bill", "obligation", "financial"]):
-                injected.append("First Example Bank current monthly payment amount payment change notice 2025 2026")
+                injected.append("mortgage current monthly payment amount payment change notice 2025 2026")
             if injected:
                 follow_up_queries = injected + [q for q in follow_up_queries if q not in injected]
                 follow_up_queries = follow_up_queries[:7]

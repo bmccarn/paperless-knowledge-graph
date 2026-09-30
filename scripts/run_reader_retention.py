@@ -31,9 +31,9 @@ def runtime_identity():
     from app.config import settings
     return {'python':platform.python_version(),
             'packages':{name:version(name) for name in ('strands-agents','openai','httpx')},
-            'model':settings.strands_model or settings.gemini_model,
+            'model':settings.strands_model or settings.llm_model,
             'enabled':bool(settings.strands_enabled and native.STRANDS_AVAILABLE),
-            'provider_route_sha256':hashlib.sha256(settings.litellm_url.encode()).hexdigest(),
+            'provider_route_sha256':hashlib.sha256(settings.llm_endpoint.base_url.encode()).hexdigest(),
             'call_timeout_seconds':settings.strands_call_timeout_seconds,
             'concurrency':settings.strands_max_concurrent_calls,
             'sdk_retries':0, 'agent_retries':None, 'cache':'bypass', 'output_limit':None}

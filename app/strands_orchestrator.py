@@ -52,7 +52,7 @@ class StrandsQueryOrchestrator:
     @property
     def status(self) -> dict[str, Any]:
         if self.enabled:
-            return {"status": "healthy", "enabled": True, "provider": "strands", "model": settings.strands_model or settings.gemini_model}
+            return {"status": "healthy", "enabled": True, "provider": "strands", "model": settings.strands_model or settings.llm_model}
         return {
             "status": "degraded" if settings.strands_enabled else "disabled",
             "enabled": False,
@@ -566,11 +566,11 @@ Rules:
         pass
 
     def _model(self, *, response_format=None):
-        model_id = settings.strands_model or settings.gemini_model
+        model_id = settings.strands_model or settings.llm_model
         return OpenAIModel(
             client_args={
-                "api_key": settings.litellm_api_key or "unused",
-                "base_url": settings.litellm_url,
+                "api_key": settings.llm_endpoint.sdk_api_key,
+                "base_url": settings.llm_endpoint.base_url,
                 "max_retries": 0,
                 "timeout": httpx.Timeout(float(settings.strands_call_timeout_seconds), connect=5.0),
             },

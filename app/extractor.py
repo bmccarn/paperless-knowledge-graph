@@ -579,8 +579,9 @@ class EntityExtractor:
         if (window_characters < 1 or not 0 <= overlap_characters < window_characters
                 or minimum_split_characters < 1):
             raise ValueError("Invalid extraction window size or overlap")
-        self.client = client or AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key, max_retries=0)
-        self.model = settings.gemini_model
+        self.client = client or AsyncOpenAI(base_url=settings.llm_endpoint.base_url,
+                                            api_key=settings.llm_endpoint.sdk_api_key, max_retries=0)
+        self.model = settings.llm_model
         self.window_characters = window_characters
         self.overlap_characters = overlap_characters
         self.minimum_split_characters = minimum_split_characters

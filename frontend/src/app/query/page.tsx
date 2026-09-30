@@ -285,6 +285,7 @@ function QueryContent() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
+  const [modelsError, setModelsError] = useState<string>("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("strict");
@@ -319,6 +320,7 @@ function QueryContent() {
     getModels().then(data => {
       setModels(data.models);
       setDefaultModel(data.default);
+      setModelsError(data.error || "");
       setSelectedModel((current) => current || data.default);
     }).catch(() => {});
   }, []);
@@ -1218,6 +1220,9 @@ function QueryContent() {
               </button>
               {showModelDropdown && (
                 <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-lg shadow-lg py-1 z-50 min-w-[200px] max-w-[calc(100vw-2rem)] max-h-[240px] overflow-y-auto">
+                  {modelsError && (
+                    <p role="alert" className="px-3 py-1.5 text-[11px] leading-snug text-destructive max-w-[320px] break-words border-b">{modelsError}</p>
+                  )}
                   {models.map((m) => (
                     <button
                       key={m.id}

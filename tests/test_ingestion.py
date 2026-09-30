@@ -289,11 +289,11 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_primary_model_change_reconciles_once_without_changing_ocr_identity(self):
         from app.config import settings
-        with patch.object(settings, "gemini_model", "gemini-3.5-flash"):
+        with patch.object(settings, "llm_model", "gemini-3.5-flash"):
             await pipeline.sync_documents()
         previous_hash = self.embeddings.hashes[1]
         previous_fingerprint = self.embeddings.fingerprints[1]
-        with patch.object(settings, "gemini_model", "gemini-3.8-flash"):
+        with patch.object(settings, "llm_model", "gemini-3.8-flash"):
             result = await pipeline.sync_documents()
             self.assertEqual(result["errors"], 0)
             self.assertEqual(result["processed"], 1)

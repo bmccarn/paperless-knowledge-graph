@@ -66,7 +66,7 @@ def expected_request_identity(manifest, request):
     identity = {'policy': f'{POLICY_VERSION}:bounded-context-v1:{PIPELINE_VERSION}',
                 'mode': request['mode'], 'question': request['question'],
                 'history': request['history'], 'model': request['model'],
-                'strands_model': config['strands_model'] or config['gemini_model'],
+                'strands_model': config['strands_model'] or config['llm_model'],
                 'generation': manifest['corpus_snapshot']['generation'],
                 'evaluated_at': manifest['evaluated_at'],
                 'source_date_order': config['source_date_order']}

@@ -46,7 +46,7 @@ REDIS_URL=redis://localhost:6379
 ## Run the Full KG App
 
 For the usual Docker path, copy the sample KG environment to the repo root,
-fill in `PAPERLESS_TOKEN` and the LiteLLM values, then start the main compose:
+fill in `PAPERLESS_TOKEN` and your model endpoint settings, then start the main compose:
 
 ```bash
 cp examples/kg-local.env.example .env

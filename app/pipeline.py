@@ -441,8 +441,8 @@ async def _generate_document_summary(doc_id: int, title: str, doc_type: str,
     client = None
     try:
         client = AsyncOpenAI(
-            base_url=_settings.litellm_url,
-            api_key=_settings.litellm_api_key,
+            base_url=_settings.llm_endpoint.base_url,
+            api_key=_settings.llm_endpoint.sdk_api_key,
         )
 
         extracted_facts = []
@@ -482,9 +482,9 @@ Summary:"""
 
         async def _call():
             response = await client.chat.completions.create(
-                model=_settings.gemini_model,
+                model=_settings.llm_model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1500,
+                max_completion_tokens=1500,
             )
             text = response.choices[0].message.content
             if text:
@@ -500,9 +500,9 @@ Summary:"""
             
             async def _retry_call():
                 response = await client.chat.completions.create(
-                    model=_settings.gemini_model,
+                    model=_settings.llm_model,
                     messages=[{"role": "user", "content": retry_prompt}],
-                    max_tokens=1500,
+                    max_completion_tokens=1500,
                 )
                 text = response.choices[0].message.content
                 if text:

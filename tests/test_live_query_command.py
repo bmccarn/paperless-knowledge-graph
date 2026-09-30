@@ -55,7 +55,7 @@ class LiveCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def test_preparation_configuration_must_match_actual_settings(self):
         runtime={'paperless_url':'http://synthetic.invalid','strands_model':'synthetic',
-                 'gemini_model':'synthetic','source_date_order':'mdy'}
+                 'llm_model':'synthetic','source_date_order':'mdy'}
         options={'dataset':'dataset','initial_output':'initial','all_mode_output':'all','inputs':'private',
                  'configuration':{'runtime':runtime,**runtime},'corpus_snapshot':{},'evaluated_at':'2026-09-10'}
         with patch('scripts.live_query_command.runtime_configuration',return_value=runtime):

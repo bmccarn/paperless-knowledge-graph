@@ -22,7 +22,7 @@ class LiveContinuationTests(unittest.TestCase):
         self.write(self.inputs/'requests.json',{'version':1,'cases':self.requests})
         self.manifest={'corpus_snapshot':{'generation':'redis:1'},'max_model_calls':300,'active_seconds':3600,
                        'configuration':{'paperless_url':'http://synthetic.invalid', 'strands_model':'synthetic',
-                                        'gemini_model':'synthetic','source_date_order':'MDY'},
+                                        'llm_model':'synthetic','source_date_order':'MDY'},
                        'evaluated_at':'2026-09-10',
                        'private_inputs_sha256':{'requests.json':sha256((self.inputs/'requests.json').read_bytes())}}
         self.restore=patch('app.answer_coverage.restore_question_coverage',return_value={'status':'complete'})

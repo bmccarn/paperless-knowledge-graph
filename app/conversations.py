@@ -21,13 +21,10 @@ async def _generate_title(message: str, _answer: str = "") -> str:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{settings.litellm_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.litellm_api_key or 'unused'}",
-                    "Content-Type": "application/json",
-                },
+                f"{settings.llm_endpoint.base_url}/chat/completions",
+                headers={**settings.llm_endpoint.headers, "Content-Type": "application/json"},
                 json={
-                    "model": settings.gemini_model,
+                    "model": settings.llm_model,
                     "messages": [
                         {
                             "role": "system",
@@ -42,7 +39,7 @@ async def _generate_title(message: str, _answer: str = "") -> str:
                             "content": message,
                         },
                     ],
-                    "max_tokens": 256,
+                    "max_completion_tokens": 256,
                 },
             )
 

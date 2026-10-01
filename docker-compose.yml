@@ -60,6 +60,7 @@ services:
     environment:
       # Ordinary and streaming API routes share this runtime backend URL.
       - BACKEND_URL=${BACKEND_URL:-http://app:8000}
+      - KG_API_KEY=${KG_API_KEY:-}
     depends_on:
       - app
     restart: unless-stopped

@@ -9,7 +9,7 @@ assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname), 'Only syn
 const artifacts = path.resolve(process.env.UI_TEST_ARTIFACTS || 'docs/audits/accuracy-ui');
 await mkdir(artifacts, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
+const context = await browser.newContext({ extraHTTPHeaders: { Origin: new URL(base).origin }, viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));

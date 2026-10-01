@@ -22,7 +22,7 @@ function deferred() {
   return { promise, resolve };
 }
 async function fixturePage(t) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ extraHTTPHeaders: { Origin: new URL(base).origin }, viewport: { width: 1440, height: 1000 } });
   t.after(() => context.close());
   const identity = await context.request.get(`${base}/api/_fixture`);
   assert.equal((await identity.json()).fixture, "paperless-accuracy-ui-v1");

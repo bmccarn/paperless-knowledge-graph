@@ -6,6 +6,10 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    kg_auth_mode: Literal["off", "warn", "enforce"] = "off"
+    kg_read_api_keys: str = Field(default="", repr=False)
+    kg_admin_api_keys: str = Field(default="", repr=False)
+
     paperless_url: str = "http://localhost:8000"
     paperless_token: str = ""
     paperless_external_url: str = ""

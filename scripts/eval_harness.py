@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import argparse
 import hashlib
 import json
@@ -33,7 +34,7 @@ def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: int) -
     req = request.Request(
         f"{base_url.rstrip('/')}{path}",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "X-KG-API-Key": os.environ.get("KG_API_KEY", "")},
         method="POST",
     )
     try:

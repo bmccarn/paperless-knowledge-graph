@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit --incremental false",
     "test:browser": "node tests/run-browser-checks.mjs",
-    "test": "tsc src/lib/graph-data.ts src/lib/answer-format.ts --outDir .test-build --module commonjs --target ES2020 --skipLibCheck && node --test tests/*.test.mjs"
+    "test": "tsc src/lib/api-proxy.ts src/lib/graph-data.ts src/lib/answer-format.ts --outDir .test-build --module commonjs --target ES2020 --skipLibCheck && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

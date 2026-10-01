@@ -8,7 +8,9 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
+from app.auth import public_route, require_read, require_admin
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -689,6 +691,7 @@ app = FastAPI(
     description="Knowledge graph extraction and query system for Paperless-ngx documents",
     version="2.0.0",
     lifespan=lifespan,
+    docs_url=None, redoc_url=None, openapi_url=None,
 )
 
 app.add_middleware(
@@ -741,14 +744,14 @@ def _get_paperless_url() -> str:
     return settings.effective_paperless_external_url
 
 
-@app.get("/config")
+@app.get("/config", dependencies=[Depends(require_read)])
 async def get_config():
     return {"paperless_url": _get_paperless_url()}
 
 
 # --- Health & Status ---
 
-@app.get("/readyz")
+@app.get("/readyz", dependencies=[Depends(public_route)])
 async def readyz():
     """Cheap Kubernetes readiness endpoint."""
     if not _startup_ready:
@@ -756,7 +759,7 @@ async def readyz():
     return {"status": "ready"}
 
 
-@app.get("/status")
+@app.get("/status", dependencies=[Depends(require_read)])
 async def status():
     try:
         counts = await graph_store.get_counts()
@@ -784,12 +787,12 @@ async def status():
         return {"status": "degraded", "error": str(e)}
 
 
-@app.get("/freshness")
+@app.get("/freshness", dependencies=[Depends(require_read)])
 async def freshness(force: bool = False):
     return await _freshness_snapshot(force=force)
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(public_route)])
 async def health():
     """Detailed component health check."""
     components = {}
@@ -838,7 +841,7 @@ async def health():
     return {"status": overall, "components": components}
 
 
-@app.get("/ops/guardrails")
+@app.get("/ops/guardrails", dependencies=[Depends(require_read)])
 async def ops_guardrails(
     max_sync_age_hours: int = 24,
     allowed_doc_drift: int = 0,
@@ -947,13 +950,13 @@ async def ops_guardrails(
 
 # --- Sync & Reindex ---
 
-@app.post("/sync", response_model=TaskResponse)
+@app.post("/sync", dependencies=[Depends(require_admin)], response_model=TaskResponse)
 async def sync():
     task_id = await _run_sync_task()
     return TaskResponse(task_id=task_id, status="started", message="Sync started in background")
 
 
-@app.post("/reindex", response_model=TaskResponse)
+@app.post("/reindex", dependencies=[Depends(require_admin)], response_model=TaskResponse)
 async def reindex():
     # Prevent concurrent reindex/sync
     running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
@@ -1009,7 +1012,7 @@ async def reindex():
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
 
 
-@app.post("/reindex/{doc_id}", response_model=TaskResponse)
+@app.post("/reindex/{doc_id}", dependencies=[Depends(require_admin)], response_model=TaskResponse)
 async def reindex_single(doc_id: int):
     task_id, message = await _run_reindex_documents_task(
         [doc_id],
@@ -1019,7 +1022,7 @@ async def reindex_single(doc_id: int):
     return TaskResponse(task_id=task_id, status="started", message=message)
 
 
-@app.post("/freshness/repair", response_model=TaskResponse)
+@app.post("/freshness/repair", dependencies=[Depends(require_admin)], response_model=TaskResponse)
 async def repair_freshness_drift():
     snapshot = await _freshness_snapshot(force=True)
     reindex_ids, delete_ids = _freshness_repair_targets(snapshot)
@@ -1035,7 +1038,7 @@ async def repair_freshness_drift():
     return TaskResponse(task_id=task_id, status="started", message=message)
 
 
-@app.get("/document/{doc_id}/detail")
+@app.get("/document/{doc_id}/detail", dependencies=[Depends(require_read)])
 async def document_detail(doc_id: int):
     """Full inspection payload for one Paperless document."""
     try:
@@ -1055,7 +1058,7 @@ async def document_detail(doc_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/document/{doc_id}/feedback")
+@app.post("/document/{doc_id}/feedback", dependencies=[Depends(require_admin)])
 async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
     """Record that a document extraction needs human review."""
     try:
@@ -1071,13 +1074,13 @@ async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/document/{doc_id}/feedback")
+@app.get("/document/{doc_id}/feedback", dependencies=[Depends(require_read)])
 async def get_document_feedback(doc_id: int):
     rows = await embeddings_store.get_document_feedback(doc_id)
     return {"feedback": rows, "open_count": sum(row["status"] == "open" for row in rows)}
 
 
-@app.post("/document/{doc_id}/feedback/{feedback_id}/resolve")
+@app.post("/document/{doc_id}/feedback/{feedback_id}/resolve", dependencies=[Depends(require_admin)])
 async def resolve_document_feedback(doc_id: int, feedback_id: int, req: DocumentFeedbackResolutionRequest):
     if req.resolution not in {"reindexed_and_reviewed", "dismissed_after_review"} or not req.note.strip() or len(req.note) > 4000:
         raise HTTPException(status_code=422, detail="Choose a resolution and supply a review note of 1–4000 characters")
@@ -1108,7 +1111,7 @@ async def resolve_document_feedback(doc_id: int, feedback_id: int, req: Document
     return {"status": "resolved", "feedback": resolved}
 
 
-@app.delete("/document/{doc_id}")
+@app.delete("/document/{doc_id}", dependencies=[Depends(require_admin)])
 async def delete_document(doc_id: int):
     async with _graph_mutation("delete-document"):
         try:
@@ -1125,7 +1128,7 @@ async def delete_document(doc_id: int):
             _clear_freshness_cache()
 
 
-@app.get("/task/{task_id}")
+@app.get("/task/{task_id}", dependencies=[Depends(require_read)])
 async def get_task(task_id: str):
     task = _tasks.get(task_id)
     if not task:
@@ -1144,29 +1147,29 @@ class ConversationCreate(BaseModel):
 class ConversationRename(BaseModel):
     title: str
 
-@app.get("/conversations")
+@app.get("/conversations", dependencies=[Depends(require_read)])
 async def list_conversations(limit: int = 50, offset: int = 0):
     return await conversations.list_conversations(limit=limit, offset=offset)
 
-@app.post("/conversations")
+@app.post("/conversations", dependencies=[Depends(require_admin)])
 async def create_conversation(req: ConversationCreate):
     return await conversations.create_conversation(title=req.title)
 
-@app.get("/conversations/{conv_id}")
+@app.get("/conversations/{conv_id}", dependencies=[Depends(require_read)])
 async def get_conversation(conv_id: str):
     conv = await conversations.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
 
-@app.patch("/conversations/{conv_id}")
+@app.patch("/conversations/{conv_id}", dependencies=[Depends(require_admin)])
 async def rename_conversation(conv_id: str, req: ConversationRename):
     result = await conversations.rename_conversation(conv_id, req.title)
     if not result:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result
 
-@app.delete("/conversations/{conv_id}")
+@app.delete("/conversations/{conv_id}", dependencies=[Depends(require_admin)])
 async def delete_conversation(conv_id: str):
     ok = await conversations.delete_conversation(conv_id)
     if not ok:
@@ -1178,7 +1181,7 @@ class GenerateTitleRequest(BaseModel):
     message: str
 
 
-@app.post("/generate-title")
+@app.post("/generate-title", dependencies=[Depends(require_admin)])
 async def generate_title(req: GenerateTitleRequest):
     """Generate a short, descriptive chat title from the user's message."""
     title = await conversations._generate_title(req.message, "")
@@ -1186,7 +1189,7 @@ async def generate_title(req: GenerateTitleRequest):
 
 # --- Query ---
 
-@app.post("/task/{task_id}/cancel")
+@app.post("/task/{task_id}/cancel", dependencies=[Depends(require_admin)])
 async def cancel_task(task_id: str):
     """Request cancellation; admitted writers retain the slot until drained."""
     cancel_event = _cancel_events.get(task_id)
@@ -1199,7 +1202,7 @@ async def cancel_task(task_id: str):
 
 
 
-@app.get("/models")
+@app.get("/models", dependencies=[Depends(require_read)])
 async def list_models():
     """List available chat models from LiteLLM."""
     from app.config import settings
@@ -1293,7 +1296,13 @@ def _answer_metadata(payload: dict) -> dict:
     )}
 
 
-@app.post("/query")
+async def authorize_query_conversation(req: QueryRequest, request: Request):
+    """Queries remain read-scoped; persisting a conversation requires admin."""
+    if req.conversation_id:
+        await require_admin(request)
+
+
+@app.post("/query", dependencies=[Depends(require_read), Depends(authorize_query_conversation)])
 async def query(req: QueryRequest):
     try:
         # Get conversation history if conversation_id provided
@@ -1324,7 +1333,7 @@ async def query(req: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/query/stream")
+@app.post("/query/stream", dependencies=[Depends(require_read), Depends(authorize_query_conversation)])
 async def query_stream(req: QueryRequest):
     """Streaming query endpoint with Server-Sent Events.
     
@@ -1414,7 +1423,7 @@ async def query_stream(req: QueryRequest):
 
 # --- Graph Browsing ---
 
-@app.get("/graph/search")
+@app.get("/graph/search", dependencies=[Depends(require_read)])
 async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0):
     try:
         page = await graph_store.search_nodes(q, node_type=type, limit=limit, offset=offset, include_page=True)
@@ -1423,7 +1432,7 @@ async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: i
     return {"query": q, "type": type, **page}
 
 
-@app.get("/documents")
+@app.get("/documents", dependencies=[Depends(require_read)])
 async def documents(q: str = "", doc_type: str = "", limit: int = 25,
                     offset: int = 0, sort: str = "title", direction: str = "asc"):
     """Browse the complete indexed Document set, with datastore pagination."""
@@ -1436,7 +1445,7 @@ async def documents(q: str = "", doc_type: str = "", limit: int = 25,
     return {"query": q, "scope": "indexed_documents", **page}
 
 
-@app.get("/graph/node/{node_uuid}")
+@app.get("/graph/node/{node_uuid}", dependencies=[Depends(require_read)])
 async def graph_node(node_uuid: str):
     node = await graph_store.get_node(node_uuid)
     if not node:
@@ -1444,7 +1453,7 @@ async def graph_node(node_uuid: str):
     return node
 
 
-@app.get("/graph/neighbors/{node_uuid}")
+@app.get("/graph/neighbors/{node_uuid}", dependencies=[Depends(require_read)])
 async def graph_neighbors(node_uuid: str, depth: int = 2):
     result = await graph_store.get_neighbors(node_uuid, depth=min(depth, 4))
     return result
@@ -1452,7 +1461,7 @@ async def graph_neighbors(node_uuid: str, depth: int = 2):
 
 # --- Graph Initial Load ---
 
-@app.get("/graph/initial")
+@app.get("/graph/initial", dependencies=[Depends(require_read)])
 async def graph_initial(limit: int = 300):
     """Return an initial set of nodes for graph visualization.
     Loads Person and Organization nodes with their connections."""
@@ -1462,7 +1471,7 @@ async def graph_initial(limit: int = 300):
 
 # --- Entity Resolution ---
 
-@app.post("/resolve-entities")
+@app.post("/resolve-entities", dependencies=[Depends(require_admin)])
 async def resolve_entities():
     async with _graph_mutation("resolve-entities"):
         """Report identity review candidates; existing UUID merges require review."""
@@ -1478,7 +1487,7 @@ async def resolve_entities():
             _clear_freshness_cache()
 
 
-@app.get("/entity-review/candidates")
+@app.get("/entity-review/candidates", dependencies=[Depends(require_read)])
 async def entity_review_candidates(limit: int = 50):
     decisions = await embeddings_store.get_entity_review_decisions()
     ignored_pairs = {
@@ -1519,7 +1528,7 @@ def _entity_suggestion_map(decisions: list[dict]) -> dict[tuple[str, str], dict]
     return suggestions
 
 
-@app.post("/entity-review/steward")
+@app.post("/entity-review/steward", dependencies=[Depends(require_admin)])
 async def entity_review_steward(limit: int = 50):
     async with _graph_mutation("entity_steward"):
         try:
@@ -1529,13 +1538,13 @@ async def entity_review_steward(limit: int = 50):
             raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/entity-review/steward/task", response_model=TaskResponse)
+@app.post("/entity-review/steward/task", dependencies=[Depends(require_admin)], response_model=TaskResponse)
 async def entity_review_steward_task(limit: int = 75):
     task_id = await _run_entity_steward_task(limit=min(limit, 200), reason="manual")
     return TaskResponse(task_id=task_id, status="started", message="Entity steward started in background")
 
 
-@app.post("/entity-review/ignore")
+@app.post("/entity-review/ignore", dependencies=[Depends(require_admin)])
 async def entity_review_ignore(req: EntityDecisionRequest):
     async with _graph_mutation("ignore-entity-pair"):
         try:
@@ -1545,7 +1554,7 @@ async def entity_review_ignore(req: EntityDecisionRequest):
     return {"status": "ignored", "decision": decision}
 
 
-@app.post("/entity-review/split")
+@app.post("/entity-review/split", dependencies=[Depends(require_admin)])
 async def entity_review_split(req: EntityDecisionRequest):
     async with _graph_mutation("split-entity-pair"):
         try:
@@ -1555,7 +1564,7 @@ async def entity_review_split(req: EntityDecisionRequest):
     return {"status": "split_requested", "decision": decision}
 
 
-@app.post("/entity-review/merge")
+@app.post("/entity-review/merge", dependencies=[Depends(require_admin)])
 async def entity_review_merge(req: EntityMergeRequest):
     async with _graph_mutation("merge-entities"):
         try:
@@ -1579,7 +1588,7 @@ async def entity_review_merge(req: EntityMergeRequest):
     # --- Log Endpoints ---
 
 
-@app.get("/logs")
+@app.get("/logs", dependencies=[Depends(require_admin)])
 async def get_logs(limit: int = 100, level: str = None, since: str = None):
     """Return buffered log lines with optional filtering."""
     lines = list(_log_buffer)
@@ -1591,7 +1600,7 @@ async def get_logs(limit: int = 100, level: str = None, since: str = None):
     return {"lines": lines[-limit:], "total": len(_log_buffer)}
 
 
-@app.get("/logs/stream")
+@app.get("/logs/stream", dependencies=[Depends(require_admin)])
 async def stream_logs():
     """SSE endpoint for real-time log streaming."""
     queue: asyncio.Queue = asyncio.Queue()
@@ -1615,7 +1624,7 @@ async def stream_logs():
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app.post("/create-indexes")
+@app.post("/create-indexes", dependencies=[Depends(require_admin)])
 async def create_indexes():
     """Create vector indexes after data is loaded."""
     try:
@@ -1623,3 +1632,24 @@ async def create_indexes():
         return {"status": "ok", "message": "Vector indexes created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/openapi.json", dependencies=[Depends(require_read)], include_in_schema=False)
+async def protected_openapi():
+    return app.openapi()
+
+
+@app.get("/docs", dependencies=[Depends(require_read)], include_in_schema=False)
+async def protected_docs():
+    return get_swagger_ui_html(openapi_url="./openapi.json", title=app.title,
+                               swagger_ui_parameters={"persistAuthorization": False})
+
+
+@app.get("/docs/oauth2-redirect", dependencies=[Depends(require_read)], include_in_schema=False)
+async def protected_docs_redirect():
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get("/redoc", dependencies=[Depends(require_read)], include_in_schema=False)
+async def protected_redoc():
+    return get_redoc_html(openapi_url="./openapi.json", title=app.title)

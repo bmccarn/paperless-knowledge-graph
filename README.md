@@ -90,6 +90,10 @@ docker compose up -d
 
 The frontend runs at `http://localhost:3001` and the API at `http://localhost:8484`. The graph starts empty. Run a full reindex, as described under [Workflow](#workflow), to import your documents.
 
+### API authentication
+
+API-key authentication defaults to off. Configure backend read and admin keys, a server-only frontend key, then roll out warn and enforce modes. Keep the UI behind trusted access control: its server admin key grants every visitor admin access. See [API authentication](docs/api-authentication.md) for exact route scopes, consumers, secret references and rollout steps.
+
 ### Local testing
 
 For a disposable Paperless-ngx instance, use the sample compose file in [`examples/`](examples/):

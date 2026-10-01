@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/f7b28ffc-746a-4237-bc67-d10b57a2c045
 - **Entity steward.** The steward suggests merges, splits and review items after manual merges, after each sync and on a schedule. It never merges entities by itself.
 - **Concurrent processing.** A semaphore limits how many documents process in parallel.
 - **Retries.** LLM and database calls retry transient errors with exponential backoff and jitter.
-- **Caching.** Query, vector, graph and entity caches use Redis. Set `REDIS_URL` to a value starting with `memory:` to use bounded in-process caches instead.
+- **Caching.** Query, vector and graph caches use Redis. Set `REDIS_URL` to a value starting with `memory:` to use bounded in-process caches instead.
 - **Task progress.** Sync and reindex tasks report progress and can be cancelled.
 - **Frontend.** The Next.js app has a 2D/3D graph explorer, a document browser, topic hubs, natural language queries with evidence and trust review, an entity review queue and a live log viewer.
 
@@ -56,7 +56,7 @@ Paperless-ngx -> LiteLLM (model routing) -> document classification -> type-spec
 | `app/classifier.py` | LLM document type classification |
 | `app/extractor.py` | Type-specific entity and relationship extraction with fallback prompts |
 | `app/graph.py` | Neo4j operations: nodes, relationships and subgraph traversal |
-| `app/embeddings.py` | pgvector storage, chunking, vector and keyword search, dimension migration |
+| `app/embeddings.py` | pgvector storage, chunking, exact vector search (no approximate index) and keyword search, dimension migration |
 | `app/entity_resolver.py` | Evidence-aware identity matching and human-reviewed merges with vetoes |
 | `app/entity_policy.py`, `app/entity_bindings.py` | Provenance and spelling policy, document-local UUID/type bindings |
 | `app/entity_steward.py` | Merge, split and review suggestions; never merges on its own |
@@ -65,7 +65,7 @@ Paperless-ngx -> LiteLLM (model routing) -> document classification -> type-spec
 | `app/query_quality.py` | Query planning fallbacks, timeline sorting and trust scores |
 | `app/strands_orchestrator.py` | Strands planner, verifier, answer editor and entity reviewer |
 | `app/timeline.py` | Final-answer dates, source-date binding and compatibility with saved timelines |
-| `app/cache.py` | TTL caches for queries, vectors, graph and entities (Redis or in memory) |
+| `app/cache.py` | TTL caches for queries, vectors and graph results (Redis or in memory) |
 | `app/retry.py` | Shared retry helpers: exponential backoff for LLM calls, shorter retries for the database |
 | `app/config.py` | Pydantic settings loaded from the environment |
 
@@ -175,7 +175,6 @@ After changing models, test extraction on one small and one large document befor
 | `/health` | GET | Component health (Neo4j, pgvector, LiteLLM, cache stats) |
 | `/freshness` | GET | Compares exact document IDs across Paperless, the graph, embeddings and hashes. Add `?force=true` to skip the short status cache. |
 | `/freshness/repair` | POST | Starts a background repair for the drifted IDs reported by `/freshness?force=true` |
-| `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health and recent error alerts |
 | `/config` | GET | Frontend configuration (the Paperless URL) |
 | `/models` | GET | Chat model routes available in LiteLLM |
 | `/sync` | POST | Incremental sync of new and changed documents |
@@ -223,12 +222,10 @@ After changing models, test extraction on one small and one large document befor
 |----------|--------|-------------|
 | `/resolve-entities` | POST | Reports identity review candidates. Merging existing entities still requires review. |
 | `/entity-review/candidates` | GET | Possible duplicate entities with deterministic scores and the latest steward suggestions |
-| `/entity-review/steward` | POST | Runs the entity steward now. It records suggestions only. |
 | `/entity-review/steward/task` | POST | Runs the entity steward as a background task |
 | `/entity-review/merge` | POST | Merges a reviewed duplicate pair, then schedules a focused steward pass |
 | `/entity-review/split` | POST | Marks a pair as distinct |
 | `/entity-review/ignore` | POST | Hides a candidate pair from review |
-| `/create-indexes` | POST | Builds IVFFlat vector indexes. Run it after a reindex. |
 | `/logs` | GET | Buffered log lines as JSON, filterable by level and time |
 | `/logs/stream` | GET | Live log stream over server-sent events |
 
@@ -261,11 +258,10 @@ The graph explorer opens in 2D. You can expand nodes, inspect sources, filter by
 
 1. **Start the stack:** `docker compose up -d`
 2. **Full reindex:** `POST /reindex` classifies and extracts every Paperless document.
-3. **Build indexes:** `POST /create-indexes` creates IVFFlat vector indexes. It needs data, so run it after the first reindex.
-4. **Review entities:** `GET /entity-review/candidates` lists possible duplicates. Optionally run `POST /entity-review/steward` for suggestions, then merge or split pairs with the review endpoints.
-5. **Keep it current:** `POST /sync` processes only new and changed documents and schedules a steward pass afterward.
-6. **Ask questions:** `POST /query {"question": "What invoices mention Acme Corp?", "mode": "deep"}`
-7. **High-stakes questions:** `POST /query {"question": "What is my current premium?", "mode": "strict"}` adds the evidence pack, verifier and claim ledger.
+3. **Review entities:** `GET /entity-review/candidates` lists possible duplicates. Optionally run `POST /entity-review/steward/task` for suggestions, then merge or split pairs with the review endpoints.
+4. **Keep it current:** `POST /sync` processes only new and changed documents and schedules a steward pass afterward.
+5. **Ask questions:** `POST /query {"question": "What invoices mention Acme Corp?", "mode": "deep"}`
+6. **High-stakes questions:** `POST /query {"question": "What is my current premium?", "mode": "strict"}` adds the evidence pack, verifier and claim ledger.
 
 ## Evidence-aware entity identity
 

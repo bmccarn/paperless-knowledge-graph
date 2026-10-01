@@ -34,12 +34,7 @@ class RedisStorageTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.to_thread(self.peer.clear)
         self.assertIsNone(await cache_get(self.cache, "answer"))
 
-    async def test_literal_prefix_and_shared_corpus_generation(self):
-        await cache_set(self.cache, "doc[1]:a", "target")
-        await cache_set(self.cache, "doc1:a", "retain")
-        await asyncio.to_thread(self.cache.invalidate_prefix, "doc[1]:")
-        self.assertIsNone(await cache_get(self.cache, "doc[1]:a"))
-        self.assertEqual(await cache_get(self.cache, "doc1:a"), "retain")
+    async def test_shared_corpus_generation(self):
         first, second = CorpusGeneration(self.client), CorpusGeneration(self.client)
         before = await asyncio.to_thread(second.get)
         await asyncio.to_thread(first.advance)

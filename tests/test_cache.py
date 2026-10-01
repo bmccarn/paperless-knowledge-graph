@@ -1,7 +1,6 @@
 """Cache contracts with real adapters and deterministic storage/clock fixtures."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import fnmatch
 import threading
 import unittest
 
@@ -43,12 +42,6 @@ class RedisFixture:
         for key in keys:
             self.data.pop(key, None)
 
-    def scan_iter(self, match, count):
-        self._call('scan_iter')
-        if count > 200:
-            raise AssertionError('unbounded scan batch')
-        yield from [key for key in self.data if fnmatch.fnmatch(key, match)]
-
     def keys(self, *args):
         raise AssertionError('KEYS is forbidden')
 
@@ -61,7 +54,7 @@ class CacheTests(unittest.TestCase):
         now[0] = 105
         self.assertIsNone(cache.get('a'))
         cache.set('b', 2, ttl=0)
-        self.assertEqual(cache.size, 0)
+        self.assertEqual(cache.stats['size'], 0)
 
     def test_capacity_uses_recent_access_and_expired_entries_are_not_counted(self):
         now = [0]
@@ -92,7 +85,7 @@ class CacheTests(unittest.TestCase):
                 cache.set(f'{worker}:{index}', {'items': [index]})
                 cache.get(f'{worker}:{index}')
                 if index % 17 == 0:
-                    cache.invalidate_prefix(f'{worker}:')
+                    cache.clear()
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(use_cache, range(8)))
         self.assertLessEqual(cache.stats['size'], 20)
@@ -104,18 +97,7 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(right.get('answer'), {'amount': 5})
         right.clear()
         self.assertIsNone(left.get('answer'))
-        self.assertNotIn('scan_iter', redis.calls)
         self.assertTrue(any(':v0:' in key for key in redis.data))  # old data expires naturally
-
-    def test_redis_prefix_scan_does_not_clear_other_entries(self):
-        redis = RedisFixture()
-        cache = RedisCache(redis, 'test')
-        cache.set('document:1', 1)
-        cache.set('other:1', 2)
-        cache.invalidate_prefix('document:')
-        self.assertIsNone(cache.get('document:1'))
-        self.assertEqual(cache.get('other:1'), 2)
-        self.assertIn('scan_iter', redis.calls)
 
     def test_stats_do_not_contact_or_scan_redis(self):
         redis = RedisFixture()

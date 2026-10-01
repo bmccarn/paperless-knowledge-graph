@@ -1,5 +1,7 @@
 # Reproducing backend validation
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 Use Python 3.12 and install `requirements.lock` with `pip install --require-hashes -r requirements.lock` in an isolated environment. From the repository root, the offline suite is:
 
 ```sh

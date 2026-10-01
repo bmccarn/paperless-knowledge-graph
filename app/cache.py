@@ -3,7 +3,6 @@
 import asyncio
 from collections import OrderedDict
 from copy import deepcopy
-import hashlib
 import json
 import logging
 import threading
@@ -60,27 +59,13 @@ class TTLCache:
         with self._lock:
             self._store.clear()
 
-    def invalidate_prefix(self, prefix: str):
-        with self._lock:
-            for key in [key for key in self._store if key.startswith(prefix)]:
-                del self._store[key]
-
-    def evict_expired(self):
-        with self._lock:
-            self._evict_expired()
-
-    @property
-    def size(self) -> int:
-        with self._lock:
-            self._evict_expired()
-            return len(self._store)
-
     @property
     def stats(self) -> dict:
         with self._lock:
+            self._evict_expired()
             total = self._hits + self._misses
             return {
-                "size": self.size, "max_entries": self._max_entries,
+                "size": len(self._store), "max_entries": self._max_entries,
                 "hits": self._hits, "misses": self._misses,
                 "evictions": self._evictions,
                 "hit_rate": round(self._hits / total, 3) if total else 0.0,
@@ -148,32 +133,6 @@ class RedisCache:
             except Exception as exc:
                 logger.warning("Redis clear error (%s): %s", self._prefix, exc)
 
-    def invalidate_prefix(self, prefix: str):
-        with self._lock:
-            try:
-                # Redis glob syntax must not change the requested literal prefix.
-                escaped = ''.join('\\' + char if char in '*?[]\\' else char for char in prefix)
-                pattern = self._make_key(escaped + '*')
-                batch = []
-                for key in self._redis.scan_iter(match=pattern, count=200):
-                    batch.append(key)
-                    if len(batch) == 200:
-                        self._redis.delete(*batch)
-                        batch = []
-                if batch:
-                    self._redis.delete(*batch)
-            except Exception as exc:
-                logger.warning("Redis prefix invalidation error (%s): %s", self._prefix, exc)
-                self._pending_clear = True
-
-    def evict_expired(self):
-        pass
-
-    @property
-    def size(self):
-        # Health requests must not enumerate the keyspace to obtain a count.
-        return None
-
     @property
     def stats(self) -> dict:
         with self._lock:
@@ -222,14 +181,10 @@ class CorpusGeneration:
             return self.get()
 
 
-def normalize_query_key(question: str) -> str:
-    return hashlib.md5(question.strip().lower().encode('utf-8')).hexdigest()
-
-
 def _init_caches():
     from app.config import settings
     if settings.redis_url.startswith('memory:'):
-        return tuple(TTLCache(default_ttl=ttl) for ttl in (3600, 1800, 1800, 7200)), CorpusGeneration()
+        return tuple(TTLCache(default_ttl=ttl) for ttl in (3600, 1800, 1800)), CorpusGeneration()
     try:
         import redis
         # Construction performs no I/O. Async callers offload the first socket
@@ -237,14 +192,14 @@ def _init_caches():
         client = redis.Redis.from_url(settings.redis_url, decode_responses=False,
                                       socket_connect_timeout=2, socket_timeout=2)
         caches = tuple(RedisCache(client, prefix, ttl) for prefix, ttl in (
-            ('kg:query', 86400), ('kg:vector', 7200), ('kg:graph', 7200), ('kg:entity', 14400)))
+            ('kg:query', 86400), ('kg:vector', 7200), ('kg:graph', 7200)))
         return caches, CorpusGeneration(client)
     except Exception as exc:
         logger.warning('Redis configuration unavailable (%s); using bounded local caches', exc)
-        return tuple(TTLCache(default_ttl=ttl) for ttl in (3600, 1800, 1800, 7200)), CorpusGeneration()
+        return tuple(TTLCache(default_ttl=ttl) for ttl in (3600, 1800, 1800)), CorpusGeneration()
 
 
-(query_cache, vector_cache, graph_cache, entity_cache), _corpus_generation = _init_caches()
+(query_cache, vector_cache, graph_cache), _corpus_generation = _init_caches()
 
 
 def get_corpus_generation() -> str:
@@ -253,13 +208,13 @@ def get_corpus_generation() -> str:
 
 def get_all_cache_stats() -> dict:
     return {name: cache.stats for name, cache in (
-        ('query', query_cache), ('vector', vector_cache), ('graph', graph_cache), ('entity', entity_cache))}
+        ('query', query_cache), ('vector', vector_cache), ('graph', graph_cache))}
 
 
 def invalidate_on_sync():
     """Advance corpus identity and invalidate all derived cache namespaces."""
     generation = _corpus_generation.advance()
-    for cache in (query_cache, vector_cache, graph_cache, entity_cache):
+    for cache in (query_cache, vector_cache, graph_cache):
         cache.clear()
     return generation
 
@@ -278,7 +233,3 @@ async def get_corpus_generation_async():
 
 async def invalidate_on_sync_async():
     return await asyncio.to_thread(invalidate_on_sync)
-
-
-async def get_all_cache_stats_async():
-    return await asyncio.to_thread(get_all_cache_stats)

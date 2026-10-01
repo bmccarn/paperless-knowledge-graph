@@ -16,7 +16,7 @@ from app.answer_coverage import (restore_pipeline_metadata, has_question_pipelin
 logger = logging.getLogger(__name__)
 
 
-async def _generate_title(message: str, _answer: str = "") -> str:
+async def _generate_title(message: str) -> str:
     """Generate a short, descriptive conversation title using the LLM."""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

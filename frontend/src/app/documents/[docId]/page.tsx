@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { getDocumentDetail, postDocumentFeedback, resolveDocumentFeedback, postReindexDoc, getPaperlessDocUrl, getConfig } from "@/lib/api";
+import { errMsg } from "@/lib/utils";
+import { getDocumentDetail, postDocumentFeedback, resolveDocumentFeedback, postReindexDoc, getPaperlessDocUrl, usePaperlessUrl } from "@/lib/api";
 import { ArrowLeft, ExternalLink, FileText, Loader2, RefreshCw, ThumbsDown, Network } from "lucide-react";
 
 interface DetailPayload {
@@ -35,7 +36,7 @@ export default function DocumentDetailPage() {
   const [loadedDocumentId, setLoadedDocumentId] = useState<number | null>(null);
   const requestVersion = useRef(0);
   const detail = loadedDocumentId === docId ? loadedDetail : null;
-  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
+  const paperlessBaseUrl = usePaperlessUrl();
   const [loading, setLoading] = useState(true);
   const [reindexing, setReindexing] = useState(false);
   const [feedbackNote, setFeedbackNote] = useState("");
@@ -56,14 +57,13 @@ export default function DocumentDetailPage() {
       setDetail(result);
       setLoadedDocumentId(docId);
     } catch (error) {
-      if (version === requestVersion.current) setError(error instanceof Error ? error.message : "Could not load document.");
+      if (version === requestVersion.current) setError(errMsg(error, "Could not load document."));
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
   }, [docId]);
 
   useEffect(() => {
-    getConfig().then((c) => setPaperlessBaseUrl(c.paperless_url)).catch(() => {});
     load();
   }, [load]);
 
@@ -76,7 +76,7 @@ export default function DocumentDetailPage() {
       await load();
       setNotice("Reindex completed. Inspect the extracted facts, then resolve any open reports.");
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Reindex failed. Review reports remain open.");
+      setError(errMsg(error, "Reindex failed. Review reports remain open."));
     } finally {
       setReindexing(false);
     }
@@ -92,7 +92,7 @@ export default function DocumentDetailPage() {
       setNotice("Open review report recorded. The extraction remains disputed until reviewed.");
       await load();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not record review report.");
+      setError(errMsg(error, "Could not record review report."));
     } finally {
       setFeedbackSending(false);
     }
@@ -107,7 +107,7 @@ export default function DocumentDetailPage() {
       setNotice("Review resolution recorded and cached answers invalidated.");
       await load();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not resolve report. Complete reindex and review first.");
+      setError(errMsg(error, "Could not resolve report. Complete reindex and review first."));
     } finally {
       setResolving(null);
     }

@@ -1,5 +1,7 @@
 # Accuracy and reliability implementation — September 4, 2026
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 **Current status:** the eight subsequent review findings have now been fixed; see the [completion closure](2026-09-04-completion-closure.md). The results below describe the earlier source snapshot.
 
 **Completion status superseded:** the subsequent [completion review](2026-09-04-completion-review.md) reproduces eight additional defects. The test/build results below remain valid for the recorded source snapshot, but the table does not establish full closure of the original findings.

@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     paperless_external_url: str = ""
     paperless_skip_tag_names: str = "needs-review"
 
-    gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
     fallback_model: str = "gpt-5.4-mini"
 
@@ -23,7 +22,6 @@ class Settings(BaseSettings):
     strands_model: str = ""
     strands_call_timeout_seconds: float = 45
     strands_max_concurrent_calls: int = Field(default=4, ge=1, le=16)
-    stream_verification_timeout_seconds: float = 60
     answer_audit_timeout_seconds: float = 60
     source_date_order: Literal["mdy", "dmy", "reject_ambiguous"] = "mdy"
 

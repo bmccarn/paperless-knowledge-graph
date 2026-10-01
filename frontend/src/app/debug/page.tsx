@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-
+import { API_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface LogLine {
@@ -22,12 +22,7 @@ const LEVEL_COLORS: Record<string, string> = {
 const LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 function formatTime(iso: string) {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  } catch {
-    return iso;
-  }
+  return new Date(iso).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function shortLogger(name: string) {
@@ -43,11 +38,8 @@ export default function DebugPage() {
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
-  const linesRef = useRef<LogLine[]>([]);
 
-  // Keep refs in sync
   useEffect(() => { pausedRef.current = paused; }, [paused]);
-  useEffect(() => { linesRef.current = lines; }, [lines]);
 
   // Auto-scroll
   useEffect(() => {
@@ -58,8 +50,6 @@ export default function DebugPage() {
 
   // Fetch initial logs + SSE
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
-
     // Fetch history
     fetch(`${API_URL}/logs?limit=200`)
       .then((r) => r.json())

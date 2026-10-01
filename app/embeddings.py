@@ -99,6 +99,9 @@ ON document_embeddings USING GIN (content gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_entity_content_trgm
 ON entity_embeddings USING GIN (content gin_trgm_ops);
+
+DROP INDEX IF EXISTS idx_embeddings_halfvec_hnsw;
+DROP INDEX IF EXISTS idx_entity_halfvec_hnsw;
 """
 
 
@@ -294,23 +297,6 @@ class EmbeddingsStore:
                     raise RuntimeError(f"{table}.embedding is {col_type}, expected vector({EMBEDDING_DIMENSIONS}); "
                                        "prepare an explicit backed-up migration before starting this version")
 
-    async def create_vector_indexes(self):
-        """3072-dimension halfvec candidate indexes; normal retrieval remains exact.
-
-        Approximate document search is an explicit method option and reranks
-        candidates using the original full-precision vectors. See vector spec.
-        """
-        async with self.pool.acquire() as conn:
-            for table, index in (("document_embeddings", "idx_embeddings_halfvec_hnsw"),
-                                 ("entity_embeddings", "idx_entity_halfvec_hnsw")):
-                await conn.execute(f"""
-                    CREATE INDEX IF NOT EXISTS {index} ON {table}
-                    USING hnsw ((embedding::halfvec({EMBEDDING_DIMENSIONS})) halfvec_cosine_ops)
-                    WITH (m = 16, ef_construction = 64)
-                    """)
-        return {"dimensions": EMBEDDING_DIMENSIONS, "default_search": "exact",
-                "optional_candidate_index": "halfvec_hnsw"}
-
     async def close(self):
         if self.pool:
             await self.pool.close()
@@ -398,34 +384,6 @@ class EmbeddingsStore:
                     doc_id, chunk_index, content[:50000], title, doc_type, str(embedding), source_kind, source_content,
                 )
         await retry_db(_op, operation='store_document_embedding')
-
-
-    async def get_chunks_for_document(self, doc_id: int, limit: int = 3) -> list[dict]:
-        """Retrieve stored chunks for a specific document by ID."""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content
-                FROM document_embeddings
-                WHERE document_id = $1
-                ORDER BY chunk_index ASC
-                LIMIT $2
-                """,
-                doc_id, limit,
-            )
-            return [
-                {
-                    'document_id': r['document_id'],
-                    'chunk_index': r['chunk_index'],
-                    'content': r['content'],
-                    'title': r['title'],
-                    'doc_type': r['doc_type'],
-                    'source_kind': r['source_kind'],
-                    'source_content': r['source_content'],
-                    'similarity': 0.5,  # neutral score for graph-driven results
-                }
-                for r in rows
-            ]
 
     async def acquisition_document_page(self, terms: list[str], *, after: int, limit: int) -> dict:
         """Page distinct lexical leads, including blocked/incomplete derived records.
@@ -536,64 +494,19 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings WHERE document_id = $1", doc_id)
 
-    async def vector_search(self, query: str, limit: int = 10, *, approximate: bool = False, strict: bool = False) -> list[dict]:
-        """Exact by default; optionally rerank approximate halfvec candidates."""
+    async def vector_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
+        """Exact cosine search over every document chunk."""
         embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
         if not embedding:
             if strict: raise SearchUnavailable()
             return []
         async with self.pool.acquire() as conn:
-            if approximate:
-                async with conn.transaction():
-                    await conn.execute("SET LOCAL hnsw.ef_search = 200")
-                    rows = await conn.fetch(f"""
-                        WITH candidates AS MATERIALIZED (
-                            SELECT * FROM document_embeddings
-                            ORDER BY embedding::halfvec({EMBEDDING_DIMENSIONS}) <=> $1::halfvec({EMBEDDING_DIMENSIONS})
-                            LIMIT $3
-                        )
-                        SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
-                               1 - (embedding <=> $1::vector) AS similarity
-                        FROM candidates ORDER BY embedding <=> $1::vector, document_id, chunk_index LIMIT $2
-                        """, str(embedding), limit, max(100, limit * 5))
-            else:
-                rows = await conn.fetch("""
-                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
-                           1 - (embedding <=> $1::vector) AS similarity
-                    FROM document_embeddings
-                    ORDER BY (embedding <=> $1::vector) + 0, document_id, chunk_index LIMIT $2
-                    """, str(embedding), limit)
-            return [dict(r) for r in rows]
-
-    async def filtered_vector_search(self, query: str, doc_type: str = None, limit: int = 10) -> list[dict]:
-        """Search with optional doc_type filter."""
-        embedding = await self.generate_embedding(query)
-        if not embedding:
-            return []
-        async with self.pool.acquire() as conn:
-            if doc_type:
-                rows = await conn.fetch(
-                    """
-                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
-                           1 - (embedding <=> $1::vector) as similarity
-                    FROM document_embeddings
-                    WHERE doc_type = $3
-                    ORDER BY (embedding <=> $1::vector) + 0
-                    LIMIT $2
-                    """,
-                    str(embedding), limit, doc_type,
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
-                           1 - (embedding <=> $1::vector) as similarity
-                    FROM document_embeddings
-                    ORDER BY (embedding <=> $1::vector) + 0
-                    LIMIT $2
-                    """,
-                    str(embedding), limit,
-                )
+            rows = await conn.fetch("""
+                SELECT document_id, chunk_index, content, title, doc_type, source_kind, source_content,
+                       1 - (embedding <=> $1::vector) AS similarity
+                FROM document_embeddings
+                ORDER BY (embedding <=> $1::vector) + 0, document_id, chunk_index LIMIT $2
+                """, str(embedding), limit)
             return [dict(r) for r in rows]
 
     async def vector_search_by_doc_ids(self, query: str, doc_ids: list[int], limit: int = 40) -> list[dict]:
@@ -904,11 +817,6 @@ class EmbeddingsStore:
             if result == "UPDATE 0":
                 raise ValueError("Legacy decision disappeared during identity assessment")
 
-    async def set_entity_decision_identity_status(self, left_uuid: str, right_uuid: str,
-                                                  decision: str, status: str):
-        await self.hydrate_entity_review_identities(
-            {"left_uuid": left_uuid, "right_uuid": right_uuid, "decision": decision}, status)
-
     @staticmethod
     def _decode_review_decision(row) -> dict:
         result = dict(row)
@@ -951,13 +859,6 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             completed = await conn.fetch("SELECT document_id FROM document_hashes WHERE document_id = ANY($1::int[])", doc_ids)
         return set(doc_ids) - {r["document_id"] for r in completed}
-
-    async def clear_all(self):
-        async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM document_embeddings")
-            await conn.execute("DELETE FROM entity_embeddings")
-            await conn.execute("DELETE FROM document_hashes")
-            await conn.execute("UPDATE sync_state SET last_sync_at = NULL, updated_at = NOW() WHERE id = 1")
 
     async def get_embedding_count(self) -> int:
         async with self.pool.acquire() as conn:

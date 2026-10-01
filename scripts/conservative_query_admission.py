@@ -3,14 +3,11 @@
 This validates recorded evidence and reviewer decisions. It does not infer whether
 two observations mean the same thing or turn a failed diagnostic into a pass.
 """
-import hashlib
 import json
 import math
 from pathlib import Path, PurePosixPath
 
-
-def sha(data):
-    return hashlib.sha256(data).hexdigest()
+from scripts.eval_source_audit import digest as sha
 
 
 def strict_json(data):

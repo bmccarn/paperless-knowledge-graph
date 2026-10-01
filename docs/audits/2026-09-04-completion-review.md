@@ -1,5 +1,7 @@
 # Completion review — September 4, 2026
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 **Follow-up:** all eight findings below were subsequently fixed and validated on `codex/accuracy-completion-fixes`. See the [closure report](2026-09-04-completion-closure.md) for current status. This review and its probes preserve the pre-fix evidence.
 
 **Verdict: incomplete. Eight additional defects are reproduced: three P1 correctness/integrity blockers and five P2 defects.** The earlier implementation report overstated completion. Its passing test results remain valid, but its blanket per-finding closure does not. Application source was unchanged during this review; only audit artifacts and status documentation were added.

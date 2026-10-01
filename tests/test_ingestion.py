@@ -122,9 +122,6 @@ class EmbeddingsFixture:
         self.chunks[doc_id, chunk_index] = content
         self.writes.append(('chunk', doc_id))
 
-    async def create_vector_indexes(self):
-        pass
-
 
 class ClassifierFixture:
     fail = False
@@ -608,7 +605,7 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         main._cancel_events.clear()
         previous = self.embeddings.last_sync
         with patch.object(main, 'invalidate_on_sync', lambda: None), patch.object(main, 'embeddings_store', self.embeddings):
-            task_id, _ = await main._run_reindex_documents_task([1], task_type='test', message='test', update_last_sync=True)
+            task_id, _ = await main._run_reindex_documents_task([1], task_type='test', message='test')
             await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
             self.assertEqual(main._tasks[task_id]['status'], 'completed')
             self.assertEqual(self.embeddings.last_sync, previous)

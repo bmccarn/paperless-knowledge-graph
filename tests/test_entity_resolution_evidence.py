@@ -324,7 +324,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
             bindings = DocumentBindings(11, extracted, source, self.resolver)
             await pipeline._process_extraction(11, "11", "legal_contract", extracted, bindings=bindings)
             await pipeline._process_implied_relationships(11, extracted, bindings=bindings)
-            await pipeline._store_entity_embeddings(11, extracted, bindings=bindings)
+            await pipeline._store_entity_embeddings(11, bindings)
             self.assertEqual(resolve.await_count, 2)
         organization = bindings.lookup("NES", "Organization")
         self.assertTrue(all(edge[0] == organization and edge[1] == "Organization" for edge in relations if edge[4] == "SIGNED_FOR"))

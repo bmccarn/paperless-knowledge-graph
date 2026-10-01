@@ -250,7 +250,7 @@ Do not deploy partial candidates or substitute local passes for native accuracy.
   bytes, with provider capacity unknown unless verified. Do not resume the failed
   prior package. Source text stays in memory; retain aggregate sizes and hashes.
 - [ ] G3 Reader retention: finish and independently review the preregistered runner
-  for source-reader-retention-diagnostic.md; bind unchanged six paired inputs and
+  for the reader-retention diagnostic; bind unchanged six paired inputs and
   gold, runtime/request hashes and 24 logical / 48 maximum native attempt budgets.
   Execute both repetitions and independently grade every raw attempt. Missing
   supplied meaning stays a failure, requiring a separately reviewed recovery design.
@@ -335,7 +335,7 @@ omit a supplied material replacement qualification. Both independent grades FAIL
 They also identify lost effective-time association, dropped conditions and a
 misassociated record status; grading classifications are being reconciled without
 changing either original grade. G3 cannot advance on this result. The next general design is recorded
-in [source interpretation recovery](source-interpretation-recovery.md); no new
+in source interpretation recovery; no new
 recovery implementation or native experiment is authorized by that draft alone.
 
 ### G3 recovery slice
@@ -343,6 +343,6 @@ recovery implementation or native experiment is authorized by that draft alone.
 The separately reviewed addition-only recovery module is implemented locally with
 immutable primary/addition occurrences and execution receipts. Both code reviews
 are clear and the backend suite passes (972 tests, 58 expected opt-in skips).
-The [matched recovery diagnostic](source-interpretation-recovery-diagnostic.md) is
+The matched recovery diagnostic is
 drafted; its runner, frozen package, wire preflight and native admission remain
 outstanding. No live query activation or new native run is claimed.

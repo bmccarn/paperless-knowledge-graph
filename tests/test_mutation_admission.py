@@ -67,7 +67,6 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
                                    main.strands_orchestrator, main.graph_store,
                                    main.embeddings_store, main.conversations):
                     stack.enter_context(patch.object(dependency, "close", close))
-                stack.enter_context(patch.object(main, "close_pipeline_clients", close))
                 async with main.lifespan(main.app):
                     await asyncio.wait_for(started.wait(), 1)
                 self.assertTrue(all(worker.done() for worker in workers))
@@ -136,7 +135,7 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(main.entity_resolver, "hydrate_review_identities", AsyncMock()), \
              patch.object(main.embeddings_store, "delete_doc_hash", AsyncMock()) as clear_hash, \
              patch.object(main.graph_store, "delete_document_graph", fail_graph), \
-             patch.object(main, "invalidate_on_sync_async", AsyncMock()) as invalidate:
+             patch("app.pipeline.invalidate_on_sync") as invalidate:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
                 pending = asyncio.create_task(client.delete("/document/101"))
                 await started.wait()
@@ -146,7 +145,7 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
                 failed = await pending
                 self.assertEqual(failed.status_code, 500)
-                self.assertEqual(invalidate.await_count, 2)
+                self.assertEqual(invalidate.call_count, 2)
                 self.assertTrue(all(t["status"] == "failed" for t in main._tasks.values()))
 
 

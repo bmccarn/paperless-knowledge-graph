@@ -5,7 +5,10 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { graphSearch, getConfig, getPaperlessDocUrl } from "@/lib/api";
+import { Pager } from "@/components/pager";
+import { errMsg } from "@/lib/utils";
+import { graphSearch, getPaperlessDocUrl, usePaperlessUrl } from "@/lib/api";
+import type { GraphNode } from "@/lib/types";
 import { Building, Car, FileText, HeartPulse, Home, Loader2, Shield, Search, ExternalLink } from "lucide-react";
 
 const DOMAINS = [
@@ -66,22 +69,17 @@ const DOMAINS = [
   },
 ];
 
-interface SearchResult {
-  labels: string[];
-  properties: Record<string, unknown>;
-}
-
 const PAGE_SIZE = 12;
 
 export default function HubsPage() {
   const [activeId, setActiveId] = useState(DOMAINS[0].id);
   const [pages, setPages] = useState<Record<string, number>>({});
-  const [docs, setDocs] = useState<SearchResult[]>([]);
+  const [docs, setDocs] = useState<GraphNode[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
-  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
+  const paperlessBaseUrl = usePaperlessUrl();
   const active = DOMAINS.find((d) => d.id === activeId) || DOMAINS[0];
   const page = pages[active.id] || 0;
 
@@ -100,13 +98,12 @@ export default function HubsPage() {
         setPages((previous) => ({ ...previous, [active.id]: Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) }));
       }
     } catch (e) {
-      if (version === requestVersion.current) setError(e instanceof Error ? e.message : "Failed to load hub documents");
+      if (version === requestVersion.current) setError(errMsg(e, "Failed to load hub documents"));
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
   }, [active, page]);
 
-  useEffect(() => { getConfig().then((c) => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
   const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
   useEffect(() => {
     void loadDomain();
@@ -198,14 +195,7 @@ export default function HubsPage() {
               <p className="text-sm text-muted-foreground">No documents found for this hub search.</p>
             )}
             {total !== null && !loading && !error && (
-              <nav aria-label="Hub document pages" className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
-                <p>{total ? page * PAGE_SIZE + 1 : 0}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total} · Page {page + 1} of {pageCount}</p>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" aria-label="Previous hub page" disabled={page === 0} onClick={() => selectPage(page - 1)}>Previous</Button>
-                  <Button variant="outline" size="sm" aria-label="Next hub page" disabled={page + 1 >= pageCount} onClick={() => selectPage(page + 1)}>Next</Button>
-                  <Button variant="outline" size="sm" aria-label="Last hub page" disabled={page + 1 >= pageCount} onClick={() => selectPage(pageCount - 1)}>Last</Button>
-                </div>
-              </nav>
+              <Pager page={page} pageCount={pageCount} pageSize={PAGE_SIZE} total={total} onPage={selectPage} noun="hub page" />
             )}
           </CardContent>
         </Card>

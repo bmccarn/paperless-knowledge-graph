@@ -21,9 +21,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.answer_delivery import render_verified_answer
 from app.timeline import project_timeline
 
-from graph_fixture import NODES, RELS, identity
-
-RELS = copy.deepcopy(RELS)
+NODES = [
+    {'labels':['Person'], 'props':{'uuid':'person-1','name':'Alex Example','description':'Synthetic fixture. <b>This is literal source text.</b>'}},
+    {'labels':['Organization'], 'props':{'uuid':'org-1','name':'Example Utility','description':'Organization appearing in two example documents.'}},
+    {'labels':['Document'], 'props':{'paperless_id':101,'title':'Utility statement — January','date':'2026-01-31','doc_type':'financial_statement'}},
+    {'labels':['Document'], 'props':{'paperless_id':102,'title':'Utility statement — February','date':'2026-02-28','doc_type':'financial_statement'}},
+]
+RELS = [
+    {'start':'person-1','end':'org-1','type':'CUSTOMER_OF','props':{'source_doc':101,'weight':1,'implied':True}},
+    {'start':'doc-101','end':'org-1','type':'INVOICED_BY','props':{'source_doc':101,'weight':1}},
+    {'start':'doc-102','end':'org-1','type':'INVOICED_BY','props':{'source_doc':102,'weight':1}},
+]
+def identity(node):
+    return node['props'].get('uuid') or f"doc-{node['props']['paperless_id']}"
 RELATIONSHIP_QUOTE = 'Alex is a customer. <img src=x onerror="window.__relationship_xss=1">'
 RELS[0]['props'].update(source_doc_ids=[101], inferred=True, support_records=[json.dumps({
     'source_doc': 101, 'inferred': True,

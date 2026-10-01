@@ -5,7 +5,9 @@ import Link from "next/link";
 import { FileText, Loader2, Network, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { errMsg } from "@/lib/utils";
 import { getGraphNode } from "@/lib/api";
+import { getNodeColor } from "@/components/graph/graph-legend";
 import {
   documentId,
   nodeFromPayload,
@@ -29,7 +31,7 @@ interface NodeDetail {
 }
 
 interface Props {
-  node: ExplorerNode & { color: string };
+  node: ExplorerNode;
   onClose: () => void;
   onExpandNeighbors: (nodeId: string) => void;
   expanding: boolean;
@@ -44,34 +46,29 @@ export function NodeDetailPanel({
   onSelectNode,
 }: Props) {
   const [state, setState] = useState<{
-    id: string;
     detail: NodeDetail | null;
     error: string | null;
-  }>({ id: "", detail: null, error: null });
+  } | null>(null);
   const [retry, setRetry] = useState(0);
 
+  // Parent remounts this panel per node (key=node.id), so state never mixes nodes.
   useEffect(() => {
     let active = true;
     getGraphNode(node.id)
       .then((detail) => {
-        if (active) setState({ id: node.id, detail, error: null });
+        if (active) setState({ detail, error: null });
       })
       .catch((error) => {
-        if (active)
-          setState({
-            id: node.id,
-            detail: null,
-            error: error instanceof Error ? error.message : "Request failed.",
-          });
+        if (active) setState({ detail: null, error: errMsg(error, "Request failed.") });
       });
     return () => {
       active = false;
     };
   }, [node.id, retry]);
 
-  const detail = state.id === node.id ? state.detail : null;
-  const error = state.id === node.id ? state.error : null;
-  const loading = state.id !== node.id;
+  const detail = state?.detail ?? null;
+  const error = state?.error ?? null;
+  const loading = state === null;
   const props = { ...node.props, ...detail?.properties };
   const relationships = (detail?.relationships || []).filter(
     (rel) => typeof rel?.rel_type === "string",
@@ -95,7 +92,7 @@ export function NodeDetailPanel({
     <div className="space-y-5 p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
-          <Badge variant="outline" style={{ color: node.color }}>
+          <Badge variant="outline" style={{ color: getNodeColor(node.label) }}>
             {node.label}
           </Badge>
           <h2 className="break-words text-lg font-semibold leading-tight">
@@ -163,7 +160,7 @@ export function NodeDetailPanel({
             size="sm"
             variant="ghost"
             onClick={() => {
-              setState({ id: "", detail: null, error: null });
+              setState(null);
               setRetry((value) => value + 1);
             }}
           >

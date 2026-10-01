@@ -35,7 +35,7 @@ class RetrievedEngine(QueryEngine):
         before = self._active_model()
         await asyncio.sleep(0.01)
         self.calls.append((before, self._active_model(), history))
-        return {"answer": "Monthly premium: $321.00 USD.", "confidence": 0.99}
+        return {"answer": "Monthly premium: $321.00 USD."}
 
 
 class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):

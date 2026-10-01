@@ -39,9 +39,6 @@ def main() -> int:
     health = get_json(args.base_url, "/health")
     checks.append(("health", health.get("status") in {"healthy", "degraded"}))
 
-    guardrails = get_json(args.base_url, "/ops/guardrails")
-    checks.append(("guardrails", guardrails.get("status") in {"ok", "alerting"}))
-
     query = post_json(
         args.base_url,
         "/query",

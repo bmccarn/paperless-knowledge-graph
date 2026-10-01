@@ -14,9 +14,7 @@ Review decisions store identity snapshots in PostgreSQL JSONB. Sorting UUID pair
 
 The configured embeddings have 3,072 dimensions. pgvector's ordinary vector HNSW index supports 2,000 dimensions, while halfvec supports 4,000. The [upstream reference](https://github.com/pgvector/pgvector#hnsw) documents those limits and [half-precision indexing](https://github.com/pgvector/pgvector#half-precision-indexing).
 
-`create_vector_indexes()` creates halfvec expression indexes. `vector_search()` defaults to exact distance ordering over the original vectors. An explicit `approximate=True` option retrieves halfvec candidates and reranks them using full-precision distance. Filtered, document-scoped and entity searches remain exact. There is no implicit switch to approximate search when indexes exist.
-
-The real PostgreSQL regression uses 320 deterministic synthetic vectors with 3,072 dimensions and four query vectors. Exact result IDs match an independent NumPy cosine baseline. Halfvec indexes exist and appear in the forced index plan; candidate retrieval has recall@10 of 1.0 for those four queries. On this small fixture it was generally slower than exact search. See the measured timings in the [validation artifact](../audits/2026-09-04-implementation-validation.json). This is not a production benchmark or evidence of universal approximate recall.
+`vector_search()` orders by exact distance over the original vectors. Filtered, document-scoped and entity searches are exact too; there are no approximate vector indexes.
 
 Startup now refuses incompatible vector dimensions without dropping tables, hashes or source data. An operator must prepare an explicit migration; a regression preserves existing data when the mismatch is detected.
 
@@ -28,4 +26,4 @@ Graph mutations initiated by HTTP routes reserve the same process-local admissio
 
 ## Validation
 
-`tests/test_storage_integrity.py` uses actual Neo4j/PostgreSQL for shared support, deletion in either order, idempotence, scoped orphans, review snapshots, prepared vectors, dimension mismatch and the vector comparison. `tests/test_redis_storage.py` verifies namespace invalidation between clients, literal-prefix scanning and shared corpus generation against actual Redis. Other tests cover Redis outages, bounded memory, copies, event-loop progress and partial ingestion failures with controlled adapters.
+`tests/test_storage_integrity.py` uses actual Neo4j/PostgreSQL for shared support, deletion in either order, idempotence, scoped orphans, review snapshots, prepared vectors and dimension mismatch. `tests/test_redis_storage.py` verifies shared corpus generation against actual Redis. Other tests cover Redis outages, bounded memory, copies, event-loop progress and partial ingestion failures with controlled adapters.

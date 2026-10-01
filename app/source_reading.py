@@ -2,8 +2,6 @@
 import copy
 import json
 
-STRATEGIES = ('flat', 'grouped', 'source_first', 'document_local', 'document_local_corrected')
-
 
 def reader_prompt(reference_instruction='Use original span_id references belonging to that document for every observation. '):
     return (

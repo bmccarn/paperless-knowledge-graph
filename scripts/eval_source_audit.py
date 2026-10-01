@@ -29,6 +29,11 @@ def digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def file_digest(path: Path) -> str:
+    with path.open('rb') as file:
+        return hashlib.file_digest(file, 'sha256').hexdigest()
+
+
 def write_private(path: Path, data):
     # Exclusive creation: an earlier failure is never overwritten by a rerun.
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
@@ -95,13 +100,10 @@ def prepare(dataset_path, **options):
     return prepare_bytes(dataset_path.read_bytes(), **options)
 
 
-def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured', audit_strategy='flat', sdk_retry_policy='configured'):
+def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds, estimated_tokens, cache_note, allow_noncontiguous=False, proxy_cache_policy='configured', sdk_retry_policy='configured'):
     data = parse_dataset(payload)
     if data['partition'] != 'development':
         raise ValueError('Holdouts require a separate frozen G5 qualification manifest')
-    from app.source_reading import STRATEGIES
-    if audit_strategy not in STRATEGIES:
-        raise ValueError('Unknown audit strategy')
     if sdk_retry_policy not in {'configured', 'single_attempt'}:
         raise ValueError('Unknown SDK retry policy')
     if proxy_cache_policy not in {'configured', 'bypass'}:
@@ -116,14 +118,14 @@ def prepare_bytes(payload, *, model, runtime, repetitions, max_attempts, seconds
         raise ValueError('Model route and cache disclosure are required')
     return dict(version=1, stage='native_audit_and_source_finalization',
                 dataset_sha256=digest(payload),
-                code_sha256={name: digest((ROOT / name).read_bytes()) for name in CODE_FILES},
+                code_sha256={name: file_digest(ROOT / name) for name in CODE_FILES},
                 model=model, runtime=runtime, repetitions=repetitions, max_provider_attempts=max_attempts,
                 elapsed_seconds=seconds, estimated_total_tokens=estimated_tokens,
                 cache_note=cache_note, independent_repetitions=False,
                 conditions='exact case documents and ordering; four-unit production batches',
                 cases=len(data['cases']), assertions=sum(len(c['claims']) for c in data['cases']),
                 synthetic_only=data['synthetic_only'], allow_noncontiguous_reconstruction=allow_noncontiguous,
-                proxy_cache_policy=proxy_cache_policy, audit_strategy=audit_strategy, sdk_retry_policy=sdk_retry_policy)
+                proxy_cache_policy=proxy_cache_policy, sdk_retry_policy=sdk_retry_policy)
 
 
 def evidence_pack(case, *, allow_noncontiguous=False):
@@ -253,7 +255,7 @@ async def execute(dataset_path, manifest, output):
                        max_attempts=manifest['max_provider_attempts'], seconds=manifest['elapsed_seconds'],
                        estimated_tokens=manifest['estimated_total_tokens'], cache_note=manifest['cache_note'],
                        allow_noncontiguous=manifest['allow_noncontiguous_reconstruction'],
-                       proxy_cache_policy=manifest['proxy_cache_policy'], audit_strategy=manifest['audit_strategy'],
+                       proxy_cache_policy=manifest['proxy_cache_policy'],
                        sdk_retry_policy=manifest['sdk_retry_policy'])
     if manifest != expected:
         raise ValueError('Frozen manifest no longer matches dataset, code or execution contract')
@@ -263,7 +265,7 @@ async def execute(dataset_path, manifest, output):
     from app import strands_orchestrator as native_module
     if runtime_snapshot() != manifest['runtime']:
         raise ValueError('Configured runtime differs from the frozen experiment')
-    auditor = StrandsQueryOrchestrator(audit_strategy=manifest['audit_strategy'])
+    auditor = StrandsQueryOrchestrator()
     if not auditor.enabled:
         raise ValueError('Native model adapter is unavailable')
     packs = {case['id']: evidence_pack(case, allow_noncontiguous=manifest['allow_noncontiguous_reconstruction']) for case in data['cases']}
@@ -435,7 +437,6 @@ def main():
                         help='Admit a diagnosed invalid reconstruction for baseline investigation; it cannot pass')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--model', default='gemini-3.8-flash')
-    parser.add_argument('--audit-strategy', choices=['flat', 'grouped', 'source_first', 'document_local', 'document_local_corrected'], default='flat')
     parser.add_argument('--sdk-retry-policy', choices=['configured', 'single_attempt'], default='configured')
     parser.add_argument('--proxy-cache-policy', choices=['configured', 'bypass'], default='configured')
     parser.add_argument('--runtime', type=Path, help='Previously captured destination/settings/package contract')
@@ -456,7 +457,7 @@ def main():
     manifest = prepare(args.dataset, model=args.model, runtime=json.loads(args.runtime.read_bytes()), repetitions=args.repetitions,
                        max_attempts=args.max_attempts, seconds=args.seconds,
                        estimated_tokens=args.estimated_tokens, cache_note=args.cache_note,
-                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy, audit_strategy=args.audit_strategy, sdk_retry_policy=args.sdk_retry_policy)
+                       allow_noncontiguous=args.allow_noncontiguous_reconstruction, proxy_cache_policy=args.proxy_cache_policy, sdk_retry_policy=args.sdk_retry_policy)
     write_private(args.manifest, manifest)
     print(json.dumps(manifest))
     return 0

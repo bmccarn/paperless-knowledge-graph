@@ -80,16 +80,11 @@ independent samples; this runner bypasses the application cache but cannot prove
 proxy/provider independence and reports that limitation explicitly. Passing this
 suite cannot establish G1 semantic reproduction or G5/G6 acceptance by itself.
 
-Offline checks for the grader and two retained protocol defects:
+Offline check for the grader:
 
 ```bash
 python -m unittest tests.test_eval_source_audit -v
-python scripts/reproduce_audit_protocol.py
 ```
-
-The second command intentionally exits 1 on the frozen v25 baseline. Its synthetic
-transport responses exercise protocol behavior only, not model semantics. Keep its
-red result separate from a real-model reproducer.
 
 Captured-window development cases may provide `evidence_pack` and `source_capture`
 in addition to original `documents`. Before any invocation, the runner rebuilds
@@ -116,13 +111,18 @@ schema, model route and output allowance stay unchanged. The chosen policy is
 captured in the manifest and each attempt. This requests proxy bypass; it does not
 prove upstream sampling independence or establish billed usage.
 
-### Source-reading experiment
+### Concluded experiments
 
-`eval_source_audit.py --audit-strategy flat|grouped|source_first` freezes the
-named application implementation in the manifest. The default stays `flat`.
-`source_first` adds a candidate-blind source-reading invocation before each
-verifier invocation; both calls, failures and any existing protocol corrections
-count toward the same declared attempt/time ceiling. All original evidence still
-reaches the verifier and finalizer. Reading notes cannot certify claims. See
-[the candidate plan](../docs/specs/source-reading-experiment.md). This does not
-activate a production setting or establish end-to-end query-mode coverage.
+These experiments are finished and their runners and specs were removed; both remain at commit 411442d.
+
+- Source-reading strategies (`flat`, `grouped`, `source_first`, `document_local`): only `document_local_corrected` survived, as the question pipeline's reader ([plan](../docs/specs/source-reading-experiment.md)).
+- Audit protocol corrections: the deterministic reproduction exited 1 on the v25 baseline; the fixes were carried into the source auditor.
+- Source coverage diagnostic: failed. The missing-latest-record case returned no gaps, so the source checker was not integrated.
+- Fact conservation diagnostic: passed all fifteen selection and exclusion calls, leading to [fact conservation integration](../docs/specs/question-fact-conservation-integration.md). The conditional model-comparison arms never ran.
+- Exclusion model comparison: protocol only; no comparison calls ran.
+- Live retrieval qualification: the live browser harness was never admitted to a qualifying run.
+- Reader/verifier model comparison: all 36 executions completed; both independent grades failed.
+- Source-scope diagnostic and source-grounded interpretation contract: both routes failed. Absence errors improved but supported positive answers were lost.
+- Source-reader retention (B2): both independent grades failed on lost effective-time and replacement qualifications.
+- Source interpretation recovery: the v2 comparison completed all twelve pairs but restored no required omissions; both grades failed.
+- Source-record interpretation and native diagnostic: ten pairs completed and two reader calls timed out; both grades rejected the candidate.

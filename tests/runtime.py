@@ -10,7 +10,6 @@ def configure_test_environment():
         "PAPERLESS_EXTERNAL_URL": "http://127.0.0.1:1",
         "LITELLM_URL": "http://127.0.0.1:1",
         "LITELLM_API_KEY": "synthetic-test-key",
-        "GEMINI_API_KEY": "synthetic-test-key",
         "NEO4J_URI": "bolt://127.0.0.1:1",
         "NEO4J_PASSWORD": "synthetic-test-password",
         "POSTGRES_HOST": "127.0.0.1",

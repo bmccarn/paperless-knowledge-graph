@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { errMsg } from "@/lib/utils";
 import { getStatus, postSync, postReindex, postRepairDrift, getTask, cancelTask, graphSearch } from "@/lib/api";
-import type { FreshnessDocumentRef, StatusResponse } from "@/lib/types";
+import type { FreshnessDocumentRef, FreshnessStatus, StatusResponse } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -68,24 +69,23 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function formatDocRefs(docs?: FreshnessDocumentRef[], limit = 5): string {
-  const refs = docs || [];
-  if (refs.length === 0) return "";
-  const shown = refs.slice(0, limit).map((doc) => {
-    const label = doc.title ? ` ${doc.title}` : "";
-    return `#${doc.id}${label}`;
-  });
+function formatRefs(refs: (FreshnessDocumentRef | number)[] = [], limit = 5): string {
+  const shown = refs.slice(0, limit).map((ref) =>
+    typeof ref === "number" ? `#${ref}` : `#${ref.id}${ref.title ? ` ${ref.title}` : ""}`);
   const more = refs.length > limit ? ` +${refs.length - limit} more` : "";
   return `${shown.join(", ")}${more}`;
 }
 
-function formatIds(ids?: number[], limit = 8): string {
-  const values = ids || [];
-  if (values.length === 0) return "";
-  const shown = values.slice(0, limit).map((id) => `#${id}`);
-  const more = values.length > limit ? ` +${values.length - limit} more` : "";
-  return `${shown.join(", ")}${more}`;
-}
+const DRIFT_ROWS: [string, keyof FreshnessStatus, Exclude<keyof NonNullable<FreshnessStatus["drift"]>, "sample_limit">][] = [
+  ["Missing graph docs", "missing_documents", "missing_from_graph"],
+  ["Extra graph docs", "extra_documents", "extra_in_graph"],
+  ["Missing embeddings", "missing_embedding_documents", "missing_embeddings"],
+  ["Extra embeddings", "extra_embedding_documents", "extra_embeddings"],
+  ["Missing hashes", "missing_hash_documents", "missing_hashes"],
+  ["Extra hashes", "extra_hash_documents", "extra_hashes"],
+  ["Modified after sync", "modified_after_last_sync_documents", "modified_after_last_sync"],
+  ["Changed since indexing", "changed_since_index_documents", "changed_since_index"],
+];
 
 const TASK_LABELS: Record<string, string> = {
   reindex: "Reindex",
@@ -183,28 +183,31 @@ export default function DashboardPage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [taskProgress?.recent_results]);
 
+  const startTask = async (start: () => Promise<{ task_id?: string; status?: string }>, label: string, startedMsg: string, failMsg: string) => {
+    try {
+      const res = await start();
+      if (res.status === "noop" || !res.task_id) {
+        setToast({ message: "Nothing to do", type: "success" });
+        fetchStatus();
+        return;
+      }
+      setActiveTaskId(res.task_id);
+      setActiveTaskType(label);
+      setTaskProgress(null);
+      setToast({ message: startedMsg, type: "success" });
+    } catch (e: unknown) {
+      const msg = errMsg(e, failMsg);
+      setToast({ message: msg.includes("409") ? "A task is already running" : msg, type: "error" });
+    }
+  };
+
   const handleSync = () => {
     setConfirmDialog({
       open: true,
       title: "Sync New Documents",
       description: "This will check for new or modified documents in Paperless and process them. Documents are reprocessed when their source or extraction configuration has changed.",
       variant: "default",
-      action: async () => {
-        try {
-          const res = await postSync();
-          setActiveTaskId(res.task_id);
-          setActiveTaskType("Sync");
-          setTaskProgress(null);
-          setToast({ message: "Sync started successfully", type: "success" });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Failed to start sync";
-          if (msg.includes("409")) {
-            setToast({ message: "A task is already running", type: "error" });
-          } else {
-            setToast({ message: msg, type: "error" });
-          }
-        }
-      },
+      action: () => startTask(postSync, "Sync", "Sync started successfully", "Failed to start sync"),
     });
   };
 
@@ -214,22 +217,7 @@ export default function DashboardPage() {
       title: "Full Reindex",
       description: "This will prepare and replace the index for every document. Existing document data remains available while its replacement is prepared. This can take a while; vector indexes and entity resolution run afterwards.",
       variant: "destructive",
-      action: async () => {
-        try {
-          const res = await postReindex();
-          setActiveTaskId(res.task_id);
-          setActiveTaskType("Reindex");
-          setTaskProgress(null);
-          setToast({ message: "Full reindex started", type: "success" });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Failed to start reindex";
-          if (msg.includes("409")) {
-            setToast({ message: "A task is already running", type: "error" });
-          } else {
-            setToast({ message: msg, type: "error" });
-          }
-        }
-      },
+      action: () => startTask(postReindex, "Reindex", "Full reindex started", "Failed to start reindex"),
     });
   };
 
@@ -239,27 +227,7 @@ export default function DashboardPage() {
       title: "Repair Freshness Drift",
       description: "This will reindex only the exact drifted document IDs reported by freshness and clean up stale graph/vector/hash artifacts for IDs no longer in Paperless.",
       variant: "default",
-      action: async () => {
-        try {
-          const res = await postRepairDrift();
-          if (res.status === "noop" || !res.task_id) {
-            setToast({ message: "No drift to repair", type: "success" });
-            fetchStatus();
-            return;
-          }
-          setActiveTaskId(res.task_id);
-          setActiveTaskType("Repair Drift");
-          setTaskProgress(null);
-          setToast({ message: "Drift repair started", type: "success" });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Failed to start drift repair";
-          if (msg.includes("409")) {
-            setToast({ message: "A task is already running", type: "error" });
-          } else {
-            setToast({ message: msg, type: "error" });
-          }
-        }
-      },
+      action: () => startTask(postRepairDrift, "Repair Drift", "Drift repair started", "Failed to start drift repair"),
     });
   };
 
@@ -274,7 +242,7 @@ export default function DashboardPage() {
       const result = await cancelTask(activeTaskId);
       setTaskProgress((prev) => prev ? { ...prev, status: result.status } : null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e, "Failed to cancel task"));
     }
   };
 
@@ -373,49 +341,26 @@ export default function DashboardPage() {
   const freshness = status.freshness;
   const lastFailedExtraction = freshness?.last_failed_extraction;
   const freshnessDriftDetails = freshness
-    ? [
-        {
-          label: "Missing graph docs",
-          count: freshness.missing_documents || 0,
-          detail: formatDocRefs(freshness.drift?.missing_from_graph),
-        },
-        {
-          label: "Extra graph docs",
-          count: freshness.extra_documents || 0,
-          detail: formatIds(freshness.drift?.extra_in_graph),
-        },
-        {
-          label: "Missing embeddings",
-          count: freshness.missing_embedding_documents || 0,
-          detail: formatDocRefs(freshness.drift?.missing_embeddings),
-        },
-        {
-          label: "Extra embeddings",
-          count: freshness.extra_embedding_documents || 0,
-          detail: formatIds(freshness.drift?.extra_embeddings),
-        },
-        {
-          label: "Missing hashes",
-          count: freshness.missing_hash_documents || 0,
-          detail: formatDocRefs(freshness.drift?.missing_hashes),
-        },
-        {
-          label: "Extra hashes",
-          count: freshness.extra_hash_documents || 0,
-          detail: formatIds(freshness.drift?.extra_hashes),
-        },
-        {
-          label: "Modified after sync",
-          count: freshness.modified_after_last_sync_documents || 0,
-          detail: formatDocRefs(freshness.drift?.modified_after_last_sync),
-        },
-        {
-          label: "Changed since indexing",
-          count: freshness.changed_since_index_documents || 0,
-          detail: formatDocRefs(freshness.drift?.changed_since_index),
-        },
-      ].filter((item) => item.count > 0)
+    ? DRIFT_ROWS.map(([label, countKey, refsKey]) => ({
+        label,
+        count: Number(freshness[countKey]) || 0,
+        detail: formatRefs(freshness.drift?.[refsKey]),
+      })).filter((item) => item.count > 0)
     : [];
+  const embeddingCoverage = status.graph.documents > 0
+    ? Math.round((status.embeddings.docs_with_embeddings / status.graph.documents) * 100)
+    : 0;
+  const overviewRows: [string, ReactNode, string?][] = [
+    ["Graph Density", `${status.graph.entities > 0 ? (status.graph.relationships / status.graph.entities).toFixed(1) : "0"} rel/entity`],
+    ["Embedding Coverage", <>{embeddingCoverage}%<span className="text-muted-foreground text-xs ml-1">({status.embeddings.docs_with_embeddings}/{status.graph.documents} docs)</span></>],
+    ["Active Tasks", Object.keys(status.active_tasks).length],
+    ...(freshness
+      ? ([
+          ["Paperless Documents", freshness.paperless_documents.toLocaleString()],
+          ["Missing From Graph", freshness.missing_documents.toLocaleString(), freshness.missing_documents > 0 ? "text-sm font-medium text-amber-400" : undefined],
+        ] satisfies [string, ReactNode, string?][])
+      : []),
+  ];
 
   return (
     <div className="space-y-4 p-4 md:space-y-6 md:p-6 lg:p-8 h-full overflow-y-auto">
@@ -482,7 +427,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
                 {freshnessDriftDetails.length > 0 && (
-                  <Button onClick={handleRepairDrift} disabled={!!activeTaskId && isRunning} size="sm" variant="secondary" className="gap-2">
+                  <Button onClick={handleRepairDrift} disabled={isRunning} size="sm" variant="secondary" className="gap-2">
                     {activeTaskType === "Repair Drift" && isRunning ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
@@ -491,7 +436,7 @@ export default function DashboardPage() {
                     Repair drift
                   </Button>
                 )}
-                <Button onClick={handleSync} disabled={!!activeTaskId && isRunning} size="sm" className="gap-2">
+                <Button onClick={handleSync} disabled={isRunning} size="sm" className="gap-2">
                   {activeTaskType === "Sync" && isRunning ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
@@ -546,7 +491,7 @@ export default function DashboardPage() {
             <div className="flex gap-3">
               <Button
                 onClick={handleSync}
-                disabled={!!activeTaskId && isRunning}
+                disabled={isRunning}
                 className="gap-2 flex-1"
               >
                 {activeTaskType === "Sync" && isRunning ? (
@@ -558,7 +503,7 @@ export default function DashboardPage() {
               </Button>
               <Button
                 onClick={handleReindex}
-                disabled={!!activeTaskId && isRunning}
+                disabled={isRunning}
                 variant="secondary"
                 className="gap-2 flex-1"
               >
@@ -724,48 +669,12 @@ export default function DashboardPage() {
                   {status.status}
                 </Badge>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Graph Density</span>
-                <span className="text-sm font-medium">
-                  {status.graph.entities > 0
-                    ? (status.graph.relationships / status.graph.entities).toFixed(1)
-                    : "0"}{" "}
-                  rel/entity
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Embedding Coverage</span>
-                <span className="text-sm font-medium">
-                  {status.graph.documents > 0
-                    ? Math.round((status.embeddings.docs_with_embeddings / status.graph.documents) * 100)
-                    : 0}%
-                  <span className="text-muted-foreground text-xs ml-1">
-                    ({status.embeddings.docs_with_embeddings}/{status.graph.documents} docs)
-                  </span>
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Active Tasks</span>
-                <span className="text-sm font-medium">
-                  {Object.keys(status.active_tasks).length}
-                </span>
-              </div>
-              {freshness && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Paperless Documents</span>
-                    <span className="text-sm font-medium">
-                      {freshness.paperless_documents.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Missing From Graph</span>
-                    <span className={freshness.missing_documents > 0 ? "text-sm font-medium text-amber-400" : "text-sm font-medium"}>
-                      {freshness.missing_documents.toLocaleString()}
-                    </span>
-                  </div>
-                </>
-              )}
+              {overviewRows.map(([label, value, className = "text-sm font-medium"]) => (
+                <div key={label} className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">{label}</span>
+                  <span className={className}>{value}</span>
+                </div>
+              ))}
               {lastFailedExtraction && (
                 <div className="rounded-lg border border-red-500/25 bg-red-500/10 p-3">
                   <p className="text-xs font-medium text-red-300">Last failed extraction</p>
@@ -775,18 +684,6 @@ export default function DashboardPage() {
                   {lastFailedExtraction.error && (
                     <p className="text-xs text-red-300/80 mt-1 line-clamp-2">{lastFailedExtraction.error}</p>
                   )}
-                </div>
-              )}
-              {status.graph.documents > 0 && (
-                <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-2">Embedding Coverage</p>
-                  <Progress
-                    value={Math.min(
-                      (status.embeddings.docs_with_embeddings / Math.max(status.graph.documents, 1)) * 100,
-                      100
-                    )}
-                    className="h-2"
-                  />
                 </div>
               )}
             </div>

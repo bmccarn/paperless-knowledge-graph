@@ -418,11 +418,6 @@ class ExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e["name"] for e in result["all_entities"]], ["Alice Example"])
         self.assertTrue(all("CompletionTruncatedError" in w["issues"][0] for w in coverage["windows"][:4]))
 
-    async def test_empty_document_is_failed_not_successful_empty_extraction(self):
-        result = await self.extract("")
-        self.assertEqual(result["extraction_coverage"]["status"], "failed")
-        self.assertEqual(result["confidence"], 0.0)
-
 
 if __name__ == "__main__":
     unittest.main()

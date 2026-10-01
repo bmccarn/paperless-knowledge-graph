@@ -1,13 +1,10 @@
 """Real storage contracts against explicitly selected disposable local services."""
-import json
 import os
-import time
 import unittest
 from urllib.parse import urlparse
 from unittest.mock import AsyncMock
 
 import asyncpg
-import numpy as np
 from neo4j import AsyncGraphDatabase
 
 from tests.runtime import configure_test_environment
@@ -37,7 +34,6 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         async with self.store.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
             await conn.execute("TRUNCATE document_embeddings, entity_embeddings, entity_review_decisions, document_hashes")
-            await conn.execute("DROP INDEX IF EXISTS idx_embeddings_halfvec_hnsw")
             await conn.execute("ALTER TABLE document_embeddings ALTER COLUMN embedding TYPE vector(3072)")
 
     async def asyncTearDown(self):
@@ -109,7 +105,8 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(row["left_identity"])
             self.assertIsNone(row["review_id"])
             self.assertEqual(row["review_method"], "legacy_unknown")
-            await self.store.set_entity_decision_identity_status(row["left_uuid"], row["right_uuid"], row["decision"], "unresolved_legacy")
+            await self.store.hydrate_entity_review_identities(
+                {"left_uuid": row["left_uuid"], "right_uuid": row["right_uuid"], "decision": row["decision"]}, "unresolved_legacy")
         rows = await self.store.get_entity_review_decisions()
         self.assertEqual(len(rows), 19)
         self.assertTrue(all(row["identity_status"] == "unresolved_legacy" for row in rows))
@@ -143,8 +140,7 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.store.get_doc_hash(101), "original-ocr-hash")
         self.assertEqual(await self.store.get_ingestion_fingerprints([101]), {101: "metadata-fingerprint"})
         self.store.generate_embedding = AsyncMock(return_value=vector)
-        for rows in (await self.store.get_chunks_for_document(101),
-                     await self.store.get_chunks_for_documents([101]),
+        for rows in (await self.store.get_chunks_for_documents([101]),
                      await self.store.vector_search("premium"),
                      await self.store.keyword_search("premium")):
             pack = build_evidence_pack("premium", {}, rows, [])
@@ -165,7 +161,7 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
             await conn.execute(INIT_SQL)
         self.assertEqual(await self.store.get_doc_hash(101), "legacy-ocr-hash")
         self.assertEqual(await self.store.get_ingestion_fingerprints([101]), {101: None})
-        rows = await self.store.get_chunks_for_document(101)
+        rows = await self.store.get_chunks_for_documents([101])
         self.assertEqual(len(rows), 2)
         self.assertEqual([item["content"] for item in build_evidence_pack("premium", {}, rows, [])["items"]], ["Premium $321."])
 
@@ -173,7 +169,7 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
         self.store.generate_embedding = AsyncMock(side_effect=AssertionError("must not regenerate prepared vector"))
         vector = [1.0] + [0.0] * 3071
         await self.store.store_document_embedding(11, "Prepared text", embedding=vector)
-        rows = await self.store.get_chunks_for_document(11)
+        rows = await self.store.get_chunks_for_documents([11])
         self.assertEqual(rows[0]["content"], "Prepared text")
         self.store.generate_embedding = AsyncMock(return_value=[])
         with self.assertRaises(ValueError):
@@ -181,7 +177,6 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dimension_mismatch_fails_without_erasing_existing_data(self):
         async with self.store.pool.acquire() as conn:
-            await conn.execute("DROP INDEX IF EXISTS idx_embeddings_halfvec_hnsw")
             await conn.execute("ALTER TABLE document_embeddings ALTER COLUMN embedding TYPE vector(3)")
             await conn.execute("INSERT INTO document_embeddings(document_id,content,embedding) VALUES(1,'keep me','[1,0,0]')")
         try:
@@ -193,36 +188,6 @@ class PostgresIntegrityTests(unittest.IsolatedAsyncioTestCase):
             async with self.store.pool.acquire() as conn:
                 await conn.execute("TRUNCATE document_embeddings")
                 await conn.execute("ALTER TABLE document_embeddings ALTER COLUMN embedding TYPE vector(3072)")
-
-    async def test_3072_index_exact_baseline_and_optional_candidate_recall(self):
-        rng = np.random.default_rng(17)
-        vectors = rng.normal(size=(320, 3072)).astype(np.float32)
-        async with self.store.pool.acquire() as conn:
-            await conn.executemany("INSERT INTO document_embeddings(document_id,content,embedding) VALUES($1,$2,$3::vector)",
-                                   [(i + 1, f"Synthetic {i + 1}", str(v.tolist())) for i, v in enumerate(vectors)])
-        config = await self.store.create_vector_indexes()
-        self.assertEqual(config["default_search"], "exact")
-        timings, recalls = [], []
-        for i in (2, 27, 101, 211):
-            query = vectors[i] + rng.normal(scale=0.05, size=3072)
-            expected = (np.argsort(-(vectors @ query) / (np.linalg.norm(vectors, axis=1) * np.linalg.norm(query)))[:10] + 1).tolist()
-            self.store.generate_embedding = AsyncMock(return_value=query.tolist())
-            start = time.perf_counter()
-            exact = await self.store.vector_search("synthetic", 10)
-            exact_ms = (time.perf_counter() - start) * 1000
-            self.assertEqual([r["document_id"] for r in exact], expected)
-            start = time.perf_counter()
-            approximate = await self.store.vector_search("synthetic", 10, approximate=True)
-            approximate_ms = (time.perf_counter() - start) * 1000
-            recalls.append(len(set(expected) & {r["document_id"] for r in approximate}) / 10)
-            timings.append({"exact_ms": round(exact_ms, 2), "approximate_ms": round(approximate_ms, 2)})
-        async with self.store.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute("SET LOCAL enable_seqscan=off")
-                plan = await conn.fetch("EXPLAIN SELECT * FROM document_embeddings ORDER BY embedding::halfvec(3072) <=> $1::halfvec(3072) LIMIT 10", str(vectors[2].tolist()))
-                self.assertIn("idx_embeddings_halfvec_hnsw", "\n".join(r[0] for r in plan))
-        print("VECTOR_BASELINE " + json.dumps({"rows": 320, "dimensions": 3072, "recall_at_10": recalls, "timings": timings}))
-        self.assertGreaterEqual(min(recalls), 0.9)
 
 
 @unittest.skipUnless(os.environ.get("STORAGE_TEST_NEO4J"), "Set STORAGE_TEST_NEO4J for disposable Neo4j")

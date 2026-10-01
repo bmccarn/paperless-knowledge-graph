@@ -1,5 +1,7 @@
 # Repository audit — September 4, 2026
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 Historical baseline. The [implementation report](2026-09-04-implementation-report.md) records the subsequent fixes and current validation; the defect-asserting probes below are not current CI gates.
 
 Revision: `caaaa5a86d2eb17c5d4260a42077f488646242e6`.

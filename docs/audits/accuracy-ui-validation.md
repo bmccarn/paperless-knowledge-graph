@@ -1,5 +1,7 @@
 # Accuracy UI validation — September 4, 2026
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 Sixteen browser scenarios passed using the actual Next.js application, its runtime API proxy, and a synthetic backend fixture: twelve in the main run, one targeted graph-support check, and three targeted domain-hub checks. All runs recorded zero browser page runtime errors. They used Node 24.20.0, Playwright 1.62.1 and Chromium 151.0.7922.34. CUA could not start its native connection, so validation used the authorized Playwright fallback.
 
 The fixture contains 303 indexed documents and 120 pageable graph-search entities. It simulates feedback state, task completion, accepted answers, interrupted streams, and hostile markup. These are frontend contract checks. They do not measure real model quality, production answer accuracy, or datastore transaction behavior. The separate Python suites exercise those backend acceptance and storage paths with controlled dependencies and disposable databases.

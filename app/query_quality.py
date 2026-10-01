@@ -1,13 +1,10 @@
-"""Deterministic query planning, evidence scoring, and trace helpers."""
+"""Deterministic query planning, and trace helpers."""
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from app.answer_finalization import parse_date, current_state
 from typing import Any
-
-from app.evidence import exact_term_hits as evidence_exact_term_hits
 
 
 DOMAIN_TERMS: dict[str, tuple[str, ...]] = {
@@ -31,8 +28,6 @@ TIMELINE_TERMS = (
     "timeline", "history", "progression", "changed", "over time", "chronological",
     "when", "effective", "expired", "expiration", "from", "to",
 )
-
-SUPERSEDED_TERMS = ("superseded", "replaced by", "cancelled", "canceled", "expired", "void", "prior version")
 
 
 def normalize_mode(mode: str | None) -> str:
@@ -200,180 +195,6 @@ def trace_step(step: str, status: str = "ok", detail: str = "", data: dict[str, 
     return payload
 
 
-def compute_evidence_grade(
-    question: str,
-    plan: dict[str, Any],
-    sources: list[dict[str, Any]],
-    context: dict[str, Any],
-    verification: dict[str, Any] | None = None,
-    evidence_pack: dict[str, Any] | None = None,
-    claim_ledger: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    reasons = []
-    penalties = []
-    dimensions: dict[str, Any] = {}
-    evidence_pack = evidence_pack or {}
-    coverage = evidence_pack.get("coverage") or {}
-    claim_summary = (claim_ledger or {}).get("summary") or {}
-    verification_status = (verification or {}).get("status")
-
-    source_count = len(sources)
-    retrieval_score = 0.0
-    if source_count >= 5:
-        retrieval_score += 0.75
-        reasons.append(f"{source_count} source documents retrieved")
-    elif source_count >= 2:
-        retrieval_score += 0.5
-        reasons.append(f"{source_count} source documents retrieved")
-    elif source_count == 1:
-        retrieval_score += 0.28
-        reasons.append("1 source document retrieved")
-    else:
-        penalties.append("No source documents were retrieved")
-
-    exact_hits = _exact_term_hits(question, sources)
-    if exact_hits >= 3:
-        retrieval_score += 0.25
-        reasons.append("Strong direct term overlap with retrieved sources")
-    elif exact_hits >= 1:
-        retrieval_score += 0.12
-        reasons.append("Some direct term overlap with retrieved sources")
-    else:
-        penalties.append("Weak direct term overlap with retrieved sources")
-    retrieval_score = min(1.0, retrieval_score)
-
-    freshness_score = 0.75
-    if plan.get("requires_current"):
-        latest_sources = [s for s in sources if s.get("date")]
-        if latest_sources:
-            freshness_score = 0.75
-            reasons.append("Current-state query has dated source coverage")
-        else:
-            freshness_score = 0.25
-            penalties.append("Current-state query lacks dated sources")
-    if coverage.get("date_signal_counts"):
-        freshness_score = min(1.0, freshness_score + 0.15)
-
-    source_quality_score = float(coverage.get("average_source_quality") or 0)
-    if source_quality_score:
-        if source_quality_score >= 0.78:
-            reasons.append("Evidence pack uses strong original/direct sources")
-        elif source_quality_score < 0.55:
-            penalties.append("Evidence pack relies on weaker summary/context sources")
-    else:
-        source_quality_score = 0.45
-
-    superseded_count = sum(1 for s in sources if _looks_superseded_text(s.get("excerpt", "")))
-    contradiction_score = 1.0
-    if superseded_count:
-        contradiction_score -= min(0.45, superseded_count * 0.12)
-        penalties.append(f"{superseded_count} retrieved source(s) look superseded or expired")
-
-    claim_support_score = 0.0
-    supported = int(claim_summary.get("supported") or 0)
-    partial = int(claim_summary.get("partial") or 0)
-    unsupported_claims = int(claim_summary.get("unsupported") or 0)
-    conflicting_claims = int(claim_summary.get("conflicting") or 0)
-    ledger_total = supported + partial + unsupported_claims + conflicting_claims + (int(claim_summary.get("unknown") or 0) + int(claim_summary.get("unchecked") or 0) + int(claim_summary.get("missing") or 0))
-    if ledger_total:
-        claim_support_score = (supported + 0.5 * partial) / max(ledger_total, 1)
-        if supported:
-            reasons.append(f"{supported} answer claim(s) source-backed")
-        if unsupported_claims:
-            penalties.append(f"{unsupported_claims} ledger claim(s) unsupported")
-        if conflicting_claims:
-            penalties.append(f"{conflicting_claims} ledger claim(s) conflicting")
-
-    if verification:
-        unsupported = verification.get("unsupported_claims") or []
-        stale = verification.get("stale_or_conflicting_claims") or []
-        if not unsupported and not stale and verification.get("status") in {"verified", "ok"}:
-            reasons.append("Verifier reported no unsupported claims; ledger still determines support")
-        if unsupported:
-            claim_support_score = min(claim_support_score, max(0.0, 0.65 - 0.08 * len(unsupported)))
-            penalties.append(f"{len(unsupported)} unsupported claim(s) flagged by verifier")
-        if stale:
-            contradiction_score = min(contradiction_score, max(0.0, 0.8 - 0.1 * len(stale)))
-            penalties.append(f"{len(stale)} stale/conflicting claim(s) flagged by verifier")
-
-    audit_score = 1.0 if ledger_total else 0.5
-    audit_status = "claim_audited" if ledger_total else "not_claim_audited"
-    score_cap = 1.0 if ledger_total and supported == ledger_total and (claim_ledger or {}).get("complete") else 0.49
-    if verification_status == "checking":
-        audit_score = 0.35
-        audit_status = "checking"
-        score_cap = min(score_cap, 0.69)
-        penalties.append("Claim support audit is still running")
-    elif verification_status == "not_run":
-        audit_score = 0.25
-        audit_status = "verifier_unavailable"
-        score_cap = min(score_cap, 0.74)
-        penalties.append("Verifier unavailable; answer is retrieval-backed but not claim-audited")
-    elif verification_status == "needs_review":
-        audit_score = min(audit_score, 0.65)
-        audit_status = "needs_review"
-        score_cap = min(score_cap, 0.77)
-        penalties.append("Verifier marked the answer for review")
-    elif verification_status in {"verified", "ok"}:
-        if ledger_total:
-            audit_score = max(0.75, claim_support_score)
-        else:
-            audit_score = 0.75
-            audit_status = "verifier_checked"
-    elif not ledger_total:
-        audit_score = 0.3
-        audit_status = "audit_missing"
-        score_cap = min(score_cap, 0.74)
-        penalties.append("No claim-level audit was available; trust is retrieval-backed only")
-
-    structured_score = 0.35
-    structured_count = int(coverage.get("structured_fact_count") or 0)
-    if structured_count >= 20:
-        structured_score = 1.0
-        reasons.append("Structured values/tables are present in evidence")
-    elif structured_count >= 5:
-        structured_score = 0.7
-
-    graph_nodes = len(context.get("graph_nodes", []) or [])
-    if graph_nodes:
-        reasons.append(f"{graph_nodes} graph entities contributed context")
-
-    dimensions = {
-        "retrieval_coverage": round(retrieval_score, 3),
-        "source_freshness": round(freshness_score, 3),
-        "claim_support": round(claim_support_score, 3),
-        "source_quality": round(source_quality_score, 3),
-        "contradiction_check": round(max(0.0, contradiction_score), 3),
-        "structured_evidence": round(structured_score, 3),
-        "audit_coverage": round(audit_score, 3),
-    }
-    score = (
-        0.22 * retrieval_score
-        + 0.18 * freshness_score
-        + 0.3 * claim_support_score
-        + 0.15 * source_quality_score
-        + 0.1 * max(0.0, contradiction_score)
-        + 0.05 * structured_score
-    )
-    score = max(0.0, min(1.0, score))
-    if score > score_cap:
-        score = score_cap
-        penalties.append("Trust score capped until claim audit coverage improves")
-    level = "high" if score >= 0.78 else "medium" if score >= 0.5 else "low"
-    return {
-        "score": round(score, 3),
-        "level": level,
-        "reasons": reasons[:6],
-        "penalties": penalties[:6],
-        "source_count": source_count,
-        "exact_term_hits": exact_hits,
-        "dimensions": dimensions,
-        "audit_status": audit_status,
-        "claim_summary": claim_summary,
-        "coverage": coverage,
-    }
-
-
 def current_state_summary(plan: dict[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any]:
     dated = [parse_date(s.get("date")) for s in sources]
     dates = [d[0] for d in dated if d]
@@ -382,35 +203,6 @@ def current_state_summary(plan: dict[str, Any], sources: list[dict[str, Any]]) -
     return result
 
 
-def timeline_fallback_events(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    events = []
-    for source in sources:
-        date = source.get("date")
-        if not parse_date(date):
-            continue
-        events.append({
-            "date": str(date),
-            "title": source.get("title") or f"Document {source.get('document_id')}",
-            "summary": "Document dated " + str(date) + ". This is a document date, not a verified event date.",
-            "document_id": source.get("document_id"),
-            "source_title": source.get("title"),
-            "status": "document_date",
-            "precision": parse_date(date)[1],
-        })
-    return sort_timeline_events(events)[:20]
-
-
-def sort_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    def key(event: dict[str, Any]) -> tuple[str, str]:
-        raw = str(event.get("date") or "")
-        normalized = _normalize_date_key(raw)
-        return normalized, str(event.get("title") or event.get("summary") or "")
-    return sorted([e for e in events if parse_date(e.get("date"))], key=key)
-
-
-def _normalize_date_key(value: str) -> str:
-    parsed = parse_date(value)
-    return parsed[0] if parsed else "9999"
 
 
 def _required_doc_types(domain: str) -> list[str]:
@@ -449,16 +241,3 @@ def _dedupe_subqueries(subqueries: list[dict[str, str]]) -> list[dict[str, str]]
         seen.add(key)
         result.append({"role": str(item.get("role") or "planned"), "query": query})
     return result[:8]
-
-
-def _exact_term_hits(question: str, sources: list[dict[str, Any]]) -> int:
-    source_text = " ".join(
-        f"{s.get('title', '')} {s.get('doc_type', '')} {s.get('excerpt', '')}"
-        for s in sources
-    )
-    return evidence_exact_term_hits(question, source_text)
-
-
-def _looks_superseded_text(text: str) -> bool:
-    lower = (text or "").lower()
-    return any(term in lower for term in SUPERSEDED_TERMS)

@@ -122,9 +122,6 @@ class EmbeddingsFixture:
         self.chunks[doc_id, chunk_index] = content
         self.writes.append(('chunk', doc_id))
 
-    async def create_vector_indexes(self):
-        pass
-
 
 class ClassifierFixture:
     fail = False
@@ -356,6 +353,53 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(main._tasks[repair.json()["task_id"]]["target_doc_ids"], [1])
                 start_worker.assert_called_once()
         self.assertEqual(self.embeddings.last_sync, original_checkpoint)
+
+    async def test_drift_repair_samples_each_category_separately(self):
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        limit = main.FRESHNESS_SAMPLE_LIMIT
+        ids = range(1, 2 * limit + 1)
+        self.paperless = PaperlessFixture([document(doc_id) for doc_id in ids])
+        for doc in self.paperless.documents.values():
+            self.embeddings.hashes[doc['id']] = 'hash'
+            self.embeddings.fingerprints[doc['id']] = PaperlessClient.ingestion_fingerprint(doc)
+        # Disjoint drift: the first half lacks embeddings, the second half lacks graph nodes.
+        self.embeddings.chunks = {(doc_id, 0): 'chunk' for doc_id in ids if doc_id > limit}
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", AsyncMock(return_value=set(range(1, limit + 1)))), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": limit})), \
+             patch.object(main, "_freshness_cache", None), \
+             patch.object(main, "_tasks", {}), \
+             patch.object(main, "_cancel_events", {}), \
+             patch.object(main, "_start_background_worker", side_effect=lambda worker: worker.close()):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                repair = await client.post("/freshness/repair")
+                self.assertEqual(repair.json()["status"], "started")
+                self.assertEqual(main._tasks[repair.json()["task_id"]]["target_doc_ids"], list(ids))
+
+    async def test_guardrails_reports_drift_alerts_for_cluster_health_monitoring(self):
+        # homelab-health-alerts polls this exact URL and filters alerts by `type`.
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        url = "/ops/guardrails?force=true&allowed_doc_drift=0&check_model=false&check_logs=false"
+        await pipeline.sync_documents()
+        self.embeddings.last_sync = datetime.now(timezone.utc)
+        graph_ids = AsyncMock(return_value={1})
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", graph_ids), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": 1})), \
+             patch.object(main, "_freshness_cache", None):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                healthy = (await client.get(url)).json()
+                graph_ids.return_value = set()
+                drifted = (await client.get(url)).json()
+        self.assertEqual((healthy["status"], healthy["alerts"]), ("ok", []))
+        self.assertEqual(drifted["status"], "alerting")
+        self.assertEqual([alert["type"] for alert in drifted["alerts"]], ["doc_id_drift"])
 
     async def test_scan_watermark_retains_changes_made_during_processing(self):
         self.extractor.started, self.extractor.release = asyncio.Event(), asyncio.Event()
@@ -608,7 +652,7 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         main._cancel_events.clear()
         previous = self.embeddings.last_sync
         with patch.object(main, 'invalidate_on_sync', lambda: None), patch.object(main, 'embeddings_store', self.embeddings):
-            task_id, _ = await main._run_reindex_documents_task([1], task_type='test', message='test', update_last_sync=True)
+            task_id, _ = await main._run_reindex_documents_task([1], task_type='test', message='test')
             await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
             self.assertEqual(main._tasks[task_id]['status'], 'completed')
             self.assertEqual(self.embeddings.last_sync, previous)

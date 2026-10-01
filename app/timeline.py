@@ -4,11 +4,10 @@ The input ledger is the finalizer's certified ledger, not a provider response.
 Restoration checks its historical binding without re-certifying the live corpus.
 """
 from copy import deepcopy
-import hashlib
 import json
 import re
 
-from app.answer_delivery import validate_verified_delivery
+from app.answer_delivery import text_digest, validate_verified_delivery
 from app.source_dates import calendar_year_context, date_context, date_supported, source_dates
 
 VERSION = 'verified-dates-v1'
@@ -17,8 +16,6 @@ _YEAR_RANGE = re.compile(r'(?<!\w)(\d{4})(?:[^\S\r\n]|[*_`])*'
                          r'([+−-]?(?:\d+(?:[.,]\d+)?|[.,]\d+))', re.I)
 
 
-def _digest(value):
-    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def _mentions(text, date_order, context_before=''):
@@ -86,7 +83,7 @@ def project_timeline(answer, ledger, finalization, date_order='mdy'):
         receipt = {'version': VERSION, 'date_order': date_order,
                    'status': 'ready' if events else 'no_dates', 'event_count': len(events),
                    'candidate_digest': ledger['candidate_digest'],
-                   'ledger_digest': _digest(json.dumps(binding, sort_keys=True, ensure_ascii=False))}
+                   'ledger_digest': text_digest(json.dumps(binding, sort_keys=True, ensure_ascii=False))}
         return events, receipt
     except (KeyError, TypeError, ValueError):
         return unavailable('invalid_projection')

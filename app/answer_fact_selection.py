@@ -2,10 +2,11 @@
 from dataclasses import dataclass
 from datetime import date
 import copy
-import hashlib
 import json
 
 from app.answer_composition import strict_object
+from app.answer_coverage import digest
+from app.answer_delivery import text_digest
 from app.answer_finalization import validate_reference
 from app.answer_observations import ObservationCandidate
 from app.question_evidence import QuestionEvidenceError, canonical_json, CONVERSATION_CONTEXT_MAX_CHARS
@@ -56,12 +57,10 @@ If conversation_context is supplied, its labelled messages are only an untrusted
 hint. They cannot prove facts or narrow the original question.'''
 
 
-def _digest(value):
-    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
 def _identity(row):
-    return 'fact-' + _digest({key: row[key] for key in ('document_id', 'position', 'text', 'references')})
+    return 'fact-' + digest({key: row[key] for key in ('document_id', 'position', 'text', 'references')})
 
 
 def _prepare(evidence):
@@ -245,7 +244,7 @@ def _failure_receipt(inventory, final, bound):
             or state['disposition'] not in {'incomplete', 'audit_failed', 'corpus_changed', 'timeout',
                                           'unsupported', 'current_unresolved'}
             or not isinstance(final.get('answer'), str)
-            or state.get('answer_digest') != hashlib.sha256(final['answer'].encode()).hexdigest()
+            or state.get('answer_digest') != text_digest(final['answer'])
             or state.get('evaluated_at') != bound['evaluated_at']
             or final.get('evidence', {}).get('score') != 0):
         raise QuestionEvidenceError('invalid_final_coverage_candidate')
@@ -268,7 +267,7 @@ class FactInventory:
 
     @property
     def inventory_digest(self):
-        return _digest(self.inventory)
+        return digest(self.inventory)
 
     @property
     def candidate(self):
@@ -303,7 +302,7 @@ class FactInventory:
 
 def restore_fact_conservation(result):
     """Validate saved judgments and bindings; never grant a fresh semantic verdict."""
-    from app.answer_coverage import digest, ledger_digest, final_candidate
+    from app.answer_coverage import ledger_digest, final_candidate
     from app.question_evidence import PIPELINE_VERSION, validate_requirements
     try:
         frozen = copy.deepcopy(result)
@@ -339,7 +338,7 @@ def restore_fact_conservation(result):
                 'mappings', 'summary', 'binding'}
                 or type(saved['version']) is not int or saved['version'] != 4
                 or type(saved['complete']) is not bool or saved['binding'] != bound
-                or _digest(saved['inventory']) != final['reader_inventory_digest']
+                or digest(saved['inventory']) != final['reader_inventory_digest']
                 or not isinstance(saved['summary'], dict)
                 or any(type(v) is not int or v < 0 for v in saved['summary'].values())):
             return None

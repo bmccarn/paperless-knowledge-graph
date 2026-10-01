@@ -61,11 +61,6 @@ class MemoryDecisions:
                 return
         raise ValueError("Legacy decision disappeared")
 
-    async def set_entity_decision_identity_status(self, left_uuid, right_uuid, decision, status):
-        for row in self.rows:
-            if set((row["left_uuid"], row["right_uuid"])) == set((left_uuid, right_uuid)) and row["decision"] == decision:
-                row["identity_status"] = status
-
     async def generate_embedding(self, text):
         return []
 
@@ -94,24 +89,6 @@ class MemoryGraph:
         node.setdefault("alias_records", []).append(copy.deepcopy(record))
         node.setdefault("aliases", []).append(record["alias"])
 
-    async def get_all_persons(self):
-        return [copy.deepcopy(n) for n in self.nodes.values() if n["entity_type"] == "Person"]
-
-    async def get_all_organizations(self):
-        return [copy.deepcopy(n) for n in self.nodes.values() if n["entity_type"] == "Organization"]
-
-    async def find_person(self, name):
-        return self.find(name, "Person")
-
-    async def find_organization(self, name):
-        return self.find(name, "Organization")
-
-    def find(self, name, label):
-        for node in self.nodes.values():
-            if node["entity_type"] == label and name.lower() in [s.lower() for s in [node["name"], *node.get("aliases", [])]]:
-                return copy.deepcopy(node)
-        return None
-
     async def get_node(self, node_uuid):
         node = self.nodes.get(node_uuid)
         return {"labels": [node["entity_type"]], "properties": copy.deepcopy(node), "relationships": []} if node else None
@@ -121,17 +98,6 @@ class MemoryGraph:
         node_uuid = f"created-{self.sequence}"
         self.nodes[node_uuid] = {**copy.deepcopy(properties), "uuid": node_uuid, "entity_type": label}
         return node_uuid
-
-    async def create_person(self, **properties):
-        return await self.create_node("Person", properties)
-
-    async def create_organization(self, **properties):
-        return await self.create_node("Organization", properties)
-
-    async def add_person_alias(self, node_uuid, alias):
-        self.nodes[node_uuid].setdefault("aliases", []).append(alias)
-
-    add_org_alias = add_person_alias
 
     async def merge_entities(self, primary_uuid, duplicate_uuid, *, review_id=None, review_method=None):
         primary = self.nodes[primary_uuid]
@@ -170,7 +136,7 @@ class MemorySession:
         elif "SET n.name = $name" in query:
             self.graph.nodes[values["uuid"]]["name"] = values["name"]
         elif "n.aliases = CASE" in query:
-            await self.graph.add_person_alias(values["uuid"], values["alias"])
+            self.graph.nodes[values["uuid"]].setdefault("aliases", []).append(values["alias"])
         elif "SET n.description = $desc" in query:
             self.graph.nodes[values["uuid"]]["description"] = values["desc"]
         async def single():

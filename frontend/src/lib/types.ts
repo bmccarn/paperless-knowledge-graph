@@ -57,12 +57,6 @@ export interface FreshnessDocumentRef {
   modified?: string | null;
 }
 
-export interface TaskResponse {
-  task_id: string;
-  status: string;
-  message: string;
-}
-
 export interface TaskStatus {
   status: string;
   result?: unknown;
@@ -76,43 +70,8 @@ export interface GraphNode {
   props?: Record<string, unknown>;
 }
 
-export interface GraphRelationship {
-  id?: string;
-  start: string | null;
-  end: string | null;
-  type: string;
-  props: Record<string, unknown>;
-}
-
-export interface NeighborsResponse {
-  nodes: GraphNode[];
-  relationships: GraphRelationship[];
-}
-
 export interface SearchResult {
   query: string;
   type: string | null;
   results: GraphNode[];
-}
-
-export interface QueryMessage {
-  role: "user" | "assistant";
-  content: string;
-  sources?: unknown[];
-  graph_context?: unknown;
-  timestamp: number;
-}
-
-export function getNodeId(node: GraphNode): string {
-  const p = node.properties || node.props || {};
-  return (p.uuid as string) || (p.paperless_id as string) || (p.name as string) || "";
-}
-
-export function getNodeName(node: GraphNode): string {
-  const p = node.properties || node.props || {};
-  return (p.name as string) || (p.title as string) || getNodeId(node);
-}
-
-export function getNodeLabel(node: GraphNode): string {
-  return node.labels?.[0] || "Unknown";
 }

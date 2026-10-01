@@ -1,5 +1,7 @@
 # Query reliability evaluation: G1 and G2
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 Spec: [evaluation before implementation](../specs/query-reliability-evaluation.md).
 Starting production revision: `809046021573a5c0e9eeb65866f5e49dcfe6ae5b`.
 Initial native baseline harness reviewed at `c682f58faf1e12dd61ed080f79dd20b68ab65be2`.

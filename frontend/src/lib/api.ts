@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
+import { useEffect, useState } from "react";
+
+export const API_URL = "/api";
 
 export async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${API_URL}${path}`, {
@@ -23,10 +25,6 @@ export async function apiFetch(path: string, options?: RequestInit) {
 
 export async function getStatus() {
   return apiFetch("/status");
-}
-
-export async function getFreshness() {
-  return apiFetch("/freshness");
 }
 
 export async function postSync() {
@@ -81,17 +79,9 @@ export async function waitForTask(taskId: string, intervalMs = 2000, timeoutMs =
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("Timed out waiting for reindex task to finish");
+  throw new Error("Timed out waiting for task to finish");
 }
 
-export async function postQuery(question: string, conversationId?: string, model?: string, mode = "strict") {
-  return apiFetch("/query", {
-    method: "POST",
-    body: JSON.stringify({ question, conversation_id: conversationId, model, mode }),
-  });
-}
-
-// SSE streaming query
 export async function* postQueryStream(question: string, conversationId?: string, model?: string, mode = "strict") {
   const response = await fetch(`${API_URL}/query/stream`, {
     method: "POST",
@@ -193,10 +183,6 @@ export async function getGraphInitial(limit = 300) {
   return apiFetch(`/graph/initial?limit=${limit}`);
 }
 
-export async function resolveEntities() {
-  return apiFetch("/resolve-entities", { method: "POST" });
-}
-
 export async function getEntityReviewCandidates(limit = 50) {
   return apiFetch(`/entity-review/candidates?limit=${limit}`);
 }
@@ -230,9 +216,6 @@ export async function cancelTask(taskId: string) {
   return apiFetch(`/task/${taskId}/cancel`, { method: "POST" });
 }
 
-
-
-
 // Models API
 export interface ModelInfo {
   id: string;
@@ -250,6 +233,12 @@ export async function getConfig(): Promise<{ paperless_url: string }> {
   if (_configCache) return _configCache;
   _configCache = await apiFetch("/config");
   return _configCache!;
+}
+
+export function usePaperlessUrl(): string {
+  const [url, setUrl] = useState("");
+  useEffect(() => { getConfig().then((c) => setUrl(c.paperless_url)).catch(() => {}); }, []);
+  return url;
 }
 
 export function getPaperlessDocUrl(docId: number, paperlessUrl: string): string {

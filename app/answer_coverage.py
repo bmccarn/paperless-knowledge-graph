@@ -1,9 +1,8 @@
 """Question coverage is separate from factual support and bound to final text."""
-import hashlib
 
 from app.answer_composition import object_schema, strict_object, valid_ids
 from app.answer_observations import ObservationCandidate
-from app.answer_delivery import validate_verified_delivery
+from app.answer_delivery import text_digest, validate_verified_delivery
 from app.answer_finalization import validate_reference, empty_ledger
 from app.question_evidence import PIPELINE_VERSION, QuestionEvidenceError, canonical_json, validate_requirements
 
@@ -23,7 +22,7 @@ COVERAGE_PROMPT = (
 
 
 def digest(value):
-    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+    return text_digest(canonical_json(value))
 
 
 def final_candidate(final):
@@ -299,7 +298,7 @@ def restore_pipeline_metadata(metadata, answer):
             and isinstance(final.get('disposition'), str)
             and final['disposition'] in {'incomplete', 'audit_failed', 'corpus_changed', 'timeout',
                                         'unsupported', 'current_unresolved'}
-            and final.get('answer_digest') == hashlib.sha256(answer.encode()).hexdigest()
+            and final.get('answer_digest') == text_digest(answer)
             and isinstance(metadata.get('evidence'), dict) and metadata['evidence'].get('score') == 0
             and not (isinstance(final.get('question_coverage'), dict)
                      and final['question_coverage'].get('complete') is True)):

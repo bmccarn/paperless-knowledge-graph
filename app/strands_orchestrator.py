@@ -42,10 +42,7 @@ else:
 class StrandsQueryOrchestrator:
     """Small, stateless wrapper around Strands Agents."""
 
-    def __init__(self, *, audit_strategy='flat'):
-        if audit_strategy not in source_reading.STRATEGIES:
-            raise ValueError('Unknown audit strategy')
-        self.audit_strategy = audit_strategy
+    def __init__(self):
         self.enabled = bool(settings.strands_enabled and STRANDS_AVAILABLE)
         self._calls = asyncio.Semaphore(settings.strands_max_concurrent_calls)
 
@@ -75,8 +72,7 @@ class StrandsQueryOrchestrator:
                    "units": units, "source_spans": spans}
         if prepared_evidence is not None:
             payload.update({key: plan[key] for key in ('requirements', 'resolved_question') if key in plan})
-        payload = (prepared_evidence.audit_payload(payload) if prepared_evidence is not None else
-                   await self._prepare_audit_payload(payload))
+            payload = prepared_evidence.audit_payload(payload)
         if payload is None:
             return None
         scope_view = prepared_evidence.scope_view if prepared_evidence is not None else None
@@ -179,47 +175,10 @@ class StrandsQueryOrchestrator:
             return {'audit_protocol_error': exc.reason}
 
 
-    async def _prepare_audit_payload(self, payload):
-        if self.audit_strategy == 'flat':
-            return payload
-        try:
-            documents = source_reading.group_sources(payload['source_spans'])
-            grouped = {key: value for key, value in payload.items() if key != 'source_spans'}
-            grouped['source_documents'] = documents
-            if self.audit_strategy in {'source_first', 'document_local', 'document_local_corrected'}:
-                grouped['source_reading'] = await self._read_source_documents(payload, documents)
-            return grouped
-        except source_reading.SourceReadingError as exc:
-            logger.warning('Strands stage=source_reader outcome=invalid_reading reason=%s', exc)
-            return None
-
     async def read_question_sources(self, payload, *, source_scope=None):
         if not self.enabled:
             raise source_reading.SourceReadingError('unavailable_source_reading')
-        return await self._read_source_documents(payload, payload['source_documents'],
-                                                 strategy='document_local_corrected', source_scope=source_scope)
-
-    async def review_source_omissions(self, payload):
-        """Diagnostic-only adapter; callers own validation, attempts and receipts."""
-        from app.source_interpretation import RECOVERY_PROMPT, response_format
-        if not self.enabled:
-            return None
-        return await self._text_agent(name='source_omission_review', system_prompt=RECOVERY_PROMPT,
-            prompt=json.dumps(payload, ensure_ascii=False),
-            response_format=response_format(payload['source_documents']))
-
-    async def read_source_record_blocks(self, payload):
-        """Inactive source-record diagnostic adapter; callers own all scheduling."""
-        from openai import OpenAIError
-        from app.source_record_reader import PROMPT, response_format, SourceRecordTransportError
-        if not self.enabled:
-            return None
-        try:
-            return await self._text_agent(name='source_record_reader', system_prompt=PROMPT,
-                prompt=json.dumps(payload, ensure_ascii=False),
-                response_format=response_format(payload['focus_block_ids']))
-        except (httpx.HTTPError, OpenAIError):
-            raise SourceRecordTransportError('source_record_transport_failed') from None
+        return await self._read_source_documents(payload, payload['source_documents'], source_scope=source_scope)
 
     async def select_question_facts(self, payload):
         from app.answer_fact_selection import SELECTION_PROMPT
@@ -273,9 +232,8 @@ class StrandsQueryOrchestrator:
         except Exception:
             return answer_coverage.unavailable_coverage(evidence, final, planning_status=planning_status)
 
-    async def _read_source_documents(self, payload, documents, *, strategy=None, source_scope=None):
-        strategy = strategy or self.audit_strategy
-        partitions = [[document] for document in documents] if strategy in {'document_local', 'document_local_corrected'} else [documents]
+    async def _read_source_documents(self, payload, documents, *, source_scope=None):
+        partitions = [[document] for document in documents]
         readings = [None] * len(partitions)
         resolutions = [None] * len(partitions)
         pending = iter(enumerate(partitions))
@@ -289,8 +247,7 @@ class StrandsQueryOrchestrator:
                         reader_input[key] = payload[key]
                 view = source_scope.view([w['span'] for d in partition for w in d['windows']]) if source_scope is not None else None
                 reader_input['source_documents'] = view.documents if view is not None else partition
-                limit = 2 if strategy == 'document_local_corrected' else 1
-                for attempt in range(limit):
+                for attempt in range(2):
                     text = await self._text_agent(
                         name='source_reader', system_prompt=(source_reading.reader_prompt(MODEL_NOTE)
                             if view is not None else source_reading.READER_PROMPT),
@@ -306,7 +263,7 @@ class StrandsQueryOrchestrator:
                         resolutions[index] = receipts
                         break
                     except source_reading.SourceReadingError:
-                        if attempt + 1 == limit:
+                        if attempt == 1:
                             raise
                         reader_input['reading_protocol_correction'] = {
                             'error': 'invalid_source_reading',
@@ -544,16 +501,10 @@ Rules:
             except asyncio.TimeoutError:
                 outcome = 'timeout'
                 logger.warning("Strands %s timed out after %.0fs", name, settings.strands_call_timeout_seconds)
-                # This diagnostic stage owns explicit failure receipts; legacy
-                # query stages keep their existing unavailable fallback.
-                if name in {'source_omission_review', 'source_record_reader'}:
-                    raise
                 return None
             except Exception as exc:
                 outcome = 'provider_failure'
                 logger.warning("Strands %s failed: %s", name, type(exc).__name__)
-                if name in {'source_omission_review', 'source_record_reader'}:
-                    raise
                 return None
             finally:
                 logger.info('Strands stage=%s outcome=%s queue_ms=%d elapsed_ms=%d input_message_chars=%d input_message_bytes=%d usage=%s',

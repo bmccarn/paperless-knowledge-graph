@@ -18,7 +18,7 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation, getConfig, getModels, generateTitle, ModelInfo} from "@/lib/api";
+  deleteConversation, getModels, generateTitle, getPaperlessDocUrl, usePaperlessUrl, ModelInfo} from "@/lib/api";
 import {
   Send,
   Loader2,
@@ -31,7 +31,6 @@ import {
   Plus,
   Clock,
   MessageSquare,
-  ChevronDown,
   Zap,
   Copy,
   Check,
@@ -178,6 +177,23 @@ interface Conversation {
   messages?: Message[];
 }
 
+type QueryMode = "quick" | "deep" | "timeline" | "strict";
+
+const MODES: [QueryMode, string][] = [
+  ["quick", "Fast"],
+  ["deep", "Deep"],
+  ["timeline", "Timeline"],
+  ["strict", "Strict"],
+];
+
+const STAGE_LABELS: Record<string, string> = {
+  evidence_pack: "Ranking source evidence...",
+  verifier: "Checking claim support...",
+  verification_retrieval_repair: "Filling evidence gaps...",
+  answer_editor: "Reconciling unsupported details...",
+  evidence_grade: "Finalizing trust artifacts...",
+};
+
 function renderMarkdownContent(text: string) {
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
@@ -268,7 +284,7 @@ function QueryContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
 
-  const [paperlessBaseUrl, setPaperlessBaseUrl] = useState("");
+  const paperlessBaseUrl = usePaperlessUrl();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -285,21 +301,23 @@ function QueryContent() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
-  const [queryMode, setQueryMode] = useState<"quick" | "deep" | "timeline" | "strict">("strict");
+  const [queryMode, setQueryMode] = useState<QueryMode>("strict");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const viewVersion = useRef(0);
   const activeConversation = useRef<string | null>(null);
   const busy = useRef(false);
+  const clearStream = () => {
+    setStreamingContent("");
+    setStatusMessage("");
+    setActivitySteps([]);
+  };
   const invalidateView = () => {
     viewVersion.current++;
     busy.current = false;
     setLoading(false);
-    setStreamingContent("");
-    setStatusMessage("");
-    setActivitySteps([]);
+    clearStream();
     setFollowUpSuggestions([]);
     setSelectedSource(null);
   };
@@ -314,7 +332,6 @@ function QueryContent() {
     }
   }, []);
 
-  useEffect(() => { getConfig().then(c => setPaperlessBaseUrl(c.paperless_url)).catch(() => {}); }, []);
   useEffect(() => {
     getModels().then(data => {
       setModels(data.models);
@@ -357,8 +374,7 @@ function QueryContent() {
     busy.current = true;
     setLoading(true);
     setInput("");
-    setStreamingContent("");
-    setStatusMessage("");
+    clearStream();
     setFollowUpSuggestions([]);
 
     let convId = activeConversation.current;
@@ -382,49 +398,19 @@ function QueryContent() {
     setActivitySteps([{ step: "start", status: "running", detail: "Starting query workflow..." }]);
 
     const startTime = Date.now();
-    let fullAnswer = "";
     let completed = false;
-    let sources: Source[] = [];
-    let entitiesFound: Array<{ name?: string; label?: string }> = [];
-    let cached = false;
-    let confidence: number | undefined;
-    let followUps: string[] = [];
-    let sourceSummary: SourceSummary | undefined;
-    let queryPlan: QueryPlan | undefined;
-    let trace: TraceStep[] = [];
-    let verification: Verification | undefined;
-    let claimLedger: ClaimLedger | undefined;
-    let evidencePack: EvidencePack | undefined;
-    let timelineEvents: TimelineEvent[] = [];
-    let finalization: Message["finalization"];
     let draftAssistantShown = false;
+    // Accumulates the streamed answer and its trust artifacts into the final message.
+    const acc: Message = {
+      role: "assistant", content: "", sources: [], entities: [], cached: false,
+      follow_ups: [], trace: [], timeline_events: [],
+    };
+    const snapshot = (): Message => ({ ...acc, timestamp: Date.now(), queryTime: Date.now() - startTime });
 
     try {
-      const showDraftAssistant = (overrides: Partial<Message> = {}) => {
+      const showDraftAssistant = () => {
         draftAssistantShown = true;
-        setMessages([
-          ...newMessages,
-          {
-            role: "assistant",
-            content: fullAnswer,
-            sources,
-            entities: entitiesFound,
-            timestamp: Date.now(),
-            queryTime: Date.now() - startTime,
-            cached,
-            confidence,
-            follow_ups: followUps,
-            source_summary: sourceSummary,
-            query_plan: queryPlan,
-            trace,
-            verification,
-            claim_ledger: claimLedger,
-            evidence_pack: evidencePack,
-            timeline_events: timelineEvents,
-            finalization,
-            ...overrides,
-          },
-        ]);
+        setMessages([...newMessages, snapshot()]);
       };
 
       for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
@@ -441,78 +427,64 @@ function QueryContent() {
             break;
           case "trace":
             if (event.step) {
-              trace = [...trace, event.step];
+              acc.trace = [...(acc.trace || []), event.step];
               setActivitySteps(prev => [...prev, event.step].slice(-8));
             }
             break;
           case "answer_chunk":
-            fullAnswer += event.content;
-            setStreamingContent(fullAnswer);
+            acc.content += event.content;
+            setStreamingContent(acc.content);
             setStatusMessage("");
             break;
           case "answer_replace":
-            fullAnswer = event.content || "";
-            if (draftAssistantShown) {
-              showDraftAssistant({ content: fullAnswer });
-            } else {
-              setStreamingContent(fullAnswer);
-            }
+            acc.content = event.content || "";
+            if (draftAssistantShown) showDraftAssistant();
+            else setStreamingContent(acc.content);
             setStatusMessage("");
             break;
           case "answer_done":
-            if (event.answer) fullAnswer = event.answer;
-            sources = event.sources || sources;
-            entitiesFound = event.entities_found || entitiesFound;
-            sourceSummary = event.source_summary || sourceSummary;
-            queryPlan = event.query_plan || queryPlan;
-            trace = event.trace || trace;
-            evidencePack = event.evidence_pack || evidencePack;
-            timelineEvents = event.timeline_events || timelineEvents;
+            if (event.answer) acc.content = event.answer;
+            acc.sources = event.sources || acc.sources;
+            acc.entities = event.entities_found || acc.entities;
+            acc.source_summary = event.source_summary || acc.source_summary;
+            acc.query_plan = event.query_plan || acc.query_plan;
+            acc.trace = event.trace || acc.trace;
+            acc.evidence_pack = event.evidence_pack || acc.evidence_pack;
+            acc.timeline_events = event.timeline_events || acc.timeline_events;
             showDraftAssistant();
             setStreamingContent("");
             setStatusMessage("Verifying source support and trust score...");
             break;
           case "metadata_update":
-            sources = event.sources || sources;
-            sourceSummary = event.source_summary || sourceSummary;
-            queryPlan = event.query_plan || queryPlan;
-            trace = event.trace || trace;
-            verification = event.verification || verification;
-            claimLedger = event.claim_ledger || claimLedger;
-            evidencePack = event.evidence_pack || evidencePack;
-            if (event.stage) {
-              const stageLabels: Record<string, string> = {
-                evidence_pack: "Ranking source evidence...",
-                verifier: "Checking claim support...",
-                verification_retrieval_repair: "Filling evidence gaps...",
-                answer_editor: "Reconciling unsupported details...",
-                evidence_grade: "Finalizing trust artifacts...",
-              };
-              setStatusMessage(stageLabels[event.stage] || "Updating trust artifacts...");
-            }
-            if (draftAssistantShown) {
-              showDraftAssistant();
-            }
+            acc.sources = event.sources || acc.sources;
+            acc.source_summary = event.source_summary || acc.source_summary;
+            acc.query_plan = event.query_plan || acc.query_plan;
+            acc.trace = event.trace || acc.trace;
+            acc.verification = event.verification || acc.verification;
+            acc.claim_ledger = event.claim_ledger || acc.claim_ledger;
+            acc.evidence_pack = event.evidence_pack || acc.evidence_pack;
+            if (event.stage) setStatusMessage(STAGE_LABELS[event.stage] || "Updating trust artifacts...");
+            if (draftAssistantShown) showDraftAssistant();
             break;
           case "complete":
             completed = true;
             if (event.answer) {
-              fullAnswer = event.answer;
-              if (!draftAssistantShown) setStreamingContent(fullAnswer);
+              acc.content = event.answer;
+              if (!draftAssistantShown) setStreamingContent(acc.content);
             }
-            sources = event.sources || [];
-            entitiesFound = event.entities_found || [];
-            cached = event.cached || false;
-            confidence = event.confidence;
-            followUps = event.follow_up_suggestions || [];
-            sourceSummary = event.source_summary || undefined;
-            queryPlan = event.query_plan || undefined;
-            trace = event.trace || trace;
-            verification = event.verification || undefined;
-            claimLedger = event.claim_ledger || undefined;
-            evidencePack = event.evidence_pack || undefined;
-            timelineEvents = event.timeline_events || [];
-            finalization = event.finalization;
+            acc.sources = event.sources || [];
+            acc.entities = event.entities_found || [];
+            acc.cached = event.cached || false;
+            acc.confidence = event.confidence;
+            acc.follow_ups = event.follow_up_suggestions || [];
+            acc.source_summary = event.source_summary || undefined;
+            acc.query_plan = event.query_plan || undefined;
+            acc.trace = event.trace || acc.trace;
+            acc.verification = event.verification || undefined;
+            acc.claim_ledger = event.claim_ledger || undefined;
+            acc.evidence_pack = event.evidence_pack || undefined;
+            acc.timeline_events = event.timeline_events || [];
+            acc.finalization = event.finalization;
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -521,32 +493,10 @@ function QueryContent() {
 
       if (!isCurrent()) return;
       if (!completed) throw new Error("Stream ended before final verification");
-      const queryTime = Date.now() - startTime;
-      const assistantMsg: Message = {
-        role: "assistant",
-        content: fullAnswer,
-        sources,
-        entities: entitiesFound,
-        timestamp: Date.now(),
-        queryTime,
-        cached,
-        confidence,
-        follow_ups: followUps,
-        source_summary: sourceSummary,
-        query_plan: queryPlan,
-        trace,
-        verification,
-        claim_ledger: claimLedger,
-        evidence_pack: evidencePack,
-        timeline_events: timelineEvents,
-            finalization,
-      };
-
-      const allMessages = [...newMessages, assistantMsg];
+      const followUps = acc.follow_ups || [];
+      const allMessages = [...newMessages, snapshot()];
       setMessages(allMessages);
-      setStreamingContent("");
-      setStatusMessage("");
-      setActivitySteps([]);
+      clearStream();
       setFollowUpSuggestions(followUps);
       loadConversations();
 
@@ -576,11 +526,9 @@ function QueryContent() {
           if (!isCurrent()) return;
           if (full.messages && full.messages.length > newMessages.length) {
             setMessages(full.messages);
-            const lastA = [...full.messages].reverse().find((m: Message) => m.role === "assistant");
+            const lastA = full.messages.findLast((m: Message) => m.role === "assistant");
             if (lastA?.follow_ups) setFollowUpSuggestions(lastA.follow_ups);
-            setStreamingContent("");
-            setStatusMessage("");
-            setActivitySteps([]);
+            clearStream();
             loadConversations();
             setLoading(false);
             return;
@@ -588,15 +536,12 @@ function QueryContent() {
         } catch { /* recovery failed */ }
       }
       if (!isCurrent()) return;
-      const errMsg: Message = {
+      setMessages([...newMessages, {
         role: "assistant",
         content: "Connection lost. The answer may still be processing \u2014 try refreshing in a moment.",
         timestamp: Date.now(),
-      };
-      setMessages([...newMessages, errMsg]);
-      setStreamingContent("");
-      setStatusMessage("");
-      setActivitySteps([]);
+      }]);
+      clearStream();
     } finally {
       if (isCurrent()) { busy.current = false; setLoading(false); }
     }
@@ -624,7 +569,7 @@ function QueryContent() {
       setMessages(full.messages || []);
       setFollowUpSuggestions([]);
       setShowHistory(false);
-      const lastAssistant = [...(full.messages || [])].reverse().find((m: Message) => m.role === "assistant");
+      const lastAssistant = (full.messages || []).findLast((m: Message) => m.role === "assistant");
       if (lastAssistant?.follow_ups) {
         setFollowUpSuggestions(lastAssistant.follow_ups);
       }
@@ -776,7 +721,7 @@ function QueryContent() {
               </div>
               {selectedSource.document_id && (
                 <a
-                  href={selectedSource.paperless_url || `${paperlessBaseUrl}/documents/${selectedSource.document_id}/details`}
+                  href={selectedSource.paperless_url || getPaperlessDocUrl(selectedSource.document_id, paperlessBaseUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
@@ -1184,19 +1129,14 @@ function QueryContent() {
         {/* Input */}
         <div className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
-            {/* Model selector */}
+            {/* Mode and model selectors */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-lg border bg-background p-0.5">
-                {[
-                  ["quick", "Fast"],
-                  ["deep", "Deep"],
-                  ["timeline", "Timeline"],
-                  ["strict", "Strict"],
-                ].map(([id, label]) => (
+                {MODES.map(([id, label]) => (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setQueryMode(id as "quick" | "deep" | "timeline" | "strict")}
+                    onClick={() => setQueryMode(id)}
                     className={
                       "rounded-md px-2.5 py-1.5 text-xs transition-colors " +
                       (queryMode === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
@@ -1206,31 +1146,22 @@ function QueryContent() {
                   </button>
                 ))}
               </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowModelDropdown(!showModelDropdown)}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-1 min-h-[36px] md:min-h-0"
-              >
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Bot className="h-3 w-3" />
-                <span className="truncate max-w-[200px]">{models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select model'}</span>
-                <ChevronDown className={"h-3 w-3 transition-transform " + (showModelDropdown ? "rotate-180" : "")} />
-              </button>
-              {showModelDropdown && (
-                <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-lg shadow-lg py-1 z-50 min-w-[200px] max-w-[calc(100vw-2rem)] max-h-[240px] overflow-y-auto">
+                <select
+                  aria-label="Model"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="max-w-[240px] truncate rounded-md border bg-background px-1.5 py-1 text-xs text-foreground min-h-[36px] md:min-h-0"
+                >
+                  {models.length === 0 && <option value="">Select model</option>}
                   {models.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); }}
-                      className={"w-full text-left px-3 py-2.5 md:py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between min-h-[44px] md:min-h-0 " + (selectedModel === m.id ? "bg-accent/50 font-medium" : "")}
-                    >
-                      <span>{m.name}</span>
-                      {m.id === defaultModel && <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-2">default</Badge>}
-                    </button>
+                    <option key={m.id} value={m.id}>
+                      {m.name}{m.id === defaultModel ? " (default)" : ""}
+                    </option>
                   ))}
-                </div>
-              )}
-            </div>
+                </select>
+              </label>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
               <Textarea

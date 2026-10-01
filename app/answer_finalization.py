@@ -27,7 +27,7 @@ from app.timeline import project_timeline
 from app.answer_delivery import render_verified_answer
 from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
-from app.source_dates import source_dates, date_supported, source_date_occurs, without_dates, date_context, VALUE_UNITS
+from app.source_dates import source_dates, date_supported, without_dates, date_context, VALUE_UNITS
 
 POLICY_VERSION = "source-audit-v28"
 
@@ -760,11 +760,8 @@ def _without_source_attribution_id(text: str, references: list[dict]) -> str:
     return text[:start] + ' ' * (end - start) + text[end:]
 
 
-def value_mismatches(text: str, references: list[dict], *, date_order: str = "mdy") -> dict:
-    return _value_mismatches(text, text, references, date_order=date_order)
-
-
-def _value_mismatches(text: str, scalar_text: str, references: list[dict], *, date_order: str) -> dict:
+def value_mismatches(text: str, references: list[dict], *, date_order: str = "mdy", scalar_text: str | None = None) -> dict:
+    scalar_text = text if scalar_text is None else scalar_text
     # Supplement (never replace) semantic audit. Exact source values are needed
     # for generated precise numbers and named units. Computations need their own
     # explicit calculation evidence; the auditor cannot simply bless a new value.
@@ -815,10 +812,6 @@ def _value_mismatches(text: str, scalar_text: str, references: list[dict], *, da
 
 def values_match(text: str, references: list[dict], *, date_order: str = "mdy") -> bool:
     return not value_mismatches(text, references, date_order=date_order)
-
-
-def date_occurs(value: str, source: str, date_order: str = "mdy", *, context_before: str = "") -> bool:
-    return source_date_occurs(value, source, date_order, context_before=context_before)
 
 
 def empty_ledger(candidate: str, observations: ObservationCandidate | None = None) -> dict:
@@ -1005,19 +998,18 @@ class AnswerFinalizer:
             results = [None] * len(batches)
             async def worker():
                 for index, batch in pending:
-                    selected = spans
                     protocol = diagnostics[index]
                     async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
-                        coverage[index].update(**span_coverage(question, spans, selected, reserve_history=False),
-                                               supplied_windows=len(selected),
+                        coverage[index].update(**span_coverage(question, spans, spans, reserve_history=False),
+                                               supplied_windows=len(spans),
                                                supplied_documents=admission['eligible_documents'], dispatched=True)
                         # Preserve sent-source identity and admission even when an
                         # outer timeout prevents this coroutine from returning.
-                        progress['spans'] = selected
+                        progress['spans'] = spans
                         try:
                             return await self.auditor.audit_answer_units(
-                                question, batch, selected, {**audit_request_plan, 'evidence_selection': admission})
+                                question, batch, spans, {**audit_request_plan, 'evidence_selection': admission})
                         except asyncio.CancelledError:
                             protocol.update(status="cancelled", final_errors=["cancelled"])
                             raise
@@ -1037,12 +1029,12 @@ class AnswerFinalizer:
                         errors = audit_protocol_errors(raw, batch)
                     protocol.update(status="invalid" if errors else "corrected" if protocol["attempts"] == 2 else "valid",
                                     final_errors=errors)
-                    results[index] = (selected, raw, protocol)
+                    results[index] = (raw, protocol)
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())
-            for batch, (selected, raw, protocol) in zip(batches, results):
-                manifest.update({s["span_id"]: s for s in selected})
+            manifest.update({s["span_id"]: s for s in spans})
+            for batch, (raw, protocol) in zip(batches, results):
                 assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
                     assessments = []
@@ -1059,7 +1051,7 @@ class AnswerFinalizer:
                     refs = []
                     for index, reference in enumerate(raw_refs):
                         failures = []
-                        refs.append(validate_reference(reference, selected, diagnostics=failures))
+                        refs.append(validate_reference(reference, spans, diagnostics=failures))
                         for reason in failures:
                             reference_diagnostic_counts[reason] = reference_diagnostic_counts.get(reason, 0) + 1
                             if len(reference_diagnostics) < 8:
@@ -1084,8 +1076,8 @@ class AnswerFinalizer:
                         # establish attribution before prose normalization loses markup.
                         scalar_text = (_without_source_attribution_id(unit["text"], refs)
                                        if observations is not None else unit["text"])
-                        mismatch_details = _value_mismatches(
-                            unit["text"], scalar_text, refs, date_order=self.date_order)
+                        mismatch_details = value_mismatches(
+                            unit["text"], refs, date_order=self.date_order, scalar_text=scalar_text)
                         if mismatch_details:
                             claim_rejections.append("value_mismatch")
                     if status == "supported" and claim_rejections:
@@ -1117,7 +1109,7 @@ class AnswerFinalizer:
                         claims[-1]['rejection_reasons'].append('invalid_comparison_scope')
                     if scope == "documented":
                         compared = assessment.get("comparison_document_ids")
-                        available = {span["document_id"] for span in selected if not span.get("feedback_open")}
+                        available = {span["document_id"] for span in spans}
                         if (assessment.get("comparison_scope") == "retrieved_documents"
                                 and isinstance(compared, list) and compared
                                 and all(type(doc) is int and doc in available for doc in compared)
@@ -1151,7 +1143,7 @@ class AnswerFinalizer:
                     scalar_text = (scalar_text[:claim["start"]]
                                    + _without_source_attribution_id(claim["claim"], claim["references"])
                                    + scalar_text[claim["end"]:])
-            if _value_mismatches(answer, scalar_text, references, date_order=self.date_order):
+            if value_mismatches(answer, references, date_order=self.date_order, scalar_text=scalar_text):
                 for claim in claims:
                     claim["status"] = "unsupported"
                     claim["rejection_reasons"].append("answer_value_mismatch")

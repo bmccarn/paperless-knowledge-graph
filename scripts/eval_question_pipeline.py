@@ -2,7 +2,6 @@
 """One native development case per invocation, with independent review between cases."""
 import argparse
 import asyncio
-import hashlib
 import json
 import logging
 import math
@@ -13,12 +12,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.eval_source_audit import (CURRENT_ATTEMPT, AttemptLog, configure_proxy_cache,
-                                      evidence_pack, runtime_snapshot, write_private)
-
-
-def digest(data):
-    return hashlib.sha256(data).hexdigest()
+from scripts.eval_source_audit import (CURRENT_ATTEMPT, AttemptLog, configure_proxy_cache, digest,
+                                      evidence_pack, file_digest, runtime_snapshot, write_private)
 
 
 def load_data(payload):
@@ -37,7 +32,7 @@ def load_data(payload):
 
 MODES = ('quick', 'deep', 'timeline', 'strict')
 EXTENSION_PATHS = {
-    'scripts/eval_question_pipeline.py', 'scripts/acquisition_measurement.py',
+    'scripts/eval_question_pipeline.py',
     'docs/specs/question-pipeline-development-evaluation.md',
     'docs/specs/question-all-mode-evaluation.md',
 }
@@ -49,7 +44,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
     if stage not in {'initial', 'all-modes'}:
         raise ValueError('Unknown evaluation stage')
     paths = sorted((ROOT / 'app').glob('*.py')) + [ROOT / name for name in (
-        'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'scripts/acquisition_measurement.py', 'requirements.lock',
+        'scripts/eval_source_audit.py', 'scripts/eval_question_pipeline.py', 'requirements.lock',
         'scripts/conservative_query_admission.py', 'docs/specs/question-reader-inventory.md',
         'docs/specs/source-relative-temporal-acceptance.md',
         'docs/specs/audit-contract-consistency.md',
@@ -68,7 +63,7 @@ def manifest_for(dataset, *, payload=None, stage='initial', initial_output=None,
         raise ValueError('Qualification requires locked Strands 1.55.0 runtime')
     manifest = {'version': 1, 'grading_version': 2, 'fact_filtering': 'disabled', 'stage': 'fixed_originals_question_pipeline_development',
         'dataset_sha256': digest(payload),
-        'code_sha256': {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths},
+        'code_sha256': {str(p.relative_to(ROOT)): file_digest(p) for p in paths},
         'runtime': runtime, 'mode': 'strict', 'cases': 12, 'max_native_calls': 300,
         'elapsed_seconds': 1800, 'estimated_total_tokens': 2000000,
         'sdk_retry_policy': 'single_attempt', 'proxy_cache_policy': 'bypass',
@@ -236,7 +231,7 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
     directory.mkdir(mode=0o700, parents=False, exist_ok=False)
     write_private(directory / 'case.json', case)
     write_private(directory / 'manifest.json', manifest)
-    orchestrator = native_module.StrandsQueryOrchestrator(audit_strategy='document_local_corrected')
+    orchestrator = native_module.StrandsQueryOrchestrator()
     if not orchestrator.enabled:
         raise ValueError('Native orchestrator disabled')
     attempts = []
@@ -245,7 +240,7 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
     def write_attempt(name, attempt):
         path = directory / name
         write_private(path, attempt)
-        attempt_hashes[name] = digest(path.read_bytes())
+        attempt_hashes[name] = file_digest(path)
 
     native_text, native_model, native_agent = orchestrator._text_agent, orchestrator._model, native_module.Agent
 

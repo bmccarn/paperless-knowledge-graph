@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
+import { errMsg } from "@/lib/utils";
 import { getGraphInitial, getGraphNeighbors, graphSearch } from "@/lib/api";
 import {
   emptyGraph,
@@ -44,10 +45,6 @@ const ForceGraphClient = dynamic(
     import("./force-graph-client").then((module) => module.ForceGraphClient),
   { ssr: false },
 );
-
-function message(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
-}
 
 function GraphContent() {
   const params = useSearchParams();
@@ -93,7 +90,7 @@ function GraphContent() {
       const data = await getGraphInitial(seedLimit);
       if (version === epoch.current) setGraph(current => mergeGraph(current, data));
     } catch (error) {
-      if (version === epoch.current) setError(message(error));
+      if (version === epoch.current) setError(errMsg(error, "Request failed."));
     } finally {
       if (version === epoch.current) setInitialLoading(false);
     }
@@ -129,7 +126,7 @@ function GraphContent() {
         setSearch({ query: text.trim(), nodes, offset,
           total: response.total ?? nodes.length, hasMore: Boolean(response.has_more) });
     } catch (error) {
-      if (version === searchVersion.current) setError(message(error));
+      if (version === searchVersion.current) setError(errMsg(error, "Request failed."));
     } finally {
       if (version === searchVersion.current) setSearching(false);
     }
@@ -162,7 +159,7 @@ function GraphContent() {
         if (version === epoch.current)
           setGraph((current) => mergeGraph(current, data));
       } catch (error) {
-        if (version === epoch.current) setError(message(error));
+        if (version === epoch.current) setError(errMsg(error, "Request failed."));
       } finally {
         if (version === epoch.current) setExpanding(null);
       }
@@ -554,10 +551,8 @@ function GraphContent() {
                   </Button>
                 </div>
                 <NodeDetailPanel
-                  node={{
-                    ...selectedNode,
-                    color: getNodeColor(selectedNode.label),
-                  }}
+                  key={selectedNode.id}
+                  node={selectedNode}
                   onClose={clearSelection}
                   onExpandNeighbors={expandNode}
                   expanding={Boolean(expanding)}

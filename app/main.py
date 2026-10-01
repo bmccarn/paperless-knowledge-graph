@@ -8,14 +8,15 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Optional
 
+from app.config import settings
 from app.embeddings import embeddings_store
 from app.graph import graph_store
-from app.pipeline import sync_documents, reindex_all, reindex_document, close_clients as close_pipeline_clients
+from app.pipeline import sync_documents, reindex_all, reindex_document, purge_document_index
 from app.paperless import paperless_client, PaperlessClient
 from app.query import query_engine
 from app.classifier import classifier
@@ -170,73 +171,29 @@ def _make_progress_callback(task_id: str):
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value).astimezone(timezone.utc) if value else None
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _document_ref(doc: dict) -> dict:
-    return {
-        "id": doc.get("id"),
-        "title": doc.get("title"),
-        "modified": doc.get("modified"),
-    }
 
 
 def _sample_document_refs(ids: set[int], docs_by_id: dict[int, dict]) -> list[dict]:
-    refs = []
-    for doc_id in sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]:
-        doc = docs_by_id.get(doc_id)
-        refs.append(_document_ref(doc) if doc else {"id": doc_id, "title": None, "modified": None})
-    return refs
+    return [
+        {"id": doc_id, "title": docs_by_id.get(doc_id, {}).get("title"), "modified": docs_by_id.get(doc_id, {}).get("modified")}
+        for doc_id in sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]
+    ]
 
 
 def _sample_ids(ids: set[int]) -> list[int]:
     return sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]
 
 
-def _doc_ref_ids(refs: list[dict]) -> set[int]:
-    ids: set[int] = set()
-    for ref in refs or []:
-        try:
-            ids.add(int(ref.get("id")))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
-
-def _ids_from_values(values: list[int]) -> set[int]:
-    ids: set[int] = set()
-    for value in values or []:
-        try:
-            ids.add(int(value))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
-
-def _freshness_repair_targets(snapshot: dict) -> tuple[list[int], list[int]]:
-    drift = snapshot.get("drift") or {}
-    reindex_ids = set()
-    reindex_ids |= _doc_ref_ids(drift.get("missing_from_graph", []))
-    reindex_ids |= _doc_ref_ids(drift.get("missing_embeddings", []))
-    reindex_ids |= _doc_ref_ids(drift.get("missing_hashes", []))
-    # Per-document fingerprints include the indexed source and metadata. A
-    # completed targeted repair can be newer than the full-sync watermark.
-    reindex_ids |= _doc_ref_ids(drift.get("changed_since_index", []))
-
-    delete_ids = set()
-    delete_ids |= _ids_from_values(drift.get("extra_in_graph", []))
-    delete_ids |= _ids_from_values(drift.get("extra_embeddings", []))
-    delete_ids |= _ids_from_values(drift.get("extra_hashes", []))
-    delete_ids -= reindex_ids
-    return sorted(reindex_ids), sorted(delete_ids)
+def _freshness_repair_targets(drift: dict) -> tuple[list[int], list[int]]:
+    """Repair the sampled IDs of every drift category: each category contributes up to sample_limit."""
+    reindex = {ref["id"] for key in ("missing_from_graph", "missing_embeddings", "missing_hashes", "changed_since_index")
+               for ref in drift[key]}
+    delete = {doc_id for key in ("extra_in_graph", "extra_embeddings", "extra_hashes") for doc_id in drift[key]} - reindex
+    return sorted(reindex), sorted(delete)
 
 
 async def _freshness_snapshot(force: bool = False) -> dict:
@@ -279,6 +236,10 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     extra_embeddings = embedding_ids - paperless_ids
     missing_hashes = paperless_ids - hash_ids
     extra_hashes = hash_ids - paperless_ids
+    # Per-document fingerprints include the indexed source and metadata. A
+    # completed targeted repair can be newer than the full-sync watermark.
+    reindex_ids = missing_from_graph | missing_embeddings | missing_hashes | changed_since_index
+    delete_ids = (extra_in_graph | extra_embeddings | extra_hashes) - reindex_ids
 
     latest_modified = latest.get("modified") if latest else None
     latest_dt = _parse_timestamp(latest_modified)
@@ -292,15 +253,7 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     elif paperless_ids:
         modified_after_last_sync = set(paperless_ids)
 
-    stale = bool(
-        missing_from_graph
-        or extra_in_graph
-        or missing_embeddings
-        or extra_embeddings
-        or missing_hashes
-        or extra_hashes
-        or changed_since_index
-    )
+    stale = bool(reindex_ids or delete_ids)
     if latest_modified and not latest_dt:
         stale = True
 
@@ -362,18 +315,16 @@ async def _graph_mutation(task_type: str):
         _schedule_task_cleanup(task_id)
 
 
-async def _run_sync_task(task_type: str = "sync") -> str:
-    from app.config import settings
-    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running or entity_steward.running:
+def _start_task(task_type: str, work, *, cancellable: bool = True, **fields) -> str:
+    """Admit one graph task and run `work(task, progress_cb, cancel_event) -> result` in the background."""
+    if entity_steward.running or any(t["status"] in {"running", "cancelling"} for t in _tasks.values()):
         raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
 
     task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
+    task = _tasks[task_id] = {
         "status": "running",
         "type": task_type,
-        "started": now.isoformat(),
+        "started": datetime.now(timezone.utc).isoformat(),
         "_start_time": time.time(),
         "total_docs": 0,
         "processed": 0,
@@ -384,35 +335,31 @@ async def _run_sync_task(task_type: str = "sync") -> str:
         "docs_per_minute": 0,
         "estimated_remaining_seconds": 0,
         "recent_results": [],
+        **fields,
     }
-
     cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
+    if cancellable:
+        _cancel_events[task_id] = cancel_event
     progress_cb = _make_progress_callback(task_id)
 
     async def _run():
         try:
             await asyncio.to_thread(invalidate_on_sync)
-            result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
-            _clear_freshness_cache()
-            _tasks[task_id]["status"] = "cancelled" if cancel_event.is_set() else ("failed" if result.get("errors") else "completed")
-            _tasks[task_id]["result"] = result
-            _tasks[task_id]["current_doc"] = ""
-            elapsed = time.time() - _tasks[task_id]["_start_time"]
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-            if _tasks[task_id]["status"] == "completed":
-                _tasks[task_id]["steward_task_id"] = await _run_entity_steward_task(
-                    limit=settings.entity_steward_candidate_limit, reason="post-sync")
+            result = await work(task, progress_cb, cancel_event)
+            if task["status"] != "completed":
+                task["status"] = "cancelled" if cancel_event.is_set() else ("failed" if result.get("errors") else "completed")
+            task["result"] = result
         except asyncio.CancelledError:
-            _tasks[task_id]["status"] = "cancelled"
+            task["status"] = "cancelled"
             raise
         except Exception as e:
-            logger.error(f"Sync task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
+            logger.error("%s task %s failed: %s", task_type, task_id, e, exc_info=True)
+            task["status"] = "failed"
+            task["error"] = str(e)
         finally:
+            task["current_doc"] = ""
+            task["elapsed_seconds"] = round(time.time() - task["_start_time"], 1)
+            task["estimated_remaining_seconds"] = 0
             await asyncio.to_thread(invalidate_on_sync)
             _clear_freshness_cache()
             _schedule_task_cleanup(task_id)
@@ -421,52 +368,28 @@ async def _run_sync_task(task_type: str = "sync") -> str:
     return task_id
 
 
+async def _run_sync_task(task_type: str = "sync") -> str:
+    async def work(task, progress_cb, cancel_event):
+        result = await sync_documents(progress_callback=progress_cb, cancel_event=cancel_event)
+        if not cancel_event.is_set() and not result.get("errors"):
+            # Release the admission slot so the post-sync steward pass can start.
+            task["status"] = "completed"
+            _clear_freshness_cache()
+            task["steward_task_id"] = await _run_entity_steward_task(
+                limit=settings.entity_steward_candidate_limit, reason="post-sync")
+        return result
+
+    return _start_task(task_type, work)
+
+
 async def _run_entity_steward_task(limit: int = 75, reason: str = "manual", focus_uuid: str | None = None) -> str:
-    running = [
-        t for t in _tasks.values()
-        if t["status"] in {"running", "cancelling"}
-    ]
-    if running or entity_steward.running:
-        raise HTTPException(status_code=409, detail="A graph task is still running; wait for it to finish.")
+    async def work(task, progress_cb, cancel_event):
+        result = await entity_steward.run_once(reason=reason, limit=limit, focus_uuid=focus_uuid)
+        task["reviewed_count"] = result.get("reviewed_count", 0)
+        return result
 
-    task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
-        "status": "running",
-        "type": "entity_steward",
-        "reason": reason,
-        "started": now.isoformat(),
-        "_start_time": time.time(),
-        "limit": limit,
-        "reviewed_count": 0,
-        "current_doc": "Reviewing entity candidates",
-        "elapsed_seconds": 0,
-        "estimated_remaining_seconds": 0,
-    }
-
-    async def _run():
-        try:
-            result = await entity_steward.run_once(reason=reason, limit=limit, focus_uuid=focus_uuid)
-            _tasks[task_id]["status"] = "completed"
-            _tasks[task_id]["result"] = result
-            _tasks[task_id]["reviewed_count"] = result.get("reviewed_count", 0)
-            _tasks[task_id]["current_doc"] = ""
-            elapsed = time.time() - _tasks[task_id]["_start_time"]
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-        except asyncio.CancelledError:
-            _tasks[task_id]["status"] = "cancelled"
-            raise
-        except Exception as e:
-            logger.error("Entity steward task %s failed: %s", task_id, e, exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
-        finally:
-            _schedule_task_cleanup(task_id)
-
-    _start_background_worker(_run())
-    return task_id
+    return _start_task("entity_steward", work, cancellable=False, reason=reason, limit=limit, reviewed_count=0,
+                       current_doc="Reviewing entity candidates")
 
 
 async def _run_reindex_documents_task(
@@ -475,12 +398,7 @@ async def _run_reindex_documents_task(
     task_type: str,
     message: str,
     delete_ids: list[int] | None = None,
-    update_last_sync: bool = False,
 ) -> tuple[str, str]:
-    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running or entity_steward.running:
-        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
-
     doc_ids = sorted({int(doc_id) for doc_id in doc_ids})
     doc_id_set = set(doc_ids)
     delete_ids = sorted({int(doc_id) for doc_id in (delete_ids or []) if int(doc_id) not in doc_id_set})
@@ -488,125 +406,55 @@ async def _run_reindex_documents_task(
     if total_docs == 0:
         return "", "No drift to repair"
 
-    task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
-        "status": "running",
-        "type": task_type,
-        "started": now.isoformat(),
-        "_start_time": time.time(),
-        "total_docs": total_docs,
-        "processed": 0,
-        "skipped": 0,
-        "errors": 0,
-        "current_doc": "",
-        "elapsed_seconds": 0,
-        "docs_per_minute": 0,
-        "estimated_remaining_seconds": 0,
-        "recent_results": [],
-        "target_doc_ids": doc_ids,
-        "delete_doc_ids": delete_ids,
-    }
-
-    cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
-    progress_cb = _make_progress_callback(task_id)
-    progress_cb("init", {"total_docs": total_docs})
-
-    async def _run():
-        start_time = time.time()
+    async def work(task, progress_cb, cancel_event):
+        progress_cb("init", {"total_docs": total_docs})
         results = []
-        try:
-            await asyncio.to_thread(invalidate_on_sync)
-            for doc_id in delete_ids:
-                if cancel_event.is_set():
-                    result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
-                    progress_cb("result", result)
-                    results.append(result)
-                    continue
+        for doc_id, deleting in [(d, True) for d in delete_ids] + [(d, False) for d in doc_ids]:
+            if cancel_event.is_set():
+                result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
+            elif deleting:
                 progress_cb("current", {"title": f"Removing stale document #{doc_id}"})
                 try:
-                    await entity_resolver.hydrate_review_identities()
-                    await embeddings_store.delete_doc_hash(doc_id)
-                    await graph_store.delete_document_graph(doc_id)
-                    await embeddings_store.delete_document_embeddings(doc_id)
+                    await purge_document_index(doc_id)
                     result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale drift artifacts"}
                 except Exception as e:
                     logger.error("Failed to remove stale drift doc %s: %s", doc_id, e, exc_info=True)
                     result = {"doc_id": doc_id, "status": "error", "error": str(e)}
-                finally:
-                    await asyncio.to_thread(invalidate_on_sync)
-                progress_cb("result", result)
-                results.append(result)
-
-            for doc_id in doc_ids:
-                if cancel_event.is_set():
-                    result = {"doc_id": doc_id, "status": "skipped", "reason": "cancelled"}
-                    progress_cb("result", result)
-                    results.append(result)
-                    continue
+            else:
                 progress_cb("current", {"title": f"Reindexing document #{doc_id}"})
                 try:
                     result = await reindex_document(doc_id)
                 except Exception as e:
                     logger.error("Failed to reindex document %s: %s", doc_id, e, exc_info=True)
                     result = {"doc_id": doc_id, "status": "error", "error": str(e)}
-                progress_cb("result", result)
-                results.append(result)
+            progress_cb("result", result)
+            results.append(result)
 
-            errors = sum(1 for r in results if r.get("status") == "error")
-            # A targeted repair does not inspect all source modifications and
-            # cannot establish a new corpus-wide incremental checkpoint.
+        # A targeted repair does not inspect all source modifications and
+        # cannot establish a new corpus-wide incremental checkpoint.
+        elapsed = time.time() - task["_start_time"]
+        processed = [r["doc_id"] for r in results if r.get("status") == "processed"]
+        errors = sum(1 for r in results if r.get("status") == "error")
+        docs_per_minute = round(len(processed) / (elapsed / 60), 1) if elapsed > 0 and processed else 0
+        task["docs_per_minute"] = docs_per_minute
+        if errors:
+            task["error"] = f"{errors} document(s) failed"
+        return {
+            "total": total_docs,
+            "processed": len(processed),
+            "skipped": sum(1 for r in results if r.get("status") == "skipped"),
+            "errors": errors,
+            "reindexed": [d for d in processed if d in doc_id_set],
+            "deleted": [d for d in processed if d not in doc_id_set],
+            "elapsed_seconds": round(elapsed, 1),
+            "docs_per_minute": docs_per_minute,
+            "results": results,
+        }
 
-            _clear_freshness_cache()
-            elapsed = time.time() - start_time
-            processed = sum(1 for r in results if r.get("status") == "processed")
-            skipped = sum(1 for r in results if r.get("status") == "skipped")
-            docs_per_minute = (processed / (elapsed / 60)) if elapsed > 0 and processed > 0 else 0
-            if cancel_event.is_set():
-                _tasks[task_id]["status"] = "cancelled"
-            elif errors:
-                _tasks[task_id]["status"] = "failed"
-            else:
-                _tasks[task_id]["status"] = "completed"
-            _tasks[task_id]["result"] = {
-                "total": total_docs,
-                "processed": processed,
-                "skipped": skipped,
-                "errors": errors,
-                "reindexed": [r["doc_id"] for r in results if r.get("status") == "processed" and r["doc_id"] in doc_id_set],
-                "deleted": [r["doc_id"] for r in results if r.get("status") == "processed" and r["doc_id"] in delete_ids],
-                "elapsed_seconds": round(elapsed, 1),
-                "docs_per_minute": round(docs_per_minute, 1),
-                "results": results,
-            }
-            _tasks[task_id]["current_doc"] = ""
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["docs_per_minute"] = round(docs_per_minute, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-            if errors:
-                _tasks[task_id]["error"] = f"{errors} document(s) failed"
-        except asyncio.CancelledError:
-            _tasks[task_id]["status"] = "cancelled"
-            raise
-        except Exception as e:
-            logger.error("%s task %s failed: %s", task_type, task_id, e, exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
-            _clear_freshness_cache()
-        finally:
-            await asyncio.to_thread(invalidate_on_sync)
-            _clear_freshness_cache()
-            _schedule_task_cleanup(task_id)
-
-    _start_background_worker(_run())
+    task_id = _start_task(task_type, work, total_docs=total_docs, target_doc_ids=doc_ids, delete_doc_ids=delete_ids)
     return task_id, message
 
-
 async def _auto_sync_loop():
-    from app.config import settings
-
     interval = max(settings.auto_sync_interval_minutes, 0)
     if interval <= 0:
         return
@@ -624,8 +472,6 @@ async def _auto_sync_loop():
 
 
 async def _entity_steward_loop():
-    from app.config import settings
-
     interval = max(settings.entity_steward_interval_minutes, 0)
     if interval <= 0:
         logger.info("Entity steward periodic loop disabled")
@@ -677,7 +523,6 @@ async def lifespan(app: FastAPI):
         await query_engine.close()
         await extractor.close()
         await classifier.close()
-        await close_pipeline_clients()
         await strands_orchestrator.close()
         await graph_store.close()
         await embeddings_store.close()
@@ -714,13 +559,15 @@ class TaskResponse(BaseModel):
 
 
 class DocumentFeedbackRequest(BaseModel):
-    reason: str = "extraction_wrong"
-    note: str = ""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reason: str = Field("extraction_wrong", min_length=1, max_length=200)
+    note: str = Field("", max_length=4000)
 
 
 class DocumentFeedbackResolutionRequest(BaseModel):
-    resolution: str
-    note: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+    resolution: Literal["reindexed_and_reviewed", "dismissed_after_review"]
+    note: str = Field(min_length=1, max_length=4000)
 
 
 class EntityDecisionRequest(BaseModel):
@@ -734,16 +581,9 @@ class EntityMergeRequest(BaseModel):
     duplicate_uuid: str
 
 
-# --- Paperless URL ---
-
-def _get_paperless_url() -> str:
-    from app.config import settings
-    return settings.effective_paperless_external_url
-
-
 @app.get("/config")
 async def get_config():
-    return {"paperless_url": _get_paperless_url()}
+    return {"paperless_url": settings.effective_paperless_external_url}
 
 
 # --- Health & Status ---
@@ -774,7 +614,7 @@ async def status():
                 "docs_with_embeddings": docs_w_embeds,
             },
             "last_sync": last_sync.isoformat() if last_sync else None,
-            "paperless_url": _get_paperless_url(),
+            "paperless_url": settings.effective_paperless_external_url,
             "active_tasks": {tid: {"status": t["status"], "type": t.get("type", "unknown")} for tid, t in _tasks.items()},
             "entity_steward": {"running": entity_steward.running},
             "cache": cache_stats,
@@ -810,7 +650,6 @@ async def health():
     # LiteLLM (LLM + embeddings gateway)
     try:
         from openai import AsyncOpenAI
-        from app.config import settings
         async with AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key) as client:
             response = await client.chat.completions.create(
                 model=settings.gemini_model,
@@ -955,57 +794,10 @@ async def sync():
 
 @app.post("/reindex", response_model=TaskResponse)
 async def reindex():
-    # Prevent concurrent reindex/sync
-    running = [t for t in _tasks.values() if t["status"] in {"running", "cancelling"}]
-    if running:
-        raise HTTPException(status_code=409, detail="A task is already running. Cancel it first or wait for it to finish.")
-    task_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-    _tasks[task_id] = {
-        "status": "running",
-        "type": "reindex",
-        "started": now.isoformat(),
-        "_start_time": time.time(),
-        "total_docs": 0,
-        "processed": 0,
-        "skipped": 0,
-        "errors": 0,
-        "current_doc": "",
-        "elapsed_seconds": 0,
-        "docs_per_minute": 0,
-        "estimated_remaining_seconds": 0,
-        "recent_results": [],
-    }
+    async def work(task, progress_cb, cancel_event):
+        return await reindex_all(progress_callback=progress_cb, cancel_event=cancel_event)
 
-    cancel_event = asyncio.Event()
-    _cancel_events[task_id] = cancel_event
-    progress_cb = _make_progress_callback(task_id)
-
-    async def _run():
-        try:
-            await asyncio.to_thread(invalidate_on_sync)
-            result = await reindex_all(progress_callback=progress_cb, cancel_event=cancel_event)
-            _clear_freshness_cache()
-            _tasks[task_id]["status"] = "cancelled" if cancel_event.is_set() else ("failed" if result.get("errors") else "completed")
-            _tasks[task_id]["result"] = result
-            _tasks[task_id]["current_doc"] = ""
-            elapsed = time.time() - _tasks[task_id]["_start_time"]
-            _tasks[task_id]["elapsed_seconds"] = round(elapsed, 1)
-            _tasks[task_id]["estimated_remaining_seconds"] = 0
-        except asyncio.CancelledError:
-            _tasks[task_id]["status"] = "cancelled"
-            raise
-        except Exception as e:
-            logger.error(f"Reindex task {task_id} failed: {e}", exc_info=True)
-            _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            _tasks[task_id]["current_doc"] = ""
-        finally:
-            await asyncio.to_thread(invalidate_on_sync)
-            _clear_freshness_cache()
-            _schedule_task_cleanup(task_id)
-
-    _start_background_worker(_run())
+    task_id = _start_task("reindex", work)
     return TaskResponse(task_id=task_id, status="started", message="Full reindex started in background")
 
 
@@ -1021,14 +813,12 @@ async def reindex_single(doc_id: int):
 
 @app.post("/freshness/repair", response_model=TaskResponse)
 async def repair_freshness_drift():
-    snapshot = await _freshness_snapshot(force=True)
-    reindex_ids, delete_ids = _freshness_repair_targets(snapshot)
+    reindex_ids, delete_ids = _freshness_repair_targets((await _freshness_snapshot(force=True))["drift"])
     task_id, message = await _run_reindex_documents_task(
         reindex_ids,
         delete_ids=delete_ids,
         task_type="repair-drift",
         message=f"Repair drift started: {len(reindex_ids)} reindex, {len(delete_ids)} cleanup",
-        update_last_sync=True,
     )
     if not task_id:
         return TaskResponse(task_id="", status="noop", message=message)
@@ -1056,17 +846,13 @@ async def document_detail(doc_id: int):
 
 
 @app.post("/document/{doc_id}/feedback")
-async def document_feedback(doc_id: int, req: DocumentFeedbackRequest):
+async def document_feedback(req: DocumentFeedbackRequest, doc_id: int = Path(ge=1)):
     """Record that a document extraction needs human review."""
     try:
-        if doc_id < 1 or not req.reason.strip() or len(req.reason) > 200 or len(req.note) > 4000:
-            raise HTTPException(status_code=422, detail="A valid document ID, reason and note of at most 4000 characters are required")
         result = await embeddings_store.add_document_feedback(doc_id, req.reason, req.note)
         await invalidate_on_sync_async()
         logger.warning("Document %s marked for extraction review: %s", doc_id, req.reason)
         return {"status": "recorded", "feedback": result}
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1078,9 +864,7 @@ async def get_document_feedback(doc_id: int):
 
 
 @app.post("/document/{doc_id}/feedback/{feedback_id}/resolve")
-async def resolve_document_feedback(doc_id: int, feedback_id: int, req: DocumentFeedbackResolutionRequest):
-    if req.resolution not in {"reindexed_and_reviewed", "dismissed_after_review"} or not req.note.strip() or len(req.note) > 4000:
-        raise HTTPException(status_code=422, detail="Choose a resolution and supply a review note of 1–4000 characters")
+async def resolve_document_feedback(feedback_id: int, req: DocumentFeedbackResolutionRequest, doc_id: int = Path(ge=1)):
     reports = await embeddings_store.get_document_feedback(doc_id)
     report = next((row for row in reports if row["id"] == feedback_id), None)
     if not report:
@@ -1112,18 +896,12 @@ async def resolve_document_feedback(doc_id: int, feedback_id: int, req: Document
 async def delete_document(doc_id: int):
     async with _graph_mutation("delete-document"):
         try:
-            await entity_resolver.hydrate_review_identities()
-            await invalidate_on_sync_async()
-            await embeddings_store.delete_doc_hash(doc_id)
-            await graph_store.delete_document_graph(doc_id)
-            await embeddings_store.delete_document_embeddings(doc_id)
+            await purge_document_index(doc_id)
             return {"status": "deleted", "doc_id": doc_id}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
         finally:
-            await invalidate_on_sync_async()
             _clear_freshness_cache()
-
 
 @app.get("/task/{task_id}")
 async def get_task(task_id: str):
@@ -1181,7 +959,7 @@ class GenerateTitleRequest(BaseModel):
 @app.post("/generate-title")
 async def generate_title(req: GenerateTitleRequest):
     """Generate a short, descriptive chat title from the user's message."""
-    title = await conversations._generate_title(req.message, "")
+    title = await conversations._generate_title(req.message)
     return {"title": title}
 
 # --- Query ---
@@ -1202,89 +980,38 @@ async def cancel_task(task_id: str):
 @app.get("/models")
 async def list_models():
     """List available chat models from LiteLLM."""
-    from app.config import settings
     import httpx
 
     base_url = settings.litellm_url.rstrip("/")
     headers = {"Authorization": f"Bearer {settings.litellm_api_key}"}
     errors: list[str] = []
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{base_url}/v1/models",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = _models_from_openai_models(resp.json())
-            if not models:
-                raise ValueError("LiteLLM /v1/models returned no chat models")
-            return {"models": models, "default": settings.gemini_model}
-    except Exception as e:
-        errors.append(f"/v1/models: {e}")
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{base_url}/model/info",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = _models_from_litellm_info(resp.json())
-            if not models:
-                raise ValueError("LiteLLM /model/info returned no chat models")
-            return {"models": models, "default": settings.gemini_model}
-    except httpx.HTTPStatusError as e:
-        errors.append(f"/model/info: {e}")
-        if e.response.status_code not in {401, 403}:
-            logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
-    except Exception as e:
-        errors.append(f"/model/info: {e}")
-        logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
+    async with httpx.AsyncClient() as client:
+        for path, keys in (("/v1/models", ("id", "model_name", "model")), ("/model/info", ("model_name", "id", "model"))):
+            try:
+                resp = await client.get(f"{base_url}{path}", headers=headers, timeout=10)
+                resp.raise_for_status()
+                models = _chat_models(resp.json(), keys)
+                if models:
+                    return {"models": models, "default": settings.gemini_model}
+                errors.append(f"{path}: no chat models")
+            except Exception as e:
+                errors.append(f"{path}: {e}")
 
     logger.error(f"Failed to list models from LiteLLM; using configured default. Details: {'; '.join(errors)}")
-    return {"models": [_model_option(settings.gemini_model)], "default": settings.gemini_model}
+    return {"models": [{"id": settings.gemini_model, "name": settings.gemini_model}], "default": settings.gemini_model}
 
 
-def _models_from_litellm_info(data: dict) -> list[dict]:
-    models = []
+def _chat_models(data: dict, keys: tuple[str, ...]) -> list[dict]:
+    """Parse LiteLLM /v1/models or /model/info, keeping route IDs verbatim and dropping embedding routes."""
+    models = {}
     for item in data.get("data", []):
-        model_id = item.get("model_name") or item.get("id") or item.get("model")
-        if not model_id or _is_embedding_model(model_id, item):
+        model_id = next((item[key] for key in keys if item.get(key)), None)
+        mode = (item.get("mode") or item.get("model_info", {}).get("mode") or "").lower()
+        model_text = f"{model_id} {item.get('litellm_params', {}).get('model', '')}".lower()
+        if not model_id or mode in {"embedding", "embeddings"} or "embed" in model_text:
             continue
-        models.append(_model_option(model_id))
-    return _unique_sorted_models(models)
-
-
-def _models_from_openai_models(data: dict) -> list[dict]:
-    models = []
-    for item in data.get("data", []):
-        model_id = item.get("id") or item.get("model_name") or item.get("model")
-        if not model_id or _is_embedding_model(model_id, item):
-            continue
-        models.append(_model_option(model_id))
-    return _unique_sorted_models(models)
-
-
-def _is_embedding_model(model_id: str, item: dict) -> bool:
-    mode = (item.get("mode") or item.get("model_info", {}).get("mode") or "").lower()
-    if mode in {"embedding", "embeddings"}:
-        return True
-    model_text = f"{model_id} {item.get('litellm_params', {}).get('model', '')}".lower()
-    return any(keyword in model_text for keyword in ("embed", "embedding", "titan-embed"))
-
-
-def _model_option(model_id: str) -> dict:
-    # Display the LiteLLM route ID exactly as returned so provider prefixes,
-    # decimals, and version strings are not mangled in the chat selector.
-    return {"id": model_id, "name": model_id}
-
-
-def _unique_sorted_models(models: list[dict]) -> list[dict]:
-    unique = {model["id"]: model for model in models}
-    return sorted(unique.values(), key=lambda model: model["name"].lower())
+        models[model_id] = {"id": model_id, "name": model_id}
+    return sorted(models.values(), key=lambda model: model["name"].lower())
 
 def _answer_metadata(payload: dict) -> dict:
     return {key: payload.get(key) for key in (
@@ -1302,7 +1029,7 @@ async def query(req: QueryRequest):
             conv_history = await conversations.get_conversation_history(req.conversation_id)
 
         result = await query_engine.query(req.question, conversation_history=conv_history, model_override=req.model, mode=req.mode)
-        paperless_base = _get_paperless_url()
+        paperless_base = settings.effective_paperless_external_url
         for source in result.get("sources", []):
             if source.get("document_id"):
                 source["paperless_url"] = f"{paperless_base}/documents/{source['document_id']}/details"
@@ -1331,7 +1058,6 @@ async def query_stream(req: QueryRequest):
     Uses background task + queue so the query completes and saves
     even if the client disconnects (e.g. mobile tab backgrounded).
     """
-    import asyncio
 
     conv_history = None
     if req.conversation_id:
@@ -1343,7 +1069,7 @@ async def query_stream(req: QueryRequest):
     async def _run_query():
         """Background task: runs query to completion, saves result regardless of client."""
         try:
-            paperless_base = _get_paperless_url()
+            paperless_base = settings.effective_paperless_external_url
             full_answer_chunks = []
             final_answer = None
             final_sources = None
@@ -1519,16 +1245,6 @@ def _entity_suggestion_map(decisions: list[dict]) -> dict[tuple[str, str], dict]
     return suggestions
 
 
-@app.post("/entity-review/steward")
-async def entity_review_steward(limit: int = 50):
-    async with _graph_mutation("entity_steward"):
-        try:
-            return await entity_steward.run_once(reason="manual", limit=min(limit, 200))
-        except Exception as e:
-            logger.error("Entity steward run failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/entity-review/steward/task", response_model=TaskResponse)
 async def entity_review_steward_task(limit: int = 75):
     task_id = await _run_entity_steward_task(limit=min(limit, 200), reason="manual")
@@ -1613,13 +1329,3 @@ async def stream_logs():
                 _log_listeners.remove(queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-@app.post("/create-indexes")
-async def create_indexes():
-    """Create vector indexes after data is loaded."""
-    try:
-        await embeddings_store.create_vector_indexes()
-        return {"status": "ok", "message": "Vector indexes created"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

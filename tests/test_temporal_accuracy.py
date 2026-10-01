@@ -1,6 +1,6 @@
 import unittest
 from app.answer_finalization import AnswerFinalizer, evidence_spans, parse_date
-from app.query_quality import compute_evidence_grade, current_state_summary
+from app.query_quality import current_state_summary
 from tests.test_answer_finalization import PACK, SupportedAuditor
 
 
@@ -16,14 +16,6 @@ class TemporalTests(unittest.IsolatedAsyncioTestCase):
         for date in ("2001-01-01", "2026-09-04", "2099-01-01", "2026-02-30"):
             summary = current_state_summary({"requires_current": True}, [{"date": date}])
             self.assertEqual(summary["status"], "needs_review")
-
-    def test_coarse_verified_status_cannot_override_unsupported_ledger(self):
-        grade = compute_evidence_grade("Premium?", {}, [{"title": "Premium", "date": "2026-09-04"}] * 10,
-                                       {"graph_nodes": [1]}, {"status": "verified"},
-                                       {"coverage": {"average_source_quality": 1, "structured_fact_count": 99}},
-                                       {"summary": {"supported": 0, "unsupported": 1}})
-        self.assertEqual(grade["dimensions"]["claim_support"], 0)
-        self.assertNotEqual(grade["level"], "high")
 
     async def test_historical_answer_can_be_qualified_without_claiming_current_value(self):
         class Historical(SupportedAuditor):

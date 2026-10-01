@@ -1,5 +1,7 @@
 # Functional and accuracy audit — September 4, 2026
 
+Evidence artifacts were removed from the tree; they remain at commit 411442d.
+
 Historical baseline. The [implementation report](2026-09-04-implementation-report.md) records the subsequent fixes and current validation; the defect-asserting probes below are not current CI gates.
 
 The backend has substantial functionality, but its current checks do not establish answer accuracy. Strict mode can return an unsupported answer, model-supplied citations and dates are not fully validated, and human entity-review decisions can be bypassed by automatic resolution. These are higher priorities than adding more retrieval or model passes.

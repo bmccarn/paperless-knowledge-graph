@@ -179,26 +179,6 @@ class GraphStore:
             result = await session.run(f"MATCH (n:{label}) RETURN properties(n) AS props")
             return [{**dict(row["props"]), "entity_type": label} async for row in result]
 
-    async def _find_canonical(self, name: str, label: str) -> Optional[dict]:
-        from app.entity_policy import name_key
-        matches = [node for node in await self.get_entities_by_type(label)
-                   if isinstance(node.get("name"), str) and node["name"].strip()
-                   and name_key(node["name"], label) == name_key(name, label)]
-        return matches[0] if len(matches) == 1 else None
-
-    async def find_person(self, name: str) -> Optional[dict]:
-        """Unique canonical lookup only; alias authorization belongs to resolver."""
-        return await self._find_canonical(name, "Person")
-
-    async def get_all_persons(self) -> list[dict]:
-        return await self.get_entities_by_type("Person")
-
-    async def get_all_organizations(self) -> list[dict]:
-        return await self.get_entities_by_type("Organization")
-
-    async def find_organization(self, name: str) -> Optional[dict]:
-        return await self._find_canonical(name, "Organization")
-
     async def record_entity_source(self, node_uuid: str, doc_id: int, *, identity_hint: str = ""):
         async with self.driver.session() as session:
             result = await session.run("""
@@ -231,77 +211,6 @@ class GraphStore:
                 RETURN n.uuid AS uuid""", uuid=node_uuid, record=serialized, alias=record["alias"])
             if await result.single() is None:
                 raise ValueError("Alias target disappeared")
-
-    async def create_person(self, name: str, aliases: list[str] = None, role: str = None,
-                            description: str = None, source_doc_ids: list[int] = None) -> str:
-        node_uuid = self.new_uuid()
-        name = self._coerce_text(name)
-        aliases = self._coerce_text_list(aliases)
-        role = self._coerce_text(role)
-        description = self._coerce_text(description)
-        async with self.driver.session() as session:
-            await session.run(
-                """
-                CREATE (p:Person {uuid: $uuid, name: $name, aliases: $aliases, role: $role,
-                                  description: $description, entity_type: 'Person', source_doc_ids: $source_doc_ids})
-                """,
-                uuid=node_uuid, name=name, aliases=aliases, role=role,
-                description=description,
-                source_doc_ids=sorted(set(source_doc_ids or [])),
-            )
-        return node_uuid
-
-    async def add_person_alias(self, node_uuid: str, alias: str):
-        alias = self._coerce_text(alias)
-        if not alias:
-            return
-        async with self.driver.session() as session:
-            await session.run(
-                """
-                MATCH (p:Person {uuid: $uuid})
-                SET p.aliases = CASE
-                    WHEN NOT $alias IN coalesce(p.aliases, []) THEN coalesce(p.aliases, []) + $alias
-                    ELSE coalesce(p.aliases, [])
-                END
-                """,
-                uuid=node_uuid, alias=alias,
-            )
-
-    async def create_organization(self, name: str, org_type: str = None,
-                                   aliases: list[str] = None, description: str = None,
-                                   source_doc_ids: list[int] = None) -> str:
-        node_uuid = self.new_uuid()
-        name = self._coerce_text(name)
-        org_type = self._coerce_text(org_type)
-        aliases = self._coerce_text_list(aliases)
-        description = self._coerce_text(description)
-        async with self.driver.session() as session:
-            await session.run(
-                """
-                CREATE (o:Organization {uuid: $uuid, name: $name, type: $type, aliases: $aliases,
-                                        description: $description, entity_type: 'Organization', source_doc_ids: $source_doc_ids})
-                """,
-                uuid=node_uuid, name=name, type=org_type, aliases=aliases,
-                description=description,
-                source_doc_ids=sorted(set(source_doc_ids or [])),
-            )
-        return node_uuid
-
-    async def add_org_alias(self, node_uuid: str, alias: str):
-        alias = self._coerce_text(alias)
-        if not alias:
-            return
-        async with self.driver.session() as session:
-            await session.run(
-                """
-                MATCH (o:Organization {uuid: $uuid})
-                SET o.aliases = CASE
-                    WHEN NOT $alias IN coalesce(o.aliases, []) THEN coalesce(o.aliases, []) + $alias
-                    ELSE coalesce(o.aliases, [])
-                END
-                """,
-                uuid=node_uuid, alias=alias,
-            )
 
     async def create_node(self, label: str, properties: dict) -> str:
         """Create a generic node with given label and properties."""
@@ -516,10 +425,6 @@ class GraphStore:
                              AND NOT EXISTS { (n)--() } DELETE n""", affected=list(affected))
         async with self.driver.session() as session:
             await session.execute_write(write)
-
-    async def clear_all(self):
-        async with self.driver.session() as session:
-            await session.run("MATCH (n) DETACH DELETE n")
 
     async def get_counts(self) -> dict:
         async with self.driver.session() as session:

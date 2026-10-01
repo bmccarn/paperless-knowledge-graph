@@ -26,13 +26,7 @@ type RenderLink = LinkObject<
 export type GraphHandle = ForceGraphMethods<
   ExplorerNode,
   Omit<ExplorerLink, "source" | "target">
-> & {
-  cameraPosition?: (
-    position?: { x: number; y: number; z: number },
-    lookAt?: { x: number; y: number; z: number },
-    duration?: number,
-  ) => void;
-};
+>;
 type GraphComponent = ComponentType<
   ForceGraphProps<ExplorerNode, Omit<ExplorerLink, "source" | "target">> &
     RefAttributes<GraphHandle>

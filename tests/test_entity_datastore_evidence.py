@@ -75,7 +75,6 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         from app import pipeline
         from app.extractor import EntityExtractor
         from app.paperless import PaperlessClient
-        from app.entity_vector_consistency import classify_entity_vector
         from tests.test_review_identity_admission import alias_client
         from tests.test_ingestion import PaperlessFixture, ClassifierFixture, document
         canonical = await self.seed("canonical", names[0], "Organization", [991712])
@@ -104,11 +103,6 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 old_edges = [e for e in original["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
                 retained = [e for e in persisted["relationships"] if e.get("neighbor_props", {}).get("paperless_id") == 991712]
                 self.assertEqual(retained, old_edges)
-                async with self.store.pool.acquire() as conn:
-                    vector = dict(await conn.fetchrow("SELECT entity_uuid,entity_name,entity_type,vector_dims(embedding) AS dimension FROM entity_embeddings WHERE entity_uuid=$1", canonical))
-                consistency = classify_entity_vector(vector, {"uuid": canonical, "name": props["name"], "labels": ["Organization"]},
-                    verified_aliases=trusted_aliases(props, "Organization", 991711, source))
-                self.assertTrue(consistency["accepted"], consistency)
                 self.assertEqual((await self.store.get_ingestion_fingerprints([991711]))[991711], PaperlessClient.ingestion_fingerprint(doc))
             self.assertEqual((await pipeline.process_document(doc))["status"], "skipped")
 

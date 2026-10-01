@@ -1,7 +1,7 @@
 """Deterministic presentation and exact binding of an accepted candidate."""
 import hashlib
 
-def _digest(value):
+def text_digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 def render_verified_answer(candidate, claims, *, partial=False, qualified=False, evaluated_at=None):
@@ -36,9 +36,9 @@ def validate_verified_delivery(answer, ledger, finalization, *, candidate=None):
                 or ledger['summary']['total'] != len(claims)
                 or ledger['summary']['audited'] != len(claims)
                 or ledger['summary']['supported'] != len(claims)
-                or _digest(candidate) != ledger.get('candidate_digest')
-                or _digest(candidate) != finalization.get('candidate_digest')
-                or not isinstance(answer, str) or _digest(answer) != finalization.get('answer_digest')):
+                or text_digest(candidate) != ledger.get('candidate_digest')
+                or text_digest(candidate) != finalization.get('candidate_digest')
+                or not isinstance(answer, str) or text_digest(answer) != finalization.get('answer_digest')):
             raise ValueError('candidate_binding')
         ids, end = set(), 0
         for claim in claims:

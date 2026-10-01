@@ -6,12 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getEntityReviewCandidates,
-  getTask,
   ignoreEntityCandidate,
   mergeEntityCandidate,
   runEntitySteward,
   splitEntityCandidate,
+  waitForTask,
 } from "@/lib/api";
+import { errMsg } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, X } from "lucide-react";
 
 interface Candidate {
@@ -42,18 +43,12 @@ interface Notice {
   text: string;
 }
 
-interface TaskStatus {
-  status?: string;
-  result?: {
-    reviewed_count?: number;
-    suggest_merge?: number;
-    suggest_split?: number;
-    suggest_review?: number;
-  };
-  error?: string;
+interface StewardResult {
+  reviewed_count?: number;
+  suggest_merge?: number;
+  suggest_split?: number;
+  suggest_review?: number;
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function EntityReviewPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -71,7 +66,7 @@ export default function EntityReviewPage() {
       const data = await getEntityReviewCandidates(75);
       setCandidates(data.candidates || []);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not load review candidates.";
+      const message = errMsg(err, "Could not load review candidates.");
       if (showSpinner) {
         setError(message);
       } else {
@@ -89,28 +84,15 @@ export default function EntityReviewPage() {
     try {
       const start = await runEntitySteward(75);
       setNotice({ kind: "success", text: "Entity steward started. Reviewing candidates in the background..." });
-      let task: TaskStatus | null = null;
-      for (let attempt = 0; attempt < 160; attempt += 1) {
-        const latest = await getTask(start.task_id) as TaskStatus;
-        task = latest;
-        if (latest.status === "completed") break;
-        if (latest.status === "failed") throw new Error(latest.error || "Entity steward run failed.");
-        await sleep(1500);
-      }
-      if (!task || task.status !== "completed") {
-        throw new Error("Entity steward is still running. Refresh in a moment to see new suggestions.");
-      }
-      const result = task.result || {};
+      const task = await waitForTask(start.task_id);
+      const result: StewardResult = task.result || {};
       setNotice({
         kind: "success",
         text: `Entity steward reviewed ${result.reviewed_count || 0} candidates: ${result.suggest_merge || 0} merge, ${result.suggest_split || 0} split, ${result.suggest_review || 0} review.`,
       });
       await load(false);
     } catch (err) {
-      setNotice({
-        kind: "error",
-        text: err instanceof Error ? err.message : "Entity steward run failed.",
-      });
+      setNotice({ kind: "error", text: errMsg(err, "Entity steward run failed.") });
     } finally {
       setStewardRunning(false);
     }
@@ -129,10 +111,7 @@ export default function EntityReviewPage() {
       setNotice({ kind: "success", text: successText });
       void load(false);
     } catch (err) {
-      setNotice({
-        kind: "error",
-        text: err instanceof Error ? err.message : "Review action failed.",
-      });
+      setNotice({ kind: "error", text: errMsg(err, "Review action failed.") });
     } finally {
       setBusyKey("");
       setBusyAction("");

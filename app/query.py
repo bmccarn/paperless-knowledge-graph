@@ -20,7 +20,6 @@ def _owner_name():
 
 def _owner_context():
     return settings.owner_context or ""
-from app.retry import retry_with_backoff
 from app.embeddings import chunk_text, embeddings_store, table_header_chunks
 from app.paperless import paperless_client
 from app.graph import graph_store
@@ -60,6 +59,10 @@ _REQUEST_MODEL = ContextVar("query_model", default=None)
 _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
 
 
+def _is_rate_limited(e: Exception) -> bool:
+    return isinstance(e, RateLimitError) or "429" in str(e) or "rate" in str(e).lower()
+
+
 class QueryEngine:
     question_pipeline = False
 
@@ -84,8 +87,8 @@ class QueryEngine:
     async def close(self):
         await self.client.close()
 
-    def _active_model(self, model_override=None):
-        return model_override or _REQUEST_MODEL.get() or self.model
+    def _active_model(self):
+        return _REQUEST_MODEL.get() or self.model
 
     async def _llm_generate(self, prompt: str) -> str:
         try:
@@ -94,8 +97,8 @@ class QueryEngine:
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.choices[0].message.content
-        except (RateLimitError, Exception) as e:
-            if isinstance(e, RateLimitError) or "429" in str(e) or "rate" in str(e).lower():
+        except Exception as e:
+            if _is_rate_limited(e):
                 logger.warning(f"Rate limited on {self._active_model()}, falling back to {settings.fallback_model}")
                 response = await self.client.chat.completions.create(
                     model=settings.fallback_model,
@@ -124,38 +127,13 @@ class QueryEngine:
                 logger.warning(f"JSON parse error from {model}: {e}, trying next model")
                 last_error = e
                 continue
-            except (RateLimitError, Exception) as e:
-                if isinstance(e, RateLimitError) or "429" in str(e) or "rate" in str(e).lower():
+            except Exception as e:
+                if _is_rate_limited(e):
                     logger.warning(f"Rate limited on {model}, trying next model")
                     last_error = e
                     continue
                 raise
         raise last_error or ValueError("All models failed for JSON call")
-
-    async def _llm_generate_stream(self, prompt: str):
-        """Yield answer chunks via streaming, with fallback on rate limit."""
-        try:
-            stream = await self.client.chat.completions.create(
-                model=self._active_model(),
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-            )
-            async for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-        except (RateLimitError, Exception) as e:
-            if isinstance(e, RateLimitError) or "429" in str(e) or "rate" in str(e).lower():
-                logger.warning(f"Rate limited on {self._active_model()}, falling back to {settings.fallback_model}")
-                stream = await self.client.chat.completions.create(
-                    model=settings.fallback_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    stream=True,
-                )
-                async for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
-            else:
-                raise
 
     # ── Orchestration ─────────────────────────────────────────────────
 
@@ -504,10 +482,6 @@ class QueryEngine:
                             final["finalization"]["disposition"], final["claim_ledger"]["summary"])]
         return final["answer"], verification, final["evidence"], trace, final["claim_ledger"], evidence_pack, sources, context, final["timeline_events"]
 
-    def _blend_confidence(self, llm_confidence, evidence, verification):
-        # Provider self-confidence cannot raise a failed source-audit verdict.
-        return float(evidence.get("score", 0.0))
-
     # ── Main query (non-streaming, backward compat) ─────────────────
 
     # ── Broad query detection & decomposition ─────────────────────
@@ -566,7 +540,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             _REQUEST_GENERATION.reset(generation_token)
 
     async def _query(self, question, conversation_history, mode):
-        mode = self._normalize_mode(mode)
+        mode = normalize_mode(mode)
         evaluated_at = datetime.now(timezone.utc).date().isoformat()
         identity = {"policy": f'{QUERY_CACHE_VERSION}:{PIPELINE_VERSION}' if self.question_pipeline else QUERY_CACHE_VERSION,
                     "mode": mode, "question": question,
@@ -633,7 +607,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             trace.append(trace_step("timeline", "ok" if projection["status"] in {"ready", "no_dates"} else "needs_review",
                                     f"{len(timeline_events)} dates from final verified observations",
                                     projection))
-        confidence = self._blend_confidence(final.get("confidence", first_pass.get("confidence", 0.5)), evidence, verification)
+        confidence = float(evidence.get("score", 0.0))
         source_summary = self._build_source_summary(
             all_context,
             latest_check_used,
@@ -1173,13 +1147,14 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
 {format_evidence_pack_for_llm(evidence_pack, max_items=50, max_chars=28000)}
 """
 
+        owner_context = _owner_context()
         return f"""You are a knowledge assistant with access to {_owner_name()}'s personal document archive and knowledge graph. You have been given context from multiple retrieval passes across hundreds of personal documents.
 
 CONTEXT ABOUT THE USER:
 - The user is {_owner_name()}
 - Documents include: medical records, VA disability ratings, military service records, financial documents, mortgage statements, legal contracts, vehicle records, pet/veterinary records, insurance policies, tax documents, employment records, and more
 - When the user says "my", "I", "me" — they mean {_owner_name()}
-- {("Additional context: " + _owner_context()) if _owner_context() else ""}
+- {("Additional context: " + owner_context) if owner_context else ""}
 
 INSTRUCTIONS:
 - Query mode: {mode}. {mode_instruction}
@@ -1236,7 +1211,7 @@ TEMPORAL AWARENESS — CRITICAL:
         graph_text = self._format_graph_context(context)
         prompt = self._build_final_prompt(
             question,
-            self._normalize_mode(mode),
+            normalize_mode(mode),
             doc_context,
             graph_text,
             draft_answer,
@@ -1250,22 +1225,7 @@ TEMPORAL AWARENESS — CRITICAL:
         except Exception as e:
             logger.error(f"Final synthesis failed: {e}")
             answer = draft_answer if draft_answer else f"Error generating answer: {e}"
-
-        confidence = 0.7
-        try:
-            conf_prompt = f"""Rate your confidence (0-1) in how completely the following answer addresses the question.
-Question: {question}
-Answer: {answer[:2000]}
-Respond with just a JSON object: {{"confidence": 0.8}}"""
-            conf_result = await self._llm_json(conf_prompt)
-            confidence = float(conf_result.get("confidence", 0.7))
-        except Exception:
-            pass
-
-        return {"answer": answer, "confidence": confidence}
-
-    def _normalize_mode(self, mode: str) -> str:
-        return normalize_mode(mode)
+        return {"answer": answer}
 
     # ── Context merging ─────────────────────────────────────────────
 
@@ -1981,7 +1941,7 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         return 0.0
 
     def _recency_boost(self, result: dict) -> float:
-        date_value = self._extract_indexed_date(result.get("content", ""))
+        date_value = self._extract_source_date(result)
         if not date_value:
             return 0.0
         try:
@@ -1996,10 +1956,6 @@ Respond with just a JSON object: {{"confidence": 0.8}}"""
         if age_days <= 730:
             return 0.04
         return 0.0
-
-    def _extract_indexed_date(self, content: str) -> str | None:
-        match = re.search(r"^Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n]*)", content, flags=re.MULTILINE)
-        return match.group(1).strip() if match else None
 
     def _looks_superseded(self, content: str) -> bool:
         terms = ("superseded", "replaced by", "cancelled", "canceled", "expired", "void", "prior version")

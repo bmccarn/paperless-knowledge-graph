@@ -379,6 +379,28 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(repair.json()["status"], "started")
                 self.assertEqual(main._tasks[repair.json()["task_id"]]["target_doc_ids"], list(ids))
 
+    async def test_guardrails_reports_drift_alerts_for_cluster_health_monitoring(self):
+        # homelab-health-alerts polls this exact URL and filters alerts by `type`.
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        url = "/ops/guardrails?force=true&allowed_doc_drift=0&check_model=false&check_logs=false"
+        await pipeline.sync_documents()
+        self.embeddings.last_sync = datetime.now(timezone.utc)
+        graph_ids = AsyncMock(return_value={1})
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", graph_ids), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": 1})), \
+             patch.object(main, "_freshness_cache", None):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                healthy = (await client.get(url)).json()
+                graph_ids.return_value = set()
+                drifted = (await client.get(url)).json()
+        self.assertEqual((healthy["status"], healthy["alerts"]), ("ok", []))
+        self.assertEqual(drifted["status"], "alerting")
+        self.assertEqual([alert["type"] for alert in drifted["alerts"]], ["doc_id_drift"])
+
     async def test_scan_watermark_retains_changes_made_during_processing(self):
         self.extractor.started, self.extractor.release = asyncio.Event(), asyncio.Event()
         running = asyncio.create_task(pipeline.sync_documents())

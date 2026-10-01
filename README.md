@@ -175,6 +175,7 @@ After changing models, test extraction on one small and one large document befor
 | `/health` | GET | Component health (Neo4j, pgvector, LiteLLM, cache stats) |
 | `/freshness` | GET | Compares exact document IDs across Paperless, the graph, embeddings and hashes. Add `?force=true` to skip the short status cache. |
 | `/freshness/repair` | POST | Starts a background repair for the drifted IDs reported by `/freshness?force=true` |
+| `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health and recent error alerts |
 | `/config` | GET | Frontend configuration (the Paperless URL) |
 | `/models` | GET | Chat model routes available in LiteLLM |
 | `/sync` | POST | Incremental sync of new and changed documents |

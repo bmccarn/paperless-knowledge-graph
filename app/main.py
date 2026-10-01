@@ -677,6 +677,113 @@ async def health():
     return {"status": overall, "components": components}
 
 
+@app.get("/ops/guardrails")
+async def ops_guardrails(
+    max_sync_age_hours: int = 24,
+    allowed_doc_drift: int = 0,
+    force: bool = False,
+    check_model: bool = True,
+    check_logs: bool = True,
+):
+    """Machine-readable guardrail checks for monitoring."""
+    alerts = []
+    last_sync = await embeddings_store.get_last_sync()
+    health_status = await health() if check_model else None
+    freshness_snapshot = None
+
+    if last_sync:
+        age_hours = (datetime.now(timezone.utc) - last_sync.astimezone(timezone.utc)).total_seconds() / 3600
+    else:
+        age_hours = None
+        alerts.append({"type": "sync_never_ran", "severity": "warning", "message": "Knowledge graph has never synced"})
+
+    if age_hours is not None and age_hours > max_sync_age_hours:
+        alerts.append({
+            "type": "sync_stale",
+            "severity": "warning",
+            "message": f"Last sync is {age_hours:.1f} hours old",
+        })
+
+    try:
+        freshness_snapshot = await _freshness_snapshot(force=force)
+        drift = int(freshness_snapshot.get("paperless_documents", 0)) - int(freshness_snapshot.get("indexed_documents", 0))
+        graph_drift = int(freshness_snapshot.get("missing_documents", 0)) + int(freshness_snapshot.get("extra_documents", 0))
+        if graph_drift > allowed_doc_drift:
+            alerts.append({
+                "type": "doc_id_drift",
+                "severity": "warning",
+                "message": (
+                    f"Paperless/graph ID drift: {freshness_snapshot.get('missing_documents', 0)} "
+                    f"missing from graph, {freshness_snapshot.get('extra_documents', 0)} extra in graph"
+                ),
+                "details": {
+                    "missing_from_graph": freshness_snapshot.get("drift", {}).get("missing_from_graph", []),
+                    "extra_in_graph": freshness_snapshot.get("drift", {}).get("extra_in_graph", []),
+                },
+            })
+        vector_drift = (
+            int(freshness_snapshot.get("missing_embedding_documents", 0))
+            + int(freshness_snapshot.get("extra_embedding_documents", 0))
+            + int(freshness_snapshot.get("missing_hash_documents", 0))
+            + int(freshness_snapshot.get("extra_hash_documents", 0))
+        )
+        if vector_drift:
+            alerts.append({
+                "type": "vector_hash_id_drift",
+                "severity": "warning",
+                "message": (
+                    f"Vector/hash drift: {freshness_snapshot.get('missing_embedding_documents', 0)} "
+                    f"missing embeddings, {freshness_snapshot.get('missing_hash_documents', 0)} missing hashes"
+                ),
+                "details": {
+                    "missing_embeddings": freshness_snapshot.get("drift", {}).get("missing_embeddings", []),
+                    "extra_embeddings": freshness_snapshot.get("drift", {}).get("extra_embeddings", []),
+                    "missing_hashes": freshness_snapshot.get("drift", {}).get("missing_hashes", []),
+                    "extra_hashes": freshness_snapshot.get("drift", {}).get("extra_hashes", []),
+                },
+            })
+    except Exception as e:
+        drift = None
+        alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
+
+    if check_model and health_status:
+        litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
+        if litellm_status != "healthy":
+            alerts.append({
+                "type": "model_route_health",
+                "severity": "critical",
+                "message": f"LiteLLM health is {litellm_status or 'unknown'}",
+            })
+
+    if check_logs:
+        error_logs = [
+            line for line in list(_log_buffer)[-200:]
+            if line.get("level") == "ERROR" or "confidence=0." in line.get("message", "")
+        ]
+        if error_logs:
+            alerts.append({
+                "type": "recent_extraction_or_runtime_errors",
+                "severity": "warning",
+                "message": f"{len(error_logs)} recent error/low-confidence log lines",
+            })
+
+    return {
+        "status": "ok" if not alerts else "alerting",
+        "alerts": alerts,
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "sync_age_hours": round(age_hours, 2) if age_hours is not None else None,
+        "graph_documents": freshness_snapshot.get("indexed_documents", 0) if freshness_snapshot else None,
+        "paperless": {
+            "count": freshness_snapshot.get("paperless_documents", 0),
+            "latest_id": freshness_snapshot.get("latest_paperless_id"),
+            "latest_title": freshness_snapshot.get("latest_paperless_title"),
+            "latest_modified": freshness_snapshot.get("latest_paperless_modified"),
+        } if freshness_snapshot else None,
+        "document_drift": drift,
+        "freshness": freshness_snapshot,
+    }
+
+
 # --- Sync & Reindex ---
 
 @app.post("/sync", response_model=TaskResponse)

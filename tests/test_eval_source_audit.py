@@ -261,7 +261,7 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
         output = Path(directory) / 'output'
         with patch.object(settings, 'strands_enabled', True), patch.object(native, 'STRANDS_AVAILABLE', True), \
              patch.object(native, 'Agent', Agent), patch.object(native.StrandsQueryOrchestrator, '_model', return_value=None):
-            manifest = prepare(source, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+            manifest = prepare(source, model=settings.strands_model or settings.llm_model, runtime=runtime_snapshot(),
                                repetitions=1, max_attempts=4, seconds=0.02 if stalled else 10,
                                estimated_tokens=1000, cache_note='Controlled protocol transport; no model inference',
                                sdk_retry_policy=sdk_retry_policy)
@@ -320,7 +320,7 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
         from scripts.eval_source_audit import execute, runtime_snapshot
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'output'
-            manifest = prepare(DATASET, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+            manifest = prepare(DATASET, model=settings.strands_model or settings.llm_model, runtime=runtime_snapshot(),
                                repetitions=1, max_attempts=4, seconds=10, estimated_tokens=1000, cache_note='Unverified')
             with patch.object(settings, 'litellm_url', 'http://127.0.0.1:9999'):
                 with self.assertRaisesRegex(ValueError, 'runtime differs'):
@@ -377,7 +377,7 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
             output = Path(directory) / 'output'
             with patch.object(settings, 'strands_enabled', True), patch.object(native, 'STRANDS_AVAILABLE', True), \
                  patch.object(native, 'Agent', Agent), patch.object(native.StrandsQueryOrchestrator, '_model', return_value=None):
-                manifest = prepare(source, model=settings.strands_model or settings.gemini_model, runtime=runtime_snapshot(),
+                manifest = prepare(source, model=settings.strands_model or settings.llm_model, runtime=runtime_snapshot(),
                     repetitions=1, max_attempts=2, seconds=10, estimated_tokens=1000,
                     sdk_retry_policy='single_attempt', cache_note='Controlled native protocol, no provider')
                 report = await execute(source, manifest, output)

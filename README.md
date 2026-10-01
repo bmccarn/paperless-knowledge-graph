@@ -43,7 +43,7 @@ See the [query reliability specification](docs/specs/evidence-query-reliability.
 ## Architecture
 
 ```
-Paperless-ngx -> LiteLLM (model routing) -> document classification -> type-specific extraction
+Paperless-ngx -> OpenAI-compatible model endpoint -> document classification -> type-specific extraction
   -> entity resolution (source evidence + reviewed identity) -> Neo4j (graph) + pgvector (embeddings)
   -> hybrid query pipeline (Strands plan + vector + keyword + graph + evidence verifier)
 ```
@@ -74,17 +74,17 @@ Paperless-ngx -> LiteLLM (model routing) -> document classification -> type-spec
 - **Backend:** FastAPI (Python 3.12)
 - **Graph database:** Neo4j 5 Community with APOC
 - **Vector database:** PostgreSQL 16 with pgvector and pg_trgm
-- **LLM routing:** LiteLLM
-- **Embeddings:** OpenAI text-embedding-3-large (3072 dimensions) through LiteLLM
+- **Model access:** any OpenAI-compatible endpoint, such as a LiteLLM proxy, OpenRouter, OpenAI or a local server
+- **Embeddings:** OpenAI text-embedding-3-large (3072 dimensions) by default, from the chat endpoint or a separate one
 - **Frontend:** Next.js 16 and React 19 on Node 24 LTS, with shadcn/ui and react-force-graph
 
 ## Quick start
 
-You need a running Paperless-ngx instance and a LiteLLM proxy that serves the models listed under [Models](#models). The main compose file runs the backend, frontend, Neo4j, PostgreSQL with pgvector, and Redis. It connects to Paperless through `PAPERLESS_URL` and `PAPERLESS_TOKEN`.
+You need a running Paperless-ngx instance and an OpenAI-compatible model endpoint that serves the models listed under [Models](#models). [Model providers](#model-providers) has sample settings for LiteLLM, OpenRouter and other endpoints. The main compose file runs the backend, frontend, Neo4j, PostgreSQL with pgvector, and Redis. It connects to Paperless through `PAPERLESS_URL` and `PAPERLESS_TOKEN`.
 
 ```bash
 cp .env.example .env
-# Set your Paperless URL and token, LiteLLM URL and key, and the Neo4j and Postgres passwords
+# Set your Paperless URL and token, your model endpoint and key, and the Neo4j and Postgres passwords
 docker compose up -d
 ```
 
@@ -100,7 +100,7 @@ docker compose --env-file examples/paperless.env \
   -f examples/docker-compose.paperless.yml up -d
 ```
 
-Create an API token in Paperless at `http://localhost:8000`. Then copy the sample knowledge graph environment, add the Paperless token and LiteLLM settings, and start the stack:
+Create an API token in Paperless at `http://localhost:8000`. Then copy the sample knowledge graph environment, add the Paperless token and model endpoint settings, and start the stack:
 
 ```bash
 cp examples/kg-local.env.example .env
@@ -120,13 +120,18 @@ To run only the databases and start the backend directly on your machine, use [`
 | `PAPERLESS_TOKEN` | Paperless API token | none |
 | `PAPERLESS_EXTERNAL_URL` | Paperless URL used for document links in the frontend | Same as `PAPERLESS_URL` |
 | `PAPERLESS_SKIP_TAG_NAMES` | Comma-separated Paperless tags. Documents with these tags are left out of sync, reindex and freshness checks. | `needs-review` |
-| `LITELLM_URL` | LiteLLM proxy URL | `http://localhost:4000` |
-| `LITELLM_API_KEY` | LiteLLM API key | none |
-| `EMBEDDING_MODEL` | Embedding model route | `text-embedding-3-large` |
-| `GEMINI_MODEL` | Primary model for classification, extraction, answers and entity helpers | `gemini-3.8-flash` |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint for chat models. A trailing `/v1` is optional. | Uses `LITELLM_URL` |
+| `LLM_API_KEY` | API key for `LLM_BASE_URL` | none |
+| `LITELLM_URL` | LiteLLM proxy URL, used when `LLM_BASE_URL` is empty | `http://localhost:4000` |
+| `LITELLM_API_KEY` | LiteLLM API key, used with `LITELLM_URL` | none |
+| `LLM_MODEL` | Primary model for classification, extraction, answers and entity helpers. `GEMINI_MODEL` is an older name for the same setting. | `gemini-3.8-flash` |
 | `FALLBACK_MODEL` | Model route used after rate limits or errors | `gpt-5.4-mini` |
+| `EMBEDDING_BASE_URL` | Separate OpenAI-compatible endpoint for embeddings | Same as the chat endpoint |
+| `EMBEDDING_API_KEY` | API key for `EMBEDDING_BASE_URL` | none |
+| `EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |
+| `EMBEDDING_DIMENSIONS` | Vector length that `EMBEDDING_MODEL` returns | `3072` |
 | `STRANDS_ENABLED` | Enables the Strands planner, verifier and editor | `true` |
-| `STRANDS_MODEL` | Optional model override for Strands calls | Same as `GEMINI_MODEL` |
+| `STRANDS_MODEL` | Optional model override for Strands calls | Same as `LLM_MODEL` |
 | `STRANDS_MAX_CONCURRENT_CALLS` | Maximum concurrent helper calls and audit workers per answer (1 to 16) | `4` |
 | `STRANDS_CALL_TIMEOUT_SECONDS` | Deadline for one helper call | `45` |
 | `ANSWER_AUDIT_TIMEOUT_SECONDS` | Time allowed per audit batch and per repair. The total audit deadline scales with the number of batches. | `60` |
@@ -148,11 +153,73 @@ To run only the databases and start the backend directly on your machine, use [`
 
 ### Models
 
-The app sends every model request through LiteLLM's OpenAI-compatible API, so each route name must exist in your proxy. The defaults are `gemini-3.8-flash` as the primary model ([Google model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)), `gpt-5.4-mini` as the fallback and `text-embedding-3-large` for embeddings.
+The app sends every model request to an OpenAI-compatible API, so each model name must exist on your endpoint. The defaults are `gemini-3.8-flash` as the primary model ([Google model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)), `gpt-5.4-mini` as the fallback and `text-embedding-3-large` for embeddings. These are LiteLLM route names. Other providers name the same models differently, as the samples below show.
 
-The classifier, extractor, query engine, entity helpers, conversation titles and the default for `/models` all use `GEMINI_MODEL`. Strands uses `STRANDS_MODEL` when it is set. `/models` lists the routes your LiteLLM proxy reports. The app does not send a thinking-level setting, so do not configure the unsupported `minimal` level for Gemini 3.8 Flash in the proxy.
+The classifier, extractor, query engine, entity helpers, conversation titles and the default for `/models` all use `LLM_MODEL`. Strands uses `STRANDS_MODEL` when it is set. `/models` lists the models from the endpoint's `GET /v1/models`. With `LITELLM_URL`, it also tries LiteLLM's `/model/info`. If neither works, the chat model picker offers only `LLM_MODEL` and shows the error. The app does not send a thinking-level setting, so do not configure the unsupported `minimal` level for Gemini 3.8 Flash in the proxy.
 
 Query cache keys include the query model and the Strands model, so changing either one does not return stale cached answers. Ingestion fingerprints include the extraction model and the source policy version. After you change the extraction model, the next normal sync rebuilds the affected documents. You don't need to wipe the graph, run Reindex All or redo OCR in Paperless. Changing models does not change the OCR hash that document feedback uses.
+
+### Model providers
+
+The chat endpoint comes from `LLM_BASE_URL` and `LLM_API_KEY`. When `LLM_BASE_URL` is empty, the app uses `LITELLM_URL` and `LITELLM_API_KEY`, so existing installs keep working without changes. Embeddings use the chat endpoint unless you set `EMBEDDING_BASE_URL`. Each API key is sent only to its own URL: an empty `LLM_API_KEY` stays empty and never borrows `LITELLM_API_KEY`. Leave the key empty for a local server that needs none.
+
+Write a base URL with or without `/v1`. The app adds `/v1` to a bare host such as `http://litellm:4000` and keeps a URL that already has a version segment, such as `https://openrouter.ai/api/v1` or `https://generativelanguage.googleapis.com/v1beta/openai`. A base URL cannot include a query string. The backend refuses to start if one does.
+
+`/health` checks both endpoints. Its `llm` component sends a five-token chat request to `LLM_MODEL`. Its `embeddings` component embeds a short string and reports `unhealthy` when the vector length differs from `EMBEDDING_DIMENSIONS`.
+
+**LiteLLM proxy.** The proxy maps route names to providers, so the default model names work when your proxy defines those routes:
+
+```env
+LITELLM_URL=http://your-litellm:4000
+LITELLM_API_KEY=your-litellm-key
+LLM_MODEL=gemini-3.8-flash
+FALLBACK_MODEL=gpt-5.4-mini
+EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_DIMENSIONS=3072
+```
+
+**OpenRouter.** OpenRouter model names carry a provider prefix. OpenRouter also serves `openai/text-embedding-3-large`, so one key covers chat and embeddings:
+
+```env
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=your-openrouter-key
+LLM_MODEL=google/gemini-3.8-flash
+FALLBACK_MODEL=openai/gpt-5.4-mini
+EMBEDDING_MODEL=openai/text-embedding-3-large
+EMBEDDING_DIMENSIONS=3072
+```
+
+**Any other OpenAI-compatible endpoint.** This covers Requesty, OpenAI, Google's OpenAI-compatible Gemini API and local servers. Use the model names that the endpoint's `GET /v1/models` returns. If the endpoint does not serve embeddings, point `EMBEDDING_BASE_URL` at one that does. This sample runs chat through Google's Gemini API and embeddings through OpenAI:
+
+```env
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+LLM_API_KEY=your-gemini-key
+LLM_MODEL=gemini-3.8-flash
+FALLBACK_MODEL=gemini-3.5-flash
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_API_KEY=your-openai-key
+EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_DIMENSIONS=3072
+```
+
+#### Change the embedding dimensions
+
+The pgvector columns have a fixed length. If `EMBEDDING_DIMENSIONS` differs from the stored columns, the backend refuses to start and asks for an explicit backed-up migration. It never erases vectors on its own. Above 4000 dimensions, the optional HNSW candidate indexes are skipped because pgvector cannot build them; retrieval stays exact. To switch to a model with a different vector length:
+
+1. Back up the PostgreSQL database.
+2. Set `EMBEDDING_MODEL` and `EMBEDDING_DIMENSIONS` to the new model and its vector length.
+3. Clear the stored vectors and resize both columns. This example uses 1536 dimensions:
+
+   ```sql
+   TRUNCATE document_embeddings, entity_embeddings;
+   DROP INDEX IF EXISTS idx_embeddings_halfvec_hnsw, idx_entity_halfvec_hnsw;
+   ALTER TABLE document_embeddings ALTER COLUMN embedding TYPE vector(1536);
+   ALTER TABLE entity_embeddings ALTER COLUMN embedding TYPE vector(1536);
+   ```
+
+4. Start the backend and run a full reindex, as described under [Workflow](#workflow).
+
+Vectors from different models are not comparable, even at the same length. After you change `EMBEDDING_MODEL`, run the same steps, and skip the `ALTER TABLE` statements if the length stays the same.
 
 ### Extraction
 
@@ -172,12 +239,12 @@ After changing models, test extraction on one small and one large document befor
 |----------|--------|-------------|
 | `/status` | GET | Node, relationship and embedding counts |
 | `/readyz` | GET | Lightweight readiness check for Kubernetes probes |
-| `/health` | GET | Component health (Neo4j, pgvector, LiteLLM, cache stats) |
+| `/health` | GET | Component health (Neo4j, pgvector, chat and embedding endpoints, cache stats) |
 | `/freshness` | GET | Compares exact document IDs across Paperless, the graph, embeddings and hashes. Add `?force=true` to skip the short status cache. |
 | `/freshness/repair` | POST | Starts a background repair for the drifted IDs reported by `/freshness?force=true` |
 | `/ops/guardrails` | GET | Machine-readable sync age, exact ID drift, model health and recent error alerts |
 | `/config` | GET | Frontend configuration (the Paperless URL) |
-| `/models` | GET | Chat model routes available in LiteLLM |
+| `/models` | GET | Chat models available from the configured endpoint |
 | `/sync` | POST | Incremental sync of new and changed documents |
 | `/reindex` | POST | Full reindex. Each document is prepared and replaced individually, so existing data stays usable until its replacement is ready. |
 | `/reindex/{doc_id}` | POST | Starts a background reindex of one document |

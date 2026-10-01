@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 import time
 import os
@@ -807,19 +808,30 @@ async def health():
     except Exception as e:
         components["pgvector"] = {"status": "unhealthy", "error": str(e)}
 
-    # LiteLLM (LLM + embeddings gateway)
+    # Chat and embedding endpoints (any OpenAI-compatible provider)
+    from openai import AsyncOpenAI
+    from app.config import settings
     try:
-        from openai import AsyncOpenAI
-        from app.config import settings
-        async with AsyncOpenAI(base_url=settings.litellm_url, api_key=settings.litellm_api_key) as client:
+        llm = settings.llm_endpoint
+        async with AsyncOpenAI(base_url=llm.base_url, api_key=llm.sdk_api_key) as client:
             response = await client.chat.completions.create(
-                model=settings.gemini_model,
+                model=settings.llm_model,
                 messages=[{"role": "user", "content": "Say 'ok'"}],
-                max_tokens=5,
+                max_completion_tokens=5,
             )
-        components["litellm"] = {"status": "healthy"} if response.choices else {"status": "degraded"}
+        components["llm"] = {"status": "healthy" if response.choices else "degraded", "model": settings.llm_model}
     except Exception as e:
-        components["litellm"] = {"status": "unhealthy", "error": str(e)}
+        components["llm"] = {"status": "unhealthy", "model": settings.llm_model, "error": str(e)}
+
+    try:
+        response = await embeddings_store.openai.embeddings.create(model=settings.embedding_model, input="ok")
+        dimensions = len(response.data[0].embedding)
+        components["embeddings"] = {"status": "healthy", "model": settings.embedding_model, "dimensions": dimensions}
+        if dimensions != settings.embedding_dimensions:
+            components["embeddings"].update(status="unhealthy", error=(
+                f"model returned {dimensions} dimensions; EMBEDDING_DIMENSIONS is {settings.embedding_dimensions}"))
+    except Exception as e:
+        components["embeddings"] = {"status": "unhealthy", "model": settings.embedding_model, "error": str(e)}
 
     # Cache
     components["cache"] = await asyncio.to_thread(get_all_cache_stats)
@@ -908,13 +920,14 @@ async def ops_guardrails(
         alerts.append({"type": "paperless_unreachable", "severity": "critical", "message": str(e)})
 
     if check_model and health_status:
-        litellm_status = health_status.get("components", {}).get("litellm", {}).get("status")
-        if litellm_status != "healthy":
-            alerts.append({
-                "type": "model_route_health",
-                "severity": "critical",
-                "message": f"LiteLLM health is {litellm_status or 'unknown'}",
-            })
+        for component, label in (("llm", "LLM"), ("embeddings", "Embedding")):
+            status = health_status.get("components", {}).get(component, {}).get("status")
+            if status != "healthy":
+                alerts.append({
+                    "type": "model_route_health",
+                    "severity": "critical",
+                    "message": f"{label} endpoint health is {status or 'unknown'}",
+                })
 
     if check_logs:
         error_logs = [
@@ -1201,51 +1214,46 @@ async def cancel_task(task_id: str):
 
 @app.get("/models")
 async def list_models():
-    """List available chat models from LiteLLM."""
+    """List chat models from the configured OpenAI-compatible endpoint."""
     from app.config import settings
     import httpx
 
-    base_url = settings.litellm_url.rstrip("/")
-    headers = {"Authorization": f"Bearer {settings.litellm_api_key}"}
+    endpoint = settings.llm_endpoint
+    headers = endpoint.headers
+    sources = [("/models", f"{endpoint.base_url}/models", _models_from_openai_models)]
+    if endpoint.litellm:
+        # Management route that only a LiteLLM proxy serves; useful when a key cannot list /models.
+        sources.append(("/model/info", f"{endpoint.litellm_root}/model/info", _models_from_litellm_info))
     errors: list[str] = []
+    async with httpx.AsyncClient() as client:
+        for label, url, parse in sources:
+            try:
+                resp = await client.get(url, headers=headers, timeout=10)
+                resp.raise_for_status()
+                models = parse(resp.json())
+                if not models:
+                    raise ValueError("returned no chat models")
+                return {"models": models, "default": settings.llm_model}
+            except httpx.HTTPStatusError as e:
+                errors.append(f"{label}: HTTP {e.response.status_code}")
+            except Exception as e:
+                errors.append(f"{label}: {_without_url_credentials(str(e))}")
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{base_url}/v1/models",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = _models_from_openai_models(resp.json())
-            if not models:
-                raise ValueError("LiteLLM /v1/models returned no chat models")
-            return {"models": models, "default": settings.gemini_model}
-    except Exception as e:
-        errors.append(f"/v1/models: {e}")
+    details = "; ".join(errors)
+    logger.error(f"Failed to list models from {_without_url_credentials(endpoint.base_url)}; "
+                 f"using configured default. Details: {details}")
+    return {"models": [_model_option(settings.llm_model)], "default": settings.llm_model,
+            "error": f"Could not list models from the LLM endpoint, so only the configured default is offered. {details}"}
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{base_url}/model/info",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = _models_from_litellm_info(resp.json())
-            if not models:
-                raise ValueError("LiteLLM /model/info returned no chat models")
-            return {"models": models, "default": settings.gemini_model}
-    except httpx.HTTPStatusError as e:
-        errors.append(f"/model/info: {e}")
-        if e.response.status_code not in {401, 403}:
-            logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
-    except Exception as e:
-        errors.append(f"/model/info: {e}")
-        logger.warning(f"Failed to list models from LiteLLM /model/info: {e}")
 
-    logger.error(f"Failed to list models from LiteLLM; using configured default. Details: {'; '.join(errors)}")
-    return {"models": [_model_option(settings.gemini_model)], "default": settings.gemini_model}
+# The error reaches browser users, so userinfo in a configured URL must not leak through it.
+# Greedy to the last "@" of the authority: urlsplit and HTTPX accept "user:pa@ss@host".
+_URL_CREDENTIALS = re.compile(r"(?<=//)[^/?#\s]*@")
+
+
+def _without_url_credentials(text: str) -> str:
+    return _URL_CREDENTIALS.sub("", text)
+
 
 
 def _models_from_litellm_info(data: dict) -> list[dict]:
@@ -1277,7 +1285,7 @@ def _is_embedding_model(model_id: str, item: dict) -> bool:
 
 
 def _model_option(model_id: str) -> dict:
-    # Display the LiteLLM route ID exactly as returned so provider prefixes,
+    # Display the endpoint's model ID exactly as returned so provider prefixes,
     # decimals, and version strings are not mangled in the chat selector.
     return {"id": model_id, "name": model_id}
 

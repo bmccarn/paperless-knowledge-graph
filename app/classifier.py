@@ -46,10 +46,10 @@ Document content (first 3000 chars):
 class DocumentClassifier:
     def __init__(self):
         self.client = AsyncOpenAI(
-            base_url=settings.litellm_url,
-            api_key=settings.litellm_api_key,
+            base_url=settings.llm_endpoint.base_url,
+            api_key=settings.llm_endpoint.sdk_api_key,
         )
-        self.model = settings.gemini_model
+        self.model = settings.llm_model
 
     async def close(self):
         await self.client.close()

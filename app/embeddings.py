@@ -11,7 +11,10 @@ from app.retry import retry_db, retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIMENSIONS = 3072  # text-embedding-3-large
+# Fixed at import: the pgvector column type must match every stored vector.
+EMBEDDING_DIMENSIONS = settings.embedding_dimensions
+# pgvector cannot build an HNSW index over halfvec values longer than this.
+HNSW_HALFVEC_MAX_DIMENSIONS = 4000
 
 INIT_SQL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -261,8 +264,8 @@ class EmbeddingsStore:
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
         self.openai = AsyncOpenAI(
-            base_url=settings.litellm_url,
-            api_key=settings.litellm_api_key,
+            base_url=settings.embedding_endpoint.base_url,
+            api_key=settings.embedding_endpoint.sdk_api_key,
         )
         self.model = settings.embedding_model
 
@@ -295,11 +298,15 @@ class EmbeddingsStore:
                                        "prepare an explicit backed-up migration before starting this version")
 
     async def create_vector_indexes(self):
-        """3072-dimension halfvec candidate indexes; normal retrieval remains exact.
+        """Configured-dimension halfvec candidate indexes; normal retrieval remains exact.
 
         Approximate document search is an explicit method option and reranks
         candidates using the original full-precision vectors. See vector spec.
         """
+        if EMBEDDING_DIMENSIONS > HNSW_HALFVEC_MAX_DIMENSIONS:
+            logger.info("Skipping halfvec HNSW candidate indexes: %d dimensions exceed pgvector's %d limit",
+                        EMBEDDING_DIMENSIONS, HNSW_HALFVEC_MAX_DIMENSIONS)
+            return {"dimensions": EMBEDDING_DIMENSIONS, "default_search": "exact", "optional_candidate_index": None}
         async with self.pool.acquire() as conn:
             for table, index in (("document_embeddings", "idx_embeddings_halfvec_hnsw"),
                                  ("entity_embeddings", "idx_entity_halfvec_hnsw")):
@@ -318,14 +325,18 @@ class EmbeddingsStore:
         await self.openai.close()
 
     async def generate_embedding(self, text: str, *, strict: bool = False) -> list[float]:
-        """Generate embedding via LiteLLM proxy."""
+        """Generate an embedding through the configured OpenAI-compatible endpoint."""
         try:
             async def _call():
                 resp = await self.openai.embeddings.create(
                     model=self.model,
                     input=text if strict else text[:24000],
                 )
-                return resp.data[0].embedding
+                vector = resp.data[0].embedding
+                if len(vector) != EMBEDDING_DIMENSIONS:
+                    raise ValueError(f"Embedding model {self.model} returned {len(vector)} dimensions; "
+                                     f"EMBEDDING_DIMENSIONS is {EMBEDDING_DIMENSIONS}")
+                return vector
             return await _call() if strict else await retry_with_backoff(_call, operation='generate_embedding')
         except Exception as e:
             if strict:

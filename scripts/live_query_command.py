@@ -25,7 +25,7 @@ from scripts.live_query_manifest import prepare_manifest
 def runtime_configuration():
     """Explicit non-secret settings only. Never serialize environment or credentials."""
     from app.config import settings
-    names = ('gemini_model', 'fallback_model', 'strands_model', 'embedding_model',
+    names = ('llm_model', 'fallback_model', 'strands_model', 'embedding_model', 'embedding_dimensions',
              'strands_enabled', 'strands_call_timeout_seconds', 'strands_max_concurrent_calls',
              'stream_verification_timeout_seconds', 'answer_audit_timeout_seconds',
              'source_date_order', 'paperless_skip_tag_names', 'postgres_host',
@@ -34,7 +34,9 @@ def runtime_configuration():
     from urllib.parse import urlsplit
     for name, value in (('paperless_url', settings.effective_paperless_external_url),
                         ('paperless_source_url', settings.paperless_url),
-                        ('litellm_url', settings.litellm_url), ('neo4j_uri', settings.neo4j_uri),
+                        ('llm_base_url', settings.llm_endpoint.base_url),
+                        ('embedding_base_url', settings.embedding_endpoint.base_url),
+                        ('neo4j_uri', settings.neo4j_uri),
                         ('redis_url', settings.redis_url)):
         parts = urlsplit(value)
         if parts.username or parts.password or parts.query or parts.fragment:
@@ -57,7 +59,7 @@ def preparation_options(payload):
         raise ValueError('Actual runtime configuration differs from preparation')
     # Expose only identity fields needed by artifact conservation. Preserve the
     # full checked settings under runtime for equality at every invocation.
-    for name in ('paperless_url', 'strands_model', 'gemini_model', 'source_date_order'):
+    for name in ('paperless_url', 'strands_model', 'llm_model', 'source_date_order'):
         if configuration.get(name) != configuration['runtime'][name]:
             raise ValueError('Request configuration differs from actual runtime')
     return options

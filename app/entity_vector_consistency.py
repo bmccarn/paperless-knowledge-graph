@@ -1,4 +1,5 @@
 """Read-only classification of identity vectors against authoritative graph state."""
+from app.config import settings
 from app.entity_policy import ENTITY_TYPES, name_key
 
 VERIFIER_VERSION = "typed-vector-source-name-v1"
@@ -30,7 +31,7 @@ def classify_entity_vector(vector: dict, graph: dict | None, *, verified_aliases
     # vectors translate Document to the graph's DocumentRef entity label.
     if "Document" in labels or vector_type not in ENTITY_TYPES or graph_types != {vector_type}:
         problems.append("type")
-    if type(vector.get("dimension")) is not int or vector["dimension"] != 3072:
+    if type(vector.get("dimension")) is not int or vector["dimension"] != settings.embedding_dimensions:
         problems.append("dimension")
     stored, canonical = vector.get("entity_name"), graph.get("name")
     if not isinstance(stored, str) or not stored.strip() or not isinstance(canonical, str) or not canonical.strip():

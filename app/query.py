@@ -76,10 +76,10 @@ class QueryEngine:
         self.question_pipeline = (settings.question_pipeline_enabled
                                   if question_pipeline is None else question_pipeline)
         self.client = AsyncOpenAI(
-            base_url=settings.litellm_url,
-            api_key=settings.litellm_api_key,
+            base_url=settings.llm_endpoint.base_url,
+            api_key=settings.llm_endpoint.sdk_api_key,
         )
-        self.model = settings.gemini_model
+        self.model = settings.llm_model
 
     async def close(self):
         await self.client.close()
@@ -571,7 +571,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         identity = {"policy": f'{QUERY_CACHE_VERSION}:{PIPELINE_VERSION}' if self.question_pipeline else QUERY_CACHE_VERSION,
                     "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
-                    "strands_model": settings.strands_model or settings.gemini_model,
+                    "strands_model": settings.strands_model or settings.llm_model,
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at,
                     "source_date_order": settings.source_date_order}
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

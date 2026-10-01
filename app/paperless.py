@@ -172,7 +172,7 @@ class PaperlessClient:
         fields["reconciliation_version"] = RECONCILIATION_VERSION
         # A successful old-model extraction must not satisfy a new-model sync.
         # Keep the OCR hash independent for feedback/source revision identity.
-        fields["extraction_model"] = settings.gemini_model
+        fields["extraction_model"] = settings.llm_model
         return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

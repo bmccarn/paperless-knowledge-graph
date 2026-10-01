@@ -82,8 +82,8 @@ def parse_dataset(payload: bytes):
 def runtime_snapshot():
     from importlib.metadata import version
     from app.config import settings
-    return dict(model=settings.strands_model or settings.gemini_model,
-                destination=settings.litellm_url,
+    return dict(model=settings.strands_model or settings.llm_model,
+                destination=settings.llm_endpoint.base_url,
                 call_timeout_seconds=settings.strands_call_timeout_seconds,
                 audit_timeout_seconds=settings.answer_audit_timeout_seconds,
                 concurrency=settings.strands_max_concurrent_calls,
@@ -278,7 +278,7 @@ async def execute(dataset_path, manifest, output):
                   audit_timeout_seconds=settings.answer_audit_timeout_seconds,
                   audit_concurrency=settings.strands_max_concurrent_calls,
                   request_identifiers='Not exposed by native adapter; unavailable',
-                  provider_destination=settings.litellm_url, output_token_cap=None,
+                  provider_destination=settings.llm_endpoint.base_url, output_token_cap=None,
                   sdk_retry_policy=manifest['sdk_retry_policy']))
     attempts, results = [], []
     native_text, native_audit, native_model = auditor._text_agent, auditor.audit_answer_units, auditor._model

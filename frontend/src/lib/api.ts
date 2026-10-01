@@ -239,7 +239,7 @@ export interface ModelInfo {
   name: string;
 }
 
-export async function getModels(): Promise<{ models: ModelInfo[]; default: string }> {
+export async function getModels(): Promise<{ models: ModelInfo[]; default: string; error?: string }> {
   return apiFetch("/models");
 }
 

@@ -354,6 +354,31 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
                 start_worker.assert_called_once()
         self.assertEqual(self.embeddings.last_sync, original_checkpoint)
 
+    async def test_drift_repair_samples_each_category_separately(self):
+        import httpx
+        import app.main as main
+        from unittest.mock import AsyncMock
+        limit = main.FRESHNESS_SAMPLE_LIMIT
+        ids = range(1, 2 * limit + 1)
+        self.paperless = PaperlessFixture([document(doc_id) for doc_id in ids])
+        for doc in self.paperless.documents.values():
+            self.embeddings.hashes[doc['id']] = 'hash'
+            self.embeddings.fingerprints[doc['id']] = PaperlessClient.ingestion_fingerprint(doc)
+        # Disjoint drift: the first half lacks embeddings, the second half lacks graph nodes.
+        self.embeddings.chunks = {(doc_id, 0): 'chunk' for doc_id in ids if doc_id > limit}
+        with patch.object(main, "paperless_client", self.paperless), \
+             patch.object(main, "embeddings_store", self.embeddings), \
+             patch.object(main.graph_store, "get_all_document_ids", AsyncMock(return_value=set(range(1, limit + 1)))), \
+             patch.object(main.graph_store, "get_counts", AsyncMock(return_value={"documents": limit})), \
+             patch.object(main, "_freshness_cache", None), \
+             patch.object(main, "_tasks", {}), \
+             patch.object(main, "_cancel_events", {}), \
+             patch.object(main, "_start_background_worker", side_effect=lambda worker: worker.close()):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                repair = await client.post("/freshness/repair")
+                self.assertEqual(repair.json()["status"], "started")
+                self.assertEqual(main._tasks[repair.json()["task_id"]]["target_doc_ids"], list(ids))
+
     async def test_scan_watermark_retains_changes_made_during_processing(self):
         self.extractor.started, self.extractor.release = asyncio.Event(), asyncio.Event()
         running = asyncio.create_task(pipeline.sync_documents())

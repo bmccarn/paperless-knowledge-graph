@@ -188,6 +188,14 @@ def _sample_ids(ids: set[int]) -> list[int]:
     return sorted(ids)[:FRESHNESS_SAMPLE_LIMIT]
 
 
+def _freshness_repair_targets(drift: dict) -> tuple[list[int], list[int]]:
+    """Repair the sampled IDs of every drift category: each category contributes up to sample_limit."""
+    reindex = {ref["id"] for key in ("missing_from_graph", "missing_embeddings", "missing_hashes", "changed_since_index")
+               for ref in drift[key]}
+    delete = {doc_id for key in ("extra_in_graph", "extra_embeddings", "extra_hashes") for doc_id in drift[key]} - reindex
+    return sorted(reindex), sorted(delete)
+
+
 async def _freshness_snapshot(force: bool = False) -> dict:
     """Compare Paperless source state with the indexed knowledge graph."""
     global _freshness_cache, _freshness_cache_at
@@ -278,8 +286,6 @@ async def _freshness_snapshot(force: bool = False) -> dict:
             "changed_since_index": _sample_document_refs(changed_since_index, docs_by_id),
             "held_by_skip_tag": _sample_document_refs(held_ids, all_docs_by_id),
         },
-        # ponytail: repair works through at most sample_limit IDs per kind per run; rerun for larger drift.
-        "repair_targets": {"reindex": _sample_ids(reindex_ids), "delete": _sample_ids(delete_ids)},
         "last_sync": last_sync.isoformat() if last_sync else None,
         "latest_paperless_modified": latest_modified,
         "latest_paperless_id": latest.get("id") if latest else None,
@@ -700,8 +706,7 @@ async def reindex_single(doc_id: int):
 
 @app.post("/freshness/repair", response_model=TaskResponse)
 async def repair_freshness_drift():
-    targets = (await _freshness_snapshot(force=True))["repair_targets"]
-    reindex_ids, delete_ids = targets["reindex"], targets["delete"]
+    reindex_ids, delete_ids = _freshness_repair_targets((await _freshness_snapshot(force=True))["drift"])
     task_id, message = await _run_reindex_documents_task(
         reindex_ids,
         delete_ids=delete_ids,

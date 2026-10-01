@@ -69,7 +69,9 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function formatRefs(refs: (FreshnessDocumentRef | number)[] = [], limit = 5): string {
+function formatRefs(refs: (FreshnessDocumentRef | number)[] = []): string {
+  // Bare IDs are short, so show more of them than titled document refs.
+  const limit = typeof refs[0] === "number" ? 8 : 5;
   const shown = refs.slice(0, limit).map((ref) =>
     typeof ref === "number" ? `#${ref}` : `#${ref.id}${ref.title ? ` ${ref.title}` : ""}`);
   const more = refs.length > limit ? ` +${refs.length - limit} more` : "";
@@ -187,7 +189,7 @@ export default function DashboardPage() {
     try {
       const res = await start();
       if (res.status === "noop" || !res.task_id) {
-        setToast({ message: "Nothing to do", type: "success" });
+        setToast({ message: "No drift to repair", type: "success" });
         fetchStatus();
         return;
       }

@@ -27,6 +27,13 @@ class GraphStore:
             from app.embeddings import embeddings_store
             await (self.review_store or embeddings_store).preserve_alias_revocations(rows)
 
+    async def _delete_entity_embeddings(self, entity_uuids):
+        # Called inside the graph transaction: PG commits first, so a failed
+        # delete rolls the graph back and a failed graph commit is retried.
+        if entity_uuids:
+            from app.embeddings import embeddings_store
+            await (self.review_store or embeddings_store).delete_entity_embeddings(entity_uuids)
+
     async def protect_review_anchor(self, node_uuid: str):
         """Partial legacy review anchors survive document orphan cleanup."""
         async with self.driver.session() as session:
@@ -420,9 +427,11 @@ class GraphStore:
             result = await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
                                   RETURN properties(n) AS props, labels(n) AS labels""", affected=list(affected))
             await self._preserve_alias_revocations([{"properties": row["props"], "labels": row["labels"]} async for row in result])
-            await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
+            result = await tx.run("""MATCH (n) WHERE n.uuid IN $affected AND NOT n:Document
                              AND NOT coalesce(n.review_anchor, false)
-                             AND NOT EXISTS { (n)--() } DELETE n""", affected=list(affected))
+                             AND NOT EXISTS { (n)--() }
+                             WITH n, n.uuid AS uuid DELETE n RETURN uuid""", affected=list(affected))
+            await self._delete_entity_embeddings([row["uuid"] async for row in result])
         async with self.driver.session() as session:
             await session.execute_write(write)
 
@@ -597,7 +606,9 @@ class GraphStore:
                    RETURN labels(primary) AS labels, properties(primary) AS properties""",
                 primary=primary["id"], duplicate=duplicate["id"], props=props,
             )
-            return dict(await result.single(strict=True))
+            merged = dict(await result.single(strict=True))
+            await self._delete_entity_embeddings([duplicate_uuid])
+            return merged
 
         async with self.driver.session() as session:
             return await session.execute_write(merge)

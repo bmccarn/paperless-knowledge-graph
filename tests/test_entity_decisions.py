@@ -418,6 +418,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         self.driver = AsyncGraphDatabase.driver(uri, auth=None)
         self.store = GraphStore()
         self.store.driver = self.driver
+        self.store.review_store = SimpleNamespace(delete_entity_embeddings=AsyncMock())
         self.prefix = f"entity-merge-test-{uuid.uuid4()}-"
         self.keep, self.remove, self.org = [self.prefix + suffix for suffix in ("keep", "remove", "org")]
         async with self.driver.session(database="neo4j") as session:

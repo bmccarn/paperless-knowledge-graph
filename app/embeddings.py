@@ -494,6 +494,10 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM document_embeddings WHERE document_id = $1", doc_id)
 
+    async def delete_entity_embeddings(self, entity_uuids: list[str]):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM entity_embeddings WHERE entity_uuid = ANY($1::text[])", entity_uuids)
+
     async def vector_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Exact cosine search over every document chunk."""
         embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)

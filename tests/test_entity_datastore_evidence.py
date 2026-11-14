@@ -53,6 +53,8 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         async with self.graph.driver.session() as session:
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix OR n.paperless_id IN [991711,991712] DETACH DELETE n", prefix=self.prefix)
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("DELETE FROM entity_embeddings WHERE starts_with(entity_uuid, $1)", self.prefix)
         await self.graph.driver.close()
         await self.store.close()
 
@@ -320,3 +322,103 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after_bad["properties"]["source_doc_ids"], [991712])
         edge = next(edge for edge in after_good["relationships"] if edge["rel_type"] == "RELATED_TO")
         self.assertEqual(edge["rel_props"]["source_doc_ids"], [991712])
+
+    async def entity_rows(self, entity_uuid, name):
+        """Rows either entity search returns for this UUID."""
+        with patch.object(self.store, "generate_embedding", AsyncMock(return_value=[.01] + [0.] * 3071)):
+            rows = await self.store.entity_vector_search(name, limit=100000)
+        rows += await self.store.entity_keyword_search(name, limit=100000)
+        return [row for row in rows if row["entity_uuid"] == entity_uuid]
+
+    async def seed_embedding(self, entity_uuid, name):
+        with patch.object(self.store, "generate_embedding", AsyncMock(return_value=[.01] + [0.] * 3071)):
+            await self.store.store_entity_embedding(entity_uuid, name, "Organization", f"{name} | organization")
+
+    async def doc_entities(self, doc_id):
+        async with self.graph.driver.session() as session:
+            result = await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix AND $doc IN n.source_doc_ids "
+                                       "RETURN n.uuid AS uuid, n.name AS name", prefix=self.prefix, doc=doc_id)
+            return {row["uuid"]: row["name"] for row in await result.data()}
+
+    async def test_reindex_and_purge_delete_entity_embeddings_of_removed_entities(self):
+        from app import pipeline
+        from app.extractor import EntityExtractor
+        from tests.test_review_identity_admission import SOURCE, alias_client
+        from tests.test_ingestion import PaperlessFixture, ClassifierFixture, document
+        shared = await self.seed("shared", "Shared Holdings", "Organization", [991711, 991712])
+        await self.seed_embedding(shared, "Shared Holdings")
+        for doc_id in (991711, 991712):
+            await self.graph.create_document_node(doc_id, "Synthetic source", "test", "2026-09-06", "synthetic")
+            await self.graph.create_relationship(str(doc_id), "Document", shared, "Organization", "MENTIONS", {"source_doc": doc_id})
+        doc = document(991711, SOURCE)
+        with patch.object(pipeline, "paperless_client", PaperlessFixture([doc])), \
+                patch.object(pipeline, "classifier", ClassifierFixture()), \
+                patch.object(pipeline, "extractor", EntityExtractor(alias_client())), \
+                patch.object(pipeline, "graph_store", self.graph), \
+                patch.object(pipeline, "embeddings_store", self.store), \
+                patch.object(pipeline, "entity_resolver", self.resolver), \
+                patch.object(pipeline, "_generate_document_summary", AsyncMock(return_value="")), \
+                patch.object(self.store, "generate_embedding", AsyncMock(return_value=[.01] + [0.] * 3071)):
+            self.assertEqual((await pipeline.process_document(doc, force=True))["status"], "processed")
+            first = await self.doc_entities(991711)
+            first.pop(shared, None)
+            self.assertTrue(first)
+            for entity_uuid, name in first.items():
+                self.assertTrue(await self.entity_rows(entity_uuid, name))
+            self.assertEqual((await pipeline.process_document(doc, force=True))["status"], "processed")
+            second = await self.doc_entities(991711)
+            second.pop(shared, None)
+            self.assertTrue(second)
+            self.assertFalse(set(first) & set(second))
+            for entity_uuid, name in first.items():
+                self.assertEqual(await self.entity_rows(entity_uuid, name), [])
+            for entity_uuid, name in second.items():
+                self.assertTrue(await self.entity_rows(entity_uuid, name))
+            await pipeline.purge_document_index(991711)
+        for entity_uuid, name in second.items():
+            self.assertIsNone(await self.graph.get_node(entity_uuid))
+            self.assertEqual(await self.entity_rows(entity_uuid, name), [])
+        self.assertIsNotNone(await self.graph.get_node(shared))
+        self.assertTrue(await self.entity_rows(shared, "Shared Holdings"))
+
+    async def test_merge_deletes_duplicate_entity_embedding_only(self):
+        keep = await self.seed("merge-keep", "Juniper Logistics", "Organization", [991711])
+        remove = await self.seed("merge-remove", "Juniper Logistic", "Organization", [991712])
+        for entity_uuid, name in ((keep, "Juniper Logistics"), (remove, "Juniper Logistic")):
+            await self.seed_embedding(entity_uuid, name)
+        await self.resolver.merge_entities(keep, remove, review_method="entity_review_api")
+        self.assertIsNone(await self.graph.get_node(remove))
+        self.assertEqual(await self.entity_rows(remove, "Juniper Logistic"), [])
+        self.assertTrue(await self.entity_rows(keep, "Juniper Logistics"))
+
+    async def test_failed_entity_embedding_delete_leaves_graph_unchanged(self):
+        keep = await self.seed("fail-keep", "Birch Partners", "Organization", [991712])
+        remove = await self.seed("fail-remove", "Birch Partner", "Organization", [991711])
+        await self.graph.create_document_node(991711, "Synthetic source", "test", "2026-09-06", "synthetic")
+        await self.graph.create_relationship("991711", "Document", remove, "Organization", "MENTIONS", {"source_doc": 991711})
+        await self.seed_embedding(remove, "Birch Partner")
+        before_keep, before_remove = await self.graph.get_node(keep), await self.graph.get_node(remove)
+        with patch.object(self.store, "delete_entity_embeddings", AsyncMock(side_effect=ConnectionError("synthetic outage"))):
+            with self.assertRaises(ConnectionError):
+                await self.graph.merge_entities(keep, remove)
+            with self.assertRaises(ConnectionError):
+                await self.graph.delete_document_graph(991711)
+        self.assertEqual(await self.graph.get_node(keep), before_keep)
+        self.assertEqual(await self.graph.get_node(remove), before_remove)
+        self.assertTrue(await self.entity_rows(remove, "Birch Partner"))
+        await self.graph.delete_document_graph(991711)
+        self.assertIsNone(await self.graph.get_node(remove))
+        self.assertEqual(await self.entity_rows(remove, "Birch Partner"), [])
+
+    async def test_stale_entity_embedding_cleanup_is_dry_run_by_default(self):
+        from scripts.delete_stale_entity_embeddings import stale_entity_embeddings
+        live = await self.seed("cleanup-live", "Aspen Supply", "Organization", [991711])
+        stale = self.prefix + "cleanup-stale"
+        for entity_uuid, name in ((live, "Aspen Supply"), (stale, "Aspen Supplies")):
+            await self.seed_embedding(entity_uuid, name)
+        async with self.store.pool.acquire() as conn:
+            for apply in (False, True):
+                found = await stale_entity_embeddings(conn, self.graph.driver, apply=apply)
+                self.assertEqual([row["entity_uuid"] for row in found if row["entity_uuid"].startswith(self.prefix)], [stale])
+                self.assertEqual(bool(await self.entity_rows(stale, "Aspen Supplies")), not apply)
+        self.assertTrue(await self.entity_rows(live, "Aspen Supply"))

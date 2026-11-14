@@ -1,5 +1,7 @@
-export interface StatusResponse {
-  status: string;
+export type StatusResponse = HealthyStatusResponse | { status: "degraded"; error: string };
+
+export interface HealthyStatusResponse {
+  status: "healthy";
   graph: {
     nodes: number;
     relationships: number;

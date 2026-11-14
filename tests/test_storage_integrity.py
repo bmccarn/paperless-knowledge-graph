@@ -195,6 +195,7 @@ class RelationshipIntegrityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.store = GraphStore()
         self.store.driver = AsyncGraphDatabase.driver(local_url("STORAGE_TEST_NEO4J"), auth=None)
+        self.store.review_store = AsyncMock()
         async with self.store.driver.session() as session:
             await session.run("MATCH (n) WHERE n.uuid STARTS WITH 'relationship-test-' OR n.paperless_id IN [990101,990102] DETACH DELETE n")
             await session.run("CREATE (:Person {uuid:'relationship-test-a',name:'Alice'}), (:Organization {uuid:'relationship-test-b',name:'Example'}), (:Asset {uuid:'relationship-test-unrelated',name:'Unrelated orphan'})")
@@ -234,6 +235,9 @@ class RelationshipIntegrityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(str(second), edge["support_records"][0])
         await self.store.delete_document_graph(990101)
         self.assertIsNone(await self.edge())
+        self.store.review_store.delete_entity_embeddings.assert_awaited_once()
+        self.assertCountEqual(self.store.review_store.delete_entity_embeddings.await_args.args[0],
+                              ["relationship-test-a", "relationship-test-b"])
         async with self.store.driver.session() as session:
             row = await (await session.run("MATCH (n {uuid:'relationship-test-unrelated'}) RETURN count(n) AS count")).single()
             self.assertEqual(row["count"], 1)

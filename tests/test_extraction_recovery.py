@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 
 from tests.runtime import configure_test_environment

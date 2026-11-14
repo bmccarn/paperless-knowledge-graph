@@ -11,7 +11,7 @@ import json
 import logging
 import asyncio
 import time
-import httpx
+from openai import Timeout
 import copy
 from typing import Any
 
@@ -523,7 +523,7 @@ Rules:
                 "api_key": settings.litellm_api_key or "unused",
                 "base_url": settings.litellm_url,
                 "max_retries": 0,
-                "timeout": httpx.Timeout(float(settings.strands_call_timeout_seconds), connect=5.0),
+                "timeout": Timeout(float(settings.strands_call_timeout_seconds), connect=5.0),
             },
             model_id=model_id,
             **({'params': {'response_format': response_format}} if response_format is not None else {}),

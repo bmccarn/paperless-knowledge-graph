@@ -26,6 +26,7 @@ Use disposable local datastores and Paperless from `examples/README.md`. Importi
 
 - `python3 scripts/api_smoke_tests.py --base-url http://localhost:8484` checks status endpoints and posts a quick query by default, so it may incur model usage. `--mutating` also starts a sync.
 - `python3 scripts/kg_exact_drift_audit.py --base-url http://localhost:8484` checks exact ID drift. `--repair` mutates derived state.
+- `python3 scripts/delete_stale_entity_embeddings.py --postgres-dsn <dsn> --neo4j-uri <uri>` lists entity embedding rows whose entity UUID is no longer in Neo4j. Run it once to remove rows that earlier versions left behind. `--apply` deletes the listed rows. Read the passwords from `PGPASSWORD` and `NEO4J_PASSWORD`.
 - `python3 scripts/eval_harness.py --base-url http://localhost:8484` runs query evaluations, requires the expected document corpus, and may incur model usage.
 
 ## Audit evidence

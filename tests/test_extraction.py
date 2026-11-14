@@ -5,7 +5,7 @@ import re
 from types import SimpleNamespace
 import unittest
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 
 from tests.runtime import configure_test_environment

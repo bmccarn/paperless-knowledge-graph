@@ -8,5 +8,5 @@ httpx
 pydantic
 pydantic-settings
 redis>=5.0.1
-strands-agents[openai]>=1.55,<2
-markdown-it-py==4.2.0
+strands-agents[openai]>=1.65,<2
+markdown-it-py==4.3.0

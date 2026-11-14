@@ -18,6 +18,7 @@ from app import entity_resolver as resolver_module
 from app import entity_steward as steward_module
 from app import main as main_module
 from app import cache as cache_module
+from app import graph as graph_module
 from app.graph import GraphStore
 from neo4j import AsyncGraphDatabase
 
@@ -26,6 +27,7 @@ class MemoryDecisions:
     def __init__(self, rows=()):
         self.rows = copy.deepcopy(list(rows))
         self.unavailable = False
+        self.journal = {}
 
     async def get_entity_review_decisions(self):
         if self.unavailable:
@@ -64,12 +66,32 @@ class MemoryDecisions:
     async def generate_embedding(self, text):
         return []
 
+    async def insert_merge_journal(self, row):
+        status = self.journal.get(row["merge_id"], {}).get("status", "pending")
+        self.journal[row["merge_id"]] = {**json.loads(json.dumps(row)), "status": status}
+
+    async def get_merge_journal(self, merge_id):
+        return copy.deepcopy(self.journal.get(merge_id))
+
+    async def set_merge_journal_status(self, merge_id, status, *, reverted_by=None, note=None):
+        if merge_id in self.journal:
+            self.journal[merge_id]["status"] = status
+
+    async def set_entity_review_decision_status(self, left_uuid, right_uuid, decision, status):
+        for row in self.rows:
+            if (row["left_uuid"], row["right_uuid"], row["decision"]) == (*sorted([left_uuid, right_uuid]), decision):
+                row["identity_status"] = status
+
+    async def restore_merge_embedding(self, merge_id):
+        pass
+
 
 class MemoryGraph:
     def __init__(self, nodes=()):
         self.nodes = {n["uuid"]: copy.deepcopy(n) for n in nodes}
         self.sequence = 0
         self.driver = SimpleNamespace(session=lambda: MemorySession(self))
+        self.review_store = None
 
     async def protect_review_anchor(self, node_uuid):
         if node_uuid in self.nodes:
@@ -99,7 +121,11 @@ class MemoryGraph:
         self.nodes[node_uuid] = {**copy.deepcopy(properties), "uuid": node_uuid, "entity_type": label}
         return node_uuid
 
-    async def merge_entities(self, primary_uuid, duplicate_uuid, *, review_id=None, review_method=None):
+    async def merge_entities(self, primary_uuid, duplicate_uuid, *, merge_id, review_id=None, review_method=None):
+        if self.review_store:
+            before = [{"labels": [self.nodes[u]["entity_type"]], "props": copy.deepcopy(self.nodes[u])} for u in (primary_uuid, duplicate_uuid)]
+            await self.review_store.insert_merge_journal({"merge_id": merge_id, "review_id": review_id, "primary_uuid": primary_uuid,
+                "duplicate_uuid": duplicate_uuid, "before_image": {"nodes": before, "edges": []}})
         primary = self.nodes[primary_uuid]
         duplicate = self.nodes.pop(duplicate_uuid)
         primary["aliases"] = list(dict.fromkeys([*primary.get("aliases", []), duplicate["name"], *duplicate.get("aliases", [])]))
@@ -110,6 +136,14 @@ class MemoryGraph:
             for alias in [duplicate["name"], *aliases]:
                 primary.setdefault("alias_records", []).append(human_alias_record(primary["name"], alias, primary["entity_type"], review_id, review_method="entity_review_api"))
         return await self.get_node(primary_uuid)
+
+    async def unmerge_entities(self, journal):
+        """No drift check: the exact-state proof is in GraphEntityMergeTests."""
+        if journal["duplicate_uuid"] in self.nodes:
+            return "already_restored"
+        for node in journal["before_image"]["nodes"]:
+            self.nodes[node["props"]["uuid"]] = copy.deepcopy(node["props"])
+        return "restored"
 
 
 class MemorySession:
@@ -154,6 +188,7 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.graph = MemoryGraph([person("left"), person("right")])
         self.decisions = MemoryDecisions()
+        self.graph.review_store = self.decisions
         self.patch_graph = patch.object(resolver_module, "graph_store", self.graph)
         self.patch_decisions = patch.object(resolver_module, "embeddings_store", self.decisions)
         self.patch_graph.start()
@@ -379,9 +414,11 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_merge_routes_clear_answers_from_before_partial_mutation(self):
         failing = SimpleNamespace(resolve_all_entities=AsyncMock(side_effect=RuntimeError("metadata failed after graph write")),
-                                  merge_entities=AsyncMock(side_effect=RuntimeError("metadata failed after graph write")))
+                                  merge_entities=AsyncMock(side_effect=RuntimeError("metadata failed after graph write")),
+                                  unmerge_entities=AsyncMock(side_effect=RuntimeError("graph restore failed after decision write")))
         for operation in (main_module.resolve_entities,
-                          lambda: main_module.entity_review_merge(main_module.EntityMergeRequest(primary_uuid="left", duplicate_uuid="right"))):
+                          lambda: main_module.entity_review_merge(main_module.EntityMergeRequest(primary_uuid="left", duplicate_uuid="right")),
+                          lambda: main_module.entity_review_unmerge(main_module.EntityUnmergeRequest(merge_id="m"))):
             cache_module.query_cache.set("answer-before-merge", {"answer": "old entity identity"})
             with patch.object(main_module, "entity_resolver", failing), self.assertRaises(main_module.HTTPException):
                 await operation()
@@ -418,7 +455,9 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         self.driver = AsyncGraphDatabase.driver(uri, auth=None)
         self.store = GraphStore()
         self.store.driver = self.driver
-        self.store.review_store = SimpleNamespace(delete_entity_embeddings=AsyncMock())
+        self.journal = MemoryDecisions()
+        self.journal.delete_entity_embeddings = AsyncMock()
+        self.store.review_store = self.journal
         self.prefix = f"entity-merge-test-{uuid.uuid4()}-"
         self.keep, self.remove, self.org = [self.prefix + suffix for suffix in ("keep", "remove", "org")]
         async with self.driver.session(database="neo4j") as session:
@@ -432,8 +471,162 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         async with self.driver.session(database="neo4j") as session:
-            await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix DETACH DELETE n", prefix=self.prefix)
+            await session.run("MATCH (n) WHERE n.uuid STARTS WITH $prefix OR n.paperless_id = 991901 DETACH DELETE n",
+                              prefix=self.prefix)
         await self.driver.close()
+
+    async def snapshot(self):
+        """Every test node and edge, with endpoints keyed by uuid or paperless_id."""
+        async with self.driver.session() as session:
+            nodes = await (await session.run("""MATCH (n) WHERE n.uuid STARTS WITH $prefix OR n.paperless_id = 991901
+                RETURN labels(n) AS labels, properties(n) AS props ORDER BY coalesce(n.uuid, '')""", prefix=self.prefix)).data()
+            edges = await (await session.run("""MATCH (a)-[r]->(b)
+                WHERE a.uuid STARTS WITH $prefix OR b.uuid STARTS WITH $prefix
+                RETURN type(r) AS type, coalesce(a.uuid, toString(a.paperless_id)) AS start,
+                       coalesce(b.uuid, toString(b.paperless_id)) AS end, properties(r) AS props""", prefix=self.prefix)).data()
+        for node in nodes:
+            node["props"].pop("processed_at", None)
+        return nodes, sorted(edges, key=lambda edge: json.dumps(edge, sort_keys=True))
+
+    async def rich_pair(self):
+        """Every merge loss the journal must undo, on one keep/remove pair."""
+        from app.entity_policy import human_alias_record
+        await self.store.create_document_node(991901, "Synthetic", "test", "2026-11-14", "test")
+        keep_record = json.dumps(human_alias_record("John Smith", "Johnny", "Person", "old-review", review_method="entity_review_api"))
+        remove_records = [json.dumps(human_alias_record("John Smyth", "J. Smyth", "Person", "old-review", review_method="entity_review_api")),
+                          json.dumps({"alias": "Jon", "type": "Person", "status": "quarantined"})]
+        async with self.driver.session() as session:
+            await session.run("""
+                MATCH (a {uuid:$keep}), (b {uuid:$remove}), (o {uuid:$org}), (d:Document {paperless_id:991901})
+                SET a.description = 'Engineer', a.alias_records = [$keep_record], a.identity_hints = ['dob:1970'],
+                    a.policy_number = 'POL-1111', b.policy_number = 'POL-2222',
+                    b.description = 'Intern', b.role = 'intern', b.resolution_status = 'isolated',
+                    b.isolated_source_key = 'k22', b.review_anchor = true, b.alias_records = $remove_records,
+                    b.identity_hints = ['dob:1980'], b.source_doc_ids = [11, 22]
+                WITH a, b, o, d
+                MATCH (a)-[r:WORKS_AT]->(o), (b)-[s:WORKS_AT]->(o)
+                SET r.support_records = [$first], s.support_records = [$second], s.source_doc = 11
+                CREATE (a)-[:KNOWS {source_doc:11}]->(b), (d)-[:MENTIONS {source_doc:991901}]->(b),
+                       (o)-[:EMPLOYS {source_doc:22}]->(b)""",
+                keep=self.keep, remove=self.remove, org=self.org, keep_record=keep_record, remove_records=remove_records,
+                first=json.dumps({"source_doc": 11, "confidence": .9, "role": "CEO"}),
+                second=json.dumps({"source_doc": 11, "confidence": .6, "role": "intern"}))
+
+    async def merge(self, keep=None, remove=None):
+        merge_id = str(uuid.uuid4())
+        await self.store.merge_entities(keep or self.keep, remove or self.remove, merge_id=merge_id,
+                                        review_id="review-" + merge_id, review_method="entity_review_api")
+        return self.journal.journal[merge_id]
+
+    async def test_unmerge_restores_the_exact_state_every_merge_loss_destroys(self):
+        await self.rich_pair()
+        before = await self.snapshot()
+        journal = await self.merge()
+        self.assertEqual(set(journal["risk_flags"]), {"shared_source_document", "direct_edge", "conflicting_identifiers",
+                                                       "different_identity_hints", "scalar_clash:description",
+                                                       "scalar_clash:policy_number", "status_carried_over"})
+        merged = await self.store.get_node(self.keep)
+        self.assertIn("KNOWS", [edge["rel_type"] for edge in merged["relationships"]])  # now a self-loop
+        works = next(edge for edge in merged["relationships"] if edge["rel_type"] == "WORKS_AT")
+        self.assertEqual(len(works["rel_props"]["support_records"]), 1)  # same-document support collapsed
+        self.assertEqual(merged["properties"]["role"], "intern")
+        self.assertNotEqual(await self.snapshot(), before)
+        self.assertEqual(await self.store.unmerge_entities(journal), "restored")
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.store.unmerge_entities(journal), "already_restored")
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_unmerge_refuses_drift_without_writing(self):
+        journal = await self.merge()
+        await self.store.create_relationship(self.keep, "Person", self.org, "Organization", "ADVISES", {"source_doc": 33})
+        drifted = await self.snapshot()
+        with self.assertRaises(graph_module.MergeDrift):
+            await self.store.unmerge_entities(journal)
+        self.assertEqual(await self.snapshot(), drifted)
+
+    async def test_chained_merges_undo_last_in_first_out(self):
+        third = self.prefix + "third"
+        async with self.driver.session() as session:
+            await session.run("""MATCH (o {uuid:$org}) CREATE (c:Person {uuid:$third, name:'John Smithe', entity_type:'Person',
+                                 source_doc_ids:[44]})-[:WORKS_AT {source_doc:44}]->(o)""", org=self.org, third=third)
+        before = await self.snapshot()
+        first = await self.merge()
+        second = await self.merge(remove=third)
+        with self.assertRaises(graph_module.MergeDrift):
+            await self.store.unmerge_entities(first)
+        await self.store.unmerge_entities(second)
+        await self.store.unmerge_entities(first)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_retried_merge_and_unmerge_transactions_stay_exact(self):
+        from neo4j import AsyncSession
+        real = AsyncSession.execute_write
+        async def retried(session, work, *args, **kwargs):
+            async def fail_after_work(tx):
+                await work(tx)
+                raise RuntimeError("synthetic commit failure")
+            with self.assertRaises(RuntimeError):
+                await real(session, fail_after_work)
+            return await real(session, work, *args, **kwargs)
+        await self.rich_pair()
+        before = await self.snapshot()
+        with patch.object(AsyncSession, "execute_write", retried):
+            journal = await self.merge()
+            self.assertEqual(len(self.journal.journal), 1)
+            self.assertEqual(await self.store.unmerge_entities(journal), "restored")
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_failed_journal_write_leaves_both_entities(self):
+        before = await self.snapshot()
+        self.journal.insert_merge_journal = AsyncMock(side_effect=ConnectionError("journal unavailable"))
+        with self.assertRaises(ConnectionError):
+            await self.merge()
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_interrupted_unmerge_resumes_to_the_exact_state(self):
+        await self.rich_pair()
+        before = await self.snapshot()
+        resolver = resolver_module.EntityResolver()
+        with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", self.journal):
+            # The status flip after the graph merge fails: the pending row still undoes it.
+            with patch.object(self.journal, "set_merge_journal_status", AsyncMock(side_effect=ConnectionError("flip failed"))):
+                with self.assertRaises(ConnectionError):
+                    await resolver.merge_entities(self.keep, self.remove, review_method="entity_review_api")
+            merge_id, = self.journal.journal
+            self.assertEqual(self.journal.journal[merge_id]["status"], "pending")
+            for failing in ("unmerge_entities", "restore_merge_embedding"):
+                with self.subTest(failing=failing):
+                    target = self.store if failing == "unmerge_entities" else self.journal
+                    with patch.object(target, failing, AsyncMock(side_effect=ConnectionError("synthetic outage"))):
+                        with self.assertRaises(ConnectionError):
+                            await resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+                    self.assertEqual(self.journal.journal[merge_id]["status"], "reverting")
+                    self.assertTrue(any(row["decision"] == "split" for row in self.journal.rows))
+            result = await resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+        self.assertEqual(result["status"], "reverted")
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_drift_fallback_resets_merged_fields_and_revokes_the_reviewed_alias(self):
+        from app.entity_policy import alias_is_quarantined, trusted_aliases
+        await self.rich_pair()
+        resolver = resolver_module.EntityResolver()
+        with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", self.journal):
+            merge_id = (await resolver.merge_entities(self.keep, self.remove, review_method="entity_review_api"))["merge_id"]
+            async with self.driver.session() as session:
+                await session.run("MATCH (n {uuid:$keep}) SET n.description = 'Changed later', n.aliases = n.aliases + 'Later'",
+                                  keep=self.keep)
+            result = await resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+        self.assertEqual(result, {"status": "conflict", "merge_id": merge_id, "reindex_doc_ids": [11, 22]})
+        self.assertEqual(self.journal.journal[merge_id]["status"], "conflict")
+        props = (await self.store.get_node(self.keep))["properties"]
+        self.assertEqual(props["description"], "Changed later")
+        for key in ("role", "resolution_status", "isolated_source_key", "review_anchor"):
+            self.assertNotIn(key, props)
+        self.assertEqual(props["identity_hints"], ["dob:1970"])
+        self.assertIn("Later", props["aliases"])
+        self.assertEqual(trusted_aliases(props, "Person", -1, ""), ["Johnny"])
+        self.assertTrue(alias_is_quarantined(props, "John Smyth", "Person"))
+        self.assertIsNone(await self.store.get_node(self.remove))
 
     async def test_bulk_resolution_leaves_same_source_homonyms_for_human_review(self):
         for kind, name in (("Person", "John Smith"), ("Organization", "Example Company")):
@@ -482,7 +675,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actual_human_merge_blesses_only_reviewed_names_not_all_legacy_aliases(self):
         from app.entity_policy import trusted_aliases
-        await self.store.merge_entities(self.keep, self.remove, review_id="synthetic-review-1", review_method="entity_review_api")
+        await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()), review_id="synthetic-review-1", review_method="entity_review_api")
         props = (await self.store.get_node(self.keep))["properties"]
         self.assertEqual(trusted_aliases(props, "Person", -1, ""), ["John Smyth"])
         self.assertEqual(set(props["aliases"]), {"First", "Second", "John Smyth"})
@@ -491,7 +684,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         before_keep = await self.store.get_node(self.keep)
         before_remove = await self.store.get_node(self.remove)
         with self.assertRaisesRegex(ValueError, "explicit review origin"):
-            await self.store.merge_entities(self.keep, self.remove, review_id="not-human", review_method="auto_dedup")
+            await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()), review_id="not-human", review_method="auto_dedup")
         self.assertEqual(await self.store.get_node(self.keep), before_keep)
         self.assertEqual(await self.store.get_node(self.remove), before_remove)
 
@@ -502,7 +695,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.store.get_node(self.keep), before)
 
     async def test_merge_preserves_aliases_and_each_documents_relationship_support(self):
-        merged = await self.store.merge_entities(self.keep, self.remove)
+        merged = await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()))
         self.assertEqual(set(merged["properties"]["aliases"]), {"First", "Second", "John Smyth"})
         self.assertEqual(merged["properties"]["source_doc_ids"], [11, 22])
         detail = await self.store.get_node(self.keep)
@@ -517,7 +710,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_merge_rejects_partial_uuid_without_mutation(self):
         with self.assertRaises(ValueError):
-            await self.store.merge_entities(self.keep[:-2], self.remove)
+            await self.store.merge_entities(self.keep[:-2], self.remove, merge_id=str(uuid.uuid4()))
         self.assertIsNotNone(await self.store.get_node(self.keep))
         self.assertIsNotNone(await self.store.get_node(self.remove))
 
@@ -529,7 +722,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
                                  SET r.support_records=[$first], s.support_records=[$second], s.source_doc=11
                                  WITH b MATCH (o {uuid:$org}) CREATE (o)-[:EMPLOYS {source_doc:22}]->(b)""",
                               keep=self.keep, remove=self.remove, org=self.org, first=json.dumps(first), second=json.dumps(second))
-        await self.store.merge_entities(self.keep, self.remove)
+        await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()))
         detail = await self.store.get_node(self.keep)
         edge = next(r for r in detail["relationships"] if r["rel_type"] == "WORKS_AT")
         records = [json.loads(value) for value in edge["rel_props"]["support_records"]]
@@ -547,7 +740,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
             {"source_doc": 11, "evidence_json": json.dumps([first])})
         await self.store.create_relationship(self.remove, "Person", self.org, "Organization", "WORKS_AT",
             {"source_doc": 11, "evidence_json": json.dumps([second]), "evidence_spans": [first]})
-        await self.store.merge_entities(self.keep, self.remove)
+        await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()))
         detail = await self.store.get_node(self.keep)
         edge = next(r for r in detail["relationships"] if r["rel_type"] == "WORKS_AT")
         records = [json.loads(value) for value in edge["rel_props"]["support_records"]]
@@ -564,7 +757,7 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         before_keep = await self.store.get_node(self.keep)
         before_remove = await self.store.get_node(self.remove)
         with self.assertRaises(ValueError):
-            await self.store.merge_entities(self.keep, self.remove)
+            await self.store.merge_entities(self.keep, self.remove, merge_id=str(uuid.uuid4()))
         self.assertEqual(await self.store.get_node(self.keep), before_keep)
         self.assertEqual(await self.store.get_node(self.remove), before_remove)
 

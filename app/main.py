@@ -581,6 +581,11 @@ class EntityMergeRequest(BaseModel):
     duplicate_uuid: str
 
 
+class EntityUnmergeRequest(BaseModel):
+    merge_id: str
+    note: str = ""
+
+
 @app.get("/config")
 async def get_config():
     return {"paperless_url": settings.effective_paperless_external_url}
@@ -1296,6 +1301,31 @@ async def entity_review_merge(req: EntityMergeRequest):
             _clear_freshness_cache()
     steward_task_id = await _run_entity_steward_task(reason="post-merge", focus_uuid=req.primary_uuid, limit=25)
     return {"status": "merged", "entity": merged, "steward_task_id": steward_task_id}
+
+
+@app.post("/entity-review/unmerge")
+async def entity_review_unmerge(req: EntityUnmergeRequest):
+    async with _graph_mutation("unmerge-entities"):
+        try:
+            result = await entity_resolver.unmerge_entities(req.merge_id, req.note, review_method="entity_review_api")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Entity unmerge failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            await invalidate_on_sync_async()
+            _clear_freshness_cache()
+    # A drifted merge is rebuilt from the duplicate's documents once admission is free.
+    result["reindex_task_id"], _ = await _run_reindex_documents_task(
+        result["reindex_doc_ids"], task_type="unmerge-reindex",
+        message=f"Reindexing {len(result['reindex_doc_ids'])} documents after unmerge")
+    return result
+
+
+@app.get("/entity-review/merges")
+async def entity_review_merges(since: datetime | None = None, method: str | None = None, status: str | None = None):
+    return {"merges": await embeddings_store.list_merge_journal(since=since, method=method, status=status)}
 
 
 

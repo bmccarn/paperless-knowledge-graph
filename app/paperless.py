@@ -59,6 +59,16 @@ class PaperlessClient:
         """Fetch a single document by ID."""
         return await self._get(f"/api/documents/{doc_id}/")
 
+    async def should_purge_document(self, doc_id: int) -> bool:
+        """Confirm deletion or a skip tag before purging a snapshot omission."""
+        try:
+            doc = await self.get_document(doc_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return True
+            raise
+        return self.has_any_tag(doc, await self.get_skip_tag_ids())
+
     async def get_tags(self, page: int = 1, page_size: int = 100) -> dict:
         """Fetch Paperless tags."""
         return await self._get("/api/tags/", params={"page": page, "page_size": page_size})

@@ -90,6 +90,15 @@ docker compose up -d
 
 The frontend runs at `http://localhost:3001` and the API at `http://localhost:8484`. The graph starts empty. Run a full reindex, as described under [Workflow](#workflow), to import your documents.
 
+### Published images
+
+Each release publishes two images to the GitHub Container Registry, tagged with the release version:
+
+- `ghcr.io/bmccarn/paperless-knowledge-graph:<version>`
+- `ghcr.io/bmccarn/paperless-knowledge-graph-frontend:<version>`
+
+Pin a version tag such as `v0.2.0`. The `latest` tag follows every merge to `main` and can change dependencies without notice. The [releases page](https://github.com/bmccarn/paperless-knowledge-graph/releases) lists what changed in each version.
+
 ### Local testing
 
 For a disposable Paperless-ngx instance, use the sample compose file in [`examples/`](examples/):

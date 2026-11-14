@@ -1,3 +1,4 @@
+import math
 import re
 import asyncio
 import logging
@@ -614,8 +615,14 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     for test in (data.get("tests") or []):
         if not isinstance(test, dict) or not test.get("name"):
             continue
-        # validate_metadata nulls an unquoted confidence; keep the default then.
-        test_confidence = float(test.get("confidence") if test.get("confidence") is not None else 1.0)
+        # A null (unquoted), bool or non-numeric model confidence counts as missing.
+        raw_confidence = test.get("confidence")
+        try:
+            test_confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            test_confidence = 1.0
+        if isinstance(raw_confidence, bool) or not math.isfinite(test_confidence):
+            test_confidence = 1.0
         if test_confidence < CONFIDENCE_THRESHOLD:
             logger.debug(f"Skipping low-confidence test result: {test.get('name')} (conf={test_confidence})")
             continue

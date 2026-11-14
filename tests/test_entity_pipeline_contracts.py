@@ -273,10 +273,9 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
                 await pipeline._process_extraction(104, "104", doc_type, extracted)
                 self.assertIn(("104", "Document", f"accepted-{kind}-Atlas", kind, relation), self.graph.calls)
 
-    async def test_metadata_processors_skip_non_dict_list_items_and_null_confidence(self):
+    async def test_metadata_processors_skip_non_dict_list_items(self):
         cases = [
             ("medical_lab", {"tests": [None, "Glucose", {"name": "A1C", "value": "5.1"}]}, "CONTAINS_RESULT"),
-            ("medical_lab", {"tests": [{"name": "A1C", "value": "5.1", "confidence": None}]}, "CONTAINS_RESULT"),
             ("legal_contract", {"parties": ["Acme Inc", None, {"name": "Atlas", "role": "signatory"}]}, "CONTRACTED_WITH"),
             ("property_home", {"parties": ["Acme Inc", None, {"name": "Atlas"}]}, "MENTIONS"),
             ("military", {"disability_ratings": [None, "Tinnitus", {"condition": "Atlas", "percentage": 10}]}, "CONTAINS_RESULT"),
@@ -287,6 +286,14 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
                 self.graph.calls.clear()
                 await pipeline._process_extraction(106, "106", doc_type, dict(metadata))
                 self.assertIn(relation, [call[4] for call in self.graph.calls])
+
+    async def test_medical_test_invalid_confidence_uses_default(self):
+        for value in (None, "high", float("nan"), False, [0.9], {"value": 0.9}):
+            with self.subTest(confidence=value):
+                with patch.object(self.graph, "create_node", AsyncMock(return_value="result")) as create_node:
+                    await pipeline._process_extraction(108, "108", "medical_lab",
+                        {"tests": [{"name": "A1C", "value": "5.1", "confidence": value}]})
+                self.assertEqual(create_node.await_args.args[1]["confidence"], 1.0)
 
     async def test_process_document_commits_hash_with_non_dict_contract_party(self):
         extracted = {"parties": ["Acme Inc"], "all_entities": [], "confidence": .9,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { StatusResponse } from "@/lib/types";
 
 export const API_URL = "/api";
 
@@ -23,7 +24,7 @@ export async function apiFetch(path: string, options?: RequestInit) {
   return res.json();
 }
 
-export async function getStatus() {
+export async function getStatus(): Promise<StatusResponse> {
   return apiFetch("/status");
 }
 

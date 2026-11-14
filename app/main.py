@@ -1022,6 +1022,10 @@ def _answer_metadata(payload: dict) -> dict:
     )}
 
 
+# Exception text can name internal services; the detail goes to the log only.
+QUERY_FAILED = "The query failed. Please try again."
+
+
 @app.post("/query")
 async def query(req: QueryRequest):
     try:
@@ -1049,8 +1053,9 @@ async def query(req: QueryRequest):
             )
 
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Query failed")
+        raise HTTPException(status_code=500, detail=QUERY_FAILED)
 
 
 @app.post("/query/stream")
@@ -1111,8 +1116,9 @@ async def query_stream(req: QueryRequest):
                         follow_ups=final_follow_ups,
                         metadata=final_metadata,
                     )
-        except Exception as e:
-            await queue.put({"type": "error", "message": str(e)})
+        except Exception:
+            logger.exception("Streaming query failed")
+            await queue.put({"type": "error", "message": QUERY_FAILED})
         finally:
             await queue.put(None)  # sentinel
 

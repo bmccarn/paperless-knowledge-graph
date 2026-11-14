@@ -271,6 +271,37 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cached["cached"])
         self.assertEqual(len(self.engine.calls), 1)
 
+    async def test_failed_or_empty_synthesis_is_never_delivered_or_cached(self):
+        gateway = "http://model-gateway.invalid:4000/v1"
+        for failure in (ConnectionError(f"Connection to {gateway} refused"), None, "  "):
+            for mode in ("quick", "strict"):
+                with self.subTest(failure=failure, mode=mode):
+                    invalidate_on_sync()
+                    llm = AsyncMock(side_effect=[failure, "Monthly premium: $321.00 USD."])
+                    with patch.object(self.engine, "_final_synthesis",
+                                      lambda *a, **kw: QueryEngine._final_synthesis(self.engine, *a, **kw)), \
+                            patch.object(self.engine, "_format_doc_context", return_value=""), \
+                            patch.object(self.engine, "_llm_generate", llm):
+                        with self.assertRaises(Exception) as raised:
+                            await self.engine.query("Recorded premium?", mode=mode)
+                        if isinstance(failure, Exception):
+                            self.assertIs(raised.exception, failure)
+                        recovered = await self.engine.query("Recorded premium?", mode=mode)
+                    self.assertFalse(recovered["cached"])
+                    self.assertIn("$321.00", recovered["answer"])
+                    self.assertNotIn("Error generating answer", recovered["answer"])
+
+    async def test_failed_synthesis_falls_back_to_the_audited_draft(self):
+        with patch.object(self.engine, "_gap_review", AsyncMock(side_effect=lambda q, c, *a, **kw: (
+                    {"draft_answer": "Monthly premium: $321.00 USD."}, c, [], []))), \
+                patch.object(self.engine, "_final_synthesis",
+                             lambda *a, **kw: QueryEngine._final_synthesis(self.engine, *a, **kw)), \
+                patch.object(self.engine, "_format_doc_context", return_value=""), \
+                patch.object(self.engine, "_llm_generate", AsyncMock(side_effect=ConnectionError("down"))):
+            result = await self.engine.query("Recorded premium?", mode="strict")
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertIn("$321.00", result["answer"])
+
     async def test_cached_answers_recheck_snapshot_before_ordinary_and_stream_delivery(self):
         import app.query as query_module
         for streaming in (False, True):

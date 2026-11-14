@@ -16,6 +16,7 @@ configure_test_environment()
 from app import main
 
 
+GATEWAY = "http://model-gateway.invalid:4000/v1"
 METADATA_KEYS = ("source_summary", "query_plan", "trace", "verification", "claim_ledger",
                  "evidence_pack", "timeline_events", "evidence", "current_state", "finalization", "mode")
 
@@ -41,6 +42,8 @@ class TerminalEngine:
         self.release = asyncio.Event()
 
     async def query(self, *_args, **_kwargs):
+        if self.behavior == "error":
+            raise RuntimeError(f"Synthetic generation failure at {GATEWAY}")
         return copy.deepcopy(final_payload())
 
     async def query_stream(self, *_args, **_kwargs):
@@ -49,7 +52,7 @@ class TerminalEngine:
         if self.behavior == "disconnect":
             await self.release.wait()
         if self.behavior == "error":
-            raise RuntimeError("Synthetic generation failure")
+            raise RuntimeError(f"Synthetic generation failure at {GATEWAY}")
         payload = copy.deepcopy(final_payload())
         if self.behavior == "missing_answer":
             payload.pop("answer")
@@ -118,9 +121,21 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_error_does_not_persist_draft_as_assistant(self):
         self.engine.behavior = "error"
-        response = await self.client.post("/query/stream", json={"question": "Synthetic question", "conversation_id": "error"})
+        with self.assertLogs("app.main", "ERROR") as logs:
+            response = await self.client.post("/query/stream", json={"question": "Synthetic question", "conversation_id": "error"})
         self.assertIn('"type": "error"', response.text)
+        self.assertNotIn(GATEWAY, response.text)
+        self.assertIn(GATEWAY, str(logs.records[0].exc_info[1]))
         self.assertEqual([message["role"] for message in self.saved.messages], ["user"])
+
+    async def test_query_error_hides_exception_text_and_saves_nothing(self):
+        self.engine.behavior = "error"
+        with self.assertLogs("app.main", "ERROR") as logs:
+            response = await self.client.post("/query", json={"question": "Synthetic question", "conversation_id": "error"})
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn(GATEWAY, response.text)
+        self.assertIn(GATEWAY, str(logs.records[0].exc_info[1]))
+        self.assertEqual(self.saved.messages, [])
 
     async def test_complete_manifest_diagnostics_roundtrip_ordinary_and_stream(self):
         from app.answer_finalization import AnswerFinalizer

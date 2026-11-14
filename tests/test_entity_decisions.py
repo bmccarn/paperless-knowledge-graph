@@ -425,6 +425,16 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(cache_module.query_cache.get("answer-before-merge"))
 
 
+    async def test_drifted_unmerge_route_reindexes_the_duplicate_documents(self):
+        conflict = {"status": "conflict", "merge_id": "m", "reindex_doc_ids": [11, 22]}
+        resolver = SimpleNamespace(unmerge_entities=AsyncMock(return_value=conflict))
+        reindex = AsyncMock(return_value=("reindex-task", "started"))
+        with patch.object(main_module, "entity_resolver", resolver), patch.object(main_module, "_run_reindex_documents_task", reindex):
+            result = await main_module.entity_review_unmerge(main_module.EntityUnmergeRequest(merge_id="m"))
+        self.assertEqual(result["reindex_task_id"], "reindex-task")
+        self.assertEqual(reindex.await_args.args[0], [11, 22])
+
+
 class StewardRecommendationTests(unittest.TestCase):
     def test_merge_suggestion_requires_both_low_risk_and_confident_assessment(self):
         for deterministic_risk, agent_risk, confidence in [

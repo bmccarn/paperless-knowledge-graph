@@ -43,8 +43,10 @@ async def _entity_image(tx, uuids: list[str]) -> tuple[dict, dict]:
     result = await tx.run("""MATCH (n)-[r]-() WHERE n.uuid IN $uuids
                              WITH DISTINCT r
                              RETURN type(r) AS type, properties(r) AS props,
-                                    elementId(startNode(r)) AS start_id, properties(startNode(r)) AS start,
-                                    elementId(endNode(r)) AS end_id, properties(endNode(r)) AS end""", uuids=uuids)
+                                    elementId(startNode(r)) AS start_id,
+                                    {uuid: startNode(r).uuid, paperless_id: startNode(r).paperless_id} AS start,
+                                    elementId(endNode(r)) AS end_id,
+                                    {uuid: endNode(r).uuid, paperless_id: endNode(r).paperless_id} AS end""", uuids=uuids)
     ids = {_canonical(_endpoint_key(n["props"])): n["id"] for n in nodes}
     edges = []
     for row in await result.data():

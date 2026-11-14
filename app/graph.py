@@ -89,9 +89,10 @@ def _three_way_fields(before: dict, after: dict, current: dict) -> dict:
     result = dict(current)
     for key in (set(before) | set(after)) - {"uuid", "source_doc_ids"}:
         if key in MERGED_LIST_FIELDS:
-            merged = after.get(key) or []
-            result[key] = list(dict.fromkeys([*(before.get(key) or []),
-                                              *(v for v in current.get(key) or [] if v not in merged)]))
+            old, merged, now = before.get(key) or [], after.get(key) or [], current.get(key) or []
+            # Drop what the merge added, put back what it removed, keep later edits.
+            result[key] = list(dict.fromkeys([*(v for v in now if v not in merged or v in old),
+                                              *(v for v in old if v not in merged and v not in now)]))
         elif after.get(key) != before.get(key) and current.get(key) == after.get(key):
             if key in before:
                 result[key] = before[key]

@@ -179,12 +179,14 @@ class EntityResolver:
             except MergeDrift as drift:
                 logger.warning("Merge %s drifted (%s); resetting fields and reindexing the duplicate's documents",
                                merge_id, drift)
-                if await graph_store.reset_unmerged_fields(journal) and journal.get("review_id"):
-                    primary, duplicate = nodes[primary_uuid]["properties"], nodes[duplicate_uuid]["properties"]
+                primary, duplicate = nodes[primary_uuid]["properties"], nodes[duplicate_uuid]["properties"]
+                kind = primary.get("entity_type") or nodes[primary_uuid]["labels"][0]
+                # A same-name revocation would quarantine the survivor's own name; the split veto suffices.
+                if (await graph_store.reset_unmerged_fields(journal) and journal.get("review_id")
+                        and name_key(duplicate["name"], kind) != name_key(primary["name"], kind)):
                     await graph_store.add_entity_alias_record(primary_uuid, {
-                        "alias": duplicate["name"], "canonical_name": primary["name"],
-                        "type": primary.get("entity_type") or nodes[primary_uuid]["labels"][0], "status": "revoked",
-                        "review_id": journal["review_id"], "review_method": review_method})
+                        "alias": duplicate["name"], "canonical_name": primary["name"], "type": kind,
+                        "status": "revoked", "review_id": journal["review_id"], "review_method": review_method})
                 await embeddings_store.set_merge_journal_status(merge_id, "conflict")
                 docs = nodes[duplicate_uuid]["properties"].get("source_doc_ids") or []
                 return {"status": "conflict", "merge_id": merge_id,

@@ -613,8 +613,8 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", self.journal):
             merge_id = (await resolver.merge_entities(self.keep, self.remove, review_method="entity_review_api"))["merge_id"]
             async with self.driver.session() as session:
-                await session.run("MATCH (n {uuid:$keep}) SET n.description = 'Changed later', n.aliases = n.aliases + 'Later'",
-                                  keep=self.keep)
+                await session.run("""MATCH (n {uuid:$keep}) SET n.description = 'Changed later',
+                                     n.aliases = [a IN n.aliases WHERE a <> 'First'] + 'Later'""", keep=self.keep)
             result = await resolver.unmerge_entities(merge_id, review_method="entity_review_api")
         self.assertEqual(result, {"status": "conflict", "merge_id": merge_id, "reindex_doc_ids": [11, 22]})
         self.assertEqual(self.journal.journal[merge_id]["status"], "conflict")
@@ -626,7 +626,24 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Later", props["aliases"])
         self.assertEqual(trusted_aliases(props, "Person", -1, ""), ["Johnny"])
         self.assertTrue(alias_is_quarantined(props, "John Smyth", "Person"))
+        self.assertNotIn("First", props["aliases"])
+        self.assertNotIn("Second", props["aliases"])
         self.assertIsNone(await self.store.get_node(self.remove))
+
+    async def test_same_name_drift_fallback_does_not_quarantine_the_surviving_name(self):
+        from app.entity_policy import alias_is_quarantined
+        async with self.driver.session() as session:
+            await session.run("MATCH (n {uuid:$remove}) SET n.name = 'John Smith'", remove=self.remove)
+        self.store.new_uuid = lambda: self.prefix + str(uuid.uuid4())
+        resolver = resolver_module.EntityResolver()
+        with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", self.journal):
+            merge_id = (await resolver.merge_entities(self.keep, self.remove, review_method="entity_review_api"))["merge_id"]
+            await self.store.create_relationship(self.keep, "Person", self.org, "Organization", "ADVISES", {"source_doc": 33})
+            self.assertEqual((await resolver.unmerge_entities(merge_id, review_method="entity_review_api"))["status"], "conflict")
+            props = (await self.store.get_node(self.keep))["properties"]
+            self.assertFalse(alias_is_quarantined(props, "John Smith", "Person"))
+            await self.store.delete_document_graph(22)  # the conflict reindex purges the duplicate's document first
+            self.assertEqual(await resolver.resolve_person("John Smith", 11), self.keep)
 
     async def test_bulk_resolution_leaves_same_source_homonyms_for_human_review(self):
         for kind, name in (("Person", "John Smith"), ("Organization", "Example Company")):

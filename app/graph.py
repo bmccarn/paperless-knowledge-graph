@@ -28,8 +28,8 @@ class GraphStore:
             await (self.review_store or embeddings_store).preserve_alias_revocations(rows)
 
     async def _delete_entity_embeddings(self, entity_uuids):
-        # Called inside the graph transaction: PG commits first, so a failed
-        # delete rolls the graph back and a failed graph commit is retried.
+        # Called inside the graph transaction, so PG commits first: a failed delete
+        # rolls the graph back; a failed graph commit leaves a live entity rowless.
         if entity_uuids:
             from app.embeddings import embeddings_store
             await (self.review_store or embeddings_store).delete_entity_embeddings(entity_uuids)

@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   getEntityReviewCandidates,
   ignoreEntityCandidate,
   mergeEntityCandidate,
@@ -13,7 +21,7 @@ import {
   waitForTask,
 } from "@/lib/api";
 import { errMsg } from "@/lib/utils";
-import { AlertCircle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, X } from "lucide-react";
 
 interface Candidate {
   score: number;
@@ -58,6 +66,7 @@ export default function EntityReviewPage() {
   const [stewardRunning, setStewardRunning] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<Candidate | null>(null);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -166,6 +175,7 @@ export default function EntityReviewPage() {
           {candidates.map((candidate) => {
             const key = `${candidate.left.uuid}:${candidate.right.uuid}`;
             const busy = busyKey === key;
+            const locked = busyKey !== "";
             return (
               <Card key={key} className="border-border/60">
                 <CardHeader className="pb-2">
@@ -213,15 +223,9 @@ export default function EntityReviewPage() {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
-                      disabled={busy}
-                      onClick={() =>
-                        act(
-                          key,
-                          "merge",
-                          `Merged "${candidate.right.name}" into "${candidate.left.name}".`,
-                          () => mergeEntityCandidate(candidate.left.uuid, candidate.right.uuid),
-                        )
-                      }
+                      variant="outline"
+                      disabled={locked}
+                      onClick={() => setMergeTarget(candidate)}
                       className="gap-2"
                     >
                       {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitMerge className="h-3.5 w-3.5" />}
@@ -230,7 +234,7 @@ export default function EntityReviewPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         act(
                           key,
@@ -247,7 +251,7 @@ export default function EntityReviewPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         act(
                           key,
@@ -268,6 +272,43 @@ export default function EntityReviewPage() {
           })}
         </div>
       )}
+
+      <Dialog open={mergeTarget !== null} onOpenChange={(open) => { if (!open) setMergeTarget(null); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Merge entities
+            </DialogTitle>
+            <DialogDescription>
+              {mergeTarget &&
+                `Merging moves the relationships of "${mergeTarget.right.name}" to "${mergeTarget.left.name}" and deletes "${mergeTarget.right.name}". This cannot be undone.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busyKey !== ""}
+              onClick={() => {
+                if (!mergeTarget) return;
+                const { left, right } = mergeTarget;
+                setMergeTarget(null);
+                void act(
+                  `${left.uuid}:${right.uuid}`,
+                  "merge",
+                  `Merged "${right.name}" into "${left.name}".`,
+                  () => mergeEntityCandidate(left.uuid, right.uuid),
+                );
+              }}
+            >
+              Merge permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -16,7 +16,7 @@ from typing import Literal, Optional
 from app.config import settings
 from app.embeddings import embeddings_store
 from app.graph import graph_store
-from app.pipeline import sync_documents, reindex_all, reindex_document, purge_document_index
+from app.pipeline import sync_documents, reindex_all, reindex_document, purge_document_index, purge_stale_document
 from app.paperless import paperless_client, PaperlessClient
 from app.query import query_engine
 from app.classifier import classifier
@@ -398,6 +398,7 @@ async def _run_reindex_documents_task(
     task_type: str,
     message: str,
     delete_ids: list[int] | None = None,
+    held_ids: set[int] | None = None,
 ) -> tuple[str, str]:
     doc_ids = sorted({int(doc_id) for doc_id in doc_ids})
     doc_id_set = set(doc_ids)
@@ -415,8 +416,7 @@ async def _run_reindex_documents_task(
             elif deleting:
                 progress_cb("current", {"title": f"Removing stale document #{doc_id}"})
                 try:
-                    await purge_document_index(doc_id)
-                    result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale drift artifacts"}
+                    result = await purge_stale_document(doc_id, held=doc_id in (held_ids or set()))
                 except Exception as e:
                     logger.error("Failed to remove stale drift doc %s: %s", doc_id, e, exc_info=True)
                     result = {"doc_id": doc_id, "status": "error", "error": str(e)}
@@ -813,10 +813,12 @@ async def reindex_single(doc_id: int):
 
 @app.post("/freshness/repair", response_model=TaskResponse)
 async def repair_freshness_drift():
-    reindex_ids, delete_ids = _freshness_repair_targets((await _freshness_snapshot(force=True))["drift"])
+    drift = (await _freshness_snapshot(force=True))["drift"]
+    reindex_ids, delete_ids = _freshness_repair_targets(drift)
     task_id, message = await _run_reindex_documents_task(
         reindex_ids,
         delete_ids=delete_ids,
+        held_ids={ref["id"] for ref in drift["held_by_skip_tag"]},
         task_type="repair-drift",
         message=f"Repair drift started: {len(reindex_ids)} reindex, {len(delete_ids)} cleanup",
     )

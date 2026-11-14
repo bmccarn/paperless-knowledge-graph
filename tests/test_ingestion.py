@@ -4,7 +4,9 @@ import copy
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import httpx
 
 from tests.runtime import configure_test_environment
 
@@ -26,6 +28,9 @@ class PaperlessFixture:
                 if modified_after is None or datetime.fromisoformat(doc['modified']) > modified_after]
 
     async def get_document(self, doc_id):
+        if doc_id not in self.documents:
+            response = httpx.Response(404, request=httpx.Request('GET', 'http://paperless.test/api/documents/'))
+            response.raise_for_status()
         return copy.deepcopy(self.documents[doc_id])
 
     async def get_skip_tag_ids(self):
@@ -33,6 +38,7 @@ class PaperlessFixture:
 
     has_any_tag = staticmethod(PaperlessClient.has_any_tag)
     partition_indexable_documents = PaperlessClient.partition_indexable_documents
+    should_purge_document = PaperlessClient.should_purge_document
 
 
 class GraphFixture:
@@ -540,6 +546,93 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['deleted'], 1)
         self.assertEqual(self.embeddings.chunks, {})
         self.assertEqual(self.embeddings.hashes, {})
+
+    async def test_sync_keeps_document_missed_when_pagination_changes(self):
+        for change, missing_id in [('edit', 2), ('delete', 4)]:
+            with self.subTest(change=change):
+                self.paperless.documents = {i: document(i) for i in range(1, 7)}
+                self.existing(missing_id)
+
+                async def page(modified_after=None, page=1, page_size=50):
+                    if modified_after is not None:
+                        return {'results': [], 'next': None}
+                    if page == 1:
+                        ids = [6, 5]
+                        first_page = [copy.deepcopy(self.paperless.documents[i]) for i in ids]
+                        if change == 'edit':
+                            self.paperless.documents[2]['modified'] = '2026-03-01T00:00:00+00:00'
+                        else:
+                            del self.paperless.documents[6]
+                        return {'results': first_page, 'next': True}
+                    elif page == 2:
+                        ids = [5, 4] if change == 'edit' else [3, 2]
+                    else:
+                        ids = [3, 1] if change == 'edit' else [1]
+                    return {'results': [copy.deepcopy(self.paperless.documents[i]) for i in ids],
+                            'next': page < 3}
+
+                fetch = PaperlessClient.get_all_documents.__get__(self.paperless)
+                with patch.object(self.paperless, 'get_all_documents', fetch), \
+                     patch.object(self.paperless, 'get_documents', page, create=True):
+                    result = await pipeline.sync_documents()
+                self.assertEqual(result['deleted'], 0)
+                self.assertIn(missing_id, self.graph.documents)
+                self.assertIn(missing_id, self.embeddings.hashes)
+                self.assertIn((missing_id, 0), self.embeddings.chunks)
+                self.assertTrue(any(r['doc_id'] == missing_id and r['status'] == 'skipped'
+                                    for r in result['results']))
+
+    async def test_sync_and_freshness_repair_confirm_snapshot_absence(self):
+        from app import main
+        request = httpx.Request('GET', 'http://paperless.test/api/documents/1/')
+        cases = [('live', document(), 'skipped'),
+                 ('held', dict(document(), tags=[99]), 'processed'),
+                 ('snapshot-held', None, 'processed'),
+                 ('missing', httpx.HTTPStatusError('missing', request=request,
+                             response=httpx.Response(404)), 'processed'),
+                 ('server', httpx.HTTPStatusError('unavailable', request=request,
+                            response=httpx.Response(503)), 'error'),
+                 ('auth', httpx.HTTPStatusError('unauthorized', request=request,
+                          response=httpx.Response(401)), 'error'),
+                 ('timeout', httpx.ReadTimeout('timeout'), 'error'),
+                 ('other', ValueError('invalid response'), 'error')]
+        for repair in (False, True):
+            for name, outcome, expected in cases:
+                with self.subTest(repair=repair, outcome=name):
+                    self.existing()
+                    self.graph.deleted.clear()
+                    previous = self.embeddings.last_sync
+                    lookup = AsyncMock(side_effect=outcome) if isinstance(outcome, Exception) else AsyncMock(return_value=outcome)
+                    snapshot = [dict(document(), tags=[99])] if name == 'snapshot-held' else []
+                    with patch.object(self.paperless, 'get_all_documents', AsyncMock(return_value=snapshot)), \
+                         patch.object(self.paperless, 'get_document', lookup):
+                        if repair:
+                            main._tasks.clear()
+                            main._cancel_events.clear()
+                            drift = {key: [] for key in ('missing_from_graph', 'missing_embeddings',
+                                     'missing_hashes', 'changed_since_index', 'extra_embeddings',
+                                     'extra_hashes', 'held_by_skip_tag')}
+                            drift['extra_in_graph'] = [1]
+                            drift['held_by_skip_tag'] = [{'id': 1}] if snapshot else []
+                            with patch.object(main, '_freshness_snapshot', AsyncMock(return_value={'drift': drift})), \
+                                 patch.object(main, 'invalidate_on_sync', lambda: None):
+                                response = await main.repair_freshness_drift()
+                                await asyncio.wait_for(asyncio.gather(*tuple(main._background_workers)), timeout=5)
+                                result = main._tasks[response.task_id]['result']
+                        else:
+                            result = await pipeline.sync_documents()
+                    if snapshot:
+                        lookup.assert_not_awaited()
+                    else:
+                        lookup.assert_awaited_once_with(1)
+                    self.assertEqual(result['results'][0]['status'], expected)
+                    self.assertEqual(self.graph.deleted, [1] if expected == 'processed' else [])
+                    for store in (self.graph.documents, self.embeddings.hashes):
+                        self.assertEqual(1 in store, expected != 'processed')
+                    self.assertEqual((1, 0) in self.embeddings.chunks, expected != 'processed')
+                    if expected == 'error':
+                        self.assertEqual(result['errors'], 1)
+                        self.assertEqual(self.embeddings.last_sync, previous)
 
     async def test_full_reindex_does_not_clear_old_data_before_preparation(self):
         self.existing()

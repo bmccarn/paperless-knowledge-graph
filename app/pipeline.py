@@ -52,6 +52,15 @@ async def purge_document_index(doc_id: int) -> None:
         await asyncio.to_thread(invalidate_on_sync)
 
 
+async def purge_stale_document(doc_id: int, *, held: bool = False) -> dict:
+    """Keep snapshot omissions unless Paperless confirms they are ineligible."""
+    if not held and not await paperless_client.should_purge_document(doc_id):
+        logger.warning("Keeping document %s omitted from snapshot: still eligible in Paperless", doc_id)
+        return {"doc_id": doc_id, "status": "skipped", "reason": "still eligible in Paperless"}
+    await purge_document_index(doc_id)
+    return {"doc_id": doc_id, "status": "processed", "reason": "removed stale document"}
+
+
 async def process_document(doc: dict, *, force: bool = False) -> dict:
     """Process a single Paperless document through the full pipeline."""
     doc_id = doc["id"]
@@ -866,6 +875,7 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
     docs = [current[doc_id] for doc_id in sorted(selected_ids)]
     force_ids = selected_ids if force else missing_ids
     deleted_ids = (graph_ids | embedding_ids | hash_ids) - set(current)
+    held_ids = {int(doc["id"]) for doc in held}
 
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs) + len(deleted_ids)})
@@ -878,9 +888,8 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
             if progress_callback:
                 progress_callback("current", {"title": f"Removing stale document #{doc_id}"})
             try:
-                await purge_document_index(doc_id)
-                deleted_count += 1
-                result = {"doc_id": doc_id, "status": "processed", "reason": "removed stale document"}
+                result = await purge_stale_document(doc_id, held=doc_id in held_ids)
+                deleted_count += result["status"] == "processed"
             except Exception as exc:
                 logger.exception("Failed to purge stale document %s", doc_id)
                 result = {"doc_id": doc_id, "status": "error", "error": str(exc)}

@@ -273,6 +273,42 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
                 await pipeline._process_extraction(104, "104", doc_type, extracted)
                 self.assertIn(("104", "Document", f"accepted-{kind}-Atlas", kind, relation), self.graph.calls)
 
+    async def test_metadata_processors_skip_non_dict_list_items(self):
+        cases = [
+            ("medical_lab", {"tests": [None, "Glucose", {"name": "A1C", "value": "5.1"}]}, "CONTAINS_RESULT"),
+            ("legal_contract", {"parties": ["Acme Inc", None, {"name": "Atlas", "role": "signatory"}]}, "CONTRACTED_WITH"),
+            ("property_home", {"parties": ["Acme Inc", None, {"name": "Atlas"}]}, "MENTIONS"),
+            ("military", {"disability_ratings": [None, "Tinnitus", {"condition": "Atlas", "percentage": 10}]}, "CONTAINS_RESULT"),
+            ("military", {"benefits": [None, "CHAMPVA", {"benefit_type": "Atlas"}]}, "CONTAINS_RESULT"),
+        ]
+        for doc_type, metadata, relation in cases:
+            with self.subTest(doc_type=doc_type, fields=list(metadata)):
+                self.graph.calls.clear()
+                await pipeline._process_extraction(106, "106", doc_type, dict(metadata))
+                self.assertIn(relation, [call[4] for call in self.graph.calls])
+
+    async def test_process_document_commits_hash_with_non_dict_contract_party(self):
+        extracted = {"parties": ["Acme Inc"], "all_entities": [], "confidence": .9,
+                     "extraction_coverage": {"status": "complete"}}
+        set_doc_hash = AsyncMock()
+        with patch.object(pipeline.paperless_client, "get_skip_tag_ids", AsyncMock(return_value=set())), \
+             patch.object(pipeline.paperless_client, "has_any_tag", return_value=False), \
+             patch.object(pipeline.embeddings_store, "get_doc_hash", AsyncMock(return_value=None)), \
+             patch.object(pipeline.embeddings_store, "get_ingestion_fingerprints", AsyncMock(return_value={})), \
+             patch.object(pipeline.embeddings_store, "generate_embedding", AsyncMock(return_value=[1.0, 0.0])), \
+             patch.object(pipeline.embeddings_store, "delete_doc_hash", AsyncMock()), \
+             patch.object(pipeline.embeddings_store, "delete_document_embeddings", AsyncMock()), \
+             patch.object(pipeline.embeddings_store, "store_document_embedding", AsyncMock()), \
+             patch.object(pipeline.embeddings_store, "store_entity_embedding", AsyncMock()), \
+             patch.object(pipeline.embeddings_store, "set_doc_hash", set_doc_hash), \
+             patch.object(pipeline.classifier, "classify", AsyncMock(return_value={"doc_type": "legal_contract", "confidence": 1.0})), \
+             patch.object(pipeline.extractor, "extract", AsyncMock(return_value=extracted)), \
+             patch.object(pipeline, "_generate_document_summary", AsyncMock(return_value="")), \
+             patch.object(pipeline, "invalidate_on_sync"):
+            result = await pipeline.process_document({"id": 107, "title": "Synthetic contract", "content": "Acme Inc"})
+        self.assertEqual(result["status"], "processed")
+        set_doc_hash.assert_awaited_once()
+
     async def test_reviewed_implied_roles_are_not_restricted_by_metadata_assumptions(self):
         extracted = {"all_entities": [{"entity_id": "p", "name": "Morgan Lee", "type": "Person"},
                                       {"entity_id": "s", "name": "Atlas", "type": "System"}],

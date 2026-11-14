@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from contextlib import contextmanager
 
-import httpx
+import httpx2 as httpx
 from tests.runtime import configure_test_environment
 configure_test_environment()
 

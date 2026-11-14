@@ -3,7 +3,7 @@ import copy
 import json
 from contextlib import ExitStack
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 import unittest
 from unittest.mock import AsyncMock, patch

@@ -273,9 +273,11 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
                 await pipeline._process_extraction(104, "104", doc_type, extracted)
                 self.assertIn(("104", "Document", f"accepted-{kind}-Atlas", kind, relation), self.graph.calls)
 
-    async def test_metadata_processors_skip_non_dict_list_items(self):
+    async def test_metadata_processors_skip_non_dict_list_items_and_null_confidence(self):
         cases = [
             ("medical_lab", {"tests": [None, "Glucose", {"name": "A1C", "value": "5.1"}]}, "CONTAINS_RESULT"),
+            ("medical_lab", {"tests": [{"name": "A1C", "value": "5.1", "confidence": None}]}, "CONTAINS_RESULT"),
+            ("general", {"people": [{"name": "Morgan Lee", "confidence": None}]}, "MENTIONS"),
             ("legal_contract", {"parties": ["Acme Inc", None, {"name": "Atlas", "role": "signatory"}]}, "CONTRACTED_WITH"),
             ("property_home", {"parties": ["Acme Inc", None, {"name": "Atlas"}]}, "MENTIONS"),
             ("military", {"disability_ratings": [None, "Tinnitus", {"condition": "Atlas", "percentage": 10}]}, "CONTAINS_RESULT"),

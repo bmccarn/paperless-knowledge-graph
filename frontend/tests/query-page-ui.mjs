@@ -60,3 +60,26 @@ for (const running of [false, true]) test(`auto-submit survives reload ${running
   assert.equal(queries, 1, "History or a reopened tab resubmitted the question");
   if (artifacts) await page.screenshot({ path: `${artifacts}/reload-${running ? "running" : "completed"}.png` });
 });
+
+test("conversation scroll position stays unchanged while typing", async t => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => context.close());
+  const identity = await context.request.get(`${base}/api/_fixture`);
+  assert.equal((await identity.json()).fixture, "paperless-accuracy-ui-v1");
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.route("**/api/conversations?*", route => route.fulfill({ json: Array.from({ length: 50 }, (_, index) => ({
+    id: `conversation-${index}`, title: `Conversation ${index}`, message_count: 0,
+  })) }));
+  await page.goto(`${base}/query`);
+  await page.getByRole("button", { name: "Conversation 49", exact: true }).waitFor();
+  const scroll = page.getByRole("button", { name: "Conversation 49", exact: true }).locator("../../..");
+  const before = await scroll.evaluate(element => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  assert.ok(before > 0, "The conversation list must overflow");
+  await page.getByPlaceholder("Ask a question...").pressSequentially("abc");
+  assert.equal(await scroll.evaluate(element => element.scrollTop), before);
+  if (artifacts) await page.screenshot({ path: `${artifacts}/conversation-scroll.png` });
+});

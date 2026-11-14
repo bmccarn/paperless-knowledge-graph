@@ -615,8 +615,8 @@ function QueryContent() {
     }
   };
 
-  // Conversation list component (shared between desktop sidebar and mobile sheet)
-  const ConversationList = () => (
+  // Shared conversation list markup for the desktop sidebar and mobile sheet
+  const renderConversationList = () => (
     <>
       <div className="p-2">
         <Button variant="outline" size="sm" className="w-full gap-2 text-xs min-h-[44px] md:min-h-0" onClick={handleNewConversation}>
@@ -683,7 +683,7 @@ function QueryContent() {
               <History className="h-3.5 w-3.5" /> Conversations
             </span>
           </div>
-          <ConversationList />
+          {renderConversationList()}
         </div>
       )}
 
@@ -696,7 +696,7 @@ function QueryContent() {
             </SheetTitle>
             <SheetDescription className="sr-only">Open, rename, or delete a saved conversation.</SheetDescription>
           </SheetHeader>
-          <ConversationList />
+          {renderConversationList()}
         </SheetContent>
       </Sheet>
 

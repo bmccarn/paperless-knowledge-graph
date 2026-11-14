@@ -291,7 +291,6 @@ export default function EntityReviewPage() {
             </Button>
             <Button
               variant="destructive"
-              disabled={busyKey !== ""}
               onClick={() => {
                 if (!mergeTarget) return;
                 const { left, right } = mergeTarget;

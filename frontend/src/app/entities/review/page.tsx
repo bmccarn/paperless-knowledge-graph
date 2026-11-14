@@ -13,15 +13,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  getEntityMerges,
   getEntityReviewCandidates,
   ignoreEntityCandidate,
   mergeEntityCandidate,
   runEntitySteward,
   splitEntityCandidate,
+  unmergeEntity,
   waitForTask,
+  type EntityMerge,
 } from "@/lib/api";
 import { errMsg } from "@/lib/utils";
-import { AlertCircle, AlertTriangle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, GitMerge, Loader2, RefreshCw, Split, Undo2, X } from "lucide-react";
 
 interface Candidate {
   score: number;
@@ -67,6 +70,18 @@ export default function EntityReviewPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [mergeTarget, setMergeTarget] = useState<Candidate | null>(null);
+  const [merges, setMerges] = useState<EntityMerge[]>([]);
+  const [mergesError, setMergesError] = useState("");
+
+  // Separate from load(): a failed merge list must not hide the candidates.
+  const loadMerges = async () => {
+    try {
+      setMerges((await getEntityMerges()).merges || []);
+      setMergesError("");
+    } catch (err) {
+      setMergesError(errMsg(err, "Could not load recent merges."));
+    }
+  };
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -107,7 +122,7 @@ export default function EntityReviewPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadMerges(); }, []);
 
   const act = async (key: string, action: string, successText: string, fn: () => Promise<unknown>) => {
     setBusyKey(key);
@@ -119,8 +134,31 @@ export default function EntityReviewPage() {
       setCandidates((prev) => prev.filter((candidate) => `${candidate.left.uuid}:${candidate.right.uuid}` !== key));
       setNotice({ kind: "success", text: successText });
       void load(false);
+      void loadMerges();
     } catch (err) {
       setNotice({ kind: "error", text: errMsg(err, "Review action failed.") });
+    } finally {
+      setBusyKey("");
+      setBusyAction("");
+    }
+  };
+
+  const undo = async (merge: EntityMerge) => {
+    setBusyKey(merge.merge_id);
+    setBusyAction("undo");
+    setNotice(null);
+    try {
+      const result = await unmergeEntity(merge.merge_id, "Undone from entity review");
+      setNotice({
+        kind: "success",
+        text: result.status === "conflict"
+          ? `"${merge.primary_name}" changed after the merge, so its merged fields were reset and the documents of "${merge.duplicate_name}" are being reindexed.`
+          : `Undid the merge of "${merge.duplicate_name}" into "${merge.primary_name}".`,
+      });
+      void load(false);
+      void loadMerges();
+    } catch (err) {
+      setNotice({ kind: "error", text: errMsg(err, "Undo failed.") });
     } finally {
       setBusyKey("");
       setBusyAction("");
@@ -273,6 +311,42 @@ export default function EntityReviewPage() {
         </div>
       )}
 
+      <Card className="border-border/60">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Recent merges</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {mergesError ? (
+            <p className="text-sm text-destructive">{mergesError}</p>
+          ) : merges.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No merges recorded.</p>
+          ) : (
+            merges.map((merge) => (
+              <div key={merge.merge_id} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                <span className="font-medium">{`${merge.duplicate_name} into ${merge.primary_name}`}</span>
+                <Badge variant="outline">{merge.status}</Badge>
+                {merge.risk_flags.map((flag) => (
+                  <Badge key={flag} variant="secondary" className="text-[9px]">{flag}</Badge>
+                ))}
+                <span className="text-xs text-muted-foreground">{new Date(merge.created_at).toLocaleString()}</span>
+                {!["reverted", "conflict"].includes(merge.status) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busyKey !== ""}
+                    onClick={() => undo(merge)}
+                    className="ml-auto gap-2"
+                  >
+                    {busyKey === merge.merge_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                    {busyKey === merge.merge_id ? "Undoing..." : "Undo"}
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
       <Dialog open={mergeTarget !== null} onOpenChange={(open) => { if (!open) setMergeTarget(null); }}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
@@ -282,7 +356,7 @@ export default function EntityReviewPage() {
             </DialogTitle>
             <DialogDescription>
               {mergeTarget &&
-                `Merging moves the relationships of "${mergeTarget.right.name}" to "${mergeTarget.left.name}" and deletes "${mergeTarget.right.name}". This cannot be undone.`}
+                `Merging moves the relationships of "${mergeTarget.right.name}" to "${mergeTarget.left.name}" and deletes "${mergeTarget.right.name}". You can undo it from Recent merges.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -303,7 +377,7 @@ export default function EntityReviewPage() {
                 );
               }}
             >
-              Merge permanently
+              Merge
             </Button>
           </DialogFooter>
         </DialogContent>

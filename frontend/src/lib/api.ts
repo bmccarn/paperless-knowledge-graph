@@ -209,6 +209,28 @@ export async function mergeEntityCandidate(primary_uuid: string, duplicate_uuid:
   });
 }
 
+export interface EntityMerge {
+  merge_id: string;
+  primary_uuid: string;
+  duplicate_uuid: string;
+  primary_name: string | null;
+  duplicate_name: string | null;
+  status: string;
+  created_at: string;
+  risk_flags: string[];
+}
+
+export async function getEntityMerges(): Promise<{ merges: EntityMerge[] }> {
+  return apiFetch("/entity-review/merges");
+}
+
+export async function unmergeEntity(merge_id: string, note = "") {
+  return apiFetch("/entity-review/unmerge", {
+    method: "POST",
+    body: JSON.stringify({ merge_id, note }),
+  });
+}
+
 export async function runEntitySteward(limit = 75) {
   return apiFetch(`/entity-review/steward/task?limit=${limit}`, { method: "POST" });
 }

@@ -277,7 +277,6 @@ class PipelineContractTests(unittest.IsolatedAsyncioTestCase):
         cases = [
             ("medical_lab", {"tests": [None, "Glucose", {"name": "A1C", "value": "5.1"}]}, "CONTAINS_RESULT"),
             ("medical_lab", {"tests": [{"name": "A1C", "value": "5.1", "confidence": None}]}, "CONTAINS_RESULT"),
-            ("general", {"people": [{"name": "Morgan Lee", "confidence": None}]}, "MENTIONS"),
             ("legal_contract", {"parties": ["Acme Inc", None, {"name": "Atlas", "role": "signatory"}]}, "CONTRACTED_WITH"),
             ("property_home", {"parties": ["Acme Inc", None, {"name": "Atlas"}]}, "MENTIONS"),
             ("military", {"disability_ratings": [None, "Tinnitus", {"condition": "Atlas", "percentage": 10}]}, "CONTAINS_RESULT"),

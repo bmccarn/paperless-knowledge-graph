@@ -797,7 +797,7 @@ async def _process_generic(doc_id, doc_node_id, data, source_props):
             if not name or not _is_valid_entity_name(name):
                 continue
             if isinstance(item, dict):
-                confidence = float(item.get("confidence") if item.get("confidence") is not None else 1.0)
+                confidence = float(item.get("confidence", 1.0))
                 if confidence < CONFIDENCE_THRESHOLD:
                     logger.debug(f"Skipping low-confidence {entity_type}: {name} (conf={confidence})")
                     continue

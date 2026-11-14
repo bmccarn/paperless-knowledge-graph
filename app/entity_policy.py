@@ -11,11 +11,31 @@ import unicodedata
 
 RESOLUTION_POLICY = "evidence-identity-v2"
 EXPLICIT_REVIEW_METHOD = "entity_review_api"
+IDENTIFIER_PROPERTIES = frozenset({"identity_hints", "policy_number", "reference_number"})
 ENTITY_TYPES = frozenset({
     "Person", "Organization", "Location", "System", "Product", "Document",
     "DocumentRef", "Event", "Condition", "FinancialItem", "InsurancePolicy",
     "Contract", "DateEvent", "Address",
 })
+
+
+def extract_identifiers(properties: dict) -> dict[str, list[str]]:
+    """Read only source identifier properties written by ingestion."""
+    identifiers = {}
+    for key, value in properties.items():
+        if key not in IDENTIFIER_PROPERTIES:
+            continue
+        values = value if isinstance(value, list) else [value]
+        normalized = []
+        for item in values:
+            if not isinstance(item, (str, int)) or isinstance(item, bool):
+                continue
+            text = re.sub(r"[^a-zA-Z0-9@.-]+", "", str(item)).lower()
+            if len(text) >= 4 and text not in normalized:
+                normalized.append(text)
+        if normalized:
+            identifiers[key] = normalized
+    return identifiers
 
 
 def display_name(name: str) -> str:

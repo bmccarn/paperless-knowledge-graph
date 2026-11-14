@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { errMsg } from "@/lib/utils";
 import { getStatus, postSync, postReindex, postRepairDrift, getTask, cancelTask, graphSearch } from "@/lib/api";
-import type { FreshnessDocumentRef, FreshnessStatus, StatusResponse } from "@/lib/types";
+import type { FreshnessDocumentRef, FreshnessStatus, HealthyStatusResponse } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -104,7 +104,7 @@ function taskLabel(taskType: string): string {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [status, setStatus] = useState<HealthyStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskType, setActiveTaskType] = useState<string>("");
@@ -131,7 +131,14 @@ export default function DashboardPage() {
 
   const fetchStatus = useCallback(() => {
     getStatus()
-      .then(setStatus)
+      .then((s) => {
+        if (s.status === "degraded") {
+          setError(s.error || "Backend degraded");
+          return;
+        }
+        setStatus(s);
+        setError(null);
+      })
       .catch((e) => setError(e.message));
   }, []);
 
@@ -244,7 +251,7 @@ export default function DashboardPage() {
       const result = await cancelTask(activeTaskId);
       setTaskProgress((prev) => prev ? { ...prev, status: result.status } : null);
     } catch (e) {
-      setError(errMsg(e, "Failed to cancel task"));
+      setToast({ message: errMsg(e, "Failed to cancel task"), type: "error" });
     }
   };
 
@@ -268,7 +275,7 @@ export default function DashboardPage() {
   if (error && !status)
     return (
       <div className="flex h-full items-center justify-center">
-        <Card className="max-w-md">
+        <Card role="alert" className="max-w-md">
           <CardContent className="pt-6 text-center">
             <XCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
             <p className="font-medium">Connection Error</p>
@@ -393,6 +400,13 @@ export default function DashboardPage() {
           </Button>
         </form>
       </div>
+
+      {error && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
+          <p className="font-medium">{error}</p>
+          <p className="text-muted-foreground mt-1">Showing the last successful status. Counts may be out of date.</p>
+        </div>
+      )}
 
       {freshness?.stale && (
         <Card className="border-amber-500/30 bg-amber-500/10">
@@ -662,13 +676,13 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Status</span>
-                <Badge variant={status.status === "healthy" ? "default" : "destructive"} className="gap-1">
-                  {status.status === "healthy" ? (
+                <Badge variant={error ? "destructive" : "default"} className="gap-1">
+                  {!error ? (
                     <CheckCircle2 className="h-3 w-3" />
                   ) : (
                     <XCircle className="h-3 w-3" />
                   )}
-                  {status.status}
+                  {error ? "Unavailable" : status.status}
                 </Badge>
               </div>
               {overviewRows.map(([label, value, className = "text-sm font-medium"]) => (

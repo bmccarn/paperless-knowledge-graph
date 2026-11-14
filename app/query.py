@@ -1222,9 +1222,14 @@ TEMPORAL AWARENESS — CRITICAL:
 
         try:
             answer = await self._llm_generate(prompt)
+            if not answer or not answer.strip():
+                raise ValueError("Final synthesis returned no content")
         except Exception as e:
             logger.error(f"Final synthesis failed: {e}")
-            answer = draft_answer if draft_answer else f"Error generating answer: {e}"
+            # Without a draft there is no candidate; error text must never become one.
+            if not draft_answer:
+                raise
+            answer = draft_answer
         return {"answer": answer}
 
     # ── Context merging ─────────────────────────────────────────────

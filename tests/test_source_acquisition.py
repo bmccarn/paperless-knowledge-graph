@@ -56,6 +56,29 @@ class AcquisitionTests(unittest.IsolatedAsyncioTestCase):
             {'id': 'planned:0', 'query': 'station pressure', 'status': 'complete',
              'sampling': 'sampled', 'document_ids': []}], execution or Execution(concurrency=3, page_size=71))
 
+    async def test_new_skip_tag_is_rechecked_after_cache_expiration(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock, patch
+        originals = docs(1)
+        originals[1]['tags'] = [42]
+        client = PaperlessClient()
+        client.get_document = AsyncMock(side_effect=lambda i: copy.deepcopy(originals[i]))
+        tags = []
+        client.get_all_tags = AsyncMock(side_effect=lambda: list(tags))
+        collector = SourceAcquisition(Index(originals), client, lambda: asyncio.sleep(0, result='g1'))
+        discovery = [{'id': 'planned:0', 'query': 'station pressure', 'status': 'complete',
+                      'sampling': 'sampled', 'document_ids': []}]
+        clock = Mock(return_value=0)
+        with patch('app.paperless.time', SimpleNamespace(monotonic=clock)):
+            first = await collector.collect(request(), discovery, Execution())
+            self.assertEqual(first.receipt['documents'][0]['state'], 'supplied')
+            tags.append({'id': 42, 'name': 'needs-review'})
+            clock.return_value = 60
+            second = await collector.collect(request(), discovery, Execution())
+        self.assertEqual(second.receipt['documents'][0]['state'], 'ineligible')
+        self.assertEqual(second.evidence_pack['items'], [])
+        self.assertEqual(client.get_all_tags.await_count, 2)
+
     async def test_packaging_expiration_withholds_completed_originals(self):
         from unittest.mock import patch
         from app import source_acquisition as module

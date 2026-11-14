@@ -52,16 +52,16 @@ async def purge_document_index(doc_id: int) -> None:
         await asyncio.to_thread(invalidate_on_sync)
 
 
-async def purge_stale_document(doc_id: int, *, held: bool = False) -> dict:
+async def purge_stale_document(doc_id: int, *, held: bool = False, skip_tag_ids: set[int] | None = None) -> dict:
     """Keep snapshot omissions unless Paperless confirms they are ineligible."""
-    if not held and not await paperless_client.should_purge_document(doc_id):
+    if not held and not await paperless_client.should_purge_document(doc_id, skip_tag_ids=skip_tag_ids):
         logger.warning("Keeping document %s omitted from snapshot: still eligible in Paperless", doc_id)
         return {"doc_id": doc_id, "status": "skipped", "reason": "still eligible in Paperless"}
     await purge_document_index(doc_id)
     return {"doc_id": doc_id, "status": "processed", "reason": "removed stale document"}
 
 
-async def process_document(doc: dict, *, force: bool = False) -> dict:
+async def process_document(doc: dict, *, force: bool = False, skip_tag_ids: set[int] | None = None) -> dict:
     """Process a single Paperless document through the full pipeline."""
     doc_id = doc["id"]
     title = doc.get("title", "")
@@ -69,7 +69,8 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
     content_hash = PaperlessClient.content_hash(content)
     fingerprint = PaperlessClient.ingestion_fingerprint(doc)
 
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    if skip_tag_ids is None:
+        skip_tag_ids = await paperless_client.get_skip_tag_ids()
     if paperless_client.has_any_tag(doc, skip_tag_ids):
         logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
         await purge_document_index(doc_id)
@@ -819,7 +820,7 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def _process_document_batch(docs, force_ids, progress_callback, cancel_event):
+async def _process_document_batch(docs, force_ids, progress_callback, cancel_event, skip_tag_ids):
     semaphore = asyncio.Semaphore(max(1, settings.max_concurrent_docs))
 
     async def process(doc):
@@ -830,7 +831,7 @@ async def _process_document_batch(docs, force_ids, progress_callback, cancel_eve
                 if progress_callback:
                     progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
                 try:
-                    result = await process_document(doc, force=doc["id"] in force_ids)
+                    result = await process_document(doc, force=doc["id"] in force_ids, skip_tag_ids=skip_tag_ids)
                 except Exception as exc:
                     logger.exception("Unexpected error processing document %s", doc["id"])
                     result = {"doc_id": doc["id"], "status": "error", "error": str(exc)}
@@ -854,12 +855,12 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
     cancel_event = cancel_event or asyncio.Event()
     start_time = time.time()
     scan_started_at = datetime.now(timezone.utc)
+    skip_tag_ids = await paperless_client.get_skip_tag_ids(refresh=True)
     last_sync = await embeddings_store.get_last_sync()
     changed = [] if force else await paperless_client.get_all_documents(modified_after=last_sync)
     # This reconciliation was already required for deletion detection. Use the
     # same complete snapshot to discover interrupted replacements across stores.
     all_docs = await paperless_client.get_all_documents()
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
     indexable, held = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
     current = {int(doc["id"]): doc for doc in indexable}
     graph_ids = await graph_store.get_all_document_ids()
@@ -879,7 +880,7 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
 
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs) + len(deleted_ids)})
-    results = await _process_document_batch(docs, force_ids, progress_callback, cancel_event)
+    results = await _process_document_batch(docs, force_ids, progress_callback, cancel_event, skip_tag_ids)
     deleted_count = 0
     for doc_id in sorted(deleted_ids):
         if cancel_event.is_set():
@@ -888,7 +889,7 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
             if progress_callback:
                 progress_callback("current", {"title": f"Removing stale document #{doc_id}"})
             try:
-                result = await purge_stale_document(doc_id, held=doc_id in held_ids)
+                result = await purge_stale_document(doc_id, held=doc_id in held_ids, skip_tag_ids=skip_tag_ids)
                 deleted_count += result["status"] == "processed"
             except Exception as exc:
                 logger.exception("Failed to purge stale document %s", doc_id)

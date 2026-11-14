@@ -234,6 +234,8 @@ After changing models, test extraction on one small and one large document befor
 | `/entity-review/candidates` | GET | Possible duplicate entities with deterministic scores and the latest steward suggestions |
 | `/entity-review/steward/task` | POST | Runs the entity steward as a background task |
 | `/entity-review/merge` | POST | Merges a reviewed duplicate pair, then schedules a focused steward pass |
+| `/entity-review/merges` | GET | Lists journaled merges (`since`, `method`, `status` filters) |
+| `/entity-review/unmerge` | POST | Undoes a journaled merge; if the survivor changed since, resets merged fields and reindexes the duplicate's documents |
 | `/entity-review/split` | POST | Marks a pair as distinct |
 | `/entity-review/ignore` | POST | Hides a candidate pair from review |
 | `/logs` | GET | Buffered log lines as JSON, filterable by level and time |

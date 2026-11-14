@@ -274,7 +274,6 @@ class Handler(BaseHTTPRequestHandler):
             if route == '/entity-review/unmerge':
                 merge = next(row for row in MERGES if row['merge_id'] == body['merge_id'])
                 merge['status'] = 'reverted'
-                REVIEWED.discard(merge['primary_uuid'])
                 return self.reply({'status': 'reverted', 'merge_id': merge['merge_id'], 'reindex_doc_ids': [], 'reindex_task_id': ''})
             if route in ('/sync', '/entity-review/steward/task'):
                 task_id = f'synthetic-task-{len(TASKS) + 1}'

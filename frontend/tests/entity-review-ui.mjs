@@ -69,18 +69,17 @@ try {
   assert.ok(await mergeButtons.first().isEnabled());
   record('entity_merge_confirm_sends_once_and_locks_cards');
 
-  // The merge appears under Recent merges, and Undo brings the pair back.
+  // The merge appears under Recent merges; Undo records a split, so the pair stays out of the candidates.
   const undo = page.getByRole('button', { name: 'Undo', exact: true });
   await undo.waitFor();
   await capture('entity-review-recent-merges');
   await undo.click();
   await page.getByText('Undid the merge of "Cedar Laboratory 1" into "Cedar Lab 1".', { exact: true }).waitFor();
-  await page.getByText('Cedar Lab 1', { exact: true }).waitFor();
   await page.getByText('reverted', { exact: true }).waitFor();
   assert.equal(unmerges.length, 1);
   assert.equal(JSON.parse(unmerges[0].postData()).merge_id, 'synthetic-merge-1');
   assert.equal(await undo.count(), 0);
-  record('entity_unmerge_restores_the_candidate_and_marks_the_merge_reverted');
+  record('entity_unmerge_sends_once_and_marks_the_merge_reverted');
   assert.deepEqual(errors, []);
   await writeFile(path.join(artifacts, 'entity-review-results.json'), JSON.stringify({ outcomes, page_errors: errors }, null, 2) + '\n');
 } finally {

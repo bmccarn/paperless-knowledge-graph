@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
+import { ClaimProse, MarginNote } from "@/components/claim-prose";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
@@ -33,6 +34,11 @@ const documents = ["Annual statement", "Home inventory", "Service agreement"];
 const answerStates: AnswerState[] = ["verified", "documented", "partial", "withheld", "not_checked", "retry", "failed"];
 const claimResults: ClaimResult[] = ["supported", "unsupported", "conflicting", "left_out"];
 const otherLabel = "Vehicle";
+const claimText = "The renewal declarations list an annual premium of $1,284.00. The policy period ends on 1 March 2027.";
+const claims = [
+  { status: "supported", start: 0, end: 61, references: [{ document_id: 1, quote: "Total annual premium ........ $1,284.00", source_title: "Renewal declarations 2026–2027" }] },
+  { status: "supported", start: 62, end: 101, references: [{ document_id: 2, quote: "Policy period: 03/01/2026 to 03/01/2027, 12:01 a.m. standard time at the residence premises.", source_title: "Homeowners policy booklet" }] },
+];
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -95,6 +101,16 @@ export default function GalleryPage() {
           <VerdictLine state="verified" reason="All 3 claims match passages in 2 documents." level="high" seconds={8.4} />
           <VerdictLine state="withheld" reason="The source audit exceeded its time budget." level="low" seconds={31.2} />
           <StreamStatus step="Retrieving source evidence" seconds={4} />
+        </Section>
+
+        <Section id="claims-notes" title="Claims and margin notes">
+          <div className="@container">
+            <div className="@min-[58rem]:pr-[356px]">
+              <ClaimProse id="gallery-claims" text={claimText} state="verified" claims={claims} sourceDates={{ "1": "2026-01-28" }} />
+            </div>
+          </div>
+          <Row name="Active note"><MarginNote id="gallery-note" n={1} claim={claims[0]} sourceDates={{ "1": "2026-01-28" }} active onSelect={() => {}} /></Row>
+          <Row name="Not checked"><ClaimProse id="gallery-unchecked" text={claimText} state="not_checked" claims={claims} /></Row>
         </Section>
 
         <Section id="node-kinds" title="Entity kinds">

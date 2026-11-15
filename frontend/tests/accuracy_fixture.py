@@ -199,6 +199,27 @@ def answer_state(result, question):
         result['confidence'] = 0.0
 
 
+def claims_answer(result):
+    """Three verified claims: one ends in an emoji, one sits under a heading and a bold label, one source has no date."""
+    sentences = ['The policy covers the house on Elm Street \U0001F3E0.',
+                 '## Premium\n**Amount:** The January statement lists a premium of $25.',
+                 'The February statement lists a balance of $0.']
+    candidate = '\n\n'.join(sentences)
+    sources = [(101, 'January premium statement', 'January statement: the premium is $25.'),
+               (101, 'January premium statement', 'January statement: the premium is $25.'),
+               (102, SECOND_SOURCE['title'], 'February statement: the balance is $0.')]
+    claims = []
+    for index, (sentence, (doc_id, title, quote)) in enumerate(zip(sentences, sources)):
+        start = candidate.index(sentence)  # Python counts code points, like the backend ledger.
+        claims.append({'id': f'u{index + 1}', 'claim': sentence, 'start': start, 'end': start + len(sentence),
+                       'status': 'supported', 'references': [{'document_id': doc_id, 'quote': quote, 'source_title': title}]})
+    result['answer'] = candidate + ' [Document 101](/documents/101)'
+    result['sources'].append(copy.deepcopy(SECOND_SOURCE))
+    result['claim_ledger'].update(candidate_text=candidate, claims=claims)
+    result['claim_ledger']['summary'].update(total=3, audited=3, supported=3)
+    result['verification']['supported_claims'] = sentences
+    result['source_dates'] = {'101': '2026-01-31'}
+
 def saved_conversations():
     """Three saved answers that only exist as stored messages: re-verification fails, legacy, and pre-candidate."""
     question = 'What premium does the January statement list?'
@@ -517,6 +538,8 @@ class Handler(BaseHTTPRequestHandler):
                 events, receipt = project_timeline(result['answer'], ledger, result['finalization'])
                 result['timeline_events'] = events
                 result['finalization']['timeline'] = receipt
+            if 'margin-claims' in question.lower():
+                claims_answer(result)
             answer_state(result, question.lower())
             if 'markup' in question.lower():
                 markup = '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'

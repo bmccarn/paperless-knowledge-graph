@@ -59,10 +59,11 @@ for (const state of [...mainStates, ...extraStates]) test(`${state.name} ${state
   test.skip(state.phoneOnly && !info.project.name.startsWith("phone"), "The conversation sheet is phone-only");
   await page.goto(state.route);
   await state.ready(page).waitFor();
+  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
+  await page.mouse.move(0, 0);
   if (state.name === "graph") await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
-  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.
   await page.clock.runFor(2500);
   await page.clock.pauseAt(new Date(fixedTime.getTime() + 10000));

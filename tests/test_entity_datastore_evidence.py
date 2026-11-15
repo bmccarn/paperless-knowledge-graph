@@ -38,7 +38,7 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
             server_settings={"search_path": "entity_evidence_test,public"})
         async with self.store.pool.acquire() as conn:
             await conn.execute(INIT_SQL)
-            await conn.execute("TRUNCATE entity_review_decisions")
+            await conn.execute("TRUNCATE entity_review_decisions, entity_merge_journal")
         self.graph = GraphStore()
         self.graph.review_store = self.store
         self.graph.new_uuid = lambda: self.prefix + str(uuid.uuid4())
@@ -391,6 +391,53 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.entity_rows(remove, "Juniper Logistic"), [])
         self.assertTrue(await self.entity_rows(keep, "Juniper Logistics"))
 
+    async def test_unmerge_restores_the_duplicate_and_its_entity_embedding(self):
+        import httpx
+        from neo4j import AsyncSession
+        from app import main
+        keep = await self.seed("unmerge-keep", "Juniper Logistics", "Organization", [991711])
+        remove = await self.seed("unmerge-remove", "Juniper Logistic", "Organization", [991712])
+        await self.graph.create_relationship(remove, "Organization", keep, "Organization", "PARTNERS_WITH", {"source_doc": 991712})
+        for entity_uuid, name in ((keep, "Juniper Logistics"), (remove, "Juniper Logistic")):
+            await self.seed_embedding(entity_uuid, name)
+        async def vector(entity_uuid):
+            async with self.store.pool.acquire() as conn:
+                return await conn.fetchval("SELECT embedding::text FROM entity_embeddings WHERE entity_uuid = $1", entity_uuid)
+        saved = await vector(remove)
+        real = AsyncSession.execute_write
+        async def retried(session, work, *args, **kwargs):
+            # The first attempt deletes the vector row in PG, then its graph commit fails.
+            async def fail_after_work(tx):
+                await work(tx)
+                raise RuntimeError("synthetic commit failure")
+            with self.assertRaises(RuntimeError):
+                await real(session, fail_after_work)
+            return await real(session, work, *args, **kwargs)
+        with patch.object(AsyncSession, "execute_write", retried):
+            merge_id = (await self.resolver.merge_entities(keep, remove, review_method="entity_review_api"))["merge_id"]
+        self.assertIsNone(await vector(remove))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+            with patch.object(main, "embeddings_store", self.store):
+                listed = (await client.get("/entity-review/merges", params={
+                    "since": "2026-01-01T00:00:00Z", "method": "entity_review_api", "status": "applied"})).json()["merges"]
+        self.assertEqual([(row["merge_id"], row["primary_name"], row["duplicate_name"], row["edge_count"]) for row in listed],
+                         [(merge_id, "Juniper Logistics", "Juniper Logistic", 1)])
+        self.assertNotIn("before_image", listed[0])
+        result = await self.resolver.unmerge_entities(merge_id, "different companies", review_method="entity_review_api")
+        self.assertEqual(result["status"], "reverted")
+        self.assertEqual((await self.graph.get_node(remove))["properties"]["name"], "Juniper Logistic")
+        self.assertEqual(await vector(remove), saved)
+        self.assertTrue(await self.entity_rows(remove, "Juniper Logistic"))
+        journal = await self.store.get_merge_journal(merge_id)
+        self.assertEqual((journal["status"], journal["reverted_by"], journal["revert_note"]),
+                         ("reverted", "entity_review_api", "different companies"))
+        self.assertIsNotNone(journal["reverted_at"])
+        decisions = {row["decision"]: row for row in await self.store.get_entity_review_decisions()}
+        self.assertEqual(decisions["merged"]["identity_status"], "reverted")
+        self.assertEqual(decisions["split"]["provenance"], "human_review")
+        with self.assertRaises(module.EntityMergeProhibited):
+            await self.resolver.merge_entities(keep, remove, review_method="entity_review_api")
+
     async def test_failed_entity_embedding_delete_leaves_graph_unchanged(self):
         keep = await self.seed("fail-keep", "Birch Partners", "Organization", [991712])
         remove = await self.seed("fail-remove", "Birch Partner", "Organization", [991711])
@@ -400,7 +447,7 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         before_keep, before_remove = await self.graph.get_node(keep), await self.graph.get_node(remove)
         with patch.object(self.store, "delete_entity_embeddings", AsyncMock(side_effect=ConnectionError("synthetic outage"))):
             with self.assertRaises(ConnectionError):
-                await self.graph.merge_entities(keep, remove)
+                await self.graph.merge_entities(keep, remove, merge_id=str(uuid.uuid4()))
             with self.assertRaises(ConnectionError):
                 await self.graph.delete_document_graph(991711)
         self.assertEqual(await self.graph.get_node(keep), before_keep)

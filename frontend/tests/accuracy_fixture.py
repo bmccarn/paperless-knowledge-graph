@@ -57,6 +57,7 @@ CONVERSATIONS = {}
 TASKS = {}
 PROCESSED = {doc['paperless_id']: NOW for doc in DOCS}
 REVIEWED = set()
+MERGES = []
 REVIEW_CANDIDATES = [
     {'score': 90, 'label': 'Organization',
      'left': {'uuid': f'synthetic-review-{i}-left', 'name': f'Cedar Lab {i}', 'properties': {'description': 'Synthetic review candidate.'}},
@@ -173,6 +174,8 @@ class Handler(BaseHTTPRequestHandler):
                                    'active_tasks': {}, 'cache': {}, 'last_sync': NOW})
             if route == '/config':
                 return self.reply({'paperless_url': 'http://127.0.0.1:8000', 'owner_name': 'Synthetic fixture'})
+            if route == '/entity-review/merges':
+                return self.reply({'merges': MERGES})
             if route == '/entity-review/candidates':
                 return self.reply({'candidates': [row for row in REVIEW_CANDIDATES if row['left']['uuid'] not in REVIEWED]})
             if route == '/logs':
@@ -256,11 +259,22 @@ class Handler(BaseHTTPRequestHandler):
                 CONVERSATIONS.clear()
                 TASKS.clear()
                 REVIEWED.clear()
+                MERGES.clear()
                 PROCESSED.update({doc['paperless_id']: NOW for doc in DOCS})
                 return self.reply({'fixture': 'paperless-accuracy-ui-v1', 'status': 'reset'})
             if route in ('/entity-review/merge', '/entity-review/split', '/entity-review/ignore'):
                 REVIEWED.add(body.get('left_uuid') or body.get('primary_uuid'))
+                if route == '/entity-review/merge':
+                    pair = next(row for row in REVIEW_CANDIDATES if row['left']['uuid'] == body['primary_uuid'])
+                    MERGES.insert(0, {'merge_id': f'synthetic-merge-{len(MERGES) + 1}', 'primary_uuid': body['primary_uuid'],
+                                      'duplicate_uuid': body['duplicate_uuid'], 'primary_name': pair['left']['name'],
+                                      'duplicate_name': pair['right']['name'], 'status': 'applied', 'created_at': NOW,
+                                      'risk_flags': ['shared_source_document']})
                 return self.reply({'status': 'completed'})
+            if route == '/entity-review/unmerge':
+                merge = next(row for row in MERGES if row['merge_id'] == body['merge_id'])
+                merge['status'] = 'reverted'
+                return self.reply({'status': 'reverted', 'merge_id': merge['merge_id'], 'reindex_doc_ids': [], 'reindex_task_id': ''})
             if route in ('/sync', '/entity-review/steward/task'):
                 task_id = f'synthetic-task-{len(TASKS) + 1}'
                 TASKS[task_id] = {'result': {'processed': 1, 'errors': 0, 'reviewed_count': 3, 'suggest_review': 3}}

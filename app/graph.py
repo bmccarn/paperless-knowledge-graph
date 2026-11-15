@@ -14,6 +14,94 @@ from app.relationship_support import merge_support_properties, support_records
 
 logger = logging.getLogger(__name__)
 
+# Node fields a merge unions; the drift fallback restores them three-way.
+MERGED_LIST_FIELDS = ("aliases", "alias_records", "identity_hints")
+
+
+class MergeDrift(Exception):
+    """The graph changed after a merge, so an exact restore would lose data."""
+
+
+def _endpoint_key(node: dict) -> dict:
+    if node.get("uuid") is not None:
+        return {"uuid": node["uuid"]}
+    if node.get("paperless_id") is not None:
+        return {"paperless_id": node["paperless_id"]}
+    raise ValueError("A relationship endpoint has no uuid or paperless_id to journal")
+
+
+def _canonical(value) -> str:
+    # No default=str: a value JSON cannot hold exactly must stop the merge.
+    return json.dumps(value, sort_keys=True)
+
+
+async def _entity_image(tx, uuids: list[str]) -> tuple[dict, dict]:
+    """Nodes and incident edges as exact JSON, plus endpoint key -> elementId."""
+    result = await tx.run("""MATCH (n) WHERE n.uuid IN $uuids
+                             RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props""", uuids=uuids)
+    nodes = await result.data()
+    result = await tx.run("""MATCH (n)-[r]-() WHERE n.uuid IN $uuids
+                             WITH DISTINCT r
+                             RETURN type(r) AS type, properties(r) AS props,
+                                    elementId(startNode(r)) AS start_id,
+                                    {uuid: startNode(r).uuid, paperless_id: startNode(r).paperless_id} AS start,
+                                    elementId(endNode(r)) AS end_id,
+                                    {uuid: endNode(r).uuid, paperless_id: endNode(r).paperless_id} AS end""", uuids=uuids)
+    ids = {_canonical(_endpoint_key(n["props"])): n["id"] for n in nodes}
+    edges = []
+    for row in await result.data():
+        edge = {"type": row["type"], "start": _endpoint_key(row["start"]), "end": _endpoint_key(row["end"]),
+                "props": row["props"]}
+        ids[_canonical(edge["start"])], ids[_canonical(edge["end"])] = row["start_id"], row["end_id"]
+        edges.append(edge)
+    image = json.loads(_canonical({
+        "nodes": sorted(({"labels": sorted(n["labels"]), "props": n["props"]} for n in nodes),
+                        key=lambda n: str(n["props"].get("uuid"))),
+        "edges": sorted(edges, key=_canonical),
+    }))
+    return image, ids
+
+
+def _merge_risk_flags(primary: dict, duplicate: dict, edges: list[dict]) -> list[str]:
+    from app.entity_policy import extract_identifiers
+    skip = {"uuid", "name", "source_doc_ids", *MERGED_LIST_FIELDS}
+    flags = []
+    if set(primary.get("source_doc_ids") or []) & set(duplicate.get("source_doc_ids") or []):
+        flags.append("shared_source_document")
+    pair = {primary["uuid"], duplicate["uuid"]}
+    if any({edge["start"].get("uuid"), edge["end"].get("uuid")} == pair for edge in edges):
+        flags.append("direct_edge")
+    # identity_hints is skipped here; it has its own flag below.
+    identifiers = [extract_identifiers({k: v for k, v in node.items() if k not in skip}) for node in (primary, duplicate)]
+    if any(not set(values) & set(identifiers[1][key]) for key, values in identifiers[0].items() if key in identifiers[1]):
+        flags.append("conflicting_identifiers")
+    hints = [set(node.get("identity_hints") or []) for node in (primary, duplicate)]
+    if all(hints) and hints[0] != hints[1]:
+        flags.append("different_identity_hints")
+    flags += [f"scalar_clash:{key}" for key in sorted(set(primary) & set(duplicate) - skip)
+              if primary[key] not in (None, "") and duplicate[key] not in (None, "") and primary[key] != duplicate[key]]
+    if (duplicate.get("resolution_status") in {"isolated", "ambiguous", "quarantined"} or duplicate.get("review_anchor")) \
+            and any(primary.get(key) != duplicate.get(key) for key in ("resolution_status", "review_anchor")):
+        flags.append("status_carried_over")
+    return flags
+
+
+def _three_way_fields(before: dict, after: dict, current: dict) -> dict:
+    """Undo the merge's node-field changes and keep changes made after it."""
+    result = dict(current)
+    for key in (set(before) | set(after)) - {"uuid", "source_doc_ids"}:
+        if key in MERGED_LIST_FIELDS:
+            old, merged, now = before.get(key) or [], after.get(key) or [], current.get(key) or []
+            # Drop what the merge added, put back what it removed, keep later edits.
+            result[key] = list(dict.fromkeys([*(v for v in now if v not in merged or v in old),
+                                              *(v for v in old if v not in merged and v not in now)]))
+        elif after.get(key) != before.get(key) and current.get(key) == after.get(key):
+            if key in before:
+                result[key] = before[key]
+            else:
+                result.pop(key, None)
+    return result
+
 
 class GraphStore:
     def __init__(self):
@@ -506,12 +594,14 @@ class GraphStore:
         candidates.sort(key=lambda c: c["score"], reverse=True)
         return candidates[:limit]
 
-    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str, *, review_id: str | None = None,
-                             review_method: str | None = None) -> dict:
+    async def merge_entities(self, primary_uuid: str, duplicate_uuid: str, *, merge_id: str,
+                             review_id: str | None = None, review_method: str | None = None) -> dict:
         """Atomically preserve canonical identity, aliases and relationship support.
 
         Human review policy is enforced by EntityResolver before calling this
         storage operation. Exact UUID lookup also rejects ambiguous legacy IDs.
+        The journal row with before and after images commits in PG before the
+        graph does, so a failed journal write leaves the graph unmerged.
         """
         from app.entity_policy import EXPLICIT_REVIEW_METHOD
         if review_id and review_method != EXPLICIT_REVIEW_METHOD:
@@ -536,6 +626,7 @@ class GraphStore:
                 raise ValueError("Document nodes cannot be merged as entities")
             if set(primary["labels"]) != set(duplicate["labels"]):
                 raise ValueError("Entity types must match")
+            before, _ = await _entity_image(tx, [primary_uuid, duplicate_uuid])
 
             result = await tx.run(
                 """MATCH (n) WHERE elementId(n) IN $ids
@@ -607,11 +698,90 @@ class GraphStore:
                 primary=primary["id"], duplicate=duplicate["id"], props=props,
             )
             merged = dict(await result.single(strict=True))
+            after, _ = await _entity_image(tx, [primary_uuid])
+            from app.embeddings import embeddings_store
+            await (self.review_store or embeddings_store).insert_merge_journal({
+                "merge_id": merge_id, "review_id": review_id, "primary_uuid": primary_uuid,
+                "duplicate_uuid": duplicate_uuid, "decision": "merged", "review_method": review_method or "",
+                "before_image": before, "after_image": after,
+                "risk_flags": _merge_risk_flags(primary["props"], duplicate["props"], before["edges"]),
+            })
             await self._delete_entity_embeddings([duplicate_uuid])
             return merged
 
         async with self.driver.session() as session:
             return await session.execute_write(merge)
+
+    async def unmerge_entities(self, journal: dict) -> str:
+        """Write the before-image back while the survivor still equals the after-image.
+
+        Returns "restored", or "already_restored" when a previous attempt committed.
+        Raises MergeDrift, without writing, when anything differs.
+        """
+        primary_uuid, duplicate_uuid = journal["primary_uuid"], journal["duplicate_uuid"]
+        before, after = journal["before_image"], journal.get("after_image")
+
+        async def unmerge(tx):
+            await tx.run("MATCH (n) WHERE n.uuid IN $uuids SET n.uuid = n.uuid", uuids=[primary_uuid, duplicate_uuid])
+            current, ids = await _entity_image(tx, [primary_uuid, duplicate_uuid])
+            if any(node["props"].get("uuid") == duplicate_uuid for node in current["nodes"]):
+                if _canonical(current) == _canonical({k: before[k] for k in ("nodes", "edges")}):
+                    return "already_restored"
+                raise MergeDrift("The duplicate entity exists again in another state")
+            if not after or _canonical(current) != _canonical(after):
+                raise MergeDrift("The surviving entity changed after the merge")
+            duplicate_key = _canonical({"uuid": duplicate_uuid})
+            if any(_canonical(edge[end]) not in ids and _canonical(edge[end]) != duplicate_key
+                   for edge in before["edges"] for end in ("start", "end")):
+                raise MergeDrift("A relationship endpoint no longer exists")
+
+            await tx.run("MATCH (n)-[r]-() WHERE n.uuid = $uuid DELETE r", uuid=primary_uuid)
+            for node in before["nodes"]:
+                if node["props"]["uuid"] == primary_uuid:
+                    await tx.run("MATCH (n) WHERE elementId(n) = $id SET n = $props",
+                                 id=ids[_canonical({"uuid": primary_uuid})], props=node["props"])
+                    continue
+                if not all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", label) for label in node["labels"]):
+                    raise ValueError("Invalid journaled entity label")
+                result = await tx.run(f"CREATE (n:{':'.join(node['labels'])}) SET n = $props RETURN elementId(n) AS id",
+                                      props=node["props"])
+                ids[duplicate_key] = (await result.single(strict=True))["id"]
+            by_type = defaultdict(list)
+            for edge in before["edges"]:
+                by_type[edge["type"]].append({"start": ids[_canonical(edge["start"])],
+                                              "end": ids[_canonical(edge["end"])], "props": edge["props"]})
+            for rel_type, edges in by_type.items():
+                escaped_type = rel_type.replace("`", "``")
+                await (await tx.run(f"""UNWIND $edges AS e
+                    MATCH (a) WHERE elementId(a) = e.start MATCH (b) WHERE elementId(b) = e.end
+                    CREATE (a)-[r:`{escaped_type}`]->(b) SET r = e.props""", edges=edges)).consume()
+            return "restored"
+
+        async with self.driver.session() as session:
+            return await session.execute_write(unmerge)
+
+    async def reset_unmerged_fields(self, journal: dict) -> bool:
+        """Drift fallback: undo the merge's node-field changes on the survivor.
+
+        Fields changed after the merge keep their current value. Returns False,
+        without writing, when the survivor is gone or the duplicate exists again.
+        """
+        primary_uuid, duplicate_uuid = journal["primary_uuid"], journal["duplicate_uuid"]
+        before = next(n["props"] for n in journal["before_image"]["nodes"] if n["props"]["uuid"] == primary_uuid)
+        after = next(n["props"] for n in journal["after_image"]["nodes"] if n["props"]["uuid"] == primary_uuid)
+
+        async def write(tx):
+            result = await tx.run("""MATCH (n) WHERE n.uuid IN $uuids SET n.uuid = n.uuid
+                                     RETURN n.uuid AS uuid, properties(n) AS props""", uuids=[primary_uuid, duplicate_uuid])
+            current = {row["uuid"]: row["props"] for row in await result.data()}
+            if duplicate_uuid in current or primary_uuid not in current:
+                return False
+            await tx.run("MATCH (n) WHERE n.uuid = $uuid SET n = $props", uuid=primary_uuid,
+                         props=_three_way_fields(before, after, current[primary_uuid]))
+            return True
+
+        async with self.driver.session() as session:
+            return await session.execute_write(write)
 
     async def search_nodes(
         self, query: str, node_type: str = None, limit: int = 20, *,

@@ -286,3 +286,24 @@ class MergeEntrypointTests(unittest.TestCase):
                         self.assertEqual(method.value, "entity_review_api")
         self.assertEqual(found, {("main.py", "entity_review_merge", "entity_resolver"),
                                  ("entity_resolver.py", "merge_entities", "graph_store")})
+
+    def test_production_unmerge_callers_require_explicit_api_origin(self):
+        import ast
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        found = set()
+        for path in (root / "app").glob("*.py"):
+            tree = ast.parse(path.read_text())
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for call in ast.walk(function):
+                    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute) or call.func.attr != "unmerge_entities":
+                        continue
+                    found.add((path.name, function.name, ast.unparse(call.func.value)))
+                    if ast.unparse(call.func.value) == "entity_resolver":
+                        method = next(keyword.value for keyword in call.keywords if keyword.arg == "review_method")
+                        self.assertIsInstance(method, ast.Constant)
+                        self.assertEqual(method.value, "entity_review_api")
+        self.assertEqual(found, {("main.py", "entity_review_unmerge", "entity_resolver"),
+                                 ("entity_resolver.py", "unmerge_entities", "graph_store")})

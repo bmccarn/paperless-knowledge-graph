@@ -89,6 +89,24 @@ ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS identity_status TEX
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS review_id TEXT;
 ALTER TABLE entity_review_decisions ADD COLUMN IF NOT EXISTS review_method TEXT NOT NULL DEFAULT 'legacy_unknown';
 
+CREATE TABLE IF NOT EXISTS entity_merge_journal (
+    merge_id       TEXT PRIMARY KEY,
+    review_id      TEXT,
+    primary_uuid   TEXT NOT NULL,
+    duplicate_uuid TEXT NOT NULL,
+    decision       TEXT NOT NULL,
+    review_method  TEXT NOT NULL,
+    before_image   JSONB NOT NULL,
+    after_image    JSONB,
+    risk_flags     JSONB NOT NULL DEFAULT '[]',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    reverted_at    TIMESTAMPTZ,
+    reverted_by    TEXT,
+    revert_note    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_merge_journal_primary ON entity_merge_journal(primary_uuid, created_at);
+
 INSERT INTO sync_state (id, last_sync_at) VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
@@ -855,6 +873,86 @@ class EmbeddingsStore:
                         ON CONFLICT (left_uuid,right_uuid,decision) DO NOTHING""",
                         row["left_uuid"], row["right_uuid"], row["note"], json.dumps(row["left_identity"]),
                         json.dumps(row["right_identity"]), row["review_id"])
+
+    async def insert_merge_journal(self, row: dict):
+        """Idempotent for a retried graph transaction: the duplicate's vector row is
+        captured on the first attempt and kept after that attempt deleted it."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO entity_merge_journal (merge_id, review_id, primary_uuid, duplicate_uuid, decision,
+                    review_method, before_image, after_image, risk_flags)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb || jsonb_strip_nulls(jsonb_build_object('embedding',
+                    (SELECT to_jsonb(e) FROM (SELECT entity_uuid, entity_name, entity_type, content,
+                        embedding::text AS embedding, created_at FROM entity_embeddings WHERE entity_uuid = $4) e))),
+                    $8::jsonb, $9::jsonb)
+                ON CONFLICT (merge_id) DO UPDATE
+                SET before_image = EXCLUDED.before_image || jsonb_strip_nulls(jsonb_build_object('embedding',
+                        COALESCE(EXCLUDED.before_image->'embedding', entity_merge_journal.before_image->'embedding'))),
+                    after_image = EXCLUDED.after_image, risk_flags = EXCLUDED.risk_flags""",
+                row["merge_id"], row.get("review_id"), row["primary_uuid"], row["duplicate_uuid"], row["decision"],
+                row["review_method"], json.dumps(row["before_image"]), json.dumps(row["after_image"]),
+                json.dumps(row["risk_flags"]))
+
+    async def get_merge_journal(self, merge_id: str) -> dict | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM entity_merge_journal WHERE merge_id = $1", merge_id)
+        if not row:
+            return None
+        result = dict(row)
+        for key in ("before_image", "after_image", "risk_flags"):
+            if isinstance(result.get(key), str):
+                result[key] = json.loads(result[key])
+        return result
+
+    async def set_merge_journal_status(self, merge_id: str, status: str, *, reverted_by: str | None = None,
+                                       note: str | None = None):
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""UPDATE entity_merge_journal SET status = $2,
+                    reverted_by = COALESCE($3, reverted_by), revert_note = COALESCE($4, revert_note),
+                    reverted_at = CASE WHEN $2 IN ('reverted', 'conflict') THEN NOW() ELSE reverted_at END
+                WHERE merge_id = $1""", merge_id, status, reverted_by, note)
+            if result == "UPDATE 0":
+                raise ValueError("Merge journal row disappeared")
+
+    async def list_merge_journal(self, *, since=None, method: str | None = None,
+                                 status: str | None = None) -> list[dict]:
+        """Journal rows without their images, newest first."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT merge_id, review_id, primary_uuid, duplicate_uuid, decision, review_method, risk_flags,
+                       status, created_at, reverted_at, reverted_by, revert_note,
+                       (SELECT n->'props'->>'name' FROM jsonb_array_elements(before_image->'nodes') n
+                        WHERE n->'props'->>'uuid' = primary_uuid) AS primary_name,
+                       (SELECT n->'props'->>'name' FROM jsonb_array_elements(before_image->'nodes') n
+                        WHERE n->'props'->>'uuid' = duplicate_uuid) AS duplicate_name,
+                       jsonb_array_length(before_image->'edges') AS edge_count
+                FROM entity_merge_journal
+                WHERE ($1::timestamptz IS NULL OR created_at >= $1) AND ($2::text IS NULL OR review_method = $2)
+                  AND ($3::text IS NULL OR status = $3)
+                ORDER BY created_at DESC LIMIT 100""", since, method, status)
+        result = [dict(row) for row in rows]
+        for row in result:
+            if isinstance(row.get("risk_flags"), str):
+                row["risk_flags"] = json.loads(row["risk_flags"])
+        return result
+
+    async def restore_merge_embedding(self, merge_id: str):
+        """Put back the duplicate's vector row saved by the merge; a live row wins."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO entity_embeddings (entity_uuid, entity_name, entity_type, content, embedding, created_at)
+                SELECT e.entity_uuid, e.entity_name, e.entity_type, e.content, e.embedding::vector, e.created_at
+                FROM entity_merge_journal j, jsonb_to_record(j.before_image->'embedding') AS e(
+                    entity_uuid TEXT, entity_name TEXT, entity_type TEXT, content TEXT, embedding TEXT, created_at TIMESTAMPTZ)
+                WHERE j.merge_id = $1 AND e.entity_uuid IS NOT NULL
+                ON CONFLICT (entity_uuid) DO NOTHING""", merge_id)
+
+    async def set_entity_review_decision_status(self, left_uuid: str, right_uuid: str, decision: str, status: str):
+        """Change only the status; the upsert would also rewrite note and created_at."""
+        ordered = sorted([left_uuid, right_uuid])
+        async with self.pool.acquire() as conn:
+            await conn.execute("""UPDATE entity_review_decisions SET identity_status = $4
+                WHERE left_uuid = $1 AND right_uuid = $2 AND decision = $3""", ordered[0], ordered[1], decision, status)
 
     async def get_incomplete_document_ids(self, doc_ids: list[int]) -> set[int]:
         """Missing completion markers mean a replacement is pending or failed."""

@@ -14,7 +14,12 @@ const page = await context.newPage();
 const errors = [], outcomes = [];
 page.on('pageerror', error => errors.push(error.message));
 const merges = [];
-page.on('request', request => { if (request.url().includes('/api/entity-review/merge')) merges.push(request); });
+const unmerges = [];
+page.on('request', request => {
+  const route = new URL(request.url()).pathname;
+  if (route === '/api/entity-review/merge') merges.push(request);
+  if (route === '/api/entity-review/unmerge') unmerges.push(request);
+});
 const record = name => { outcomes.push({ name, status: 'passed' }); console.log(`PASS ${name}`); };
 const capture = name => page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
 const mergeButtons = page.getByRole('button', { name: 'Merge right into left', exact: true });
@@ -27,11 +32,13 @@ try {
   await page.goto(`${base}/entities/review`);
   await page.getByText('Cedar Lab 1', { exact: true }).waitFor();
 
-  // Merge is irreversible, so the first click only asks.
+  await page.getByText('No merges recorded.', { exact: true }).waitFor();
+
+  // Merge deletes an entity, so the first click only asks.
   await mergeButtons.first().click();
   await dialog.waitFor();
   const text = await dialog.innerText();
-  for (const expected of ['Cedar Lab 1', 'Cedar Laboratory 1', 'cannot be undone']) assert.ok(text.includes(expected), expected);
+  for (const expected of ['Cedar Lab 1', 'Cedar Laboratory 1', 'undo it from Recent merges']) assert.ok(text.includes(expected), expected);
   assert.equal(merges.length, 0);
   await capture('entity-review-merge-confirm');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -46,7 +53,7 @@ try {
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/api/entity-review/merge', route => release(route));
   await mergeButtons.first().click();
-  await dialog.getByRole('button', { name: 'Merge permanently', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
   const route = await held;
   await dialog.waitFor({ state: 'hidden' });
   for (const name of ['Merge right into left', 'Merging...', 'Keep split', 'Ignore']) {
@@ -61,6 +68,18 @@ try {
   assert.equal(merges.length, 1);
   assert.ok(await mergeButtons.first().isEnabled());
   record('entity_merge_confirm_sends_once_and_locks_cards');
+
+  // The merge appears under Recent merges; Undo records a split, so the pair stays out of the candidates.
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  await undo.waitFor();
+  await capture('entity-review-recent-merges');
+  await undo.click();
+  await page.getByText('Undid the merge of "Cedar Laboratory 1" into "Cedar Lab 1".', { exact: true }).waitFor();
+  await page.getByText('reverted', { exact: true }).waitFor();
+  assert.equal(unmerges.length, 1);
+  assert.equal(JSON.parse(unmerges[0].postData()).merge_id, 'synthetic-merge-1');
+  assert.equal(await undo.count(), 0);
+  record('entity_unmerge_sends_once_and_marks_the_merge_reverted');
   assert.deepEqual(errors, []);
   await writeFile(path.join(artifacts, 'entity-review-results.json'), JSON.stringify({ outcomes, page_errors: errors }, null, 2) + '\n');
 } finally {

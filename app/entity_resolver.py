@@ -4,7 +4,7 @@ import logging
 import uuid
 
 from app.embeddings import embeddings_store
-from app.graph import graph_store
+from app.graph import MergeDrift, graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited, identity_has_unresolved_veto,
                                   alias_revocations, alias_replay_prohibited)
@@ -135,14 +135,65 @@ class EntityResolver:
                     review_method=row.get("review_method", "legacy_unknown"), review_id=row.get("review_id"),
                 )
             review_id = str(uuid.uuid4())
-            merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid,
+            merge_id = str(uuid.uuid4())
+            merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid, merge_id=merge_id,
                                                        review_id=review_id, review_method=review_method)
             await embeddings_store.add_entity_review_decision(
                 primary_uuid, duplicate_uuid, "merged", "",
                 left_identity=keep, right_identity=remove,
                 provenance="human_review", identity_status="active", review_id=review_id, review_method=review_method,
             )
-            return merged
+            await embeddings_store.set_merge_journal_status(merge_id, "applied")
+            return {**merged, "merge_id": merge_id}
+
+    async def unmerge_entities(self, merge_id: str, note: str = "", *, review_method: str | None = None) -> dict:
+        """Undo a journaled merge. PG says "separate" before the graph changes, so a
+        failure leans toward separation and a second call resumes."""
+        if review_method != EXPLICIT_REVIEW_METHOD:
+            raise ValueError("Explicit review origin is required for entity unmerge")
+        async with self._mutation_lock:
+            journal = await embeddings_store.get_merge_journal(merge_id)
+            if not journal:
+                raise ValueError("Merge not found")
+            if journal["status"] in {"reverted", "conflict"}:
+                raise ValueError(f"Merge was already undone ({journal['status']})")
+            primary_uuid, duplicate_uuid = journal["primary_uuid"], journal["duplicate_uuid"]
+            nodes = {n["props"]["uuid"]: {"labels": n["labels"], "properties": n["props"]}
+                     for n in journal["before_image"]["nodes"]}
+            # The veto must match rebuilt nodes by name and documents, as for a live node.
+            for edge in journal["before_image"]["edges"]:
+                for near, far in (("start", "end"), ("end", "start")):
+                    if edge[near].get("uuid") in nodes:
+                        nodes[edge[near]["uuid"]].setdefault("relationships", []).append(
+                            {"neighbor_props": edge[far], "rel_props": edge["props"]})
+            await embeddings_store.set_merge_journal_status(merge_id, "reverting", reverted_by=review_method, note=note)
+            await embeddings_store.set_entity_review_decision_status(primary_uuid, duplicate_uuid, "merged", "reverted")
+            await embeddings_store.add_entity_review_decision(
+                primary_uuid, duplicate_uuid, "split", note,
+                left_identity=entity_identity(nodes[primary_uuid]), right_identity=entity_identity(nodes[duplicate_uuid]),
+                provenance="human_review", identity_status="active",
+                review_method=review_method, review_id=str(uuid.uuid4()),
+            )
+            try:
+                await graph_store.unmerge_entities(journal)
+            except MergeDrift as drift:
+                logger.warning("Merge %s drifted (%s); resetting fields and reindexing the duplicate's documents",
+                               merge_id, drift)
+                primary, duplicate = nodes[primary_uuid]["properties"], nodes[duplicate_uuid]["properties"]
+                kind = primary.get("entity_type") or nodes[primary_uuid]["labels"][0]
+                # A same-name revocation would quarantine the survivor's own name; the split veto suffices.
+                if (await graph_store.reset_unmerged_fields(journal) and journal.get("review_id")
+                        and name_key(duplicate["name"], kind) != name_key(primary["name"], kind)):
+                    await graph_store.add_entity_alias_record(primary_uuid, {
+                        "alias": duplicate["name"], "canonical_name": primary["name"], "type": kind,
+                        "status": "revoked", "review_id": journal["review_id"], "review_method": review_method})
+                await embeddings_store.set_merge_journal_status(merge_id, "conflict")
+                docs = nodes[duplicate_uuid]["properties"].get("source_doc_ids") or []
+                return {"status": "conflict", "merge_id": merge_id,
+                        "reindex_doc_ids": sorted(d for d in docs if type(d) is int)}
+            await embeddings_store.restore_merge_embedding(merge_id)
+            await embeddings_store.set_merge_journal_status(merge_id, "reverted")
+            return {"status": "reverted", "merge_id": merge_id, "reindex_doc_ids": []}
 
     async def resolve_person(self, name: str, source_doc_id: int, role: str = None,
                              description: str = None, **evidence) -> str:

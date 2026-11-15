@@ -22,6 +22,7 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.graph = MemoryGraph()
         self.decisions = MemoryDecisions()
+        self.graph.review_store = self.decisions
         self.resolver = module.EntityResolver()
         self.patches = [patch.object(module, "graph_store", self.graph),
                         patch.object(module, "embeddings_store", self.decisions)]
@@ -230,6 +231,28 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
         row["provenance"] = "legacy_unknown"
         self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Example", "Person", [11])}
         self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 44), "rebuilt")
+
+    async def test_unmerged_pair_is_not_replayed_or_merged_again(self):
+        self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),
+                            "b": node("b", "Alice Smyth", "Person", [22])}
+        merge_id = (await self.resolver.merge_entities("a", "b", review_method="entity_review_api"))["merge_id"]
+        self.assertEqual(self.decisions.journal[merge_id]["status"], "applied")
+        for method in (None, "entity_steward", "auto_dedup"):
+            with self.assertRaises(ValueError):
+                await self.resolver.unmerge_entities(merge_id, review_method=method)
+        result = await self.resolver.unmerge_entities(merge_id, "different people", review_method="entity_review_api")
+        self.assertEqual(result, {"status": "reverted", "merge_id": merge_id, "reindex_doc_ids": []})
+        self.assertEqual(self.decisions.journal[merge_id]["status"], "reverted")
+        rows = {row["decision"]: row for row in self.decisions.rows}
+        self.assertEqual(rows["merged"]["identity_status"], "reverted")
+        self.assertEqual((rows["split"]["provenance"], rows["split"]["review_method"]), ("human_review", "entity_review_api"))
+        self.assertEqual(set(self.graph.nodes), {"a", "b"})
+        with self.assertRaises(module.EntityMergeProhibited):
+            await self.resolver.merge_entities("a", "b", review_method="entity_review_api")
+        with self.assertRaisesRegex(ValueError, "already undone"):
+            await self.resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+        self.graph.nodes = {"rebuilt": node("rebuilt", "Alice Example", "Person", [11])}
+        self.assertNotEqual(await self.resolver.resolve_person("Alice Smyth", 33), "rebuilt")
 
     async def test_human_reviewed_alias_chain_survives_uuid_replacement_without_legacy_poison(self):
         self.graph.nodes = {"a": node("a", "Alice Example", "Person", [11]),

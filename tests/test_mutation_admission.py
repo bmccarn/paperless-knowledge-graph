@@ -119,6 +119,10 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.status_code, 409)
                 result = await client.post("/entity-review/merge", json={"primary_uuid": "a", "duplicate_uuid": "b"})
                 self.assertEqual(result.status_code, 409)
+                with patch.object(main.entity_resolver, "unmerge_entities", AsyncMock()) as unmerge:
+                    result = await client.post("/entity-review/unmerge", json={"merge_id": "m"})
+                    self.assertEqual(result.status_code, 409)
+                    unmerge.assert_not_awaited()
                 with patch.object(main.entity_resolver, "record_decision", AsyncMock()) as decide:
                     result = await client.post("/entity-review/split", json={"left_uuid": "a", "right_uuid": "b"})
                     self.assertEqual(result.status_code, 409)

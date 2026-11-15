@@ -31,7 +31,7 @@ const extraStates = [
     ...mainStates[0], name: `palette-${state}`, state: `palette-${state}`,
     seed: async page => { await page.request.post("/api/_fixture/saved-answers"); },
     prepare: async page => {
-      await page.getByRole("button", { name: "Search pages and archive, Ctrl K", exact: true }).click();
+      await page.getByRole("button", { name: "Search Ctrl K, pages and archive", exact: true }).click();
       const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
       if (state !== "initial") {
         await input.fill(state === "results" ? "Example" : state === "error" ? "fixture-error" : "unmatched-archive-term");

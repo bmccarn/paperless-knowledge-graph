@@ -121,8 +121,15 @@ try {
   await toasts.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await toasts.getByText('Merged Cedar Laboratory 2 into Cedar Lab 2.', { exact: true }).waitFor({ state: 'detached' });
   await capture('entity-review-recent-merges');
+  // Undo must clear an earlier candidate-load error before refreshing the queue.
+  await page.route('**/api/entity-review/candidates?*', route => route.fulfill({ status: 503, json: { detail: 'Synthetic candidate failure' } }));
+  await page.getByRole('button', { name: 'Refresh', exact: true }).first().click();
+  await queue.getByText('API error: 503 Synthetic candidate failure', { exact: true }).waitFor();
+  await page.unroute('**/api/entity-review/candidates?*');
   await recent.getByRole('button', { name: 'Undo', exact: true }).click();
   await toasts.getByText('Undid the merge of Cedar Laboratory 2 into Cedar Lab 2.', { exact: true }).waitFor();
+  await candidate('Cedar Lab 3').waitFor();
+  assert.equal(await queue.getByRole('alert').count(), 0);
   assert.equal(unmerges.length, 2);
   assert.equal(JSON.parse(unmerges[1].postData()).merge_id, 'synthetic-merge-2');
   assert.equal(await recent.getByText('Undone', { exact: true }).count(), 2);

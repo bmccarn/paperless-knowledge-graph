@@ -73,3 +73,33 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     assert.equal(await page.locator("main").getByRole("link", { name: "Back to Documents", exact: true }).getAttribute("href"), "/documents");
   });
 }
+
+test("document retry clears the failure while the new request is pending", async t => {
+  const context = await browser.newContext();
+  t.after(() => context.close());
+  const page = await context.newPage();
+  await page.route("**/api/document/101/detail", route => route.fulfill({ status: 503, json: { detail: "Synthetic detail failure" } }));
+  await page.goto(`${base}/documents/101`);
+  await page.getByText("API error: 503 Synthetic detail failure", { exact: true }).waitFor();
+  await page.unroute("**/api/document/101/detail");
+  let release;
+  const request = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/document/101/detail", route => release(route));
+  await page.getByRole("button", { name: "Retry loading document", exact: true }).click();
+  const held = await request;
+  await page.getByLabel("Loading document", { exact: true }).waitFor();
+  assert.equal(await page.locator("main").getByRole("alert").count(), 0);
+  await held.continue();
+  await page.getByRole("heading", { name: "January premium statement", exact: true }).waitFor();
+});
+
+test("a nonnumeric document ID shows not found without a render loop", async t => {
+  const context = await browser.newContext();
+  t.after(() => context.close());
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(`${base}/documents/not-a-number`);
+  await page.getByRole("heading", { name: "Document not found", exact: true }).waitFor();
+  assert.deepEqual(errors, []);
+});

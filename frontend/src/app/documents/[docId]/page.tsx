@@ -53,25 +53,35 @@ export default function DocumentDetailPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => {
-    const version = ++requestVersion.current;
+  const [previousDocId, setPreviousDocId] = useState(docId);
+  if (!Object.is(previousDocId, docId)) {
+    setPreviousDocId(docId);
     setLoading(true);
     setError("");
-    try {
-      const result = await getDocumentDetail(docId);
+  }
+
+  const load = useCallback(() => {
+    const version = ++requestVersion.current;
+    return getDocumentDetail(docId).then((result) => {
       if (version !== requestVersion.current) return;
       setDetail(result);
       setLoadedDocumentId(docId);
-    } catch (error) {
+    }).catch((error) => {
       if (version === requestVersion.current) setError(errMsg(error, "Could not load document."));
-    } finally {
+    }).finally(() => {
       if (version === requestVersion.current) setLoading(false);
-    }
+    });
   }, [docId]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const reload = () => {
+    setLoading(true);
+    setError("");
+    return load();
+  };
 
   const handleReindex = async () => {
     setReindexing(true);
@@ -79,7 +89,7 @@ export default function DocumentDetailPage() {
     setNotice("");
     try {
       await postReindexDoc(docId);
-      await load();
+      await reload();
       setNotice("Reindex completed. Inspect the extracted facts, then resolve any open reports.");
     } catch (error) {
       setError(errMsg(error, "Reindex failed. Review reports remain open."));
@@ -96,7 +106,7 @@ export default function DocumentDetailPage() {
       await postDocumentFeedback(docId, "extraction_wrong", feedbackNote);
       setFeedbackNote("");
       setNotice("Open review report recorded. The extraction remains disputed until reviewed.");
-      await load();
+      await reload();
     } catch (error) {
       setError(errMsg(error, "Could not record review report."));
     } finally {
@@ -111,7 +121,7 @@ export default function DocumentDetailPage() {
     try {
       await resolveDocumentFeedback(docId, feedbackId, resolutionKinds[feedbackId] || "reindexed_and_reviewed", resolutionNotes[feedbackId] || "");
       setNotice("Review resolution recorded and cached answers invalidated.");
-      await load();
+      await reload();
     } catch (error) {
       setError(errMsg(error, "Could not resolve report. Complete reindex and review first."));
     } finally {
@@ -133,7 +143,7 @@ export default function DocumentDetailPage() {
       <p role="alert" className="copy-14 text-fg-muted">{error || "We could not load this document."}</p>
       <div className="flex flex-wrap items-center gap-4">
         <Link href="/documents" className="inline-flex min-h-11 items-center underline underline-offset-4">Back to Documents</Link>
-        <Button onClick={load} variant="outline">Retry loading document</Button>
+        <Button onClick={reload} variant="outline">Retry loading document</Button>
       </div>
     </div>;
   }
@@ -168,7 +178,7 @@ export default function DocumentDetailPage() {
           </div>
         </header>
 
-        {error && <Alert variant="destructive"><AlertDescription>{error}<Button variant="link" onClick={load}>Reload document</Button></AlertDescription></Alert>}
+        {error && <Alert variant="destructive"><AlertDescription>{error}<Button variant="link" onClick={reload}>Reload document</Button></AlertDescription></Alert>}
         {notice && <Alert variant="success" role="status"><AlertDescription>{notice}</AlertDescription></Alert>}
 
         <section aria-labelledby="extraction-heading" className="space-y-5 border-t pt-6">

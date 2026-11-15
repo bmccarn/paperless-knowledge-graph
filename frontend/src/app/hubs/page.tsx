@@ -85,25 +85,30 @@ export default function HubsPage() {
   const active = DOMAINS.find((d) => d.id === activeId) || DOMAINS[0];
   const page = pages[active.id] || 0;
 
-  const loadDomain = useCallback(async () => {
-    const version = ++requestVersion.current;
+  const requestKey = `${active.id}:${page}`;
+  const [previousRequest, setPreviousRequest] = useState(requestKey);
+  if (previousRequest !== requestKey) {
+    setPreviousRequest(requestKey);
     setLoading(true);
     setError(null);
     setDocs([]);
     setTotal(null);
-    try {
-      const data = await graphSearch(active.query, "Document", PAGE_SIZE, page * PAGE_SIZE);
+  }
+
+  const loadDomain = useCallback(() => {
+    const version = ++requestVersion.current;
+    return graphSearch(active.query, "Document", PAGE_SIZE, page * PAGE_SIZE).then((data) => {
       if (version !== requestVersion.current) return;
       setDocs(data.results || []);
       setTotal(data.total);
       if (page > 0 && page * PAGE_SIZE >= data.total) {
         setPages((previous) => ({ ...previous, [active.id]: Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) }));
       }
-    } catch (e) {
+    }).catch((e) => {
       if (version === requestVersion.current) setError(errMsg(e, "Failed to load hub documents"));
-    } finally {
+    }).finally(() => {
       if (version === requestVersion.current) setLoading(false);
-    }
+    });
   }, [active, page]);
 
   const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
@@ -112,18 +117,19 @@ export default function HubsPage() {
     return invalidateRequests;
   }, [loadDomain, invalidateRequests]);
 
-  const selectDomain = (id: string) => {
-    if (id === activeId) return;
-    invalidateRequests();
+  function resetDomain() {
     setLoading(true);
     setError(null);
     setDocs([]);
     setTotal(null);
+  }
+  const selectDomain = (id: string) => {
+    if (id === activeId) return;
+    invalidateRequests();
     setActiveId(id);
   };
   const selectPage = (next: number) => {
     invalidateRequests();
-    setLoading(true);
     setPages((previous) => ({ ...previous, [active.id]: next }));
   };
 
@@ -155,7 +161,7 @@ export default function HubsPage() {
             {loading ? (
               <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading documents...</div>
             ) : error ? (
-              <Alert variant="destructive"><AlertTitle>Could not load documents</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button></AlertDescription></Alert>
+              <Alert variant="destructive"><AlertTitle>Could not load documents</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" onClick={() => { resetDomain(); void loadDomain(); }}>Retry hub search</Button></AlertDescription></Alert>
             ) : docs.length ? docs.map((doc) => {
               const p = doc.properties || {};
               const docId = p.paperless_id as number;
@@ -180,7 +186,7 @@ export default function HubsPage() {
                 </div>
               );
             }) : (
-              <div className="space-y-2"><p className="text-sm text-fg-muted">No documents found for this hub search.</p><Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button></div>
+              <div className="space-y-2"><p className="text-sm text-fg-muted">No documents found for this hub search.</p><Button variant="outline" onClick={() => { resetDomain(); void loadDomain(); }}>Retry hub search</Button></div>
             )}
             {total !== null && !loading && !error && (
               <Pager page={page} pageCount={pageCount} pageSize={PAGE_SIZE} total={total} onPage={selectPage} noun="hub page" />

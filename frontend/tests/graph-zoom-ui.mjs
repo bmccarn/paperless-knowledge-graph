@@ -47,6 +47,7 @@ try {
           padding: (box[2] - this.measureText(text).width) * scale,
           height: box[3] * scale, gap: (y - circle[1]) * scale,
           x: point.x / devicePixelRatio, y: point.y / devicePixelRatio,
+          worldX: circle[0], worldY: circle[1],
         };
       }
       return fillText.call(this, text, x, y, ...rest);
@@ -196,6 +197,25 @@ try {
   const fittedZoom = await canvas.evaluate(element => element.__zoom.k);
   assert.ok(fittedZoom < zoom / 2, `Fit view must leave close-up: ${fittedZoom} vs ${zoom}`);
   await page.screenshot({ path: path.join(artifacts, 'graph-fit.png'), fullPage: true });
+  // A dragged node stays pinned when expansion replaces the renderer data.
+  const pinBounds = await canvas.boundingBox();
+  const pinStart = await page.evaluate(() => window.__graphPaint['Alex Example']);
+  await page.mouse.move(pinBounds.x + pinStart.x, pinBounds.y + pinStart.y);
+  await page.mouse.down();
+  await page.mouse.move(pinBounds.x + pinStart.x + 25, pinBounds.y + pinStart.y + 25, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const pinned = await page.evaluate(() => window.__graphPaint['Alex Example']);
+  await page.getByRole('button', { name: /Alex Example/ }).click();
+  const neighbors = page.waitForResponse(response => new URL(response.url()).pathname.startsWith('/api/graph/neighbors/'));
+  await page.getByRole('button', { name: 'Load neighbors into graph', exact: true }).click();
+  await neighbors;
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button =>
+    button.textContent.includes('Load neighbors into graph') && !button.disabled));
+  await page.waitForTimeout(1000);
+  const expanded = await page.evaluate(() => window.__graphPaint['Alex Example']);
+  assert.ok(Math.abs(expanded.worldX - pinned.worldX) < 0.01, 'Expansion preserves the pinned x coordinate');
+  assert.ok(Math.abs(expanded.worldY - pinned.worldY) < 0.01, 'Expansion preserves the pinned y coordinate');
   assert.deepEqual(errors, []);
   console.log(`PASS graph_closeup_zoom (${zoom.toFixed(1)}x), constant label geometry, visible selection after inspector/resize, panning and Fit view`);
 } finally {

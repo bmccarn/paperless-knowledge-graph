@@ -180,7 +180,6 @@ export default function DashboardPage() {
   }, []);
 
   const loadOverview = useCallback(() => {
-    setOverview({});
     Promise.allSettled([
       recentAnswers(),
       getEntityReviewCandidates(DUPLICATE_LIMIT),
@@ -201,9 +200,8 @@ export default function DashboardPage() {
     return () => clearInterval(i);
   }, [fetchStatus, loadOverview]);
 
-  // Auto-attach to running tasks on page load
-  useEffect(() => {
-    if (activeTaskId || !status) return;
+  // Select the running task before rendering its controls.
+  if (!activeTaskId && status) {
     const runningTasks = Object.entries(status.active_tasks).filter(
       ([, info]) => {
         const s = typeof info === "object" && info !== null ? (info as Record<string, string>).status : info;
@@ -215,10 +213,15 @@ export default function DashboardPage() {
       setActiveTaskId(taskId);
       const taskType = typeof info === "object" && info !== null ? (info as Record<string, string>).type || "task" : "task";
       setActiveTaskType(taskLabel(taskType));
-      // Immediately fetch task progress instead of waiting for poll interval
-      getTask(taskId).then((t) => setTaskProgress(t as TaskProgress)).catch(() => {});
     }
-  }, [status, activeTaskId]);
+  }
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    let active = true;
+    getTask(activeTaskId).then((t) => { if (active) setTaskProgress(t as TaskProgress); }).catch(() => {});
+    return () => { active = false; };
+  }, [activeTaskId]);
 
   // Poll task progress
   useEffect(() => {
@@ -230,6 +233,7 @@ export default function DashboardPage() {
         if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
           clearInterval(interval);
           fetchStatus();
+          setOverview({});
           loadOverview();
         }
       } catch {
@@ -500,7 +504,7 @@ export default function DashboardPage() {
     )}
 
     <div className="grid gap-6 md:grid-cols-3">
-      <Column title="Recent answers" value={answers} error="Could not load recent answers." onRetry={loadOverview}>
+      <Column title="Recent answers" value={answers} error="Could not load recent answers." onRetry={() => { setOverview({}); loadOverview(); }}>
         {answers?.length ? (
           <ul className="space-y-2">
             {answers.map((answer) => (
@@ -516,7 +520,7 @@ export default function DashboardPage() {
           </p>
         )}
       </Column>
-      <Column title="Possible duplicates" value={duplicates} error="Could not load possible duplicates." onRetry={loadOverview}>
+      <Column title="Possible duplicates" value={duplicates} error="Could not load possible duplicates." onRetry={() => { setOverview({}); loadOverview(); }}>
         {duplicates ? (
           <p className="copy-14 text-fg-muted">
             <span className="heading-16 text-fg tabular-nums">{duplicates === DUPLICATE_LIMIT ? `${DUPLICATE_LIMIT}+` : duplicates}</span>{" "}
@@ -527,7 +531,7 @@ export default function DashboardPage() {
           <p className="copy-14 text-fg-muted">No possible duplicates right now.</p>
         )}
       </Column>
-      <Column title="Archive by type" value={types} error="Could not load document types." onRetry={loadOverview}>
+      <Column title="Archive by type" value={types} error="Could not load document types." onRetry={() => { setOverview({}); loadOverview(); }}>
         {types?.length ? (
           <ul className="space-y-1.5">
             {types.map(([type, count]) => (

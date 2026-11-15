@@ -431,3 +431,15 @@ test("invalid saved verification preserves text without positive certification p
   assert.equal(await page.getByText("100%", { exact: true }).count(), 0);
   await record(page, "restored-invalid-receipt");
 });
+
+test("a whitespace-only graph URL does not search the archive", async t => {
+  const { page } = await fixturePage(t);
+  const searches = [];
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === "/api/graph/search") searches.push(request.url());
+  });
+  await page.goto(`${base}/graph?q=%20%20`);
+  await page.getByText("4 nodes", { exact: false }).last().waitFor();
+  await page.waitForLoadState("networkidle");
+  assert.deepEqual(searches, []);
+});

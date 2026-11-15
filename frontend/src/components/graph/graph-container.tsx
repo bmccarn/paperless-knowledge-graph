@@ -48,7 +48,7 @@ const ForceGraphClient = dynamic(
 
 function GraphContent() {
   const params = useSearchParams();
-  const initialQuery = params.get("q") || "";
+  const initialQuery = params.get("q")?.trim() || "";
   const [graph, setGraph] = useState<ExplorerGraph>(emptyGraph);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +60,7 @@ function GraphContent() {
     offset: number;
     hasMore: boolean;
   } | null>(null);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(Boolean(initialQuery));
   const [expanding, setExpanding] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
@@ -73,26 +73,16 @@ function GraphContent() {
   const searchVersion = useRef(0);
   const handleRef = useRef<GraphHandle | null>(null);
 
-  const loadInitial = useCallback(async () => {
+  const loadInitial = useCallback(() => {
     const version = ++epoch.current;
     searchVersion.current++;
-    setInitialLoading(true);
-    setError(null);
-    setSelectedNodeId(null);
-    setSelectedLinkId(null);
-    setSearch(null);
-    setFocused(false);
-    setExpanding(null);
-    setSearching(false);
-    setGraph(emptyGraph());
-    try {
-      const data = await getGraphInitial(seedLimit);
+    return getGraphInitial(seedLimit).then((data) => {
       if (version === epoch.current) setGraph(current => mergeGraph(current, data));
-    } catch (error) {
+    }).catch((error) => {
       if (version === epoch.current) setError(errMsg(error, "Request failed."));
-    } finally {
+    }).finally(() => {
       if (version === epoch.current) setInitialLoading(false);
-    }
+    });
   }, [seedLimit]);
 
   const invalidateRequests = useCallback(() => {
@@ -104,18 +94,23 @@ function GraphContent() {
     return invalidateRequests;
   }, [loadInitial, invalidateRequests]);
 
-  const runSearch = useCallback(async (text: string, offset = 0) => {
-    if (!text.trim()) {
-      searchVersion.current++;
-      setSearch(null);
-      setSearching(false);
-      return;
-    }
-    const version = ++searchVersion.current;
-    setSearching(true);
+  const resetInitial = () => {
+    invalidateRequests();
+    setInitialLoading(true);
     setError(null);
-    try {
-      const response = await graphSearch(text.trim(), undefined, 50, offset);
+    setSelectedNodeId(null);
+    setSelectedLinkId(null);
+    setSearch(null);
+    setFocused(false);
+    setExpanding(null);
+    setSearching(false);
+    setGraph(emptyGraph());
+  };
+  const reloadInitial = () => { resetInitial(); void loadInitial(); };
+
+  const runSearch = useCallback((text: string, offset = 0) => {
+    const version = ++searchVersion.current;
+    return graphSearch(text.trim(), undefined, 50, offset).then((response) => {
       const nodes = (response.results || [])
         .map(nodeFromPayload)
         .filter(
@@ -124,16 +119,36 @@ function GraphContent() {
       if (version === searchVersion.current)
         setSearch({ query: text.trim(), nodes, offset,
           total: response.total ?? nodes.length, hasMore: Boolean(response.has_more) });
-    } catch (error) {
+    }).catch((error) => {
       if (version === searchVersion.current) setError(errMsg(error, "Request failed."));
-    } finally {
+    }).finally(() => {
       if (version === searchVersion.current) setSearching(false);
-    }
+    });
   }, []);
 
+  const [previousQuery, setPreviousQuery] = useState(initialQuery);
+  if (previousQuery !== initialQuery) {
+    setPreviousQuery(initialQuery);
+    if (initialQuery) {
+      setSearching(true);
+      setError(null);
+    }
+  }
   useEffect(() => {
     if (initialQuery) void runSearch(initialQuery);
   }, [initialQuery, runSearch]);
+
+  const searchGraph = (text: string, offset = 0) => {
+    if (!text.trim()) {
+      searchVersion.current++;
+      setSearch(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    setError(null);
+    return runSearch(text, offset);
+  };
 
   const selectNode = useCallback((node: ExplorerNode) => {
     setGraph((current) =>
@@ -258,7 +273,7 @@ function GraphContent() {
             variant="ghost"
             size="sm"
             aria-label="Reset sample"
-            onClick={() => void loadInitial()}
+            onClick={reloadInitial}
             disabled={initialLoading}
           >
             <RefreshCw
@@ -292,7 +307,7 @@ function GraphContent() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              void runSearch(query);
+              void searchGraph(query);
             }}
             className="space-y-2 border-b p-3"
           >
@@ -365,7 +380,7 @@ function GraphContent() {
               <select
                 id="graph-seeds"
                 value={seedLimit}
-                onChange={(event) => setSeedLimit(Number(event.target.value))}
+                onChange={(event) => { resetInitial(); setSeedLimit(Number(event.target.value)); }}
                 className="rounded border bg-background px-2 py-1 text-xs"
               >
                 {[50, 100, 200, 300].map((limit) => (
@@ -390,12 +405,12 @@ function GraphContent() {
           {search && (search.offset > 0 || search.hasMore) && (
             <div className="flex items-center justify-between gap-2 px-3 pb-2">
               <Button size="sm" variant="outline" disabled={searching || search.offset === 0}
-                onClick={() => void runSearch(search.query, Math.max(0, search.offset - 50))}>
+                onClick={() => void searchGraph(search.query, Math.max(0, search.offset - 50))}>
                 Previous
               </Button>
               <span className="text-xs text-muted-foreground">Page {Math.floor(search.offset / 50) + 1}</span>
               <Button size="sm" variant="outline" disabled={searching || !search.hasMore}
-                onClick={() => void runSearch(search.query, search.offset + 50)}>
+                onClick={() => void searchGraph(search.query, search.offset + 50)}>
                 Next
               </Button>
             </div>
@@ -474,7 +489,7 @@ function GraphContent() {
                 onClick={() => {
                   setTypeFilter("all");
                   setFocused(false);
-                  if (!graph.nodes.length) void loadInitial();
+                  if (!graph.nodes.length) reloadInitial();
                 }}
               >
                 Reset view

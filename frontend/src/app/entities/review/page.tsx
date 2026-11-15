@@ -129,31 +129,34 @@ export default function EntityReviewPage() {
   const showToast = (text: string, action?: ToastMessage["action"]) => setToast({ id: ++toastId.current, text, action });
 
   // Separate from load(): a failed merge list must not hide the candidates.
-  const loadMerges = async () => {
-    try {
-      setMerges((await getEntityMerges()).merges || []);
+  const loadMerges = () => {
+    return getEntityMerges().then((data) => {
+      setMerges(data.merges || []);
       setMergesError("");
-    } catch (err) {
+    }).catch((err) => {
       setMergesError(errMsg(err, "Could not load recent merges."));
-    }
+    });
   };
 
-  const load = async (showSpinner = true) => {
-    if (showSpinner) setLoading(true);
-    setError("");
-    try {
-      const data = await getEntityReviewCandidates(75);
+  const load = (showSpinner = true) => {
+    return getEntityReviewCandidates(75).then((data) => {
       setCandidates(data.candidates || []);
-    } catch (err) {
+    }).catch((err) => {
       const message = errMsg(err, "Could not load review candidates.");
       if (showSpinner) {
         setError(message);
       } else {
         setNotice({ kind: "error", text: `Action succeeded, but refresh failed: ${message}` });
       }
-    } finally {
+    }).finally(() => {
       if (showSpinner) setLoading(false);
-    }
+    });
+  };
+
+  const refresh = () => {
+    setLoading(true);
+    setError("");
+    return load();
   };
 
   const runSteward = async () => {
@@ -203,6 +206,7 @@ export default function EntityReviewPage() {
     setBusyKey(merge.merge_id);
     setBusyAction("undo");
     setNotice(null);
+    setError("");
     try {
       const result = await unmergeEntity(merge.merge_id, "Undone from entity review");
       if (result.status === "conflict") {
@@ -252,7 +256,7 @@ export default function EntityReviewPage() {
               <GitMerge />
               Run steward
             </Button>
-            <Button onClick={() => load()} disabled={loading} variant="outline" size="sm">
+            <Button onClick={refresh} disabled={loading} variant="outline" size="sm">
               <RefreshCw />
               Refresh
             </Button>
@@ -284,12 +288,12 @@ export default function EntityReviewPage() {
             ) : error ? (
               <div role="alert" className="flex flex-wrap items-center gap-3 py-8 copy-14 text-error">
                 <span>{error}</span>
-                <Button variant="outline" size="sm" onClick={() => load()}>Retry</Button>
+                <Button variant="outline" size="sm" onClick={refresh}>Retry</Button>
               </div>
             ) : candidates.length === 0 ? (
               <div className="flex flex-wrap items-center gap-3 py-8 copy-14 text-fg-muted">
                 <span>No possible duplicates to review.</span>
-                <Button variant="outline" size="sm" onClick={() => load()}>Refresh</Button>
+                <Button variant="outline" size="sm" onClick={refresh}>Refresh</Button>
               </div>
             ) : (
               <div className="divide-y divide-border">

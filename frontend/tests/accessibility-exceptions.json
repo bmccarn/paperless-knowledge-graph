@@ -1,17 +1,5 @@
 [
   {
-    "rule": "color-contrast",
-    "route": "/",
-    "state": "main",
-    "issue": 137,
-    "targets": [
-      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(1) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
-      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(2) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
-      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(3) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
-      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(4) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]"
-    ]
-  },
-  {
     "rule": "aria-prohibited-attr",
     "route": "/graph",
     "state": "main",

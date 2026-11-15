@@ -5,11 +5,17 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { KindShape, TypeDot } from "@/components/kind-shape";
+import { nodeFromPayload, relationshipSupport } from "@/lib/graph-data";
+import { nodeLabelText } from "@/lib/categories";
 import { Textarea } from "@/components/ui/textarea";
 import { errMsg } from "@/lib/utils";
 import { getDocumentDetail, postDocumentFeedback, resolveDocumentFeedback, postReindexDoc, getPaperlessDocUrl, usePaperlessUrl } from "@/lib/api";
-import { ArrowLeft, ExternalLink, FileText, Loader2, RefreshCw, ThumbsDown, Network } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, RefreshCw, ThumbsDown, ChevronDown } from "lucide-react";
 
 interface DetailPayload {
   paperless: Record<string, unknown>;
@@ -114,138 +120,131 @@ export default function DocumentDetailPage() {
   };
 
   if (loading && !detail) {
-    return <div className="flex h-full flex-col items-center justify-center gap-4"><h1 className="page-title">Documents</h1><Loader2 className="h-8 w-8 animate-spin text-primary/50" /></div>;
+    return <div className="space-y-6 p-4 md:px-12 md:py-10" aria-busy="true" aria-label="Loading document">
+      <h1 className="page-title">Documents</h1>
+      <Skeleton className="h-8 w-2/3" />
+      <Skeleton className="h-36 w-full" />
+      <Skeleton className="h-48 w-full" />
+    </div>;
   }
   if (!detail) {
-    return <div className="space-y-3 p-6"><h1 className="page-title">Document unavailable</h1><p role="alert">{error || "Document details are unavailable."}</p><Button onClick={load}>Retry loading document</Button></div>;
+    return <div className="space-y-4 p-4 md:px-12 md:py-10">
+      <h1 className="page-title">Document not found</h1>
+      <p role="alert" className="copy-14 text-fg-muted">{error || "We could not load this document."}</p>
+      <div className="flex flex-wrap items-center gap-4">
+        <Link href="/documents" className="inline-flex min-h-11 items-center underline underline-offset-4">Back to Documents</Link>
+        <Button onClick={load} variant="outline">Retry loading document</Button>
+      </div>
+    </div>;
   }
 
-  const title = (detail?.paperless?.title as string) || `Document #${docId}`;
-  const docType = (detail?.graph?.document?.doc_type as string) || (detail?.chunks?.[0]?.doc_type as string) || "unknown";
+  const title = (detail.paperless.title as string) || `Document #${docId}`;
+  const docType = (detail.graph.document?.doc_type as string) || detail.chunks[0]?.doc_type || "unknown";
+  const date = detail.paperless.created || detail.graph.document?.date;
+  const correspondent = detail.graph.document?.correspondent || detail.paperless.correspondent;
+  const entities = detail.graph.entities.map(nodeFromPayload).filter(entity => entity !== null);
+  const kinds = [...new Set(entities.map(entity => entity.label))];
 
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 lg:p-8 space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <Link href="/documents" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-2">
-            <ArrowLeft className="h-3 w-3" /> Back to documents
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-6xl space-y-8 p-4 md:px-12 md:py-10">
+        <header className="space-y-4">
+          <Link href="/documents" className="inline-flex min-h-11 items-center gap-2 label-13 text-fg-muted underline underline-offset-4 md:min-h-0">
+            <ArrowLeft className="size-4" aria-hidden /> Back to Documents
           </Link>
-          <h1 className="page-title font-[family-name:var(--font-source-serif)]">{title}</h1>
-          <div className="flex flex-wrap gap-2 mt-2">
-            <Badge variant="secondary">{docType}</Badge>
-            <Badge variant={detail?.processing?.processed ? "default" : "destructive"}>
-              {detail?.processing?.processed ? "processed" : "not processed"}
-            </Badge>
-            <Badge variant="outline">{detail?.processing?.chunk_count || 0} chunks</Badge>
-            {detail?.processing?.open_feedback_count ? <Badge variant="destructive">{detail.processing.open_feedback_count} open review reports</Badge> : null}
+          <h1 className="doc-title text-[22px] leading-7 text-balance">{title}</h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 label-13 text-fg-muted tabular-nums">
+            <TypeDot type={docType} />
+            {date ? <span>Date: {String(date).slice(0, 10)}</span> : null}
+            {correspondent ? <span>{typeof correspondent === "number" ? "Correspondent ID" : "Correspondent"}: {String(correspondent)}</span> : null}
+            <span>{detail.processing.processed ? "Processed" : "Not processed"}</span>
+            <span>{detail.processing.chunk_count || 0} chunks</span>
+            {detail.processing.open_feedback_count ? <Badge variant="destructive">{detail.processing.open_feedback_count} open review reports</Badge> : null}
           </div>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={handleReindex} disabled={reindexing} size="sm" className="gap-2">
-            {reindexing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Reindex
-          </Button>
-          <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline" size="sm" className="gap-2">
-              <ExternalLink className="h-3.5 w-3.5" /> Paperless
-            </Button>
-          </a>
-          <Link href={`/query?q=${encodeURIComponent(`Why would document ${docId} be used as a source?`)}`}>
-            <Button variant="outline" size="sm">Why sourced?</Button>
-          </Link>
-        </div>
-      </div>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline"><a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden />Open in Paperless</a></Button>
+            <Button onClick={handleReindex} loading={reindexing}><RefreshCw aria-hidden />Reindex</Button>
+            <Button asChild variant="ghost"><Link href={`/query?q=${encodeURIComponent(`Why would document ${docId} be used as a source?`)}`}>Why sourced?</Link></Button>
+          </div>
+        </header>
 
-      {error && <p role="alert" className="rounded border border-destructive p-3 text-sm text-destructive">{error} <button className="underline" onClick={load}>Reload document</button></p>}
-      {notice && <p role="status" className="rounded border p-3 text-sm">{notice}</p>}
+        {error && <Alert variant="destructive"><AlertDescription>{error}<Button variant="link" onClick={load}>Reload document</Button></AlertDescription></Alert>}
+        {notice && <Alert variant="success" role="status"><AlertDescription>{notice}</AlertDescription></Alert>}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-        <div className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Raw OCR</CardTitle></CardHeader>
-            <CardContent>
-              <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-xs leading-relaxed">
-                {(detail?.paperless?.content as string) || "No OCR content returned by Paperless."}
-              </pre>
-            </CardContent>
-          </Card>
+        <section aria-labelledby="extraction-heading" className="space-y-5 border-t pt-6">
+          <h2 id="extraction-heading" className="heading-16">Extracted from this document</h2>
+          {entities.length ? <div className="grid gap-6 md:grid-cols-2">
+            {kinds.map(kind => <div key={kind} className="space-y-2">
+              <h3><KindShape label={kind} /></h3>
+              <ul className="space-y-1">
+                {entities.filter(entity => entity.label === kind).map(entity => <li key={entity.id}>
+                  <Link href={`/graph?focus=${encodeURIComponent(entity.id)}`} className="inline-flex min-h-11 items-center label-14 underline underline-offset-4 md:min-h-8">{entity.name}</Link>
+                </li>)}
+              </ul>
+            </div>)}
+          </div> : <p className="copy-14 text-fg-muted">No entities extracted. Reindex this document to extract its entities.</p>}
+          <div className="space-y-2">
+            <h3 className="label-14">Relationships</h3>
+            {detail.graph.relationships.length ? <ul className="divide-y rounded-lg border bg-surface px-4">
+              {detail.graph.relationships.map((rel, idx) => {
+                const props = (rel.rel_props || {}) as Record<string, unknown>;
+                const target = (rel.props || {}) as Record<string, unknown>;
+                const support = relationshipSupport(props);
+                const stated = new Set(support.filter(record => !record.inferred).map(record => record.documentId)).size;
+                const inferred = new Set(support.filter(record => record.inferred).map(record => record.documentId)).size;
+                const state = !support.length && props.inferred !== true && props.implied !== true ? "No support record" : stated && inferred ? `Stated in ${stated}, inferred in ${inferred}` : inferred || props.inferred === true || props.implied === true ? "Inferred" : "Supported";
+                return <li key={idx} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 copy-14">
+                  <span>{nodeLabelText(String(rel.rel_type).replace(/_/g, " "))} {String(target.name || target.title || "Unknown entity")}</span>
+                  <span className="label-12 text-fg-muted tabular-nums">{state}</span>
+                </li>;
+              })}
+            </ul> : <p className="copy-14 text-fg-muted">No relationships extracted.</p>}
+          </div>
+        </section>
 
-          <Card>
-            <CardHeader><CardTitle className="text-base">Indexed Chunks</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              {detail?.chunks?.length ? detail.chunks.map((chunk) => (
-                <div key={chunk.chunk_index} className="rounded-lg border p-3">
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Chunk {chunk.chunk_index}</p>
-                  <p className="text-xs leading-relaxed whitespace-pre-wrap">{chunk.content}</p>
-                </div>
-              )) : <p className="text-sm text-muted-foreground">No chunks indexed for this document.</p>}
-            </CardContent>
-          </Card>
-        </div>
+        <section aria-labelledby="chunks-heading" className="space-y-4 border-t pt-6">
+          <h2 id="chunks-heading" className="heading-16">Indexed chunks</h2>
+          {detail.chunks.length ? detail.chunks.map(chunk => <article key={chunk.chunk_index} className="space-y-2 rounded-lg border bg-surface p-4">
+            <h3 className="label-12 text-fg-muted tabular-nums">Chunk {chunk.chunk_index}</h3>
+            <p className="ocr max-w-(--measure) whitespace-pre-wrap break-words">{chunk.content}</p>
+          </article>) : <p className="copy-14 text-fg-muted">No chunks indexed for this document.</p>}
+        </section>
 
-        <div className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Network className="h-4 w-4" /> Extraction</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Processed at</p>
-                <p className="text-sm">{detail?.processing?.processed_at ? new Date(detail.processing.processed_at).toLocaleString() : "Never"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Entities</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {detail?.graph?.entities?.length ? detail.graph.entities.slice(0, 80).map((entity, idx) => (
-                    <Badge key={idx} variant="outline" className="text-[10px]">
-                      {(entity.properties.name as string) || (entity.properties.title as string) || entity.labels?.[0]}
-                    </Badge>
-                  )) : <span className="text-sm text-muted-foreground">No entities extracted.</span>}
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Relationships</p>
-                <div className="space-y-1 max-h-64 overflow-auto">
-                  {detail?.graph?.relationships?.length ? detail.graph.relationships.map((rel, idx) => (
-                    <div key={idx} className="rounded border px-2 py-1 text-xs">
-                      {String(rel.rel_type)} to {String((rel.props as Record<string, unknown>)?.name || (rel.props as Record<string, unknown>)?.title || rel.labels)}
-                    </div>
-                  )) : <span className="text-sm text-muted-foreground">No relationships extracted.</span>}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <Collapsible key={docId} className="border-y py-2">
+          <h2><CollapsibleTrigger className="group flex min-h-11 w-full items-center justify-between gap-4 text-left heading-16">
+            Original OCR text<ChevronDown aria-hidden className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger></h2>
+          <CollapsibleContent className="pt-2 pb-4">
+            <div role="region" aria-label="Original OCR text" tabIndex={0} className="max-h-[420px] overflow-auto rounded-md bg-sunken p-4">
+              <p className="ocr max-w-(--measure) whitespace-pre-wrap break-words">{(detail.paperless.content as string) || "No OCR content returned by Paperless."}</p>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
-          <Card>
-            <CardHeader><CardTitle className="text-base flex items-center gap-2"><ThumbsDown className="h-4 w-4" /> Extraction Review</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">Open reports mark derived extraction as disputed. Original OCR remains available. Reindexing keeps reports open until you inspect and resolve them.</p>
-              <Textarea
-                value={feedbackNote}
-                onChange={(e) => setFeedbackNote(e.target.value)}
-                placeholder="What looks wrong?"
-                aria-label="Extraction review report"
-                rows={3}
-              />
-              <Button onClick={handleFeedback} disabled={!feedbackNote.trim() || feedbackSending} variant="secondary" className="w-full gap-2">
-                <FileText className="h-4 w-4" /> Mark extraction wrong
-              </Button>
-              {(detail?.feedback || []).map((report) => (
-                <div key={report.id} className="space-y-2 rounded border p-3 text-xs">
-                  <div className="flex items-center justify-between"><Badge variant={report.status === "open" ? "destructive" : "outline"}>{report.status}</Badge><span>{new Date(report.created_at).toLocaleDateString()}</span></div>
-                  <p className="whitespace-pre-wrap">{report.note || report.reason}</p>
-                  {report.status === "resolved" ? <p className="text-muted-foreground">{report.resolution === "reindexed_and_reviewed" ? "Reindexed and reviewed" : "Dismissed after review"}: {report.resolution_note}</p> : <>
-                    <label htmlFor={`resolution-${report.id}`} className="block">Resolution</label>
-                    <select id={`resolution-${report.id}`} className="w-full rounded border bg-background p-2" value={resolutionKinds[report.id] || "reindexed_and_reviewed"} onChange={(event) => setResolutionKinds({ ...resolutionKinds, [report.id]: event.target.value })}>
-                      <option value="reindexed_and_reviewed">Reindexed and checked correction</option>
-                      <option value="dismissed_after_review">Checked original extraction; no correction needed</option>
-                    </select>
-                    <Textarea aria-label={`Review note for report ${report.id}`} placeholder="What did you check against the original source?" value={resolutionNotes[report.id] || ""} onChange={(event) => setResolutionNotes({ ...resolutionNotes, [report.id]: event.target.value })} rows={2} />
-                    <Button variant="outline" size="sm" disabled={!resolutionNotes[report.id]?.trim() || resolving !== null || reindexing} onClick={() => handleResolve(report.id)}>{resolving === report.id ? "Resolving…" : "Resolve reviewed report"}</Button>
-                  </>}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
+        <section aria-labelledby="review-heading" className="space-y-4">
+          <h2 id="review-heading" className="heading-16 flex items-center gap-2"><ThumbsDown className="size-4" aria-hidden />Extraction review</h2>
+          <Alert role="note"><AlertDescription>Open reports mark derived extraction as disputed. Original OCR remains available. Reindexing keeps reports open until you inspect and resolve them.</AlertDescription></Alert>
+          <div className="max-w-2xl space-y-3">
+            <Textarea value={feedbackNote} onChange={event => setFeedbackNote(event.target.value)} placeholder="What looks wrong?" aria-label="Extraction review report" rows={3} />
+            <Button onClick={handleFeedback} disabled={!feedbackNote.trim()} loading={feedbackSending} variant="secondary"><FileText aria-hidden />Mark extraction wrong</Button>
+            {(detail.feedback || []).map(report => <div key={report.id} className="space-y-3 rounded-lg border bg-surface p-4 copy-14">
+              <div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={report.status === "open" ? "destructive" : "outline"}>{report.status === "open" ? "Open" : "Resolved"}</Badge><span className="label-12 text-fg-muted tabular-nums">{new Date(report.created_at).toLocaleDateString()}</span></div>
+              <p className="whitespace-pre-wrap break-words">{report.note || report.reason}</p>
+              {report.status === "resolved" ? <p className="text-fg-muted">{report.resolution === "reindexed_and_reviewed" ? "Reindexed and reviewed" : "Dismissed after review"}: {report.resolution_note}</p> : <>
+                <label htmlFor={`resolution-${report.id}`} className="label-12 block">Resolution</label>
+                <Select value={resolutionKinds[report.id] || "reindexed_and_reviewed"} onValueChange={value => setResolutionKinds({ ...resolutionKinds, [report.id]: value })}>
+                  <SelectTrigger id={`resolution-${report.id}`}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="reindexed_and_reviewed">Reindexed and checked correction</SelectItem>
+                    <SelectItem value="dismissed_after_review">Checked original extraction; no correction needed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Textarea aria-label={`Review note for report ${report.id}`} placeholder="What did you check against the original source?" value={resolutionNotes[report.id] || ""} onChange={event => setResolutionNotes({ ...resolutionNotes, [report.id]: event.target.value })} rows={2} />
+                <Button variant="outline" disabled={!resolutionNotes[report.id]?.trim() || resolving !== null || reindexing} onClick={() => handleResolve(report.id)}>{resolving === report.id ? "Resolving…" : "Resolve reviewed report"}</Button>
+              </>}
+            </div>)}
+          </div>
+        </section>
       </div>
     </div>
   );

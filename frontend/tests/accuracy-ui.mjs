@@ -113,7 +113,7 @@ try {
   await capture('query-supported');
   await page.getByRole('link', { name: 'Document 101', exact: true }).first().click();
   await page.waitForURL('**/documents/101');
-  await visible('Raw OCR');
+  await visible('Original OCR text');
   record('query_supported_citation', 'Accepted answer displays supported claim and complete quote; Document 101 citation opens original document inspection.');
 
   for (const scenario of ['interrupt', 'stream-error']) {

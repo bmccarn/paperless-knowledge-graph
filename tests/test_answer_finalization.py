@@ -28,6 +28,27 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["claim_ledger"]["claims"][0]["document_id"], 101)
         self.assertEqual(result["verification"]["status"], "verified")
 
+    async def test_claim_references_hold_only_the_passages_matched_to_that_claim(self):
+        items = [{"id": "lab-v1", "document_id": 201, "chunk_index": 0, "title": "Lab report",
+                  "content": "Glucose: 95 mg/dL.", "excerpt": "Glucose: 95 mg/dL."}]
+        items += [{"id": f"statement-{i}", "document_id": 300 + i, "chunk_index": 0, "title": f"Statement {i}",
+                   "content": f"Statement total: $1{i}.00.", "excerpt": f"Statement total: $1{i}.00."} for i in range(5)]
+        class MatchingAuditor:
+            async def audit_answer_units(self, question, units, spans, plan):
+                # Each unit cites only the passage that holds its own value.
+                return {"assessments": [{"unit_id": unit["id"], "status": "supported", "references": [
+                    {"span_id": span["span_id"]} for span in spans if span["content"].split(": ")[1].rstrip(".") in unit["text"]]}
+                    for unit in units]}
+        result = await AnswerFinalizer(MatchingAuditor()).finalize(
+            "What do the lab report and the first statement record?",
+            "Glucose was 95 mg/dL. The statement total was $10.00.", {"items": items, "coverage": {}},
+            plan={"requires_current": False}, mode="strict", evaluated_at="2026-09-04")
+        self.assertEqual(result["finalization"]["disposition"], "supported")
+        self.assertEqual([[ref["document_id"] for ref in claim["references"]] for claim in result["claim_ledger"]["claims"]],
+                         [[201], [300]])
+        self.assertEqual(result["answer"], "Glucose was 95 mg/dL. [Document 201](/documents/201) "
+                                           "The statement total was $10.00. [Document 300](/documents/300)")
+
     async def test_markdown_structure_keeps_claim_context_without_formatting_claims(self):
         answer = "### Recorded premium\n---\n**Monthly premium:**\nThe premium is $321.00 USD."
         class ContextAuditor(SupportedAuditor):

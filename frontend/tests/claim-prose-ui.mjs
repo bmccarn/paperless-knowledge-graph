@@ -282,3 +282,36 @@ test("no block in the old style remains under the answer", async t => {
   assert.deepEqual(allCaps, []);
   assert.equal(await page.getByRole("button", { name: "When is the next premium due?", exact: true }).count(), 1);
 });
+
+for (const width of [1440, 390]) test(`a claim number stays on the line of the claim's last word at ${width} px`, async t => {
+  const { answer } = await ask(t, width);
+  // Narrow the prose one pixel at a time so each claim's last word reaches the right edge at some width.
+  const result = await answer.locator(".prose").first().evaluate(prose => {
+    const lastCharRect = claim => {
+      const walker = document.createTreeWalker(claim, NodeFilter.SHOW_TEXT);
+      let last = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.trim()) last = node;
+      const end = last.data.trimEnd().length;
+      const range = document.createRange();
+      range.setStart(last, end - 1);
+      range.setEnd(last, end);
+      return range.getBoundingClientRect();
+    };
+    const start = prose.getBoundingClientRect().width;
+    const split = [];
+    let checks = 0;
+    for (let width = start; width > start - 160 && width > 200; width--) {
+      prose.style.width = `${width}px`;
+      for (const number of prose.querySelectorAll("button.cite")) {
+        const claim = number.previousElementSibling;
+        const word = lastCharRect(claim), mark = number.getBoundingClientRect();
+        checks++;
+        if (mark.top >= word.bottom || mark.bottom <= word.top) split.push(`${number.getAttribute("aria-label")} at ${width}px`);
+      }
+    }
+    prose.style.width = "";
+    return { checks, split };
+  });
+  assert.ok(result.checks > 100);
+  assert.deepEqual(result.split, []);
+});

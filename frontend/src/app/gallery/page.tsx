@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
@@ -59,6 +60,12 @@ export default function GalleryPage() {
           <h1 className="page-title">Component gallery</h1>
           <p className="text-sm text-fg-muted">The shared controls for reading, reviewing and exploring your archive.</p>
         </header>
+
+        <Section id="phone-navigation" title="Phone navigation">
+          <div className="max-w-[390px] overflow-hidden rounded-lg border">
+            <TabBar pathname="/query" healthy={true} className="static block md:block border-t-0" />
+          </div>
+        </Section>
 
         <Section id="answer-states" title="Answer states">
           <Row name="Medium">{answerStates.map(state => <StatusLabel key={state} status={state} />)}</Row>

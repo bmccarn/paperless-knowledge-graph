@@ -717,7 +717,11 @@ function QueryContent() {
 
                   {(claims.length > 0 || omitted.length > 0) && (
                     <ClaimTable id={`claims-${i}`} claims={claims} omitted={omitted} sourceDates={msg.source_dates}
-                      active={activeClaims[i] ?? null} onSelect={select} />
+                      active={activeClaims[i] ?? null} onSelect={n => {
+                        select(n);
+                        // After the render that shows the note on a phone, as a claim number does.
+                        requestAnimationFrame(() => document.getElementById(`note-answer-${i}-${n}`)?.scrollIntoView({ block: "nearest" }));
+                      }} />
                   )}
 
                   <TimelineDates events={msg.timeline_events}

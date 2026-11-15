@@ -125,6 +125,7 @@ test("a Not checked answer shows no underlines and no notes", async t => {
   assert.ok((await answer.innerText()).includes("The January statement lists a premium of $25."));
   assert.equal(await answer.locator("[data-claim]").count(), 0);
   assert.equal(await answer.getByRole("note").count(), 0);
+  assert.equal(await answer.getByRole("button", { name: /^Claim table/ }).count(), 0, "unchecked claims have no results to show");
 });
 
 test("an older saved Verified answer shows plain prose with no claims and no literal citation", async t => {
@@ -202,9 +203,15 @@ test("the Partial answer's claim table lists each left-out unit", async t => {
   assert.equal(await left.getByRole("button").count(), 0, "a left-out claim is not in the prose, so it cannot be selected");
 });
 
-test("at 390 px the claim table stacks without horizontal scroll", async t => {
+test("at 390 px the claim table stacks without horizontal scroll, and selecting a row scrolls to its note", async t => {
   const { page, answer } = await ask(t, 390);
-  await openClaimTable(answer);
+  const table = await openClaimTable(answer);
   assert.ok(await noHorizontalScroll(page), "no horizontal scroll");
+  const note = answer.getByRole("note", { name: "Claim 2 source" });
+  // A DOM click: Playwright's click would scroll the page itself.
+  await table.getByRole("button", { name: "Select claim 2", exact: true }).scrollIntoViewIfNeeded();
+  await table.getByRole("button", { name: "Select claim 2", exact: true }).evaluate(button => button.click());
+  await page.waitForFunction(element => { const r = element.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight; },
+    await note.elementHandle(), { timeout: 3000 });
   if (artifacts) await page.screenshot({ path: `${artifacts}/claim-table-390.png`, fullPage: true });
 });

@@ -11,7 +11,7 @@ import { formatSourceDate } from "@/lib/answer-state";
 import type { LedgerClaim } from "@/lib/claim-prose";
 
 /** Older saved ledgers name one source on the claim itself instead of in `references`. */
-export type TableClaim = LedgerClaim & { claim?: string; document_id?: number; source_title?: string; evidence_quote?: string };
+export type TableClaim = LedgerClaim & { claim?: string; document_id?: number; source_title?: string; evidence_quote?: string; evidence_excerpt?: string };
 /** An entry of `verification.partial.omitted_units`. */
 export interface OmittedUnit { id?: string; claim?: string; omission_reason?: string }
 
@@ -59,8 +59,8 @@ export function ClaimTable({ id, claims, omitted = [], sourceDates, active, onSe
               const n = i + 1;
               const current = active === n || undefined;
               const refs = claim.references?.length ? claim.references
-                : claim.source_title || claim.evidence_quote
-                  ? [{ document_id: claim.document_id ?? 0, quote: claim.evidence_quote ?? "", source_title: claim.source_title }] : [];
+                : claim.source_title || claim.evidence_quote || claim.evidence_excerpt
+                  ? [{ document_id: claim.document_id ?? 0, quote: claim.evidence_quote || claim.evidence_excerpt || "", source_title: claim.source_title }] : [];
               return (
                 <TableRow key={n} aria-current={current} onClick={() => onSelect(n)}
                   className="cursor-pointer aria-[current=true]:bg-raised aria-[current=true]:shadow-[inset_2px_0_0_var(--mark-line)] max-md:grid max-md:grid-cols-[40px_1fr] max-md:gap-x-2 max-md:gap-y-1.5 max-md:py-3">

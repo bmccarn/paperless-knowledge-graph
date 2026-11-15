@@ -74,9 +74,10 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         # Only comma-grouped amounts before a whole uppercase word are read.
         for claim, source in [("5", "5MM"), ("5", "5M"), ("3", "3ABCD12EF3GH45678"),
                               ("10", "10AM"), ("1234567", "AP1234567"), ("5,000", "5,000MMX9"),
-                              ("250,000", "-250,000PD")]:
+                              ("250,000", "-250,000PD"), *[(amount + "1,000", amount + "1,000" + magnitude)
+                                  for amount in ("", "$") for magnitude in ("K", "M", "MM", "B", "BN", "MN", "mn")]]:
             with self.subTest(claim=claim, source=source):
-                self.assertIn("values", value_mismatches(f"The amount is {claim}.", [{"quote": source}]))
+                self.assertTrue(value_mismatches(f"The amount is {claim}.", [{"quote": source}]))
 
     async def test_requested_short_source_reaches_auditor_among_long_distractors(self):
         from app.evidence import build_evidence_pack

@@ -791,9 +791,9 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     number = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
     def numbers(value):
         return {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,])(" + number + r")(?!\w|[.,]\d)", value)}
-    # Sources may glue a unit word to a grouped amount (500,000BI). Bare,
-    # signed or single-letter-suffixed tokens (5MM, 10AM, AP1234567) stay unread.
-    glued = r"(\d{1,3}(?:,\d{3})+)(?=[A-Z]{2,}\b)"
+    # Sources may glue a unit word to a grouped amount (500,000BI). Ungrouped,
+    # signed or magnitude-suffixed tokens (5MM, 10AM, AP1234567, 1,000MM) stay unread.
+    glued = r"(\d{1,3}(?:,\d{3})+)(?=(?!(?:MM|BN|MN)\b)[A-Z]{2,}\b)"
     def source_numbers(value):
         return numbers(value) | {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,+-])" + glued, value)}
     missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in source_numbers(source)}

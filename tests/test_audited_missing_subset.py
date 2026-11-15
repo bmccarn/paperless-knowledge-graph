@@ -133,7 +133,13 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('$321', result['answer'])
         self.assertNotIn('partial', result['verification'])
         self.assertEqual(len(auditor.contexts), 3)
-        second = result['claim_ledger']['subset_audit']['subset_audit']
+        # The stored ledger stays the original audit, with each subset round nested under it.
+        ledger = result['claim_ledger']
+        self.assertEqual([c['status'] for c in ledger['claims']], ['supported'] * 3 + ['unsupported'])
+        self.assertEqual(result['verification']['unsupported_claims'], [NAME])
+        self.assertIn('rejection_reasons', ledger['claims'][3])
+        self.assertEqual(ledger['subset_audit']['summary']['unsupported'], 1)
+        second = ledger['subset_audit']['subset_audit']
         self.assertEqual(second['summary']['unsupported'], 1)
         self.assertTrue(all('content' not in s for s in second['spans']))
 

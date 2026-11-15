@@ -103,6 +103,12 @@ for rel_type, target in [('PAID_TO', 'nb-markup'), ('EMPLOYED_BY', 'nb-unnamed')
     nb_link('nb-desk', rel_type, target, 2)
 
 
+# The sample person and organization also open as a neighborhood, for the inspector's source checks.
+NB_ENTITIES.update({'person-1': ('Person', 'Alex Example'), 'org-1': ('Organization', 'Example Utility')})
+NB_LINKS.append(('person-1', 'CUSTOMER_OF', 'org-1', [(101, True, None)]))
+NB_LINKS.extend((f'doc-{doc}', 'INVOICED_BY', 'org-1', [(doc, False, None)]) for doc in (101, 102))
+
+
 def nb_node(uid):
     if uid.startswith('doc-'):
         doc = document(int(uid[4:]))
@@ -503,6 +509,22 @@ class Handler(BaseHTTPRequestHandler):
                 query = get('q').lower().strip()
                 if query == 'fixture-error':
                     return self.reply({'detail': 'Synthetic graph search failure'}, 503)
+                if get('exclude_documents') in ('1', 'true'):
+                    # The graph landing: entities with the derived fields, the owner flagged but not removed.
+                    pool = {**NB_ENTITIES, **{identity(node): (node['labels'][0], node['props']['name'])
+                                              for node in SEARCH_NODES if 'Document' not in node['labels']}}
+                    rows = [{'labels': [label], 'properties': {'uuid': uid, 'name': name},
+                             'evidence_doc_count': nb_fields(uid)['evidence_doc_count'], 'matched_alias': None,
+                             'is_owner': uid == HUB}
+                            for uid, (label, name) in pool.items() if query in name.lower()]
+                    if get('sort') == 'documents':
+                        rows.sort(key=lambda row: (-row['evidence_doc_count'], row['properties']['name'].lower()))
+                    else:
+                        # Relevance ties fall back to the uuid, as in the backend; an empty query lists nothing.
+                        rows = sorted(rows, key=lambda row: row['properties']['uuid']) if query else []
+                    offset, limit = int(get('offset', '0')), int(get('limit', '20'))
+                    return self.reply({'query': get('q'), 'total': len(rows), 'offset': offset, 'limit': limit,
+                                       'has_more': offset + limit < len(rows), 'results': rows[offset:offset + limit]})
                 rows = [{'labels': node['labels'], 'properties': node['props']} for node in SEARCH_NODES
                         if query in json.dumps(node).lower()]
                 if get('type') == 'Document' and get('limit') == '12':
@@ -514,12 +536,12 @@ class Handler(BaseHTTPRequestHandler):
                                    'has_more': offset + limit < len(rows), 'results': rows[offset:offset + limit]})
             if route.startswith('/graph/node/'):
                 uid = route.rsplit('/', 1)[1]
-                if uid in NB_ENTITIES:
-                    if get('summary') in ('1', 'true'):
-                        return self.reply(nb_summary(uid))
+                if uid in NB_ENTITIES and get('summary') in ('1', 'true'):
+                    return self.reply(nb_summary(uid))
+                node = next((node for node in SEARCH_NODES if identity(node) == uid), None)
+                if node is None and uid in NB_ENTITIES:
                     label, name = NB_ENTITIES[uid]
                     return self.reply({'labels': [label], 'properties': {'uuid': uid, 'name': name}, 'relationships': []})
-                node = next((node for node in SEARCH_NODES if identity(node) == uid), None)
                 if node is None and uid.startswith('doc-'):
                     doc = document(int(uid[4:]))
                     node = {'labels': ['Document'], 'props': doc} if doc else None

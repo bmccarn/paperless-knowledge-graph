@@ -17,17 +17,17 @@ try {
   const marker = await context.request.get(`${base}/api/_fixture`);
   assert.equal(marker.status(), 200);
   assert.equal((await marker.json()).fixture, 'paperless-accuracy-ui-v1');
-  await page.goto(`${base}/graph`);
-  await page.locator('canvas').first().waitFor({ state: 'visible' });
+  await page.goto(`${base}/graph?focus=person-1`);
+  const canvas = page.locator('canvas').first();
+  await canvas.waitFor({ state: 'visible' });
   assert.equal(await page.getByRole('button', { name: /^(2D|3D)$/ }).count(), 0, 'Graph dimension controls must be removed');
   assert.equal(await page.getByLabel('Graph dimensions', { exact: true }).count(), 0);
-  const labels = page.getByRole('checkbox', { name: 'Show labels', exact: true });
-  assert.equal(await labels.isEnabled(), true);
-  assert.equal(await labels.isChecked(), true);
-  await labels.uncheck();
-  assert.equal(await labels.isChecked(), false);
-  await labels.check();
-  await page.getByRole('button', { name: /Alex Example/ }).click();
+  // Select the focus at the world origin after the initial fit and the hit canvas refresh.
+  await page.waitForFunction(() => document.querySelector('canvas')?.__zoom?.k !== 1);
+  await page.waitForTimeout(1000);
+  const box = await canvas.boundingBox();
+  const zoom = await canvas.evaluate(element => element.__zoom);
+  await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
   const summary = page.locator('summary').filter({ hasText: 'Evidence from document #101' });
   assert.match(await summary.innerText(), /inferred/);
   await summary.click();

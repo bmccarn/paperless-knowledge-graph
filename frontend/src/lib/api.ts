@@ -182,12 +182,9 @@ export async function getGraphNodeSummary(uuid: string): Promise<NodeSummary> {
   return apiFetch(`/graph/node/${encodeURIComponent(uuid)}?summary=1`);
 }
 
-export async function getGraphNeighbors(uuid: string, depth = 2) {
-  return apiFetch(`/graph/neighbors/${uuid}?depth=${depth}`);
-}
-
-export async function getGraphInitial(limit = 300) {
-  return apiFetch(`/graph/initial?limit=${limit}`);
+/** Entities only, for the graph landing; `sort=documents` with an empty query lists the most connected. */
+export async function searchEntities(q: string, limit: number, sort: "relevance" | "documents" = "relevance") {
+  return apiFetch(`/graph/search?${new URLSearchParams({ q, limit: String(limit), sort, exclude_documents: "1" })}`);
 }
 
 export async function getEntityReviewCandidates(limit = 50) {

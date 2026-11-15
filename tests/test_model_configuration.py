@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -62,6 +63,30 @@ class ModelIdentityTests(unittest.TestCase):
 
 
 class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_json_helpers_ignore_request_override_while_final_synthesis_uses_it(self):
+        from app.query import QueryEngine, _REQUEST_MODEL
+
+        def completion(content):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+        with patch.object(settings, 'gemini_model', 'synthetic-helper'), \
+             patch.object(settings, 'fallback_model', 'synthetic-fallback'), \
+             patch('app.query.AsyncOpenAI'):
+            engine = QueryEngine()
+            create = engine.client.chat.completions.create = AsyncMock(side_effect=[
+                completion('not JSON'), completion('{"entities": []}'), completion('Synthetic answer')])
+            token = _REQUEST_MODEL.set('synthetic-composer')
+            try:
+                self.assertEqual(await engine._llm_json('Synthetic helper'), {'entities': []})
+                result = await engine._final_synthesis('Synthetic question', {}, '', plan={})
+            finally:
+                _REQUEST_MODEL.reset(token)
+        self.assertEqual(result, {'answer': 'Synthetic answer'})
+        self.assertEqual([call.kwargs['model'] for call in create.call_args_list],
+                         ['synthetic-helper', 'synthetic-fallback', 'synthetic-composer'])
+        self.assertTrue(all(call.kwargs['response_format'] == {'type': 'json_object'}
+                            for call in create.call_args_list[:2]))
+
     async def test_primary_selectors_and_strands_inheritance_use_the_configured_route(self):
         from app.classifier import DocumentClassifier
         from app.extractor import EntityExtractor

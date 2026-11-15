@@ -28,9 +28,13 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Query mode**: `quick`, `deep`, `timeline`, or `strict`; selects retrieval and answer-processing behavior independently of the selected model.
 
+**Answer model**: The request-selected route for ordinary final synthesis. Existing failure handling can use a fallback route or an audited helper draft; the optional question pipeline uses Strands composition. JSON retrieval helpers use the configured primary route, then the fallback after parse errors or rate limits. Query cache identity includes the helper route. Strands planning and auditing use their separately configured route.
+
 **Evidence pack**: Source excerpts and provenance assembled for answer synthesis and verification.
 
 **Claim ledger**: Structured claims with supporting evidence and verification status bound to one exact answer candidate. A complete ledger means every unit was audited, not that the answer or archive is complete.
+
+**Audit source prefix**: Shared source context serialized before candidate and batch fields to permit prompt-prefix caching. Reuse changes no audit rule or delivered answer state; every delivered claim still requires support from the last complete audit.
 
 **Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. A complete subset audit that rejects more units allows one more subset round; at most two rounds run, and the last audit must support every delivered unit. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
 

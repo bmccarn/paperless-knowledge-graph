@@ -75,6 +75,9 @@ class StrandsQueryOrchestrator:
             payload = prepared_evidence.audit_payload(payload)
         if payload is None:
             return None
+        # Keep shared source context ahead of candidate- and batch-specific fields.
+        payload = {**{key: payload[key] for key in ('source_spans', 'source_documents', 'source_reading')
+                      if key in payload}, **payload}
         scope_view = prepared_evidence.scope_view if prepared_evidence is not None else None
         text = await self._text_agent(
             name="source_auditor",

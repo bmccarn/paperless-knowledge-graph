@@ -159,6 +159,17 @@ class QueryDeliveryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(cached["cached"])
         self.assertEqual(len(self.engine.calls), 2)
 
+    async def test_json_helper_change_misses_cache_with_fixed_answer_and_strands_routes(self):
+        from app.config import settings
+        with patch.object(settings, 'strands_model', 'fixed-auditor'):
+            for model in ('synthetic-helper-a', 'synthetic-helper-b'):
+                with patch.object(self.engine, 'model', model):
+                    result = await self.engine.query('Recorded premium?', model_override='fixed-composer')
+                    self.assertFalse(result['cached'])
+                    cached = await self.engine.query('Recorded premium?', model_override='fixed-composer')
+                    self.assertTrue(cached['cached'])
+        self.assertEqual(len(self.engine.calls), 2)
+
     async def test_auditor_receives_full_followup_context_without_echoing_history_publicly(self):
         history = [{"role": "user", "content": "context " * 200 + "important subject at the end"}]
         contexts = []

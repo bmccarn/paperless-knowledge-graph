@@ -12,15 +12,6 @@
     ]
   },
   {
-    "rule": "font-size",
-    "route": "/",
-    "state": "main",
-    "issue": 137,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
     "rule": "color-contrast",
     "route": "/debug",
     "state": "main",
@@ -43,7 +34,6 @@
       "[\"span.inline-block.w-[52px].text-amber-400\"]",
       "[\"span.inline-block.w-[52px].text-red-400\"]",
       "[\"span.inline-block.w-[52px].text-zinc-200\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-zinc-400\"]",
       "[\"span.text-zinc-500\"]"
     ]
@@ -66,8 +56,7 @@
       "[\"p.text-[10px].uppercase.text-muted-foreground.tracking-wider\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]"
     ]
   },
   {
@@ -87,17 +76,7 @@
     "targets": [
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/documents/101",
-    "state": "main",
-    "issue": 135,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]"
     ]
   },
   {
@@ -107,8 +86,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]"
     ]
   },
   {
@@ -118,8 +96,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]"
     ]
   },
   {
@@ -142,7 +119,6 @@
       "[\"span.hidden.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2.sm:block\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
     ]
   },
@@ -153,8 +129,7 @@
     "issue": 138,
     "targets": [
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]"
     ]
   },
   {
@@ -167,15 +142,6 @@
     ]
   },
   {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "history-sheet",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
     "rule": "color-contrast",
     "route": "/query",
     "state": "main",
@@ -185,120 +151,12 @@
     ]
   },
   {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "main",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "verified",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "documented",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "partial",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "withheld",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "not-checked",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "retry",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "failed",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "saved-unverifiable",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "legacy",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/query",
-    "state": "older-verified",
-    "issue": 120,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
     "rule": "color-contrast",
     "route": "/query",
     "state": "failed",
     "issue": 120,
     "targets": [
       "[\".text-muted-foreground\\\\/60\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/visual-missing-page",
-    "state": "main",
-    "issue": 122,
-    "targets": [
-      "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   }
 ]

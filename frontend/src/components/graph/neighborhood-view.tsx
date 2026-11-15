@@ -197,8 +197,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       <Button variant="link" size="xs" className="h-auto p-0 text-sm" onClick={() => { setCross(null); setCrossAttempt(value => value + 1); }}>Retry</Button>
     </>);
   else if (crossCount === 0 && !leaf) crossCaption = "No links between these neighbors.";
-  else if (shownCross) crossCaption = shownCross.total === 0 ? "No links between these neighbors."
-    : shownCross.total > shownCross.links.length ? `Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`
+  else if (shownCross) crossCaption = shownCross.total > shownCross.links.length ? `Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`
     : `${plural(shownCross.total, "link")} between neighbors.`;
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 

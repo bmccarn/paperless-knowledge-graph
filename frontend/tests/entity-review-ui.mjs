@@ -81,6 +81,7 @@ try {
   assert.equal(await queue.getByRole('button', { name: 'Keep split', exact: true }).count(), 3);
   await capture('entity-review-merge-pending');
   await route.continue();
+  await page.unroute('**/api/entity-review/merge');
   await toasts.getByText('Merged Cedar Laboratory 1 into Cedar Lab 1.', { exact: true }).waitFor();
   await candidate('Cedar Lab 1').waitFor({ state: 'detached' });
   assert.equal(merges.length, 1);

@@ -22,7 +22,8 @@ export function StreamStatus({ step, seconds }: { step: string; seconds: number 
       </span>
       <span className="hidden font-medium text-fg motion-reduce:inline">Working</span>
       <span>{step}</span>
-      <span className="tabular-nums">{seconds} s</span>
+      {/* Hidden from the live region so screen readers hear each step, not every second. */}
+      <span aria-hidden className="tabular-nums">{seconds} s</span>
     </div>
   );
 }

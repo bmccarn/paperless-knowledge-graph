@@ -154,6 +154,7 @@ for (const reducedMotion of ["no-preference", "reduce"]) test(`a running questio
   await status.waitFor();
   await page.clock.runFor(3000);
   assert.match(await status.innerText(), /Starting.*3 s/s);
+  assert.doesNotMatch(await status.ariaSnapshot(), /\d+ s/, "the live region does not announce every second");
   const working = status.getByText("Working", { exact: true });
   assert.equal(await working.isVisible(), reducedMotion === "reduce");
   assert.equal(await status.getByTestId("typing-dots").isVisible(), reducedMotion !== "reduce");

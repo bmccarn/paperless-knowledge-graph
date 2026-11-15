@@ -91,6 +91,15 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
       element = element.parentElement;
     }
   });
+  if (!state.state) {
+    await page.locator("main").evaluate(main => {
+      for (const element of [main, ...main.querySelectorAll("*")]) {
+        if (element.scrollTop) element.scrollTop = 0;
+      }
+    });
+    const heading = await page.getByRole("heading", { level: 1 }).boundingBox();
+    expect(heading?.y, "Main captures start at the page heading").toBeGreaterThanOrEqual(0);
+  }
   let capture;
   await expect(async () => {
     const previous = capture;

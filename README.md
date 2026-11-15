@@ -214,13 +214,33 @@ After changing models, test extraction on one small and one large document befor
 | `/query` | POST | Natural language query with hybrid retrieval and LLM synthesis |
 | `/query/stream` | POST | Server-sent events stream with trace and status events, answer replacement after repair, and trust metadata |
 | `/graph/search?q=...&type=...` | GET | Searches graph nodes by name, with an optional type filter |
-| `/graph/node/{uuid}` | GET | Node details and relationships |
+| `/graph/node/{uuid}` | GET | Node details and relationships; `?summary=1` returns light focus, link and document rows with owner status |
 | `/graph/neighbors/{uuid}?depth=2` | GET | Multi-hop neighborhood |
 | `/graph/paths?a=...&b=...` | GET | Up to 5 paths between two entities over semantic links, ranked by their weakest link; the owner is left out unless `include_owner=1` |
 | `/graph/initial?limit=300` | GET | Initial graph for the explorer |
 | `/conversations` | GET, POST | Lists or creates saved conversations |
 | `/conversations/{conv_id}` | GET, PATCH, DELETE | Reads, renames or deletes a conversation |
 | `/generate-title` | POST | Generates a short conversation title from a message |
+
+`GET /graph/node/{uuid}?summary=1` returns `focus`, `links`, `documents`,
+`owner_status` and `owner_match_count`. The default node response is unchanged.
+The owner rule matches Person names or aliases against `OWNER_NAME` after Unicode
+NFKC normalization, case-folding and whitespace normalization. Multiple matches
+rank by evidence document count descending, non-evidence link count descending,
+then UUID ascending. Evidence counts use nonempty `source_doc_ids`, otherwise
+distinct linked Document nodes. The rule only reads the graph.
+
+| `owner_status` | Meaning | `owner_match_count` |
+|---|---|---|
+| `found` | One matching Person is the owner. | 1 |
+| `chosen` | The highest-ranked matching Person is the owner. | Number of matching Persons, at least 2 |
+| `unset` | `OWNER_NAME` is empty. | 0 |
+| `not_found` | No Person matches `OWNER_NAME`. | 0 |
+| `ambiguous` | Legacy status for multiple matches; this rule now returns `chosen`. | Not returned by this rule |
+
+Search rows, summary focus and neighbor rows, and path searches use the same
+owner choice. Only the chosen node has `is_owner=true`. Paths exclude the owner
+unless `include_owner=1` or the owner is a requested endpoint.
 
 `/query` and `/query/stream` accept a `mode`:
 

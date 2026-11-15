@@ -949,7 +949,7 @@ class GraphStore:
         focus_id = _graph_node_id(node["properties"])
         relationships = [r for r in node["relationships"] if r["rel_type"] is not None]
         neighbor_ids = [_graph_node_id(r["neighbor_props"]) for r in relationships]
-        owner_status, owner = await self.get_owner()
+        owner_status, owner, owner_match_count = await self.get_owner()
         fields = await self.get_node_fields(list(dict.fromkeys([focus_id, *neighbor_ids])), owner)
         focus = {"id": focus_id, "label": node["labels"][0],
                  "name": node["properties"].get("name") or node["properties"].get("title", ""),
@@ -984,7 +984,7 @@ class GraphStore:
             documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
                          async for row in result}
         return {"focus": focus, "links": sorted(links, key=lambda link: link["key"]),
-                "documents": documents, "owner_status": owner_status}
+                "documents": documents, "owner_status": owner_status, "owner_match_count": owner_match_count}
 
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
         depth = max(1, min(int(depth), 4))
@@ -1248,13 +1248,17 @@ class GraphStore:
             return {"status": "unhealthy", "error": str(e)}
         return {"status": "unhealthy", "error": "unexpected"}
 
-    async def get_owner(self) -> tuple[str, Optional[str]]:
-        """Return (owner_status, owner uuid) for OWNER_NAME; see app.graph_fields.owner_rule."""
+    async def get_owner(self) -> tuple[str, Optional[str], int]:
+        """Return (status, owner uuid, match count) for OWNER_NAME; see app.graph_fields.owner_rule."""
         if not settings.owner_name.strip():
-            return "unset", None
+            return "unset", None, 0
         async with self.driver.session() as session:
             result = await session.run(
-                "MATCH (p:Person) RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases")
+                f"""
+                MATCH (n:Person) RETURN n.uuid AS uuid, n.name AS name, n.aliases AS aliases,
+                       {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
+                       COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count
+                """, evidence=EVIDENCE_TYPES)
             persons = [dict(row) async for row in result]
         return owner_rule(settings.owner_name, persons)
 

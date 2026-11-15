@@ -35,7 +35,7 @@ class PathRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_forced_timeout_returns_503(self):
         class SlowStore:
             async def get_owner(self):
-                return 'unset', None
+                return 'unset', None, 0
 
             async def find_paths(self, *args, **kwargs):
                 await asyncio.sleep(1)
@@ -66,7 +66,9 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
                     await (await session.run('''
                         CREATE (a:Person {uuid: $p + 'a', name: 'Path Start'}),
                                (b:Organization {uuid: $p + 'b', name: 'Path End'}),
-                               (o:Person {uuid: $p + 'owner', name: $owner}),
+                               (o:Person {uuid: $p + 'owner', name: $owner, source_doc_ids: [1, 2, 3]}),
+                               (:Person {uuid: $p + 'owner-small', name: $owner, source_doc_ids: [1]}),
+                               (:Person {uuid: $p + 'owner-mid', aliases: [$owner], source_doc_ids: [1, 2]}),
                                (m:Organization {uuid: $p + 'm', name: 'Middle Bank'}),
                                (n:Organization {uuid: $p + 'n', name: 'Inferred Middle'}),
                                (x:InsurancePolicy {uuid: $p + 'x', name: 'Mixed Policy'}),
@@ -144,6 +146,8 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(link['type'] not in {'MENTIONS', 'CONTAINS_RESULT'} for link in body['links_detail'].values()))
 
     async def test_owner_excluded_unless_included(self):
+        with patch('app.graph.settings.owner_name', OWNER):
+            self.assertEqual(await self.store.get_owner(), ('chosen', P + 'owner', 3))
         default = (await get(self.store, a=P + 'a', b=P + 'b')).json()
         self.assertTrue(all('owner' not in path for path in self.node_paths(default)))
         included = (await get(self.store, a=P + 'a', b=P + 'b', include_owner=1)).json()

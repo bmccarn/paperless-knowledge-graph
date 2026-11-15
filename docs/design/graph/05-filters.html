@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF5 Filters open</title>
+<link rel="stylesheet" href="wf.css">
+<style>.bar{display:inline-block;width:9px;margin-right:2px;background:#3b5878;vertical-align:bottom;border-radius:2px 2px 0 0}.bar.on{background:#7fb2ff}
+.cb{display:flex;align-items:center;gap:8px;padding:3px 0}.cb .box{width:14px;height:14px;border:1px solid #4b6582;border-radius:3px;display:inline-block}.cb .box.on{background:#2f5784;border-color:#7fb2ff}
+.cb .n{margin-left:auto;color:var(--ink3);font-size:12px}</style></head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="btn">←</span><span class="btn">→</span>
+    <div class="crumbs">Map › <b>Harbor Mutual Insurance</b></div>
+    <span class="spacer"></span>
+    <div class="seg"><span>Map</span><span class="on">Neighborhood</span><span>Path</span><span>Table</span></div>
+    <span class="btn">Save view</span>
+  </div>
+  <div class="body" style="grid-template-columns: 360px 1fr;">
+    <div class="rail" style="overflow:hidden">
+      <div style="display:flex;align-items:center"><b style="font-size:14px">Filters</b> <span class="n-pin" style="position:relative;display:inline-block;margin-left:6px">1</span><span class="spacer" style="flex:1"></span><span class="btn">Reset all</span></div>
+      <div class="h">Relationship families</div>
+      <div class="cb"><span class="box on"></span>Parties and roles<span class="n">14</span></div>
+      <div class="cb"><span class="box on"></span>Coverage and obligations<span class="n">37</span></div>
+      <div class="cb"><span class="box on"></span>Money and accounts<span class="n">22</span></div>
+      <div class="cb"><span class="box"></span>Places<span class="n">6</span></div>
+      <div class="cb"><span class="box on"></span>Document links<span class="n">9</span></div>
+      <div class="cb"><span class="box"></span>Other (unmapped types)<span class="n">4</span></div>
+      <div class="h">Support</div>
+      <div class="seg"><span class="on">All</span><span>Supported only</span><span>Inferred only</span></div>
+      <div class="h">Lowest confidence on a link ≥ 0.70</div>
+      <div style="height:40px;display:flex;align-items:flex-end">
+        <span class="bar" style="height:6px"></span><span class="bar" style="height:9px"></span><span class="bar" style="height:5px"></span><span class="bar" style="height:12px"></span><span class="bar" style="height:10px"></span><span class="bar" style="height:16px"></span><span class="bar" style="height:14px"></span><span class="bar on" style="height:20px"></span><span class="bar on" style="height:28px"></span><span class="bar on" style="height:36px"></span><span class="bar on" style="height:40px"></span><span class="bar on" style="height:30px"></span>
+        <span style="margin-left:12px" class="chip">No score · 9 <span class="box on" style="width:12px;height:12px;border:1px solid #7fb2ff;background:#2f5784;border-radius:3px"></span></span>
+      </div>
+      <div class="h">Evidence documents per link ≥ 2</div>
+      <div class="seg"><span>1</span><span class="on">2</span><span>3</span><span>5</span><span>10</span></div>
+      <div class="h">Document date · 2023-01 to 2026-11</div>
+      <div style="height:34px;display:flex;align-items:flex-end">
+        <span class="bar" style="height:8px"></span><span class="bar" style="height:12px"></span><span class="bar" style="height:10px"></span><span class="bar on" style="height:14px"></span><span class="bar on" style="height:18px"></span><span class="bar on" style="height:22px"></span><span class="bar on" style="height:20px"></span><span class="bar on" style="height:26px"></span><span class="bar on" style="height:30px"></span><span class="bar on" style="height:24px"></span><span class="bar on" style="height:32px"></span><span class="bar on" style="height:18px"></span><span class="bar on" style="height:12px"></span>
+      </div>
+      <div class="h">Document type</div>
+      <span class="chip on">insurance</span><span class="chip on">financial_invoice</span><span class="chip">legal_contract</span><span class="chip">property_home</span><span class="chip">+5</span>
+      <div class="h">Entity types</div>
+      <span class="chip on"><span class="dot" style="background:var(--k-person)"></span>Person</span><span class="chip on"><span class="sq" style="background:var(--k-org)"></span>Organization</span><span class="chip on"><span class="sq" style="background:var(--k-money)"></span>Money · 3 types</span><span class="chip"><span class="sq" style="background:var(--k-place)"></span>Places · 2</span><span class="chip on"><span class="sq" style="background:var(--k-thing)"></span>Things · 2</span>
+      <div class="h">View</div>
+      <div class="cb"><span class="box on"></span>Hide the owner entity</div>
+      <div class="cb"><span class="box"></span>Show “mentioned together” links (derived)</div>
+    </div>
+    <div class="canvas">
+      <div style="position:absolute;left:12px;top:12px;right:12px;display:flex;gap:6px;flex-wrap:wrap;z-index:3">
+        <span class="chip on">Families: 4 of 6 ✕</span><span class="chip on">Confidence ≥ 0.70 or none ✕</span><span class="chip on">≥ 2 documents ✕</span><span class="chip on">2024-01 → 2026-11 ✕</span><span class="chip on">2 doc types ✕</span><span class="chip on">Owner hidden ✕</span>
+      </div>
+      <svg width="1080" height="852" viewBox="0 0 1080 852" style="position:absolute;left:0;top:0">
+        <g fill="none" stroke="#6f8296"><line x1="540" y1="430" x2="380" y2="280" stroke-width="2.6"/><line x1="540" y1="430" x2="700" y2="290" stroke-width="2.2"/><line x1="540" y1="430" x2="760" y2="470" stroke-width="3"/><line x1="540" y1="430" x2="420" y2="600" stroke-width="2"/></g>
+        <g fill="none" stroke="#2a3a4c" stroke-dasharray="2 4"><line x1="540" y1="430" x2="300" y2="430"/><line x1="540" y1="430" x2="600" y2="650"/><line x1="540" y1="430" x2="820" y2="620"/></g>
+        <rect x="514" y="404" width="52" height="52" rx="10" fill="#d95926" stroke="#fff" stroke-width="3"/><text class="lbl big" x="540" y="480" text-anchor="middle">Harbor Mutual Insurance</text>
+        <polygon points="380,262 396,271 396,289 380,298 364,289 364,271" fill="#c98500"/><text class="lbl" x="380" y="318" text-anchor="middle">Policy HM-4471</text>
+        <polygon points="700,272 716,281 716,299 700,308 684,299 684,281" fill="#c98500"/><text class="lbl" x="700" y="328" text-anchor="middle">Policy HO-2210 (home)</text>
+        <polygon points="760,452 776,461 776,479 760,488 744,479 744,461" fill="#c98500"/><text class="lbl" x="784" y="474">Premiums · 18 bills</text>
+        <rect x="406" y="586" width="28" height="28" rx="6" fill="#d95926"/><text class="lbl" x="420" y="634" text-anchor="middle">Bayline Claims Services</text>
+
+        <polygon points="300,418 312,430 300,442 288,430" fill="#199e70" opacity=".18"/>
+        <circle cx="600" cy="650" r="9" fill="#3987e5" opacity=".18"/>
+        <polygon points="820,606 834,630 806,630" fill="#d55181" opacity=".18"/>
+      </svg>
+      <div class="status">5 of 9 neighbors match · 3 hidden by filters · <u>show hidden as ghosts</u></div>
+
+      <span class="n-pin" style="left:1040px;top:12px">2</span>
+      <span class="n-pin" style="left:300px;top:390px">3</span>
+    </div>
+  </div>
+</div>
+<div class="notes" style="left:1080px;top:560px;width:340px">
+  <h3>WF5 · Filters</h3>
+  <ol>
+    <li>Filters are grouped by question: which links, how well supported, from which documents, which entities. Every row shows a live count. “No score” is its own bucket, because the backend omits <code>confidence</code> when any source record lacks one.</li>
+    <li>Active filters repeat as removable chips above the canvas and in the URL.</li>
+    <li>Hidden nodes stay where they were as 18 % ghosts (on request) so the layout never jumps when a filter changes.</li>
+  </ol>
+</div>
+</body></html>

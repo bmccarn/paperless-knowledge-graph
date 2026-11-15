@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/f7b28ffc-746a-4237-bc67-d10b57a2c045
 - **Retries.** LLM and database calls retry transient errors with exponential backoff and jitter.
 - **Caching.** Query, vector and graph caches use Redis. Set `REDIS_URL` to a value starting with `memory:` to use bounded in-process caches instead.
 - **Task progress.** Sync and reindex tasks report progress and can be cancelled.
-- **Frontend.** The Next.js app has a 2D/3D graph explorer, a document browser, topic hubs, natural language queries with evidence and trust review, an entity review queue and a live log viewer.
+- **Frontend.** The Next.js app has a 2D graph explorer, a document browser, topic hubs, natural language queries with evidence and trust review, an entity review queue and a live log viewer.
 
 ## Answer behavior
 
@@ -246,7 +246,7 @@ After changing models, test extraction on one small and one large document befor
 | Page | Description |
 |------|-------------|
 | `/` | Dashboard with stats, quick actions and recent activity |
-| `/graph` | Interactive 2D/3D graph explorer |
+| `/graph` | Interactive 2D graph explorer |
 | `/documents` | Document browser with type filters, sorting, pagination and batch reindex |
 | `/documents/[id]` | Document detail, extracted graph facts, chunks, processing status and extraction feedback |
 | `/hubs` | Topic hubs (insurance, taxes, medical, vehicles, home) that page through matching documents and suggest questions |
@@ -254,7 +254,7 @@ After changing models, test extraction on one small and one large document befor
 | `/entities/review` | Review queue for possible duplicate entities, with steward suggestions |
 | `/debug` | Live log viewer with level filters and auto-scroll |
 
-The graph explorer opens in 2D. You can expand nodes, inspect sources, filter by type, focus on a neighborhood and switch to 3D. See [graph validation](docs/audits/graph-validation.md) for its regression tests and a synthetic preview.
+The graph explorer opens in 2D. You can expand nodes, inspect sources, filter by type and focus on a neighborhood. See [graph validation](docs/audits/graph-validation.md) for its regression tests and a synthetic preview.
 
 ## Services
 

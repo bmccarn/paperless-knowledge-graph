@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF4 Path between two</title>
+<link rel="stylesheet" href="wf.css"></head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="btn">←</span><span class="btn">→</span>
+    <div class="crumbs">Map › Dana Whitlock › <b>Path to Northgate Credit Union</b></div>
+    <span class="spacer"></span>
+    <div class="seg"><span>Map</span><span>Neighborhood</span><span class="on">Path</span><span>Table</span></div>
+    <span class="btn">Save view</span>
+  </div>
+  <div class="body" style="grid-template-columns: 340px 1fr 380px;">
+    <div class="rail">
+      <div class="h">From</div>
+      <div class="search" style="width:100%"><span class="dot" style="background:var(--k-person)"></span><span style="color:var(--ink)">Dana Whitlock</span></div>
+      <div style="text-align:center;margin:4px 0" class="muted">⇅ swap</div>
+      <div class="h" style="margin-top:4px">To</div>
+      <div class="search" style="width:100%"><span class="sq" style="background:var(--k-org)"></span><span style="color:var(--ink)">Northgate Credit Union</span></div>
+      <div class="h">Rules <span class="n-pin" style="position:relative;display:inline-block;margin-left:4px">1</span></div>
+      <div class="row">Longest path<span class="n"><span class="seg"><span>2</span><span>3</span><span class="on">4</span><span>5</span></span></span></div>
+      <div class="row">Avoid the owner<span class="n">● on</span></div>
+      <div class="row">Allow inferred links<span class="n">● on</span></div>
+      <div class="row">Allow “same document” hops<span class="n">○ off</span></div>
+      <div class="h">3 paths found · strongest first</div>
+      <div class="card" style="border-color:#2f5784">
+        <b>1 · 2 links</b> <span class="tag sup">weakest link: 3 docs</span>
+        <div class="ink2" style="font-size:12px;margin-top:4px">Dana → co-borrower on → Loan 88-2031 → loan from → Northgate</div>
+      </div>
+      <div class="card">
+        <b>2 · 2 links</b> <span class="tag inf">contains inferred</span>
+        <div class="ink2" style="font-size:12px;margin-top:4px">Dana → resides at → 14 Larkspur Ct ← mailing address of ← Northgate</div>
+      </div>
+      <div class="card">
+        <b>3 · 2 links</b> <span class="tag sup">weakest link: 1 doc</span>
+        <div class="ink2" style="font-size:12px;margin-top:4px">Dana → works at → Bayline Logistics → payroll bank → Northgate</div>
+      </div>
+      <div class="muted" style="font-size:12px">2 more paths go through the owner. <u>Show them</u></div>
+    </div>
+    <div class="canvas">
+      <svg width="720" height="852" viewBox="0 0 720 852" style="position:absolute;left:0;top:0">
+
+        <g class="lbl small" fill="#74859a"><text x="70" y="120" text-anchor="middle">START</text><text x="360" y="120" text-anchor="middle">HOP 1</text><text x="650" y="150" text-anchor="middle">END</text></g>
+
+        <g stroke="#7fb2ff" stroke-width="3.5" fill="none"><path d="M 86 400 C 200 400 220 260 340 260"/><path d="M 380 260 C 500 260 520 400 630 400"/></g>
+
+        <g stroke="#b7a46a" stroke-width="2" fill="none" stroke-dasharray="6 4" opacity=".75"><path d="M 86 400 C 200 400 220 420 340 420"/><path d="M 380 420 C 500 420 520 400 630 400"/></g>
+
+        <g stroke="#6f8296" stroke-width="1.6" fill="none" opacity=".55"><path d="M 86 400 C 200 400 220 580 302 580"/><path d="M 330 580 C 480 580 520 400 630 400"/></g>
+        <circle cx="70" cy="400" r="18" fill="#3987e5" stroke="#fff" stroke-width="2"/><text class="lbl big" x="70" y="440" text-anchor="middle">Dana Whitlock</text>
+        <rect x="632" y="382" width="36" height="36" rx="8" fill="#d95926" stroke="#fff" stroke-width="2"/><text class="lbl big" x="700" y="368" text-anchor="end">Northgate Credit Union</text>
+        <polygon points="360,240 378,250 378,270 360,280 342,270 342,250" fill="#c98500"/><text class="lbl" x="360" y="300" text-anchor="middle">Loan 88-2031</text>
+        <polygon points="360,404 376,420 360,436 344,420" fill="#199e70" opacity=".8"/><text class="lbl" x="360" y="456" text-anchor="middle">14 Larkspur Ct</text>
+        <rect x="302" y="566" width="28" height="28" rx="6" fill="#d95926" opacity=".7"/><text class="lbl small" x="316" y="612" text-anchor="middle">Bayline Logistics</text>
+        <g class="lbl small">
+          <text x="150" y="250">CO_BORROWER_ON · 3 docs</text><text x="440" y="235">LOAN_FROM · 5 docs</text>
+          <text x="200" y="440">RESIDES_AT · 6</text><text x="420" y="480">MAILING_ADDRESS · 1 · inferred</text>
+        </g>
+
+        <rect x="150" y="700" width="420" height="96" rx="10" fill="#111b26" stroke="#263547"/>
+        <text class="lbl" x="166" y="724">Evidence for path 1</text>
+        <text class="lbl small" x="166" y="748">Loan agreement 2024 · supports both links</text>
+        <text class="lbl small" x="166" y="766">Statement, Mar 2026 · LOAN_FROM</text>
+        <text class="lbl small" x="166" y="784">Payoff letter draft · CO_BORROWER_ON</text>
+      </svg>
+      <span class="n-pin" style="left:300px;top:150px">2</span>
+      <span class="n-pin" style="left:560px;top:690px">3</span>
+    </div>
+    <div class="insp">
+      <div class="muted">Selected path 1 of 3</div>
+      <div style="font-size:16px;font-weight:600;margin:4px 0 10px">Dana Whitlock → Northgate Credit Union</div>
+      <div class="card"><b>Dana Whitlock</b> <span class="muted">CO_BORROWER_ON</span> <b>Loan 88-2031</b>
+        <div style="margin-top:4px"><span class="tag sup">supported · 3 docs</span> <span class="muted">min confidence 0.91</span></div>
+        <blockquote>“Borrowers: Alex Rivera and <mark>Dana Whitlock</mark>, jointly and severally…”</blockquote></div>
+      <div class="card"><b>Loan 88-2031</b> <span class="muted">LOAN_FROM</span> <b>Northgate Credit Union</b>
+        <div style="margin-top:4px"><span class="tag sup">supported · 5 docs</span> <span class="muted">min confidence 0.88</span></div>
+        <blockquote>“<mark>Northgate Credit Union</mark> (Lender) agrees to lend…”</blockquote></div>
+      <div style="display:flex;gap:6px"><span class="btn primary">Ask how they are related</span><span class="btn">Open as table</span></div>
+      <span class="n-pin" style="position:relative;display:inline-block;margin-top:10px">4</span>
+    </div>
+  </div>
+</div>
+<div class="notes" style="left:24px;top:660px;width:300px">
+  <h3>WF4 · How are these two related?</h3>
+  <ol>
+    <li>The server returns up to k = 5 simple paths, at most 4 links, ranked by the weakest link’s evidence count. Owner and “same document” hops are excluded by default.</li>
+    <li>Layered left-to-right layout (columns = hop index), not a force layout.</li>
+    <li>Evidence documents for the selected path are listed under it.</li>
+    <li>“Ask how they are related” opens /query with both entity ids attached.</li>
+  </ol>
+</div>
+</body></html>

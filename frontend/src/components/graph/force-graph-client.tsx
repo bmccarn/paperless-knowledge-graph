@@ -9,7 +9,6 @@ import type {
   LinkObject,
 } from "react-force-graph-2d";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   escapeGraphLabel,
   type ExplorerGraph,
@@ -18,7 +17,7 @@ import {
 } from "@/lib/graph-data";
 import { getNodeColor } from "./graph-legend";
 
-type RenderNode = NodeObject<ExplorerNode> & { z?: number; fz?: number };
+type RenderNode = NodeObject<ExplorerNode>;
 type RenderLink = LinkObject<
   ExplorerNode,
   Omit<ExplorerLink, "source" | "target">
@@ -34,7 +33,6 @@ type GraphComponent = ComponentType<
 
 interface Props {
   graph: ExplorerGraph;
-  is3D: boolean;
   showLabels: boolean;
   selectedNodeId: string | null;
   selectedLinkId: string | null;
@@ -42,7 +40,6 @@ interface Props {
   onSelectLink: (link: ExplorerLink) => void;
   onClear: () => void;
   onReady: (handle: GraphHandle | null) => void;
-  onUse2D: () => void;
 }
 
 function endpointId(value: RenderLink["source"]): string {
@@ -53,7 +50,6 @@ function endpointId(value: RenderLink["source"]): string {
 
 export function ForceGraphClient({
   graph,
-  is3D,
   showLabels,
   selectedNodeId,
   selectedLinkId,
@@ -61,7 +57,6 @@ export function ForceGraphClient({
   onSelectLink,
   onClear,
   onReady,
-  onUse2D,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
@@ -69,36 +64,24 @@ export function ForceGraphClient({
   const initialFitPending = useRef(true);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [renderer, setRenderer] = useState<{
-    mode: boolean;
     Component: GraphComponent | null;
     error: string | null;
-  }>({ mode: is3D, Component: null, error: null });
+  }>({ Component: null, error: null });
 
   useEffect(() => {
     let active = true;
     initialFitPending.current = true;
     async function load() {
       try {
-        if (is3D) {
-          const canvas = document.createElement("canvas");
-          if (!canvas.getContext("webgl2") && !canvas.getContext("webgl"))
-            throw new Error(
-              "3D requires WebGL. The 2D graph works without it.",
-            );
-        }
-        const rendererModule = is3D
-          ? await import("react-force-graph-3d")
-          : await import("react-force-graph-2d");
+        const rendererModule = await import("react-force-graph-2d");
         if (active)
           setRenderer({
-            mode: is3D,
             Component: rendererModule.default as unknown as GraphComponent,
             error: null,
           });
       } catch (error) {
         if (active)
           setRenderer({
-            mode: is3D,
             Component: null,
             error:
               error instanceof Error
@@ -111,7 +94,7 @@ export function ForceGraphClient({
     return () => {
       active = false;
     };
-  }, [is3D]);
+  }, []);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -133,10 +116,8 @@ export function ForceGraphClient({
         props: { ...node.props },
         x: previous?.x,
         y: previous?.y,
-        z: previous?.z,
         fx: previous?.fx,
         fy: previous?.fy,
-        fz: previous?.fz,
       };
       renderNodes.current.set(node.id, rendered);
       return rendered;
@@ -148,7 +129,7 @@ export function ForceGraphClient({
   }, [graph]);
 
   useEffect(() => {
-    if (is3D || renderer.mode !== is3D || !renderer.Component || !selectedNodeId ||
+    if (!renderer.Component || !selectedNodeId ||
         dimensions.width <= 0 || dimensions.height <= 0 ||
         !graph.nodes.some((node) => node.id === selectedNodeId)) return;
     // The inspector and responsive layout resize the canvas. Center after its
@@ -160,7 +141,7 @@ export function ForceGraphClient({
       handleRef.current?.centerAt(node.x, node.y, 0);
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedNodeId, dimensions.width, dimensions.height, is3D, renderer.mode, renderer.Component, graph.nodes]);
+  }, [selectedNodeId, dimensions.width, dimensions.height, renderer.Component, graph.nodes]);
 
   const highlighted = useMemo(() => {
     const ids = new Set<string>();
@@ -231,15 +212,14 @@ export function ForceGraphClient({
     if (event.target instanceof HTMLCanvasElement) initialFitPending.current = false;
   };
 
-  const Component = renderer.mode === is3D ? renderer.Component : null;
-  const error = renderer.mode === is3D ? renderer.error : null;
+  const { Component, error } = renderer;
   return (
     <div
       ref={containerRef}
       onWheelCapture={preserveUserView}
       onPointerDownCapture={preserveUserView}
       className="relative h-full w-full min-h-0 overflow-hidden bg-[#0b131c]"
-      aria-label={`${is3D ? "3D" : "2D"} relationship graph`}
+      aria-label="2D relationship graph"
     >
       {error ? (
         <div
@@ -248,7 +228,6 @@ export function ForceGraphClient({
         >
           <AlertCircle className="h-6 w-6 text-amber-400" />
           <p>{error}</p>
-          {is3D && <Button onClick={onUse2D}>Use 2D graph</Button>}
         </div>
       ) : !Component || !dimensions.width || !dimensions.height ? (
         <div
@@ -260,7 +239,6 @@ export function ForceGraphClient({
         </div>
       ) : (
         <Component
-          key={is3D ? "3d" : "2d"}
           ref={setHandle}
           graphData={data}
           width={dimensions.width}
@@ -287,18 +265,14 @@ export function ForceGraphClient({
           linkDirectionalArrowRelPos={0.95}
           linkCurvature={0.08}
           linkLineDash={(link) => (link.props.implied ? [3, 2] : null)}
-          nodeCanvasObject={is3D ? undefined : paintNode}
-          nodePointerAreaPaint={
-            is3D
-              ? undefined
-              : (node, color, ctx, scale) => {
-                  if (node.x === undefined || node.y === undefined) return;
-                  ctx.fillStyle = color;
-                  ctx.beginPath();
-                  ctx.arc(node.x, node.y, 9 / scale, 0, Math.PI * 2);
-                  ctx.fill();
-                }
-          }
+          nodeCanvasObject={paintNode}
+          nodePointerAreaPaint={(node, color, ctx, scale) => {
+            if (node.x === undefined || node.y === undefined) return;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, 9 / scale, 0, Math.PI * 2);
+            ctx.fill();
+          }}
           onNodeClick={(node) => onSelectNode(node)}
           onBackgroundClick={onClear}
           onLinkClick={(link) =>
@@ -311,7 +285,6 @@ export function ForceGraphClient({
           onNodeDragEnd={(node) => {
             node.fx = node.x;
             node.fy = node.y;
-            if (is3D) (node as RenderNode).fz = (node as RenderNode).z;
           }}
           onEngineStop={() => {
             if (initialFitPending.current && handleRef.current) {

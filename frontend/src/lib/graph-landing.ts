@@ -1,17 +1,19 @@
 /** Pure helpers for the /graph landing: search rows, typeahead groups, Recent and the `?q=` rule. */
 import { nodeKind, nodeLabelText, type Kind } from "./categories";
 
-export interface EntityRow { id: string; name: string; label: string; documents: number; alias: string | null; owner: boolean }
+/** `ownerMatch`: another Person that matches the owner setting, not the one the owner rule chose. */
+export interface EntityRow { id: string; name: string; label: string; documents: number; alias: string | null; owner: boolean;
+  ownerMatch: boolean }
 
 /** A `/graph/search` result as a landing row; documents and rows without an entity id are dropped. */
 export function entityRow(raw: unknown): EntityRow | null {
   const row = (raw ?? {}) as { labels?: string[]; properties?: Record<string, unknown>; evidence_doc_count?: number;
-    matched_alias?: string | null; is_owner?: boolean };
+    matched_alias?: string | null; is_owner?: boolean; owner_match?: boolean };
   const label = row.labels?.[0] ?? "";
   const id = row.properties?.uuid;
   if (typeof id !== "string" || !id || nodeKind(label).kind === "docs") return null;
   return { id, label, name: String(row.properties?.name ?? ""), documents: Number(row.evidence_doc_count) || 0,
-    alias: row.matched_alias || null, owner: row.is_owner === true };
+    alias: row.matched_alias || null, owner: row.is_owner === true, ownerMatch: row.owner_match === true };
 }
 
 /** The name, or the kind and a short id for an unnamed entity; never the bare id. */
@@ -37,8 +39,8 @@ export function exactMatch(rows: EntityRow[], text: string): EntityRow | null {
   return matches.length === 1 ? matches[0] : null;
 }
 
-/** The top 10 by evidence documents, without the owner. */
-export const mostConnected = (rows: EntityRow[]) => rows.filter(row => !row.owner).slice(0, 10);
+/** The top 10 by evidence documents, without the owner and the other Persons that match the owner setting. */
+export const mostConnected = (rows: EntityRow[]) => rows.filter(row => !row.owner && !row.ownerMatch).slice(0, 10);
 
 export type RecentEntity = Pick<EntityRow, "id" | "name" | "label" | "documents">;
 

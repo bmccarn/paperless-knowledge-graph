@@ -205,9 +205,12 @@ test("the graph opens on entity search with Recent and Most connected, never the
   const ranked = await (await context.request.get(`${base}/api/graph/search?q=&sort=documents&exclude_documents=1&limit=11`)).json();
   assert.equal(ranked.results[0].properties.name, "Rowan Vale");
   assert.equal(ranked.results[0].is_owner, true);
+  // Two more Persons match the owner setting; the server flags them, and the landing leaves them out too.
+  const matches = ranked.results.filter(row => row.owner_match).map(row => row.properties.name);
+  assert.deepEqual(matches, ["Rowan Vale", "Rowan Vale"], "Both other matches rank in the top 11");
   const rows = await most.getByRole("link").allTextContents();
   assert.equal(rows.length, 10);
-  assert.ok(!rows.some(row => row.includes("Rowan Vale")), `The owner is not listed: ${rows}`);
+  assert.ok(!rows.some(row => row.includes("Rowan Vale")), `Neither the owner nor its other matches is listed: ${rows}`);
   assert.match(rows[0], /^Lakeshore Pharmacy.*120 documents$/);
   // "/" returns focus to the search box without typing a slash.
   await most.getByRole("link").first().focus();

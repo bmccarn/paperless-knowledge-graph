@@ -111,6 +111,14 @@ NB_ENTITIES.update({'person-1': ('Person', 'Alex Example'), 'org-1': ('Organizat
 NB_LINKS.append(('person-1', 'CUSTOMER_OF', 'org-1', [(101, True, None)]))
 NB_LINKS.extend((f'doc-{doc}', 'INVOICED_BY', 'org-1', [(doc, False, None)]) for doc in (101, 102))
 
+# Two more Persons match the owner setting, as extraction duplicates do; the rule chose Rowan Vale (nb-rowan).
+# The first is linked to the owner through documents the owner already has, so the evidence shelf is unchanged.
+OWNER_MATCHES = {'nb-rowan-dup-1': range(9230, 9244), 'nb-rowan-dup-2': range(9250, 9261)}
+for uid, docs in OWNER_MATCHES.items():
+    NB_ENTITIES[uid] = ('Person', 'Rowan Vale')
+    NB_LINKS.extend((f'doc-{doc}', 'MENTIONS', uid, [(doc, False, None)]) for doc in docs)
+NB_LINKS.append((HUB, 'RELATED_TO', 'nb-rowan-dup-1', [(doc, False, 0.9) for doc in range(9000, 9004)]))
+
 
 def nb_node(uid):
     if uid.startswith('doc-'):
@@ -148,7 +156,10 @@ def nb_summary(uid):
     return {'focus': {'id': uid, 'label': label, 'name': name, 'aliases': [], **nb_fields(uid)},
             'links': sorted(links, key=lambda link: link['key']),
             'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in sorted(documents)},
-            'owner_status': 'found'}
+            'owner_status': 'chosen',
+            'owner_duplicates': [{'id': other, 'label': 'Person', 'name': NB_ENTITIES[other][1],
+                                  'evidence_doc_count': nb_fields(other)['evidence_doc_count']}
+                                 for other in OWNER_MATCHES] if uid == HUB else []}
 
 
 LOCK = threading.RLock()
@@ -518,7 +529,7 @@ class Handler(BaseHTTPRequestHandler):
                                               for node in SEARCH_NODES if 'Document' not in node['labels']}}
                     rows = [{'labels': [label], 'properties': {'uuid': uid, 'name': name},
                              'evidence_doc_count': nb_fields(uid)['evidence_doc_count'], 'matched_alias': None,
-                             'is_owner': uid == HUB}
+                             'is_owner': uid == HUB, 'owner_match': uid in OWNER_MATCHES}
                             for uid, (label, name) in pool.items() if query in name.lower()]
                     if get('sort') == 'documents':
                         rows.sort(key=lambda row: (-row['evidence_doc_count'], row['properties']['name'].lower()))

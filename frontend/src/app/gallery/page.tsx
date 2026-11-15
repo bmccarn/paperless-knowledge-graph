@@ -161,7 +161,10 @@ export default function GalleryPage() {
         </Section>
 
         <Section id="graph-legend" title="Graph legend">
-          <GraphLegend items={{ labels: [...NODE_LABELS.filter(label => !label.startsWith("Document")), "Other"], styles: ["supported", "inferred", "aggregate"] }} />
+          {/* The collapsed button sits above the legend's bottom edge, as on the canvas. */}
+          <div className="flex min-h-12 flex-col justify-end">
+            <GraphLegend defaultOpen items={{ labels: [...NODE_LABELS.filter(label => !label.startsWith("Document")), "Other"], styles: ["supported", "inferred", "aggregate"] }} />
+          </div>
         </Section>
 
         <Section id="document-types" title="Document types">

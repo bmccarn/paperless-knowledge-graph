@@ -247,7 +247,6 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             )}
             {legend && !leaf && (
               <>
-                <GraphLegend items={legend} className="absolute bottom-4 left-4 hidden md:block" />
                 <Sheet>
                   <SheetTrigger asChild>
                     <Button variant="outline" size="icon-lg" aria-label="Legend" className="absolute right-3 top-3 md:hidden"><Info /></Button>
@@ -260,6 +259,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
               </>
             )}
           </section>
+          {legend && !leaf && <GraphLegend items={legend} className="max-md:hidden" />}
           {summary && (
             <EvidenceShelf documents={documents} entityId={summary.focus.id} marked={markedDocs} onMark={setMarkedDoc}
               className={selected ? "max-md:hidden" : undefined} />

@@ -30,7 +30,7 @@ function link(family, type, neighbor, docs, extra = {}) {
 const summary = (links, documents = {}) => ({
   focus: { id: "focus", label: "Person", name: "Focus", aliases: [], evidence_doc_count: 0, link_count: links.length,
            is_hub: false, is_owner: false },
-  links, documents, owner_status: "found",
+  links, documents, owner_status: "found", owner_duplicates: [],
 });
 const doc = (title, date, doc_type = "insurance") => ({ title, date, doc_type });
 
@@ -74,7 +74,24 @@ test("links by family follow sector order, rank by documents, skip evidence and 
   assert.deepEqual(groups.map(group => group.family), ["parties", "money", "other"]);
   assert.deepEqual(groups[0].links.map(item => item.neighbor.id), ["p2", "p1"]);
   assert.equal(groups[2].inferred, 1);
-  assert.deepEqual(keyFacts(data).map(item => item.neighbor.id), ["p2", "m1"]);
+  assert.deepEqual(keyFacts(data).map(item => item.neighbor.id), ["p2", "p1", "m1"]);
+});
+
+test("key facts: supported before mixed before inferred, then more documents, one per type, never a DocumentRef", () => {
+  const data = summary([
+    link("parties", "SIGNED_BY", "signature", [1, 2, 3, 4, 5, 6], { label: "DocumentRef" }),
+    link("money", "BILLED_TO", "billing-1", [7, 8, 9, 10], { inferred: [7, 8, 9, 10] }),
+    link("money", "BILLED_TO", "billing-2", [11, 12, 13], { inferred: [11, 12, 13] }),
+    link("coverage", "COVERS", "policy", [14, 15, 16], { inferred: [14] }),
+    link("parties", "EMPLOYED_BY", "employer", [17, 18]),
+    link("parties", "EMPLOYED_BY", "employer-2", [19, 20, 21]),
+    link("time", "EFFECTIVE_FROM", "start", [22]),
+    link("loose", "RELATED_TO", "friend", [23, 24, 25, 26, 27]),
+  ]);
+  assert.deepEqual(keyFacts(data).map(item => item.neighbor.id), ["employer-2", "start", "policy", "billing-1"]);
+  // Four types fill the four rows when they exist.
+  const many = summary(["A_BY", "B_BY", "C_BY", "D_BY", "E_BY"].map((type, index) => link("parties", type, `n${index}`, [index + 1])));
+  assert.deepEqual(keyFacts(many).map(item => item.type), ["A_BY", "B_BY", "C_BY", "D_BY"]);
 });
 
 test("a document highlights the links its records cite", () => {

@@ -243,7 +243,7 @@ const extraStates = [
     await page.mouse.click(box.x + pill.x, box.y + pill.y);
     await page.getByRole("list", { name: "Parties and roles group" }).waitFor();
   } },
-  // The legend collapsed on desktop, and its sheet on phone.
+  // The legend opened on desktop (a strip above the evidence shelf), and its sheet on phone.
   { ...mainStates[9], name: "graph-neighborhood-legend", state: "legend", prepare: async page => {
     await page.getByRole("button", { name: "Legend", exact: true }).click();
     if (page.viewportSize().width < 768) await page.getByRole("dialog", { name: "Legend" }).waitFor();

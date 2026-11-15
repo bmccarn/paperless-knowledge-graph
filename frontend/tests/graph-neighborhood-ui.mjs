@@ -21,6 +21,7 @@ const families = ['Parties and roles', 'Money and accounts', 'Coverage and oblig
 await context.addInitScript(() => {
   window.__frame = {};
   window.__strokes = [];
+  window.__texts = [];
   window.__minFont = Infinity;
   const proto = CanvasRenderingContext2D.prototype;
   const ends = new WeakMap();
@@ -30,7 +31,7 @@ await context.addInitScript(() => {
   };
   const clearRect = proto.clearRect;
   proto.clearRect = function (...args) {
-    if (this.canvas.isConnected) { window.__frame = {}; window.__strokes = []; }
+    if (this.canvas.isConnected) { window.__frame = {}; window.__strokes = []; window.__texts = []; }
     return clearRect.apply(this, args);
   };
   for (const name of ['lineTo', 'quadraticCurveTo']) {
@@ -54,7 +55,12 @@ await context.addInitScript(() => {
     if (this.canvas.isConnected) {
       const font = Math.round(parseFloat(this.font.match(/([\d.]+)px/)[1]) * this.getTransform().a / devicePixelRatio * 100) / 100;
       window.__minFont = Math.min(window.__minFont, font);
-      window.__frame[text] = { ...screen(this, 0, 0), font };
+      // The text's ink box in screen pixels, to find what lies under an overlay.
+      const ink = this.measureText(text);
+      const [a, b] = [screen(this, x - ink.actualBoundingBoxLeft, y - ink.actualBoundingBoxAscent),
+        screen(this, x + ink.actualBoundingBoxRight, y + ink.actualBoundingBoxDescent)];
+      window.__frame[text] = { ...screen(this, 0, 0), font, box: { left: a.x, top: a.y, right: b.x, bottom: b.y } };
+      window.__texts.push(text);
     }
     return fillText.call(this, text, x, y, ...rest);
   };
@@ -67,7 +73,8 @@ const frameNow = page => page.evaluate(() => {
     { ...at, worldX: Math.round((at.x - zoom.x) / zoom.k * 100) / 100, worldY: Math.round((at.y - zoom.y) / zoom.k * 100) / 100 }]));
 });
 
-async function open(page, url = hubUrl, ready = 'Rowan Vale: 105 links in 9 families. Large hub: the top 2 of each family are shown.') {
+const hubReady = 'Rowan Vale: 105 links in 9 families. Large hub: the top 2 of each family are shown.';
+async function open(page, url = hubUrl, ready = /^Rowan Vale: /) {
   await page.goto(url);
   await page.getByText(ready, { exact: true }).waitFor();
   await page.locator('canvas').first().waitFor({ state: 'visible' });
@@ -107,6 +114,10 @@ try {
   // Caps: 2 neighbors per family on a hub, one pill per family with hidden links, no documents.
   const first = await open(page);
   await page.screenshot({ path: path.join(artifacts, 'graph-neighborhood-hub.png') });
+  // Two more Persons match the owner setting; the one linked to the owner is not drawn as its neighbor.
+  assert.deepEqual(await page.evaluate(() => window.__texts.filter(text => text === 'Rowan Vale')), ['Rowan Vale'],
+    'Only the focus is labeled Rowan Vale');
+  await page.getByText(hubReady, { exact: true }).waitFor({ timeout: 1000 });
   const neighbors = neighborsOf(first);
   assert.equal(neighbors.length, 18, `2 neighbors in each of 9 families: ${neighbors}`);
   assert.ok(!neighbors.some(name => /^[A-Z][a-z]+ fixture \d+$/.test(name)), 'Only the top-ranked neighbors are drawn');
@@ -210,6 +221,29 @@ try {
   await page.mouse.move(deskBox.x + desk[markup].x, deskBox.y + desk[markup].y);
   await page.getByText(`${markup} · Organization`, { exact: true }).waitFor({ state: 'visible' });
   assert.equal(await page.locator('b, i').filter({ hasText: 'Acme' }).count(), 0, 'No markup element is created');
+
+  // The legend starts collapsed and covers no node or label of the hub. Opened, it is remembered,
+  // and the initial fit leaves its area free.
+  const underLegend = async frame => {
+    const canvas = await page.locator('canvas').first().boundingBox();
+    const panel = page.getByRole('region', { name: 'Legend' });
+    const legend = await ((await panel.count()) ? panel : page.getByRole('button', { name: 'Legend', exact: true })).boundingBox();
+    const area = { left: legend.x - canvas.x, top: legend.y - canvas.y,
+      right: legend.x + legend.width - canvas.x, bottom: legend.y + legend.height - canvas.y };
+    const hits = box => box.left < area.right && box.right > area.left && box.top < area.bottom && box.bottom > area.top;
+    // A node is at most 18 px in radius with a 2 px ring; a pill is 28 px tall around its text.
+    return Object.entries(frame).filter(([, at]) => hits({ left: at.x - 20, right: at.x + 20, top: at.y - 20, bottom: at.y + 20 })
+      || hits({ left: at.box.left - 14, right: at.box.right + 14, top: at.box.top - 8, bottom: at.box.bottom + 8 })).map(([text]) => text);
+  };
+  const legendToggle = page.getByRole('button', { name: 'Legend', exact: true });
+  const collapsed = await open(page);
+  assert.equal(await legendToggle.getAttribute('aria-expanded'), 'false', 'The legend starts collapsed');
+  assert.deepEqual(await underLegend(collapsed), [], 'Nothing lies under the collapsed legend');
+  await legendToggle.click();
+  const reopened = await open(page);
+  assert.equal(await legendToggle.getAttribute('aria-expanded'), 'true', 'The open legend is remembered');
+  assert.deepEqual(await underLegend(reopened), [], 'Nothing lies under the open legend after the initial fit');
+  await page.screenshot({ path: path.join(artifacts, 'graph-neighborhood-legend.png') });
 
   // In the light theme the canvas background equals --bg, and a theme change re-reads the tokens.
   const light = await context.newPage();

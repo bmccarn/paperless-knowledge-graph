@@ -167,6 +167,23 @@ test('a pill lists its hidden links; "Add" and Shift+click put them on the canva
   await page.waitForFunction(() => window.__frame['+1 Parties and roles']);
 });
 
+test('the owner\'s other matches are left out of its families and listed as possible duplicates', async t => {
+  const page = await newPage(t);
+  await open(page, 'nb-rowan', 'Rowan Vale: ');
+  const hub = await summaryOf(page, 'nb-rowan');
+  assert.deepEqual(hub.owner_duplicates.map(item => item.id), ['nb-rowan-dup-1', 'nb-rowan-dup-2']);
+  assert.ok(hub.links.some(link => link.neighbor.id === 'nb-rowan-dup-1'), 'One other match is linked to the owner');
+  await page.getByText(hubReady, { exact: false }).waitFor();
+  const panel = inspector(page);
+  await panel.getByRole('button', { name: /^Loose association/ }).click();
+  assert.ok(!(await panel.getByRole('list', { name: 'Loose association links' }).innerText()).includes('Rowan Vale'));
+  const duplicates = panel.getByRole('list', { name: 'Possible duplicates of this entity' });
+  assert.deepEqual((await duplicates.getByRole('listitem').allInnerTexts()).map(text => text.replace(/\s+/g, ' ')),
+    ['Rowan Vale 18 documents', 'Rowan Vale 11 documents']);
+  assert.equal(await duplicates.getByRole('link').first().getAttribute('href'), '/graph?focus=nb-rowan-dup-1');
+  assert.equal(await panel.getByRole('link', { name: 'Review on Entities', exact: true }).getAttribute('href'), '/entities/review');
+});
+
 test('"Ask about this" opens Ask with the question in the composer and sends nothing', async t => {
   const page = await newPage(t);
   await open(page, 'nb-rowan', hubReady);
@@ -214,16 +231,20 @@ test('the legend lists exactly the kinds and link styles in view, in token color
     links: await legend.getByRole('list', { name: 'Links' }).getByRole('listitem').allInnerTexts(),
   });
   await open(page, 'nb-desk', deskReady);
-  assert.deepEqual(await contents(), { kinds: ['Organization', 'Other'], links: ['Supported'] });
   const toggle = page.getByRole('button', { name: 'Legend', exact: true });
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await legend.count(), 0, 'The legend starts collapsed on desktop');
+  await toggle.click();
   assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await contents(), { kinds: ['Organization', 'Other'], links: ['Supported'] });
   await toggle.click();
   assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await legend.count(), 0, 'Collapsing hides the legend');
   await toggle.click();
-  assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
 
+  // The open state is remembered.
   await open(page, 'nb-rowan', hubReady);
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
   assert.deepEqual(await contents(), {
     kinds: ['Person', 'Organization', 'Location', 'Address', 'Financial item', 'Insurance policy', 'Product', 'System',
       'Condition', 'Medical result', 'Event', 'Date event'],

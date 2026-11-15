@@ -51,8 +51,9 @@ export function ViewSwitcher(props: SwitcherProps) {
   const [active, setActive] = useState<GraphView | null>(null);
   const tabStop = views.some(view => view.id === active) ? active : current;
   return (
-    <>
-      <div role="toolbar" aria-label="View" className={cn("inline-flex items-center gap-0.5 rounded-(--r-ctl) border border-border-strong p-0.5", className)}
+    // className also hides the live region, so a hidden switcher never announces.
+    <div className={cn("contents", className)}>
+      <div role="toolbar" aria-label="View" className="inline-flex items-center gap-0.5 rounded-(--r-ctl) border border-border-strong p-0.5"
         onKeyDown={event => {
           const index = rovingIndex(views.findIndex(view => view.id === tabStop), event.key, views.length);
           if (index === null) return;
@@ -74,7 +75,7 @@ export function ViewSwitcher(props: SwitcherProps) {
         ))}
       </div>
       <span role="status" className="sr-only">{message}</span>
-    </>
+    </div>
   );
 }
 

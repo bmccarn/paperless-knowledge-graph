@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import { nodeFromPayload, relationshipSupport } from "@/lib/graph-data";
 import { nodeLabelText } from "@/lib/categories";
+import { displayName } from "@/lib/graph-encoding";
 import { Textarea } from "@/components/ui/textarea";
 import { errMsg } from "@/lib/utils";
 import { getDocumentDetail, postDocumentFeedback, resolveDocumentFeedback, postReindexDoc, getPaperlessDocUrl, usePaperlessUrl } from "@/lib/api";
@@ -188,7 +189,7 @@ export default function DocumentDetailPage() {
               <h3><KindShape label={kind} /></h3>
               <ul className="space-y-1">
                 {entities.filter(entity => entity.label === kind).map(entity => <li key={entity.id}>
-                  <Link href={`/graph?focus=${encodeURIComponent(entity.id)}`} className="inline-flex min-h-11 items-center label-14 underline underline-offset-4 md:min-h-8">{entity.name}</Link>
+                  <Link href={`/graph?focus=${encodeURIComponent(entity.id)}`} className="inline-flex min-h-11 items-center label-14 underline underline-offset-4 md:min-h-8">{displayName(entity.name, entity.id, entity.label)}</Link>
                 </li>)}
               </ul>
             </div>)}

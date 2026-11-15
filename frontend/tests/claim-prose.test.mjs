@@ -96,3 +96,8 @@ test("a quote from a passage with table pipes, bold markers, rules and line-brea
   const { values } = quoteWindow("Glucose was 95 mg/dL on 2026-03-01.", quote);
   assert.deepEqual(emphasize(quote, values).filter(piece => piece.match).map(piece => piece.text), ["95", "2026-03-01"]);
 });
+
+test("a block tag between two values keeps them apart, and an inline tag joins its text", () => {
+  assert.equal(plainQuote("<p>Total: $100.00</p><p>2026 statement</p>"), "Total: $100.00 2026 statement");
+  assert.equal(plainQuote("Premium: <strong>$1,284</strong>.00 per <em>year</em>"), "Premium: $1,284.00 per year");
+});

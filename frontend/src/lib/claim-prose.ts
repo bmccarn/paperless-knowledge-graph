@@ -127,12 +127,13 @@ export function quoteWindow(claim: string, quote: string): { start: number; valu
 
 /**
  * A passage as readable text: indexed passages can hold Markdown and HTML from text extraction.
- * Drops tags, bold markers, rules, heading marks and table rules; table cells become " · "-separated.
+ * Drops tags, bold markers, rules, heading marks and table rules; Markdown table cells become " · "-separated.
  */
 export function plainQuote(text: string): string {
   return text
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<\/?[a-z][^>]*>/gi, "")
+    // Inline tags join their text; any other tag (br, p, td, li) separates it, so "$100.00</p><p>2026" keeps two values.
+    .replace(/<\/?(?:a|b|strong|i|em|u|span|mark|small|sub|sup)(?:\s[^>]*)?>/gi, "")
+    .replace(/<\/?[a-z][^>]*>/gi, " ")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
     .replace(/^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*$/gm, "")
     .replace(/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")

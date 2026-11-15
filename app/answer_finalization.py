@@ -29,7 +29,7 @@ from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
 from app.source_dates import source_dates, date_supported, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v29"
+POLICY_VERSION = "source-audit-v30"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -881,6 +881,14 @@ def temporal_acceptance(question, candidate, ledger, plan, evidence_pack, evalua
     return "qualified", current
 
 
+# Final errors of a reply that arrived but broke the protocol. An empty reply
+# ("unavailable"), a timeout or an exception is an execution failure instead.
+REPLY_PROTOCOL_ERRORS = frozenset({
+    'invalid_assessments', 'invalid_assessment', 'unexpected_unit_id', 'duplicate_unit_id',
+    'missing_unit_id', 'invalid_status', 'invalid_references_list',
+    *('semantic_protocol_' + reason for reason in PROTOCOL_ERRORS)})
+
+
 def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
     """Structural errors only; semantic rejection never justifies another vote."""
     if not raw:
@@ -1042,6 +1050,7 @@ class AnswerFinalizer:
                     group.create_task(worker())
             manifest.update({s["span_id"]: s for s in spans})
             for batch, (raw, protocol) in zip(batches, results):
+                reply_invalid = bool(protocol["final_errors"]) and set(protocol["final_errors"]) <= REPLY_PROTOCOL_ERRORS
                 assessments = raw["assessments"] if not protocol["final_errors"] else []
                 if not isinstance(assessments, list):
                     assessments = []
@@ -1075,6 +1084,8 @@ class AnswerFinalizer:
                         checked += 1
                     semantic = assessment.get('semantic_decision')
                     claim_rejections = list(semantic['rejection_reasons']) if semantic else []
+                    if reply_invalid:
+                        claim_rejections.append("audit_reply_invalid")
                     mismatch_details = {}
                     if not valid:
                         claim_rejections.append("missing_evidence" if not raw_refs else "invalid_reference")
@@ -1261,15 +1272,22 @@ class AnswerFinalizer:
         # A complete subset audit that rejects more units gets one more round on
         # its own ledger; each round's receipt nests in the previous one.
         summary = ledger["summary"]
+        # Claims left unchecked only by a batch whose reply stayed invalid may be
+        # omitted like unsupported ones; the rest must pass a fresh subset audit.
+        reply_gap = (disposition == "incomplete" and bool(ledger["claims"]) and not ledger.get("rejection_reasons")
+                     and all(c["status"] != "unchecked" or "audit_reply_invalid" in c["rejection_reasons"]
+                             for c in ledger["claims"]))
         base_candidate, base_ledger, base_observations, receipt, omitted = candidate, ledger, observations, ledger, []
         original_ids = {}  # subset unit id -> original candidate unit id, after the first round
         for _round in range(2):
             base_summary = base_ledger["summary"]
-            if not (self.allow_subset and disposition == "unsupported" and base_ledger["complete"]
-                    and base_summary.get("audited") == base_summary.get("total")
+            gap = reply_gap and base_ledger is ledger
+            # A failed subset audit sets another disposition, which ends the rounds.
+            if not (self.allow_subset and (disposition == "unsupported" or reply_gap and disposition == "incomplete")
+                    and (gap or base_ledger["complete"] and base_summary.get("audited") == base_summary.get("total"))
                     and 0 < base_summary.get("supported", 0) < base_summary.get("total", 0)
                     and not base_ledger.get("rejection_reasons")
-                    and all(c["status"] in {"supported", "unsupported", "missing"}
+                    and all((c["status"] in {"supported", "unsupported", "missing"} or gap and c["status"] == "unchecked")
                             and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
                                      & set(c.get("rejection_reasons", []))) for c in base_ledger["claims"])):
                 break

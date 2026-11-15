@@ -753,7 +753,7 @@ function QueryContent() {
           <div className="max-w-3xl min-[1180px]:max-w-[996px] mx-auto space-y-2">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor="question" className="label-14 shrink-0">Ask a question</label>
-              <div className="min-w-0"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>
+              <div className="min-w-0 flex-1 md:flex-none"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
               <Textarea

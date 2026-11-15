@@ -27,7 +27,7 @@ export function QueryModel({ models, value, defaultModel, onChange }: {
   models: ModelInfo[]; value: string; defaultModel: string; onChange: (value: string) => void;
 }) {
   return <Select value={value} onValueChange={onChange} disabled={!models.length}>
-    <SelectTrigger aria-label="Model" className="w-52 max-w-full md:w-60"><SelectValue placeholder="Select model" /></SelectTrigger>
+    <SelectTrigger aria-label="Model" className="w-full md:w-60 *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:truncate"><SelectValue placeholder="Select model" /></SelectTrigger>
     <SelectContent position="popper">{models.map(model => <SelectItem key={model.id} value={model.id}>
       {model.name}{model.id === defaultModel ? " (default)" : ""}
     </SelectItem>)}</SelectContent>

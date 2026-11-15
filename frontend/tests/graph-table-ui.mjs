@@ -170,6 +170,26 @@ try {
   assert.equal(await table.locator('tr[aria-current=true]').count(), 0);
   await page.unroute('**/api/graph/node/nb-rowan?summary=1');
 
+  // Stored named dates normalize once for Table chronology and the shared Focus evidence.
+  const dated = structuredClone(hub);
+  dated.owner_duplicates = [];
+  dated.focus.is_hub = false;
+  dated.links = [hub.links.find(link => link.type === 'EMPLOYED_BY'), hub.links.find(link => link.type === 'SIGNED_BY')]
+    .map(link => ({ ...link, records: link.records.slice(0, 3), stated_count: 3, inferred_count: 0, support_state: 'supported' }));
+  const storedDates = [['September 1, 2025', 'May 4, 2026', '2026-04-30'], ['31 Dec 2026', '04 MAY 26', '2026-01-02']];
+  dated.links.forEach((link, index) => link.records.forEach((record, position) => { dated.documents[String(record.doc_id)].date = storedDates[index][position]; }));
+  await page.route('**/api/graph/node/nb-rowan?summary=1', route => route.fulfill({ json: dated }));
+  await page.goto(`${base}/graph?focus=nb-rowan&view=table`);
+  await table.waitFor();
+  assert.equal(await table.locator('tbody tr').first().getByRole('cell').nth(9).innerText(), '4 May 2026');
+  await table.getByRole('button', { name: 'Latest document', exact: true }).click();
+  assert.match(await table.locator('tbody tr').first().innerText(), /Juniper Okafor/);
+  assert.equal(await table.locator('tbody tr').first().getByRole('cell').nth(9).innerText(), '31 Dec 2026');
+  await page.keyboard.press('n');
+  await page.getByRole('region', { name: /^Evidence ·/ }).waitFor();
+  assert.match(await page.getByRole('region', { name: /^Evidence ·/ }).getByRole('link').first().innerText(), /31 Dec 2026/);
+  await page.unroute('**/api/graph/node/nb-rowan?summary=1');
+
   // At the 150-entity cap the group opens the full table instead of adding more neighbors.
   const large = structuredClone(hub);
   large.owner_duplicates = [];

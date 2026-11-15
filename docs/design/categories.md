@@ -1,6 +1,6 @@
 # Categories
 
-This file holds the document-type labels and colors and the relationship families used by the redesign issue. The colors repeat the `--doc-*` tokens in `tokens.css`. Once `globals.css` holds the tokens and the backend family module exists, those are the sources, and this file points at them instead of repeating them.
+This file holds the document-type labels and colors used by the redesign issue. The relationship family definitions live in the backend module linked below. The colors repeat the `--doc-*` tokens in `tokens.css`. Once `globals.css` holds the tokens, it is the color source.
 
 ## Document types
 
@@ -21,18 +21,10 @@ Each type appears as a colored dot with its text label.
 
 ## Relationship families
 
-The backend maps each relationship type to a family. An explicit map entry wins. Otherwise the type is split on `_`, and the first family in this table with a prefix that starts one of the tokens wins. Every other type is `other`.
+The source is [`app/relationship_families.py`](../../app/relationship_families.py).
+It defines the fixed family order, display names, token prefixes and explicit seed map.
+Only graph routes use the classifier; extraction and answer retrieval keep their existing behavior.
 
-| Key | Name | Keyword prefixes |
-|---|---|---|
-| `parties` | Parties and roles | WORK, EMPLOY, OFFICER, OWNER, SIGNED, AUTHOR, PREPAR, PARTY, CONTRACT, ISSUE, PROVIDER, MEMBER, BORROWER |
-| `money` | Money and accounts | PAID, PAYS, PAYMENT, PAYROLL, BILLED, BILLING, INVOICE, LOAN, MORTGAGE, PREMIUM, INCOME, TAXED, ACCOUNT, WITHHELD |
-| `coverage` | Coverage and obligations | COVER, INSUR, GOVERN, APPLIES, BENEFICIAR |
-| `health` | Health | PATIENT, TREAT, DIAGNOS, CONDITION, PRESCRIB, MEDICA, DISCHARG |
-| `service` | Service and government | SERVED, SERVICE, STATION, DEPLOY, ASSIGN, BRANCH, FILED, SUBMIT, VETERAN, ENLIST |
-| `places` | Places | LOCATED, LIVES, RESIDE, ADDRESS, HEADQUARTER, GARAGED |
-| `time` | Time | EFFECTIVE, EXPIRE, STARTS, ENDS, DATED, RENEW |
-| `doclinks` | Document links | REFERENC, SUPERSED, ATTACHMENT, SUPPLEMENT, AMEND, CORRECT |
-| `evidence` | Evidence | none (explicit only) |
-| `loose` | Loose association | RELATED, ASSOCIAT |
-| `other` | Other | none |
+An explicit map entry wins. Otherwise the type is split on `_`, and the first family
+in the fixed order with a prefix that starts a token wins. Every other type is `other`.
+`GET /graph/relationship-types` lists stored types with counts, families and assignment methods.

@@ -972,6 +972,16 @@ class GraphStore:
                 return {"nodes": [], "relationships": []}
             return {"nodes": record["nodes"], "relationships": record["rels"]}
 
+    async def get_relationship_types(self) -> list[dict]:
+        """Count every stored relationship type, with stable ordering for ties."""
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH ()-[r]->()
+                RETURN type(r) AS type, count(*) AS count
+                ORDER BY count DESC, type ASC
+            """)
+            return [{"type": row["type"], "count": row["count"]} async for row in result]
+
     async def get_initial_graph(self, limit: int = 300) -> dict:
         """Get an initial graph view sampling across ALL entity types (not raw Document nodes)."""
         async with self.driver.session() as session:

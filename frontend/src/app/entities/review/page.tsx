@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster, type ToastMessage } from "@/components/ui/toast";
 import {
@@ -259,15 +260,10 @@ export default function EntityReviewPage() {
         </header>
 
         {notice && (
-          <div
-            className={`flex items-start gap-2 rounded-md border px-3 py-2 copy-14 ${
-              notice.kind === "error" ? "border-error-line bg-error-bg text-error" : "border-qualified-line bg-qualified-bg text-qualified"
-            }`}
-            role={notice.kind === "error" ? "alert" : "status"}
-          >
-            {notice.kind === "error" ? <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden /> : <Info className="mt-0.5 size-4 shrink-0" aria-hidden />}
-            <span>{notice.text}</span>
-          </div>
+          <Alert variant={notice.kind === "error" ? "destructive" : "default"} role={notice.kind === "error" ? "alert" : "status"}>
+            {notice.kind === "error" ? <AlertCircle aria-hidden /> : <Info aria-hidden />}
+            <AlertDescription>{notice.text}</AlertDescription>
+          </Alert>
         )}
 
         <div className="grid items-start gap-8 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">

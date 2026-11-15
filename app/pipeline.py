@@ -1,3 +1,4 @@
+import math
 import re
 import asyncio
 import logging
@@ -613,9 +614,16 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     await _link(doc_id, doc_node_id, data.get("ordering_physician"), "Person", "AUTHORED_BY", source_props, {"Person"})
 
     for test in (data.get("tests") or []):
-        if not test.get("name"):
+        if not isinstance(test, dict) or not test.get("name"):
             continue
-        test_confidence = float(test.get("confidence", 1.0))
+        # A null (unquoted), bool or non-numeric model confidence counts as missing.
+        raw_confidence = test.get("confidence")
+        try:
+            test_confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            test_confidence = 1.0
+        if isinstance(raw_confidence, bool) or not math.isfinite(test_confidence):
+            test_confidence = 1.0
         if test_confidence < CONFIDENCE_THRESHOLD:
             logger.debug(f"Skipping low-confidence test result: {test.get('name')} (conf={test_confidence})")
             continue
@@ -651,6 +659,8 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
 async def _process_contract(doc_id, doc_node_id, data, source_props):
     """Process contract with specific relationship types (PARTY_TO, CONTRACTED_WITH)."""
     for party in (data.get("parties") or []):
+        if not isinstance(party, dict):
+            continue
         name = coerce_text(party.get("name"))
         is_org = any(w in name.lower() for w in ["inc", "llc", "corp", "company", "ltd", "agency", "dept", "department"])
         role = coerce_text(party.get("role", "")).lower()
@@ -699,6 +709,8 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
     if address and _is_valid_entity_name(address):
         await _attach(doc_node_id, "Address", {"full_address": address}, source_props, "LOCATED_AT")
     for party in (data.get("parties") or []):
+        if not isinstance(party, dict):
+            continue
         await _link(doc_id, doc_node_id, party.get("name"), "Person", "MENTIONS", source_props)
 
 
@@ -710,6 +722,8 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
     await _link(doc_id, doc_node_id, data.get("base"), "Location", "STATIONED_AT", source_props, _PLACE)
 
     for rating in (data.get("disability_ratings") or []):
+        if not isinstance(rating, dict):
+            continue
         condition = rating.get("condition", "")
         percentage = rating.get("percentage", "")
         if not condition:
@@ -755,6 +769,8 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
                                        {**source_props, "status": status})
 
     for benefit in (data.get("benefits") or []):
+        if not isinstance(benefit, dict):
+            continue
         benefit_type = benefit.get("benefit_type", "")
         if not benefit_type:
             continue

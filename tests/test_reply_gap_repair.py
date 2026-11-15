@@ -70,6 +70,7 @@ class ReplyGapRepairTests(unittest.IsolatedAsyncioTestCase):
             'empty reply': ({EXTRA: [None]}, 'incomplete'),
             'protocol error, then empty correction': ({EXTRA: [PROTOCOL, None]}, 'incomplete'),
             'protocol batch and empty batch': ({EXTRA: [PROTOCOL, PROTOCOL], CHARGE: [None]}, 'incomplete'),
+            # With no unit audited the editor has no findings; tests/test_source_audit_contract.py keeps this rule.
             'every batch invalid': ({EXTRA: [PROTOCOL, PROTOCOL], CHARGE: [PROTOCOL, PROTOCOL]}, 'incomplete'),
             'raise': ({EXTRA: [RuntimeError('unavailable')]}, 'audit_failed'),
             'timeout': ({EXTRA: [TimeoutError()]}, 'audit_failed'),

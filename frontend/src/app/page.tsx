@@ -538,7 +538,7 @@ export default function DashboardPage() {
             ))}
           </ul>
         ) : (
-          <p className="copy-14 text-fg-muted">No documents indexed yet. <button type="button" onClick={handleSync} className="text-fg underline underline-offset-4">Sync new documents</button></p>
+          <p className="copy-14 text-fg-muted">No documents indexed yet.</p>
         )}
       </Column>
     </div>

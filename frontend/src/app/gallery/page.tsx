@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
@@ -67,6 +68,12 @@ export default function GalleryPage() {
           <Row name="Alerts">{(["default", "warning", "destructive", "success"] as const).map(variant => <Alert key={variant} variant={variant}><AlertTitle>{variant === "default" ? "Information" : variant === "destructive" ? "Error" : variant === "warning" ? "Warning" : "Success"}</AlertTitle><AlertDescription>Review the original source before resolving this report.</AlertDescription></Alert>)}</Row>
           <Row name="Resolution"><Select defaultValue="reviewed"><SelectTrigger aria-label="Example resolution" className="max-w-sm"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reviewed">Reindexed and checked correction</SelectItem><SelectItem value="dismissed">Checked original extraction; no correction needed</SelectItem></SelectContent></Select></Row>
           <Row name="Disclosure"><Collapsible><CollapsibleTrigger asChild><Button variant="outline">Original source text</Button></CollapsibleTrigger><CollapsibleContent className="ocr pt-3">The January statement lists a premium of $25.</CollapsibleContent></Collapsible></Row>
+        </Section>
+
+        <Section id="phone-navigation" title="Phone navigation">
+          <div className="max-w-[390px] overflow-hidden rounded-lg border">
+            <TabBar pathname="/query" healthy={true} className="static block md:block border-t-0" />
+          </div>
         </Section>
 
         <Section id="answer-states" title="Answer states">

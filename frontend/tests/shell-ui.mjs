@@ -36,6 +36,9 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
         assert.equal((await page.getByRole("complementary", { name: "App navigation" }).boundingBox()).width, 200);
         assert.equal((await nav.getByRole("link").first().boundingBox()).height, 32);
         await page.getByText("Backend up", { exact: true }).waitFor();
+        const health = await page.getByText("Backend up", { exact: true }).boundingBox();
+        const toggle = await page.getByRole("button", { name: "Toggle theme", exact: true }).boundingBox();
+        assert.ok(health.y > 800 && toggle.y > 800, "Sidebar health and theme controls belong at the foot");
       }
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route} must fit`);
     }
@@ -80,4 +83,82 @@ test("document failures show the document not found state with retry", async t =
   await page.getByRole("heading", { name: "Document not found", level: 1 }).waitFor();
   assert.equal(await page.locator("h1").count(), 1);
   assert.ok(await page.getByRole("button", { name: "Retry loading document" }).isVisible());
+});
+
+for (const theme of ["dark", "light"]) test(`phone tabs and More sheet: ${theme}`, async t => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+  t.after(() => context.close());
+  await context.addInitScript(theme => localStorage.setItem("theme", theme), theme);
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  await page.goto(`${base}/query`);
+  const nav = page.getByRole("navigation", { name: "Phone", exact: true });
+  assert.deepEqual(await nav.getByRole("link").allTextContents(), ["Ask", "Documents", "Graph", "Entities"]);
+  assert.equal(await nav.evaluate(el => el.getBoundingClientRect().height), 56);
+  for (const control of await nav.locator("a, button").all()) {
+    const icon = await control.locator("svg").boundingBox();
+    const label = await control.locator("span").boundingBox();
+    const box = await control.boundingBox();
+    assert.ok(icon.y + icon.height <= label.y, "The icon must not overlap its label");
+    assert.ok(box.width >= 44 && box.height >= 44, "Phone controls need 44 px targets");
+    assert.equal(await control.locator("span").evaluate(el => getComputedStyle(el).fontSize), "12px");
+  }
+  const more = nav.getByRole("button", { name: "More", exact: true });
+  await more.click();
+  const sheet = page.getByRole("dialog", { name: "More", exact: true });
+  assert.deepEqual(await sheet.getByRole("link").allTextContents(), ["Status", "Hubs", "Logs"]);
+  await sheet.getByText("Backend up", { exact: true }).waitFor();
+  const toggle = sheet.getByRole("button", { name: "Toggle theme", exact: true });
+  await toggle.click();
+  assert.equal(await page.locator("html").evaluate(el => el.classList.contains("dark")), theme !== "dark");
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({ state: "hidden" });
+  assert.equal(await more.evaluate(el => el === document.activeElement), true);
+  await more.click();
+  await sheet.getByRole("link", { name: "Hubs", exact: true }).click();
+  await page.waitForURL("**/hubs");
+  await sheet.waitFor({ state: "hidden" });
+  assert.equal(await more.getAttribute("data-active"), "true");
+});
+
+for (const theme of ["dark", "light"]) test(`Ask keyboard focus clears the composer and tabs: ${theme}`, async t => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+  t.after(() => context.close());
+  await context.addInitScript(theme => localStorage.setItem("theme", theme), theme);
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  await page.goto(`${base}/query`);
+  const input = page.getByPlaceholder("Ask a question...");
+  await input.fill("What premium does the January statement list?");
+  await input.press("Enter");
+  await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
+  // Exercise a long answer's controls, including controls at the end of its scroll region.
+  await page.getByRole("link", { name: "Skip to content", exact: true }).focus();
+  const visited = new Set();
+  for (let i = 0; i < 100; i++) {
+    await page.keyboard.press("Tab");
+    const focused = page.locator(":focus");
+    if (await focused.count() === 0) break;
+    const info = await focused.evaluate(el => {
+      const box = el.getBoundingClientRect();
+      const scroll = el.closest(".app-scroll");
+      const clip = scroll?.getBoundingClientRect();
+      return { name: el.getAttribute("aria-label") || el.textContent || el.tagName, top: box.top, bottom: box.bottom,
+        clipTop: clip?.top, clipBottom: clip?.bottom, padding: scroll && parseFloat(getComputedStyle(scroll).scrollPaddingBottom),
+        composer: document.querySelector("textarea").closest("form").parentElement.parentElement.getBoundingClientRect().height };
+    });
+    if (info.name === "Skip to content") break;
+    visited.add(info.name);
+    assert.ok(info.top >= 0 && info.bottom <= 844, `${info.name} must remain in the viewport`);
+    if (info.clipBottom !== undefined) {
+      assert.ok(info.top >= info.clipTop && info.bottom <= info.clipBottom, `${info.name} must clear the composer`);
+      assert.ok(info.padding >= info.composer + 56, "Scroll padding includes the composer and tab bar");
+    }
+    if (await focused.evaluate(el => el.closest("main") !== null)) {
+      const bar = await page.getByRole("navigation", { name: "Phone", exact: true }).boundingBox();
+      assert.ok(info.bottom <= bar.y, `${info.name} must clear the tab bar`);
+    }
+  }
+  assert.ok(visited.has("More"));
+  assert.ok(visited.has("Model"));
 });

@@ -34,6 +34,10 @@ const extraStates = [
   } })),
   { name: "document-missing", route: "/documents/999999", state: "missing", ready: page => page.getByRole("heading", { name: "Document not found", exact: true }) },
   { name: "document-empty", route: "/documents/102", state: "empty", ready: page => page.getByText("No entities extracted.", { exact: false }) },
+  { ...mainStates[0], name: "phone-more", state: "more-sheet", phoneOnly: true, prepare: async page => {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("dialog", { name: "More", exact: true }).waitFor();
+  } },
   ...["dialog", "sheet"].map(kind => ({ ...gallery, name: `gallery-${kind}`, state: kind, prepare: async page => {
     await page.getByRole("button", { name: `Open ${kind}`, exact: true }).click();
     await page.getByRole("dialog").waitFor();

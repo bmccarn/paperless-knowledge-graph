@@ -359,8 +359,13 @@ tr:focus-visible {
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 
-/* Mobile safe area for bottom nav */
-.safe-area-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+
+.app-scroll {
+  scroll-padding-bottom: calc(var(--composer-height, 0px) + var(--tabbar) + env(safe-area-inset-bottom));
 }
 
+@media (min-width: 768px) {
+  .app-scroll {
+    scroll-padding-bottom: var(--composer-height, 0px);
+  }
+}

@@ -59,7 +59,10 @@ class AutoMergeBlockerTests(unittest.TestCase):
             "direct_edge": [dict(left=node(org("a"), relationships=[{"neighbor_props": {"uuid": "b"}}]))],
             "identifiers": [dict(left=node(org("a", policy_number="POL-1111")),
                                  right=node(org("b", "Example Inc", [2], policy_number="POL-2222"))),
-                            dict(left=node(org("a", reference_number="REF-1111")))],
+                            dict(left=node(org("a", reference_number="REF-1111"))),
+                            dict(left=node(org("a", reference_number="123")),
+                                 right=node(org("b", "Example Inc", [2], reference_number="456"))),
+                            dict(left=node(org("a", reference_number=12)))],
         }
         cases["resolution_status"] = [dict(left=node(org("a", resolution_status=status)))
                                       for status in ("ambiguous", "isolated", "quarantined")]
@@ -149,6 +152,9 @@ class StewardAutoMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.resolver.merge_entities.await_count, 2)
         self.assertEqual(self.agent.review_entity_candidate.await_count, 2)
         self.assertEqual(report["auto_merge_blocked"]["cap"], 3)
+        # Deferred pairs wait for a later run; the regular pass must not refresh them.
+        self.assertTrue({("2a", "2b"), ("3a", "3b"), ("4a", "4b")}
+                        <= self.graph.get_entity_review_candidates.await_args.args[0])
         report = await self.run_steward("on", cap=0)
         self.assertEqual(self.resolver.merge_entities.await_count, 2)
         self.assertEqual(report["auto_merge_blocked"]["cap"], 5)

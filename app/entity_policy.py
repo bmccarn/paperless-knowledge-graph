@@ -67,9 +67,13 @@ def auto_merge_blocker(left: dict, right: dict, label: str, same_key_count: int)
         return "shared_document"
     if any((rel.get("neighbor_props") or {}).get("uuid") == rp.get("uuid") for rel in left.get("relationships") or []):
         return "direct_edge"
-    # Stricter than a conflict: a one-sided identifier also blocks.
-    ids = [extract_identifiers({k: v for k, v in p.items() if k != "identity_hints"}) for p in (lp, rp)]
-    if {k: set(v) for k, v in ids[0].items()} != {k: set(v) for k, v in ids[1].items()}:
+    # Stricter than a conflict: a one-sided identifier also blocks. Unlike
+    # extract_identifiers, keep short values, since "123" vs "456" still conflicts.
+    def identifiers(p):
+        return {key: {re.sub(r"[^a-zA-Z0-9@.-]+", "", str(v)).lower()
+                      for v in (p[key] if isinstance(p[key], list) else [p[key]]) if v not in (None, "")}
+                for key in IDENTIFIER_PROPERTIES - {"identity_hints"} if p.get(key) not in (None, "", [])}
+    if identifiers(lp) != identifiers(rp):
         return "identifiers"
     return ""
 

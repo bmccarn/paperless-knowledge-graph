@@ -186,6 +186,7 @@ class EntitySteward:
                 continue
             if agent_calls >= cap:
                 report["auto_merge_blocked"]["cap"] += 1
+                handled.add(pair)  # a later run reviews it; the regular pass must not refresh its timestamp
                 continue
             agent_calls += 1
             nodes = {left["uuid"]: left, right["uuid"]: right}

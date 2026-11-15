@@ -113,8 +113,8 @@ def final_answer(question):
                  'source_title': 'January premium statement'}
     return {'question': question, 'answer': claim + ' [Document 101](/documents/101)', 'mode': 'strict',
             'confidence': 0.8, 'cached': False, 'entities_found': [], 'follow_up_suggestions': [],
-            'sources': [{'document_id': 101, 'title': 'January premium statement', 'doc_type': 'insurance',
-                         'chunk_index': 0, 'excerpt': SOURCE_TEXT, 'date': '2026-01-31', 'similarity': 0.9}],
+            # Audited sources carry no type, like app/query.py; the type comes from the evidence pack.
+            'sources': [{'document_id': 101, 'title': 'January premium statement', 'excerpt': SOURCE_TEXT}],
             'query_plan': {'mode': 'strict', 'intent': 'lookup', 'domain': 'insurance', 'requires_current': False},
             'verification': {'status': 'verified', 'supported_claims': [claim], 'unsupported_claims': [],
                              'stale_or_conflicting_claims': [], 'missing_evidence': []},
@@ -131,7 +131,7 @@ def final_answer(question):
                                'claim_summary': {'supported': 1},
                                'trust_dimensions': {'claim_support': 1, 'audit_coverage': 1}},
             'evidence_pack': {'items': [{'id': 'doc-101-chunk-0', 'document_id': 101, 'chunk_index': 0,
-                                       'title': 'January premium statement', 'excerpt': SOURCE_TEXT}],
+                                       'title': 'January premium statement', 'doc_type': 'insurance', 'excerpt': SOURCE_TEXT}],
                               'coverage': {'evidence_item_count': 1, 'source_document_count': 1}},
             'evidence': {'score': 0.8, 'level': 'high'},
             'source_dates': {'101': '2026-01-31'},
@@ -507,7 +507,11 @@ class Handler(BaseHTTPRequestHandler):
                 result['claim_ledger']['candidate_text'] = claim
                 result['verification']['supported_claims'] = [claim]
                 result['answer'] += '\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question.'
-                result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1},
+                omitted = {'id': 'u2', 'claim': 'The January statement lists a late fee of $5.', 'status': 'unsupported',
+                           'rejection_reasons': [], 'value_mismatches': {}, 'omission_reason': 'source_rejection',
+                           'dependency_ids': []}
+                result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1,
+                                                                         'omitted_units': [omitted]},
                                                missing_evidence=['Some claims were omitted because they could not be verified.'])
                 result['finalization'].update(disposition='partial', complete=False, answer_verified=True)
                 result['confidence'] = 0.65

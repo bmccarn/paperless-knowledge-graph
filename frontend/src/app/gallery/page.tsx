@@ -10,6 +10,8 @@ import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
 import { ClaimProse, MarginNote } from "@/components/claim-prose";
+import { ClaimTable } from "@/components/claim-table";
+import { SourceList } from "@/components/source-list";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
@@ -73,6 +75,7 @@ export default function GalleryPage() {
   const [descending, setDescending] = useState(false);
   const [selected, setSelected] = useState<string | null>("Home inventory");
   const [page, setPage] = useState(0);
+  const [claim, setClaim] = useState<number | null>(null);
   return (
     <div className="h-full overflow-y-auto" data-gallery-scroll>
       <div className="mx-auto max-w-6xl space-y-10 p-4 md:px-12 md:py-10" data-gallery-content>
@@ -128,11 +131,19 @@ export default function GalleryPage() {
         <Section id="claims-notes" title="Claims and margin notes">
           <div className="@container">
             <div className="@min-[58rem]:pr-[356px]">
-              <ClaimProse id="gallery-claims" text={claimText} state="verified" claims={claims} sourceDates={{ "1": "2026-01-28" }} />
+              <ClaimProse id="gallery-claims" text={claimText} state="verified" claims={claims} sourceDates={{ "1": "2026-01-28" }} active={claim} onSelect={setClaim} />
             </div>
           </div>
           <Row name="Active note"><MarginNote id="gallery-note" n={1} claim={claims[0]} sourceDates={{ "1": "2026-01-28" }} active onSelect={() => {}} /></Row>
-          <Row name="Not checked"><ClaimProse id="gallery-unchecked" text={claimText} state="not_checked" claims={claims} /></Row>
+          <Row name="Not checked"><ClaimProse id="gallery-unchecked" text={claimText} state="not_checked" claims={claims} active={null} onSelect={() => {}} /></Row>
+        </Section>
+
+        <Section id="claim-table-sources" title="Claim table and sources">
+          <ClaimTable id="gallery-claim-table" defaultOpen claims={claims.map((c, i) => ({ ...c, claim: claimText.slice(c.start, c.end) || `Claim ${i + 1}` }))}
+            omitted={[{ id: "u3", claim: "The deductible is $500.", omission_reason: "source_rejection" }]}
+            sourceDates={{ "1": "2026-01-28" }} active={claim} onSelect={setClaim} />
+          <SourceList id="gallery-sources" claims={claims} sourceDates={{ "1": "2026-01-28" }} active={claim} paperlessBaseUrl="" onOpen={() => {}}
+            sources={[{ document_id: 1, title: "Renewal declarations 2026–2027", doc_type: "insurance" }, { document_id: 2, title: "Homeowners policy booklet", doc_type: "insurance" }]} />
         </Section>
 
         <Section id="node-kinds" title="Entity kinds">

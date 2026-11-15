@@ -299,7 +299,7 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   const notice = page.getByTestId("verdict").filter({ hasText: "Partial" });
   await notice.waitFor();
   assert.ok((await notice.innerText()).includes("1 of 2 claims was left out"));
-  await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Claim table 1 claim, 1 left out", exact: true }).waitFor();
   await page.getByText("Dates in verified observations (1)", { exact: true }).waitFor();
   assert.equal(await page.getByText("0%", { exact: true }).count(), 0);
   assert.equal(await page.getByText("$999", { exact: true }).count(), 0);
@@ -393,7 +393,7 @@ for (const [question, status, count] of [
     await coverage.waitFor();
     assert.ok((await coverage.innerText()).includes(status));
     assert.ok((await coverage.innerText()).includes(count));
-    await page.getByText("Source checks", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "How this was checked", exact: true }).waitFor();
     assert.equal(await page.getByText(/medium trust.*65%/).count(), 0);
     const conversations = await (await context.request.get(`${base}/api/conversations`)).json();
     const saved = await (await context.request.get(`${base}/api/conversations/${conversations[0].id}`)).json();
@@ -426,7 +426,7 @@ test("invalid saved verification preserves text without positive certification p
   await page.getByText("Historical answer text retained for review.", { exact: true }).waitFor();
   await page.getByText("Coverage unavailable", { exact: true }).waitFor();
   assert.equal(await page.getByText("supported", { exact: true }).count(), 0);
-  assert.equal(await page.getByText(/Claim ledger \(/).count(), 0);
+  assert.equal(await page.getByRole("button", { name: /^Claim table/ }).count(), 0);
   assert.equal(await page.getByText("All answer units have validated source references.", { exact: true }).count(), 0);
   assert.equal(await page.getByText("100%", { exact: true }).count(), 0);
   await record(page, "restored-invalid-receipt");

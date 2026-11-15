@@ -125,6 +125,7 @@ test("a Not checked answer shows no underlines and no notes", async t => {
   assert.ok((await answer.innerText()).includes("The January statement lists a premium of $25."));
   assert.equal(await answer.locator("[data-claim]").count(), 0);
   assert.equal(await answer.getByRole("note").count(), 0);
+  assert.equal(await answer.getByRole("button", { name: /^Claim table/ }).count(), 0, "unchecked claims have no results to show");
 });
 
 test("an older saved Verified answer shows plain prose with no claims and no literal citation", async t => {
@@ -141,4 +142,76 @@ test("an older saved Verified answer shows plain prose with no claims and no lit
   assert.equal(await answer.locator("[data-claim]").count(), 0);
   assert.equal(await answer.getByRole("note").count(), 0);
   assert.equal((await page.locator("body").innerText()).includes("[Document"), false);
+});
+
+const openClaimTable = async answer => {
+  await answer.getByRole("button", { name: /^Claim table/ }).click();
+  const table = answer.getByRole("table", { name: "Claims" });
+  await table.waitFor();
+  return table;
+};
+
+test("selecting a claim table row marks the same claim in the prose and its note, and back", async t => {
+  const { answer } = await ask(t, 1440);
+  const table = await openClaimTable(answer);
+  const row = n => table.getByRole("row").filter({ has: answer.page().getByRole("button", { name: `Select claim ${n}`, exact: true }) });
+  await table.getByRole("button", { name: "Select claim 2", exact: true }).click();
+  assert.equal(await row(2).getAttribute("aria-current"), "true");
+  for (const piece of await answer.locator('[data-claim="2"]').all()) assert.equal(await piece.getAttribute("aria-current"), "true");
+  assert.equal(await answer.getByRole("note", { name: "Claim 2 source" }).getAttribute("aria-current"), "true");
+  // Selecting in the prose moves the table's selection too.
+  await answer.locator('[data-claim="3"]').last().click();
+  assert.equal(await row(3).getAttribute("aria-current"), "true");
+  assert.equal(await row(2).getAttribute("aria-current"), null);
+  assert.equal(await row(3).locator("q").innerText(), (await answer.getByRole("note", { name: "Claim 3 source" }).locator("q").innerText()));
+  assert.ok(await noHorizontalScroll(answer.page()), "no horizontal scroll");
+});
+
+test("each source row shows its serif title, type, the date when known, the claims it supports and both links", async t => {
+  const { answer } = await ask(t, 1440);
+  const sources = answer.getByRole("region", { name: "Sources" });
+  const rows = sources.getByRole("listitem");
+  assert.equal(await rows.count(), 2);
+  const first = rows.nth(0), second = rows.nth(1);
+  const title = first.getByRole("button", { name: "January premium statement", exact: true });
+  assert.match(await title.evaluate(element => getComputedStyle(element).fontFamily), /Source Serif 4/);
+  assert.ok((await first.innerText()).includes("Insurance"));
+  assert.equal(await first.locator("[data-type] > span[aria-hidden]").count(), 1, "type dot");
+  assert.ok((await first.innerText()).includes("31 Jan 2026"));
+  assert.ok((await first.innerText()).includes("Supports claims 1 and 2"));
+  assert.ok((await second.innerText()).includes("Supports claim 3"));
+  // No date in source_dates: no date text and no placeholder.
+  assert.doesNotMatch(await second.innerText(), /\d{4}|—\s*$|Unknown date/i);
+  for (const row of [first, second]) {
+    assert.equal(await row.getByRole("link", { name: /^Open\b(?! in Paperless)/ }).count(), 1);
+    assert.equal(await row.getByRole("link", { name: /^Open in Paperless/ }).count(), 1);
+  }
+  assert.equal(await first.getByRole("link", { name: /^Open\b(?! in Paperless)/ }).getAttribute("href"), "/documents/101");
+  await title.click();
+  const sheet = answer.page().getByRole("dialog");
+  assert.ok((await sheet.innerText()).includes("January statement: the premium is $25."));
+  assert.match(await sheet.getByRole("heading", { name: "January premium statement" }).evaluate(element => getComputedStyle(element).fontFamily), /Source Serif 4/);
+});
+
+test("the Partial answer's claim table lists each left-out unit", async t => {
+  const { answer } = await ask(t, 1440, "Show partial recorded history", "Timeline");
+  const table = await openClaimTable(answer);
+  const left = table.getByRole("row").filter({ hasText: "Left out" });
+  assert.equal(await left.count(), 1);
+  assert.ok((await left.innerText()).includes("The January statement lists a late fee of $5."));
+  assert.equal(await left.locator("svg.lucide-circle-minus").count(), 1);
+  assert.equal(await left.getByRole("button").count(), 0, "a left-out claim is not in the prose, so it cannot be selected");
+});
+
+test("at 390 px the claim table stacks without horizontal scroll, and selecting a row scrolls to its note", async t => {
+  const { page, answer } = await ask(t, 390);
+  const table = await openClaimTable(answer);
+  assert.ok(await noHorizontalScroll(page), "no horizontal scroll");
+  const note = answer.getByRole("note", { name: "Claim 2 source" });
+  // A DOM click: Playwright's click would scroll the page itself.
+  await table.getByRole("button", { name: "Select claim 2", exact: true }).scrollIntoViewIfNeeded();
+  await table.getByRole("button", { name: "Select claim 2", exact: true }).evaluate(button => button.click());
+  await page.waitForFunction(element => { const r = element.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight; },
+    await note.elementHandle(), { timeout: 3000 });
+  if (artifacts) await page.screenshot({ path: `${artifacts}/claim-table-390.png`, fullPage: true });
 });

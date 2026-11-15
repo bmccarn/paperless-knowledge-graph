@@ -99,6 +99,8 @@ for (const [disposition, reason] of [
   const body = await page.locator("body").innerText();
   assert.equal(body.includes(DRAFT), false, "draft claims stay hidden");
   assert.equal(body.includes(ABSTENTION), false, "no answer text");
+  await answer.getByRole("button", { name: "How this was checked", exact: true }).click();
+  assert.equal((await answer.innerHTML()).includes(DRAFT), false, "the open check section shows no draft claim");
   await answer.getByRole("button", { name: "Review the 2 documents", exact: true }).click();
   assert.ok(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Sources"));
   const request = page.waitForRequest("**/api/query/stream");

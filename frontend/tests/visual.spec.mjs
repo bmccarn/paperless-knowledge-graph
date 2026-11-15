@@ -142,12 +142,31 @@ const extraStates = [
   { ...mainStates[0], name: "ask-verified", state: "verified", prepare: async page => {
     await page.getByPlaceholder("Ask a question...").fill("What premium does the January statement list?");
     await page.getByPlaceholder("Ask a question...").press("Enter");
-    await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
+    await page.getByRole("button", { name: /^Claim table/ }).waitFor();
   } },
   { ...mainStates[0], name: "ask-claims", state: "claims", prepare: async page => {
     await page.getByPlaceholder("Ask a question...").fill("What does the policy say? margin-claims");
     await page.getByPlaceholder("Ask a question...").press("Enter");
     await page.getByRole("button", { name: "Claim 2", exact: true }).click();
+  } },
+  { ...mainStates[0], name: "ask-claim-table", state: "claim-table", prepare: async page => {
+    await page.getByPlaceholder("Ask a question...").fill("What does the policy say? margin-claims");
+    await page.getByPlaceholder("Ask a question...").press("Enter");
+    await page.getByRole("button", { name: /^Claim table/ }).click();
+    await page.getByRole("button", { name: "Select claim 2", exact: true }).click();
+    await page.getByRole("button", { name: "How this was checked", exact: true }).click();
+  } },
+  { ...mainStates[0], name: "ask-partial-table", state: "partial-claim-table", prepare: async page => {
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await page.getByPlaceholder("Ask a question...").fill("Show partial recorded history");
+    await page.getByPlaceholder("Ask a question...").press("Enter");
+    await page.getByRole("button", { name: /^Claim table/ }).click();
+  } },
+  { ...mainStates[0], name: "ask-source-sheet", state: "source-sheet", prepare: async page => {
+    await page.getByPlaceholder("Ask a question...").fill("What premium does the January statement list?");
+    await page.getByPlaceholder("Ask a question...").press("Enter");
+    await page.getByRole("region", { name: "Sources" }).getByRole("button", { name: "January premium statement", exact: true }).click();
+    await page.getByRole("dialog").waitFor();
   } },
   // One capture per other answer state; the question's token selects the fixture outcome.
   ...[

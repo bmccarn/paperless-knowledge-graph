@@ -3,6 +3,11 @@
 import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/timeline-dates";
 import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question-coverage";
 import { ClaimProse } from "@/components/claim-prose";
+import { ClaimTable, type OmittedUnit, type TableClaim } from "@/components/claim-table";
+import { SourceLinks, SourceList } from "@/components/source-list";
+import { TypeDot } from "@/components/kind-shape";
+import { formatSourceDate } from "@/lib/answer-state";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { answerView } from "@/lib/answer-state";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -23,19 +28,16 @@ import {
   createConversation,
   getConversation,
   renameConversation,
-  deleteConversation, getModels, generateTitle, getPaperlessDocUrl, usePaperlessUrl, ModelInfo} from "@/lib/api";
+  deleteConversation, getModels, generateTitle, usePaperlessUrl, ModelInfo} from "@/lib/api";
 import {
   Send,
   Loader2,
-  ExternalLink,
   History,
-  FileText,
   Users,
   Copy,
   Check,
+  ChevronRight,
   Search,
-  Route,
-  ShieldCheck,
 } from "lucide-react";
 
 interface Source {
@@ -91,7 +93,7 @@ interface TraceStep {
 
 interface Verification {
   status?: string;
-  partial?: { omitted_count: number; original_total: number; original_supported: number };
+  partial?: { omitted_count: number; original_total: number; original_supported: number; omitted_units?: OmittedUnit[] };
   supported_claims?: string[];
   unsupported_claims?: string[];
   stale_or_conflicting_claims?: string[];
@@ -198,6 +200,67 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/**
+ * The query plan, the trace and the evidence summary, closed by default.
+ * Claim text from the verifier only shows with answer text, so a withheld draft never reaches the page.
+ */
+function HowChecked({ msg, showClaims }: { msg: Message; showClaims: boolean }) {
+  const plan = msg.query_plan, summary = msg.source_summary, verification = msg.verification;
+  const planLine = [plan?.intent && `Intent ${plan.intent}`, plan?.domain && `Domain ${plan.domain}`, plan?.planner && `${plan.planner} planner`]
+    .filter(Boolean).join(" · ");
+  const flagged = (summary?.unsupported_claim_count || 0) + (summary?.stale_or_conflicting_claim_count || 0);
+  const notes = [
+    ...(summary?.newer_docs_may_exist ? ["Retrieval does not establish completeness of the archive; newer or conflicting records may exist."] : []),
+    ...(flagged ? [`The verifier flagged ${summary?.unsupported_claim_count || 0} unsupported and ${summary?.stale_or_conflicting_claim_count || 0} stale or conflicting claims.`] : []),
+    ...(summary?.trust_penalties ?? []),
+    ...(summary?.trust_reasons ?? []),
+    ...(showClaims ? [
+      ...(verification?.unsupported_claims ?? []).map(claim => `Unsupported: ${claim}`),
+      ...(verification?.stale_or_conflicting_claims ?? []).map(claim => `Stale or conflicting: ${claim}`),
+      ...(verification?.missing_evidence ?? []).map(gap => `Missing evidence: ${gap}`),
+    ] : []),
+  ];
+  const trace = msg.trace ?? [];
+  if (!planLine && !plan?.strategy && !plan?.subqueries?.length && !trace.length && !notes.length) return null;
+  const heading = "mb-1 label-12 font-medium text-fg";
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group inline-flex min-h-11 items-center gap-1.5 label-14 text-fg md:min-h-8">
+        <ChevronRight aria-hidden className="size-4 text-fg-muted transition-transform duration-(--dur-2) group-aria-expanded:rotate-90" strokeWidth={1.75} />
+        How this was checked
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-4 pt-2 pl-[22px] label-13 text-fg-muted">
+        {(planLine || plan?.strategy || plan?.subqueries?.length) && (
+          <div>
+            <h3 className={heading}>Query plan</h3>
+            {planLine && <p>{planLine}</p>}
+            {plan?.strategy && <p>{plan.strategy}</p>}
+            {plan?.subqueries?.length ? (
+              <ul className="mt-1 space-y-0.5">
+                {plan.subqueries.map((q, idx) => <li key={idx}><span className="text-fg-subtle">{q.role || "query"}</span> {q.query}</li>)}
+              </ul>
+            ) : null}
+          </div>
+        )}
+        {trace.length > 0 && (
+          <div>
+            <h3 className={heading}>Trace</h3>
+            <ol className="space-y-0.5">
+              {trace.map((step, idx) => <li key={idx}><span className="text-fg">{step.step}</span>: {step.detail || step.status}</li>)}
+            </ol>
+          </div>
+        )}
+        {notes.length > 0 && (
+          <div>
+            <h3 className={heading}>Evidence summary</h3>
+            <ul className="space-y-0.5">{notes.map((note, idx) => <li key={idx}>{note}</li>)}</ul>
+          </div>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function QueryContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
@@ -219,6 +282,8 @@ function QueryContent() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
+  // The selected claim of each answer, by message index; shared by its prose, margin notes, claim table and sources.
+  const [activeClaims, setActiveClaims] = useState<Record<number, number>>({});
   const [queryMode, setQueryMode] = useState<QueryMode>("strict");
   const composerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -237,6 +302,7 @@ function QueryContent() {
     clearStream();
     setFollowUpSuggestions([]);
     setSelectedSource(null);
+    setActiveClaims({});
   };
   useEffect(() => () => { viewVersion.current++; busy.current = false; }, []);
   useEffect(() => {
@@ -504,6 +570,10 @@ function QueryContent() {
     await loadConversations();
   };
 
+  // The sheet shows a source's date only from the answer's source_dates, like the source list.
+  const openSource = (source: Source, dates?: Record<string, string>) =>
+    setSelectedSource({ ...source, date: dates?.[String(source.document_id)] });
+
   const renderConversationList = () => <ConversationList conversations={conversations} activeId={activeConvId}
     onNew={handleNewConversation} onOpen={loadConversation} onRename={handleRename} onDelete={handleDeleteConversation} />;
 
@@ -538,46 +608,26 @@ function QueryContent() {
 
       <Sheet open={!!selectedSource} onOpenChange={(open) => !open && setSelectedSource(null)}>
         <SheetContent side="right" className="w-[380px] sm:w-[460px] p-0 flex flex-col">
-          <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="text-sm flex items-center gap-1.5">
-              <FileText className="h-4 w-4" /> Source detail
-            </SheetTitle>
-            <SheetDescription className="sr-only">Inspect the source excerpt and open its document in Paperless.</SheetDescription>
-          </SheetHeader>
-          {selectedSource && (
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div>
-                <p className="text-sm font-medium">{selectedSource.title || `Document #${selectedSource.document_id}`}</p>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {selectedSource.doc_type && <Badge variant="secondary" className="text-xs">{selectedSource.doc_type}</Badge>}
-                  {selectedSource.date && <Badge variant="outline" className="text-xs">{selectedSource.date}</Badge>}
+          {selectedSource && (() => {
+            const title = selectedSource.title || `Document ${selectedSource.document_id}`;
+            return <>
+              <SheetHeader className="border-b px-4 py-3 pr-12">
+                <SheetTitle className="doc-title">{title}</SheetTitle>
+                <SheetDescription className="flex flex-wrap items-center gap-x-3 label-12 text-fg-subtle tabular-nums">
+                  {selectedSource.doc_type && <TypeDot type={selectedSource.doc_type} className="label-12" />}
+                  {selectedSource.date && <span>{formatSourceDate(selectedSource.date)}</span>}
+                  <span className="sr-only">The retrieved excerpt from this source.</span>
+                </SheetDescription>
+              </SheetHeader>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div>
+                  <h3 className="mb-1.5 label-12 font-medium text-fg-muted">Retrieved excerpt</h3>
+                  <p className="ocr whitespace-pre-wrap">{selectedSource.excerpt || "No excerpt was returned for this source."}</p>
                 </div>
+                <SourceLinks source={selectedSource} paperlessBaseUrl={paperlessBaseUrl} />
               </div>
-              <div className="rounded-lg border bg-card p-3">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-                  Retrieved excerpt
-                </p>
-                <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                  {selectedSource.excerpt || "No excerpt was returned for this source."}
-                </p>
-              </div>
-              {selectedSource.document_id && (
-                <div className="flex flex-wrap gap-4">
-                <a href={`/documents/${selectedSource.document_id}`} className="inline-flex items-center gap-1.5 text-xs underline underline-offset-3">
-                  <FileText className="h-3 w-3" /> Open
-                </a>
-                <a
-                  href={selectedSource.paperless_url || getPaperlessDocUrl(selectedSource.document_id, paperlessBaseUrl)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                >
-                  <ExternalLink className="h-3 w-3" /> Open in Paperless
-                </a>
-                </div>
-              )}
-            </div>
-          )}
+            </>;
+          })()}
         </SheetContent>
       </Sheet>
 
@@ -623,6 +673,14 @@ function QueryContent() {
               const verdict = <VerdictLine state={view.state} reason={view.reason} level={view.level}
                 seconds={seconds != null ? seconds / 1000 : undefined} />;
               const sourceCount = msg.sources?.length ?? 0;
+              // Only audited states have claim results to show; Fast and withheld ledgers are not shown.
+              const audited = ["verified", "documented", "partial"].includes(view.state);
+              const claims: TableClaim[] = audited ? msg.claim_ledger?.claims ?? [] : [];
+              const omitted = audited ? msg.verification?.partial?.omitted_units ?? [] : [];
+              const select = (n: number) => setActiveClaims(current => ({ ...current, [i]: n }));
+              // Audited sources carry no type; the evidence pack has it for the same document.
+              const sources = (msg.sources ?? []).map(s => s.doc_type ? s
+                : { ...s, doc_type: msg.evidence_pack?.items?.find(item => item.document_id === s.document_id && item.doc_type)?.doc_type });
               return (
               <article key={i} aria-label="Answer" className="space-y-4 @min-[58rem]:pr-[356px]">
                 {view.state === "failed" ? (
@@ -635,7 +693,8 @@ function QueryContent() {
                 ) : verdict}
                 {view.prose !== null && (
                   <ClaimProse id={`answer-${i}`} text={view.prose} state={view.state}
-                    claims={msg.claim_ledger?.candidate_text ? msg.claim_ledger.claims : undefined} sourceDates={msg.source_dates} />
+                    claims={msg.claim_ledger?.candidate_text ? msg.claim_ledger.claims : undefined} sourceDates={msg.source_dates}
+                    active={activeClaims[i] ?? null} onSelect={select} />
                 )}
                 {view.state === "withheld" && (
                   <div className="flex flex-wrap gap-2">
@@ -656,149 +715,17 @@ function QueryContent() {
 
                   <QuestionCoverage receipt={msg.finalization?.question_coverage} />
 
-                  {msg.source_summary && (
-                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium flex items-center gap-1">
-                          <ShieldCheck className="h-3 w-3" /> {msg.finalization?.pipeline_version ? "Source checks" : "Trust check"}
-                        </span>
-                        {msg.source_summary.latest_check_used ? (
-                          <Badge variant="secondary" className="text-xs">latest-pass run</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs">latest-pass not needed</Badge>
-                        )}
-                        {msg.source_summary.latest_source_date && (
-                          <span className="text-muted-foreground">
-                            Latest source: {msg.source_summary.latest_source_date}
-                          </span>
-                        )}
-                      </div>
-                      {msg.source_summary.newer_docs_may_exist && (
-                        <p className="text-muted-foreground">
-                          Retrieval does not establish completeness of the archive; newer or conflicting records may exist.
-                        </p>
-                      )}
-                      {Boolean((msg.source_summary.unsupported_claim_count || 0) + (msg.source_summary.stale_or_conflicting_claim_count || 0)) && (
-                        <p className="text-partial">
-                          Verifier flagged {msg.source_summary.unsupported_claim_count || 0} unsupported and {msg.source_summary.stale_or_conflicting_claim_count || 0} stale/conflicting claim(s).
-                        </p>
-                      )}
-                      {msg.source_summary.trust_penalties && msg.source_summary.trust_penalties.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {msg.source_summary.trust_penalties.slice(0, 3).map((penalty, idx) => (
-                            <span key={idx} className="rounded-md bg-partial-bg px-2 py-1 text-xs text-partial">
-                              {penalty}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {msg.source_summary.trust_reasons && msg.source_summary.trust_reasons.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {msg.source_summary.trust_reasons.slice(0, 3).map((reason, idx) => (
-                            <span key={idx} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                              {reason}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {view.prose !== null && msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
-                        <div className="flex flex-wrap gap-1 pt-1">
-                          {Object.entries(msg.source_summary.claim_summary).map(([status, count]) => count ? (
-                            <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-xs">
-                              {status}: {count}
-                            </Badge>
-                          ) : null)}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {view.prose !== null && msg.verification && (
-                    Boolean((msg.verification.unsupported_claims || []).length + (msg.verification.stale_or_conflicting_claims || []).length + (msg.verification.missing_evidence || []).length) && (
-                      <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
-                        <p className="font-medium flex items-center gap-1">
-                          <ShieldCheck className="h-3 w-3" /> Evidence review
-                        </p>
-                        {(msg.verification.unsupported_claims || []).slice(0, 4).map((claim, idx) => (
-                          <div key={`unsupported-${idx}`} className="text-xs text-partial">
-                            Unsupported: {claim}
-                          </div>
-                        ))}
-                        {(msg.verification.stale_or_conflicting_claims || []).slice(0, 4).map((claim, idx) => (
-                          <div key={`stale-${idx}`} className="text-xs text-error">
-                            Stale/conflict: {claim}
-                          </div>
-                        ))}
-                        {(msg.verification.missing_evidence || []).slice(0, 3).map((gap, idx) => (
-                          <div key={`gap-${idx}`} className="text-xs text-muted-foreground">
-                            Missing evidence: {gap}
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  )}
-
-                  {view.prose !== null && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
-                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
-                      <p className="font-medium flex items-center gap-1">
-                        <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})
-                      </p>
-                      {msg.claim_ledger.claims.map((claim, idx) => (
-                        <div key={idx} className="grid gap-1 text-xs">
-                          <div className="flex items-start gap-1.5">
-                            <Badge variant={(claim.status || claim.support_status) === "supported" ? "secondary" : "outline"} className="text-xs px-1 py-0 shrink-0">
-                              {claim.status || claim.support_status || "unknown"}
-                            </Badge>
-                            <span>{claim.claim}</span>
-                          </div>
-                          {(claim.source_title || claim.evidence_quote || claim.evidence_excerpt) && (
-                            <div className="text-muted-foreground pl-14 whitespace-pre-wrap break-words">
-                              {claim.source_title || "Evidence"}{claim.date ? ` · ${claim.date}` : ""}{(claim.evidence_quote || claim.evidence_excerpt) ? ` · ${claim.evidence_quote || claim.evidence_excerpt}` : ""}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {(msg.query_plan || (msg.trace && msg.trace.length > 0)) && (
-                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium flex items-center gap-1">
-                          <Route className="h-3 w-3" /> Why this answer
-                        </span>
-                        {msg.query_plan?.planner && <Badge variant="outline" className="text-xs">{msg.query_plan.planner} planner</Badge>}
-                        {msg.query_plan?.intent && <Badge variant="secondary" className="text-xs">{msg.query_plan.intent}</Badge>}
-                        {msg.query_plan?.domain && <Badge variant="outline" className="text-xs">{msg.query_plan.domain}</Badge>}
-                      </div>
-                      {msg.query_plan?.strategy && (
-                        <p className="text-muted-foreground">{msg.query_plan.strategy}</p>
-                      )}
-                      {msg.query_plan?.subqueries && msg.query_plan.subqueries.length > 0 && (
-                        <div className="space-y-1">
-                          {msg.query_plan.subqueries.slice(0, 4).map((q, idx) => (
-                            <div key={idx} className="flex gap-1.5 text-xs">
-                              <span className="shrink-0 text-muted-foreground">{q.role || "query"}</span>
-                              <span className="truncate">{q.query}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {msg.trace && msg.trace.length > 0 && (
-                        <div className="grid gap-1">
-                          {msg.trace.slice(-5).map((step, idx) => (
-                            <div key={idx} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                              <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0" />
-                              <span><span className="font-medium text-foreground">{step.step}</span>: {step.detail || step.status}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  {(claims.length > 0 || omitted.length > 0) && (
+                    <ClaimTable id={`claims-${i}`} claims={claims} omitted={omitted} sourceDates={msg.source_dates}
+                      active={activeClaims[i] ?? null} onSelect={n => {
+                        select(n);
+                        // After the render that shows the note on a phone, as a claim number does.
+                        requestAnimationFrame(() => document.getElementById(`note-answer-${i}-${n}`)?.scrollIntoView({ block: "nearest" }));
+                      }} />
                   )}
 
                   <TimelineDates events={msg.timeline_events}
-                    receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={setSelectedSource} />
+                    receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={source => openSource(source, msg.source_dates)} />
 
                   {msg.entities && msg.entities.length > 0 && (
                     <div className="space-y-1.5 px-1">
@@ -821,28 +748,12 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {msg.sources && msg.sources.length > 0 && (
-                    <section id={`sources-${i}`} tabIndex={-1} aria-label="Sources" className="space-y-1.5 px-1">
-                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
-                        <FileText className="h-3 w-3" /> Sources ({msg.sources.length})
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {msg.sources.map((s, j) => {
-                          const docId = s.document_id;
-                          const title = s.title || `Document #${docId}`;
-                          const excerpts = s.excerpt_count && s.excerpt_count > 1 ? ` (${s.excerpt_count} excerpts)` : "";
-                          return (
-                            <button key={j} type="button" onClick={() => setSelectedSource(s)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors min-h-[36px]">
-                              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className="truncate max-w-[180px] md:max-w-[200px]">{title}{excerpts}</span>
-                              {s.doc_type && <Badge variant="secondary" className="text-xs px-1 py-0 hidden sm:inline-flex">{s.doc_type}</Badge>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
+                  {sources.length > 0 && (
+                    <SourceList id={`sources-${i}`} sources={sources} claims={claims} sourceDates={msg.source_dates}
+                      active={activeClaims[i]} paperlessBaseUrl={paperlessBaseUrl} onOpen={source => openSource(source, msg.source_dates)} />
                   )}
+
+                  <HowChecked msg={msg} showClaims={view.prose !== null} />
               </article>
               );
             })}

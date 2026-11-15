@@ -1165,6 +1165,11 @@ async def graph_relationship_types():
     return result
 
 
+@app.get("/graph/overview")
+async def graph_overview():
+    return await graph_store.get_overview()
+
+
 @app.get("/graph/search")
 async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0,
                        sort: str = "relevance", exclude_documents: bool = False):

@@ -54,20 +54,7 @@
     "state": "expanded",
     "issue": 134,
     "targets": [
-      "[\".bg-emerald-500\\\\/15\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(10) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(11) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(3) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(4) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(5) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(6) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(7) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(8) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-muted\\\\/50:nth-child(9) > .md\\\\:table-cell.hidden.p-2:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]"
+      "[\".bg-emerald-500\\\\/15\"]"
     ]
   },
   {
@@ -77,9 +64,9 @@
     "issue": 134,
     "targets": [
       "[\"p.text-[10px].uppercase.text-muted-foreground.tracking-wider\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -89,22 +76,7 @@
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\".bg-emerald-500\\\\/15\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(10) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(11) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(12) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(2) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(3) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(4) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(5) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(6) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(7) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(8) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-muted\\\\/50.group:nth-child(9) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]"
+      "[\".bg-emerald-500\\\\/15\"]"
     ]
   },
   {
@@ -113,9 +85,9 @@
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -135,7 +107,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -146,7 +118,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -168,7 +140,7 @@
       "[\"div.px-3.py-2.text-[11px].font-medium.uppercase.tracking-wider.text-muted-foreground\"]",
       "[\"p.border-t.p-3.text-[11px].leading-relaxed.text-muted-foreground\"]",
       "[\"span.hidden.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2.sm:block\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
@@ -180,8 +152,8 @@
     "state": "main",
     "issue": 138,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -218,7 +190,7 @@
     "state": "main",
     "issue": 120,
     "targets": [
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.items-center.justify-center.rounded-sm.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -234,11 +206,11 @@
       "[\"p.text-[10px].font-medium.text-muted-foreground.flex.items-center.gap-1.uppercase.tracking-wider\"]",
       "[\"span\"]",
       "[\"span.font-medium.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[8px].px-1.py-0.shrink-0\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].px-1.py-0.hidden.sm:inline-flex\"]",
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.border-transparent.font-medium.w-fit.whitespace-nowrap.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[8px].px-1.py-0.shrink-0\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.items-center.justify-center.rounded-sm.border.border-transparent.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].px-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.items-center.justify-center.rounded-sm.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-[10px].text-muted-foreground\"]",
       "[\"span.text-[10px].text-muted-foreground.flex.items-center.gap-1\"]"

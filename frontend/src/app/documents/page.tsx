@@ -51,7 +51,7 @@ const DOC_TYPE_COLORS: Record<string, string> = {
 function getDocTypeClass(type: string): string {
   const lower = type?.toLowerCase() || "";
   for (const [key, cls] of Object.entries(DOC_TYPE_COLORS)) {
-    if (lower.includes(key)) return cls;
+    if (lower.includes(key)) return `${cls} text-foreground`;
   }
   return "bg-muted text-muted-foreground";
 }

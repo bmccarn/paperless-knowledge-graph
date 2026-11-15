@@ -39,18 +39,17 @@ Prioritize data integrity and incorrect answers, then reliability, performance, 
 
 The browser runner's final stage uses `playwright/test` against the same synthetic
 backend and frontend. `tests/visual.spec.mjs` captures one main state per existing
-page in desktop dark, desktop light, phone dark and phone light. Dialogs, expanded
-rows and final answers are additional captures without screenshot gates. Add the
-component gallery to this matrix in #113. Each capture attaches its axe violations,
+page and the component gallery in desktop dark, desktop light, phone dark and phone
+light. Dialogs, expanded rows and final answers are additional captures without
+screenshot gates. Each capture attaches its axe violations,
 incomplete results and visible text below 12 px to the HTML comparison report.
 
 CI runs in `mcr.microsoft.com/playwright:v1.65.1-noble`. Screenshots use a fixed
 clock, UTC, en-US, device scale factor 1, loaded fonts, disabled animation and
 seeded graph randomness. Do not create application baselines on a developer machine.
 
-Screenshot comparison stays capture-only until #111 merges. In the first PR
-after #111, generate baselines with the manual workflow, commit the approved
-images and set `UI_VISUAL_GATE` to `"1"`. Comparison uses zero differing pixels
+CI enables screenshot comparison with `UI_VISUAL_GATE` set to `"1"` and the
+approved CI-generated images in the repository. Comparison uses zero differing pixels
 and zero per-pixel threshold. Missing baselines fail without writing files.
 
 To update baselines, dispatch **Container Images** on the ticket branch with

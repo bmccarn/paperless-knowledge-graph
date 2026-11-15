@@ -19,13 +19,13 @@ const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
         aria-valuenow={indeterminate ? undefined : value}
         aria-valuemin={0}
         aria-valuemax={max}
-        className={cn("relative h-2 w-full overflow-hidden rounded-full bg-primary/20", className)}
+        className={cn("relative h-2 w-full overflow-hidden rounded-sm bg-sunken", className)}
         {...props}
       >
         <div
           className={cn(
-            "h-full rounded-full bg-primary transition-all duration-500 ease-in-out",
-            indeterminate && "animate-pulse w-full"
+            "h-full rounded-sm bg-primary transition-[width] duration-(--dur-3)",
+            indeterminate && "w-full opacity-50"
           )}
           style={indeterminate ? undefined : { width: `${percentage}%` }}
         />

@@ -104,8 +104,7 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
       UI_PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
       UI_BASELINE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines && '1' || '0' }}
-      # Enable in the first PR after #111 merges, together with CI-generated baselines.
-      UI_VISUAL_GATE: "0"
+      UI_VISUAL_GATE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1

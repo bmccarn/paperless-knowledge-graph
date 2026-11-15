@@ -40,7 +40,7 @@ export function supportSummary(summary: NodeSummary): string {
   const dates = documents.map(doc => doc.date).filter((date): date is string => Boolean(shortDate(date))).sort();
   const first = shortDate(dates[0]), last = shortDate(dates[dates.length - 1]);
   const seen = `Seen in ${plural(documents.length, "document")}`;
-  const span = !first ? "." : first === last ? `, all dated ${first}.` : ` from ${first} to ${last}.`;
+  const span = !first ? "." : first === last ? (dates.length === documents.length ? `, all dated ${first}.` : `, dated ${first} or undated.`) : ` from ${first} to ${last}.`;
   const inferred = drawableLinks(summary).filter(link => link.support_state === "inferred").length;
   return `${seen}${span}${inferred ? ` ${plural(inferred, "link")} ${inferred === 1 ? "is" : "are"} inferred.` : ""}`;
 }

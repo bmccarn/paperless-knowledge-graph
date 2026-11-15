@@ -260,7 +260,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           <aside
             key={selectedLinkId ?? selectedNodeId ?? "focus"}
             aria-label="Evidence inspector"
-            className={`h-[300px] shrink-0 overflow-y-auto border-t border-border bg-background md:h-auto md:w-[380px] md:border-l md:border-t-0 ${selected ? "" : "max-md:hidden"}`}
+            className={`h-[300px] shrink-0 overflow-y-auto border-t border-border bg-background md:h-auto md:w-[380px] md:border-l md:border-t-0 ${selected || leaf ? "" : "max-md:hidden"}`}
           >
             {inspector}
           </aside>

@@ -56,6 +56,8 @@ test("support summary: span, same-day and undated forms, and the count of inferr
     "Seen in 3 documents from 3 Mar 2024 to 2 Sep 2026. 1 link is inferred.");
   assert.equal(supportSummary(summary([], { 1: doc("x", "2026-09-01"), 2: doc("y", "2026-09-01") })),
     "Seen in 2 documents, all dated 1 Sep 2026.");
+  assert.equal(supportSummary(summary([], { 1: doc("x", "2026-09-01"), 2: doc("y", null) })),
+    "Seen in 2 documents, dated 1 Sep 2026 or undated.");
   assert.equal(supportSummary(summary([], { 1: doc("x", null) })), "Seen in 1 document.");
 });
 

@@ -200,6 +200,12 @@ test('the fixture leaf shows its empty state and its documents', async t => {
   assert.equal(await shelfOf(page).getByRole('link').count(), 2);
 });
 
+test('on a phone the leaf shows its inspector without a selection', async t => {
+  const page = await newPage(t, { width: 390, height: 844 });
+  await open(page, 'nb-leaf', 'No direct links extracted. This entity appears in 2 documents.');
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).getByRole('link', { name: 'Ask about this' }).waitFor();
+});
+
 test('the legend lists exactly the kinds and link styles in view, in token colors, and collapses', async t => {
   const page = await newPage(t);
   const legend = page.getByRole('region', { name: 'Legend' });

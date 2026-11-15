@@ -124,6 +124,7 @@ class Neo4jSummaryTests(unittest.IsolatedAsyncioTestCase):
                          'is_hub': True, 'is_owner': False})
         self.assertEqual(summary['owner_status'], 'found')
         self.assertEqual(summary['owner_match_count'], 1)
+        self.assertEqual(summary['owner_duplicates'], [])
         employs = next(link for link in links if link['neighbor']['id'] == PREFIX + '000000000000')
         self.assertEqual(employs, {
             'key': PREFIX + '000000000660~EMPLOYS~' + PREFIX + '000000000000', 'type': 'EMPLOYS', 'family': 'parties',

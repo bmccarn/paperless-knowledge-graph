@@ -12,11 +12,12 @@ import {
 } from "../.test-build/graph-landing.js";
 
 const raw = (uuid, label, name, extra = {}) => ({ labels: [label], properties: { uuid, name }, evidence_doc_count: 2, ...extra });
-const row = (id, label, name = id, owner = false) => ({ id, label, name, documents: 1, alias: null, owner });
+const row = (id, label, name = id, owner = false, ownerMatch = false) => ({ id, label, name, documents: 1, alias: null, owner, ownerMatch });
 
 test("search rows keep entities only and read the derived fields", () => {
   assert.deepEqual(entityRow(raw("a", "Organization", "Harbor", { matched_alias: "HM", is_owner: true })),
-    { id: "a", label: "Organization", name: "Harbor", documents: 2, alias: "HM", owner: true });
+    { id: "a", label: "Organization", name: "Harbor", documents: 2, alias: "HM", owner: true, ownerMatch: false });
+  assert.equal(entityRow(raw("d", "Person", "Harbor", { owner_match: true })).ownerMatch, true);
   assert.equal(entityRow({ labels: ["Document"], properties: { paperless_id: 4 } }), null);
   assert.equal(entityRow(raw("r", "DocumentRef", "Referenced letter")), null);
   assert.equal(entityRow({ labels: ["Person"], properties: { name: "No id" } }), null);
@@ -47,11 +48,12 @@ test("?q= opens an entity only when exactly one name equals the text", () => {
   assert.equal(exactMatch([row("1", "Person", "Dana Whitlock")], "dana"), null);
 });
 
-test("most connected leaves out the owner and keeps 10", () => {
-  const rows = [row("owner", "Person", "Owner", true), ...Array.from({ length: 11 }, (_, index) => row(String(index), "Organization"))];
+test("most connected leaves out the owner and its other matches, and keeps 10", () => {
+  const rows = [row("owner", "Person", "Owner", true), row("copy-1", "Person", "Owner", false, true),
+    ...Array.from({ length: 11 }, (_, index) => row(String(index), "Organization")), row("copy-2", "Person", "Owner", false, true)];
   const top = mostConnected(rows);
   assert.equal(top.length, 10);
-  assert.ok(!top.some(item => item.owner));
+  assert.deepEqual(top.map(item => item.id), Array.from({ length: 10 }, (_, index) => String(index)));
 });
 
 test("Recent puts the latest first, once, and keeps 10", () => {

@@ -4,7 +4,7 @@ import re
 import uuid
 from collections import defaultdict
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Collection, Optional
 
 from neo4j import AsyncGraphDatabase, Query
 from rapidfuzz import fuzz
@@ -12,7 +12,7 @@ from rapidfuzz import fuzz
 from app.config import settings
 from app.retry import retry_db
 from app.relationship_support import merge_support_properties, support_records
-from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, link_support, owner_rule
+from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, link_support, owner_matches
 from app.relationship_families import classify_relationship
 
 logger = logging.getLogger(__name__)
@@ -949,7 +949,7 @@ class GraphStore:
         focus_id = _graph_node_id(node["properties"])
         relationships = [r for r in node["relationships"] if r["rel_type"] is not None]
         neighbor_ids = [_graph_node_id(r["neighbor_props"]) for r in relationships]
-        owner_status, owner, owner_match_count = await self.get_owner()
+        owner_status, owner, matches = await self.get_owner_matches()
         fields = await self.get_node_fields(list(dict.fromkeys([focus_id, *neighbor_ids])), owner)
         focus = {"id": focus_id, "label": node["labels"][0],
                  "name": node["properties"].get("name") or node["properties"].get("title", ""),
@@ -984,7 +984,10 @@ class GraphStore:
             documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
                          async for row in result}
         return {"focus": focus, "links": sorted(links, key=lambda link: link["key"]),
-                "documents": documents, "owner_status": owner_status, "owner_match_count": owner_match_count}
+                "documents": documents, "owner_status": owner_status, "owner_match_count": len(matches),
+                "owner_duplicates": [{"id": person["uuid"], "label": "Person", "name": person.get("name") or "",
+                                      "evidence_doc_count": person["evidence_doc_count"]}
+                                     for person in matches[1:]] if focus_id == owner else []}
 
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
         depth = max(1, min(int(depth), 4))
@@ -1250,8 +1253,13 @@ class GraphStore:
 
     async def get_owner(self) -> tuple[str, Optional[str], int]:
         """Return (status, owner uuid, match count) for OWNER_NAME; see app.graph_fields.owner_rule."""
+        status, owner, matches = await self.get_owner_matches()
+        return status, owner, len(matches)
+
+    async def get_owner_matches(self) -> tuple[str, Optional[str], list[dict]]:
+        """Return (status, owner uuid, every matching Person) for OWNER_NAME; see app.graph_fields.owner_matches."""
         if not settings.owner_name.strip():
-            return "unset", None, 0
+            return "unset", None, []
         async with self.driver.session() as session:
             result = await session.run(
                 f"""
@@ -1260,7 +1268,7 @@ class GraphStore:
                        COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count
                 """, evidence=EVIDENCE_TYPES)
             persons = [dict(row) async for row in result]
-        return owner_rule(settings.owner_name, persons)
+        return owner_matches(settings.owner_name, persons)
 
     async def get_node_fields(self, uuids: list[str], owner: Optional[str] = None) -> dict[str, dict]:
         """Derived fields by graph id (uuid or doc-N). Evidence links do not count as links."""
@@ -1277,12 +1285,12 @@ class GraphStore:
                                   "is_owner": row["uuid"] == owner}
                     async for row in result}
 
-    async def find_paths(self, a: str, b: str, *, max_len: int, k: int, exclude: Optional[str],
+    async def find_paths(self, a: str, b: str, *, max_len: int, k: int, exclude: Collection[str],
                          allow_inferred: bool, owner: Optional[str], timeout: float) -> dict:
         """Up to k simple paths over semantic links between two entities, at most max_len links each.
 
         Shorter lengths are searched first, and at most PATH_CANDIDATES paths are checked in all;
-        `exhausted` is false when that cap stopped the search. `exclude` is never an inner node.
+        `exhausted` is false when that cap stopped the search. No node in `exclude` is on a path.
         """
         found, checked = [], 0
         async with self.driver.session() as session:
@@ -1293,7 +1301,7 @@ class GraphStore:
                     MATCH (b {{uuid: $b}}) WHERE NOT b:Document
                     MATCH p = (a)-[rs*{length}]-(b)
                     WHERE all(r IN rs WHERE NOT type(r) IN $evidence AND ($allow_inferred OR NOT {_INFERRED}))
-                      AND all(x IN nodes(p) WHERE NOT x:Document AND coalesce(x.uuid, '') <> $exclude)
+                      AND all(x IN nodes(p) WHERE NOT x:Document AND NOT coalesce(x.uuid, '') IN $exclude)
                       AND all(x IN nodes(p) WHERE single(y IN nodes(p) WHERE y = x))
                     WITH p LIMIT $remaining
                     WITH p, [r IN relationships(p) | coalesce(r.weight, 0)] AS weights,
@@ -1312,7 +1320,7 @@ class GraphStore:
                             weight: row.weights[i], props: properties(relationships(row.p)[i])}}],
                         weakest: row.weakest, inferred: row.inferred}}] AS paths
                     """, timeout=timeout), a=a, b=b, evidence=EVIDENCE_TYPES, allow_inferred=allow_inferred,
-                    exclude=exclude or "", remaining=PATH_CANDIDATES - checked, k=k)
+                    exclude=list(exclude), remaining=PATH_CANDIDATES - checked, k=k)
                 row = await result.single()
                 checked += row["checked"] if row else 0
                 found += [{**path, "length": length} for path in (row["paths"] if row else [])]

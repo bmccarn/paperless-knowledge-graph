@@ -27,7 +27,7 @@ function summary(links, isHub = false) {
   return {
     focus: { id: "focus", label: "Person", name: "Focus", aliases: [], evidence_doc_count: 1,
              link_count: links.length, is_hub: isHub, is_owner: false },
-    links, documents, owner_status: "found",
+    links, documents, owner_status: "found", owner_duplicates: [],
   };
 }
 // A hub: 60 parties, 120 money and 3 places links, a two-family neighbor and evidence that is never drawn.
@@ -44,6 +44,15 @@ function hub() {
 }
 const familyTotals = data => drawableLinks(data).reduce((totals, item) =>
   ({ ...totals, [item.family]: (totals[item.family] || 0) + 1 }), {});
+
+test("on the owner's view, links to other matches of the owner setting are not drawn", () => {
+  const data = summary([link("parties", "employer", 2), link("loose", "owner-copy", 4, { type: "RELATED_TO", label: "Person" })]);
+  assert.deepEqual(drawableLinks(data).map(item => item.neighbor.id), ["employer", "owner-copy"], "Another focus draws it");
+  data.focus.is_owner = true;
+  data.owner_duplicates = [{ id: "owner-copy", label: "Person", name: "Owner", evidence_doc_count: 4 }];
+  assert.deepEqual(drawableLinks(data).map(item => item.neighbor.id), ["employer"]);
+  assert.deepEqual(neighborhoodLayout(data, 6).nodes.map(node => node.id), ["focus", "employer"]);
+});
 
 test("caps: a hub keeps 2 per family, others 6, or 5 on phone", () => {
   assert.equal(familyCap(true, false), 2);

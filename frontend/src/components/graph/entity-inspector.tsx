@@ -167,6 +167,25 @@ export function FocusInspector({ summary, onClose, ...events }: { summary: NodeS
         </>
       )}
       <p className="mt-3 copy-14 text-fg-muted">{supportSummary(summary)}</p>
+      {summary.owner_duplicates.length > 0 && (
+        <>
+          <h3 className={heading}>Possible duplicates of this entity</h3>
+          <ul aria-label="Possible duplicates of this entity">
+            {summary.owner_duplicates.map(entity => (
+              <li key={entity.id}>
+                <Link href={`/graph?focus=${encodeURIComponent(entity.id)}`}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 rounded-md px-2 py-1.5 hover:bg-raised">
+                  <span className="truncate label-13 text-fg">{entityName(entity)}</span>
+                  <span className="label-12 tabular-nums text-fg-muted">{plural(entity.evidence_doc_count, "document")}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 px-2 label-12 text-fg-muted">
+            They also match the owner name. <Link href="/entities/review" className="text-fg underline underline-offset-4">Review on Entities</Link>
+          </p>
+        </>
+      )}
       {groups.length > 0 && (
         <>
           <h3 className={heading}>Links by family</h3>

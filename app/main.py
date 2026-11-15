@@ -1173,9 +1173,11 @@ async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: i
                                               sort=sort, exclude_documents=exclude_documents, graph_fields=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _, owner, _ = await graph_store.get_owner()
+    _, owner, matches = await graph_store.get_owner_matches()
+    duplicates = {person["uuid"] for person in matches[1:]}
     for row in page["results"]:
         row["is_owner"] = owner is not None and row["properties"].get("uuid") == owner
+        row["owner_match"] = row["properties"].get("uuid") in duplicates
     return {"query": q, "type": type, **page}
 
 
@@ -1214,8 +1216,9 @@ PATH_SEARCH_SECONDS = 5
 async def graph_paths(a: str, b: str, max_len: int = Query(4, ge=2, le=4), k: int = Query(5, ge=1, le=5),
                       include_owner: bool = False, allow_inferred: bool = True):
     async def search():
-        _, owner, _ = await graph_store.get_owner()
-        exclude = None if include_owner or owner in (a, b) else owner
+        _, owner, matches = await graph_store.get_owner_matches()
+        # Every Person that matches the owner setting is left out, except an endpoint.
+        exclude = [] if include_owner else [person["uuid"] for person in matches if person["uuid"] not in (a, b)]
         # The query timeout only backs up the cancellation below, so the server stops too.
         return await graph_store.find_paths(a, b, max_len=max_len, k=k, exclude=exclude, owner=owner,
                                             allow_inferred=allow_inferred, timeout=PATH_SEARCH_SECONDS + 1)

@@ -34,8 +34,8 @@ async def get(store, owner=OWNER, **params):
 class PathRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_forced_timeout_returns_503(self):
         class SlowStore:
-            async def get_owner(self):
-                return 'unset', None, 0
+            async def get_owner_matches(self):
+                return 'unset', None, []
 
             async def find_paths(self, *args, **kwargs):
                 await asyncio.sleep(1)
@@ -68,13 +68,15 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
                                (b:Organization {uuid: $p + 'b', name: 'Path End'}),
                                (o:Person {uuid: $p + 'owner', name: $owner, source_doc_ids: [1, 2, 3]}),
                                (:Person {uuid: $p + 'owner-small', name: $owner, source_doc_ids: [1]}),
-                               (:Person {uuid: $p + 'owner-mid', aliases: [$owner], source_doc_ids: [1, 2]}),
+                               (om:Person {uuid: $p + 'owner-mid', aliases: [$owner], source_doc_ids: [1, 2]}),
                                (m:Organization {uuid: $p + 'm', name: 'Middle Bank'}),
                                (n:Organization {uuid: $p + 'n', name: 'Inferred Middle'}),
                                (x:InsurancePolicy {uuid: $p + 'x', name: 'Mixed Policy'}),
                                (d:Document {uuid: $p + 'doc', paperless_id: 950000001, title: 'Paths doc'}),
                                // Strongest route, but through the owner.
                                (a)-[:SIBLING_OF {weight: 9}]->(o)-[:CUSTOMER_OF {weight: 9}]->(b),
+                               // Next strongest, through a Person that also matches the owner setting.
+                               (a)-[:SIBLING_OF {weight: 8}]->(om)-[:CUSTOMER_OF {weight: 8}]->(b),
                                // Through a Document node, and over an evidence link: never returned.
                                (a)-[:SIGNED_BY {weight: 9}]->(d)-[:ISSUED_BY {weight: 9}]->(b),
                                (d)-[:MENTIONS {weight: 9}]->(a),
@@ -149,10 +151,15 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.graph.settings.owner_name', OWNER):
             self.assertEqual(await self.store.get_owner(), ('chosen', P + 'owner', 3))
         default = (await get(self.store, a=P + 'a', b=P + 'b')).json()
-        self.assertTrue(all('owner' not in path for path in self.node_paths(default)))
+        # The other Persons that match the owner setting are left out with it.
+        self.assertTrue(all(not node.startswith('owner') for path in self.node_paths(default) for node in path))
         included = (await get(self.store, a=P + 'a', b=P + 'b', include_owner=1)).json()
-        self.assertEqual(self.node_paths(included)[0], ['a', 'owner', 'b'])
+        self.assertEqual(self.node_paths(included)[:2], [['a', 'owner', 'b'], ['a', 'owner-mid', 'b']])
         self.assertTrue(included['nodes'][P + 'owner']['is_owner'])
+        # A match that is an endpoint is searched from; the owner is still left out.
+        endpoint = (await get(self.store, a=P + 'owner-mid', b=P + 'b')).json()
+        self.assertEqual(self.node_paths(endpoint)[0], ['owner-mid', 'b'])
+        self.assertTrue(all('owner' not in path for path in self.node_paths(endpoint)))
         # With no owner configured, nothing is excluded.
         unset = (await get(self.store, owner='', a=P + 'a', b=P + 'b')).json()
         self.assertEqual(self.node_paths(unset)[0], ['a', 'owner', 'b'])

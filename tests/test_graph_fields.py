@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from tests.runtime import configure_test_environment
 configure_test_environment()
 from app.graph import GraphStore
-from app.graph_fields import link_support, owner_rule
+from app.graph_fields import link_support, owner_matches, owner_rule
 from neo4j import AsyncGraphDatabase
 
 TEST_URI = os.environ.get('NEO4J_TEST_URI', '')
@@ -80,6 +80,13 @@ class OwnerRuleTests(unittest.TestCase):
 
     def test_two_matches(self):
         self.assertEqual(owner_rule('Casey Twin', self.PERSONS), ('chosen', 'c', 2))
+
+    def test_matches_list_the_owner_first_then_its_possible_duplicates(self):
+        persons = [dict(uuid=uuid, name='Owner Example', evidence_doc_count=docs) for uuid, docs in zip('abc', [2, 9, 5])]
+        status, owner, matches = owner_matches('owner example', [*persons, *self.PERSONS])
+        self.assertEqual((status, owner, [p['uuid'] for p in matches]), ('chosen', 'b', ['b', 'c', 'a']))
+        self.assertEqual(owner_matches('Nobody Known', self.PERSONS), ('not_found', None, []))
+        self.assertEqual(owner_matches('', self.PERSONS), ('unset', None, []))
 
 
 @unittest.skipUnless(TEST_URI, 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI')
@@ -172,6 +179,9 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
                 rows = response.json()['results']
                 self.assertEqual({row['properties']['uuid']: row['is_owner'] for row in rows},
                                  dict(zip(ids, [False, False, True])))
+                # The matches the rule did not choose are flagged, so lists can leave them out with the owner.
+                self.assertEqual({row['properties']['uuid']: row['owner_match'] for row in rows},
+                                 dict(zip(ids, [True, True, False])))
                 for uuid in ids:
                     response = await client.get('/graph/node/' + uuid + '?summary=1')
                     self.assertEqual(response.status_code, 200)
@@ -181,6 +191,11 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(summary['focus']['is_owner'], uuid == ids[2])
                     for link in summary['links']:
                         self.assertEqual(link['neighbor']['is_owner'], link['neighbor']['id'] == ids[2])
+                    # Only the owner's summary lists the other matches, in rank order, linked or not.
+                    self.assertEqual(summary['owner_duplicates'], [
+                        {'id': ids[1], 'label': 'Person', 'name': 'Fields Owner Example', 'evidence_doc_count': 3},
+                        {'id': ids[0], 'label': 'Person', 'name': 'Fields Owner Example', 'evidence_doc_count': 1},
+                    ] if uuid == ids[2] else [])
         self.assertEqual([await self.store.get_node(uuid) for uuid in ids], before)
 
     async def test_mixed_link_keeps_its_stored_flag(self):
@@ -219,6 +234,7 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
                          [PREFIX + 'busy', PREFIX + 'listed-a', PREFIX + 'listed-b'])
         self.assertEqual([row['evidence_doc_count'] for row in rows], [120, 3, 3])
         self.assertEqual([row['is_owner'] for row in rows], [False, False, True])
+        self.assertEqual([row['owner_match'] for row in rows], [False, False, False])
         self.assertTrue(all('Document' not in row['labels'] for row in rows))
         self.assertEqual(alias.json()['results'][0]['matched_alias'], 'Fields Nickname')
 

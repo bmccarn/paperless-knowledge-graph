@@ -37,6 +37,8 @@ export interface NodeSummary {
   links: SummaryLink[];
   documents: Record<string, { title: string; date: string | null; doc_type: string | null }>;
   owner_status: string;
+  /** On the owner's summary: the other Persons that match the owner setting; empty on any other. */
+  owner_duplicates: { id: string; label: string; name: string; evidence_doc_count: number }[];
 }
 
 /** Links per family before "+N more": 2 for a hub, else 6 (5 on phone). */
@@ -59,10 +61,13 @@ const ORDER: string[] = FAMILIES.map(([key]) => key);
 const familyIndex = (family: string) => (ORDER.includes(family) ? ORDER.indexOf(family) : ORDER.length - 1);
 const drawnFamily = (family: string) => ORDER[familyIndex(family)];
 
-/** Entity-to-entity links only: no evidence family, no Document neighbor, no self link. */
+/**
+ * Entity-to-entity links only: no evidence family, no Document neighbor, no self link, and on the owner's
+ * view no link to another match of the owner setting, which the inspector lists as a possible duplicate.
+ */
 export function drawableLinks(summary: NodeSummary): SummaryLink[] {
   return summary.links.filter(link => link.family !== "evidence" && link.neighbor.label !== "Document"
-    && link.neighbor.id !== summary.focus.id);
+    && link.neighbor.id !== summary.focus.id && !summary.owner_duplicates.some(entity => entity.id === link.neighbor.id));
 }
 
 /**

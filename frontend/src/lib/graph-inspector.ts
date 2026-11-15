@@ -70,12 +70,21 @@ export function linksByFamily(summary: NodeSummary): FamilyGroup[] {
   });
 }
 
-/** Up to 4 key facts: the strongest link of parties, money, coverage and time, in that order. */
+const SUPPORT_ORDER = ["supported", "mixed", "inferred"];
+
+/**
+ * Up to 4 key facts from parties, money, coverage and time: supported before mixed before inferred, then more
+ * evidence documents, then the inspector's order. One per relationship type; never a link to a DocumentRef.
+ */
 export function keyFacts(summary: NodeSummary): SummaryLink[] {
-  const groups = linksByFamily(summary);
-  return ["parties", "money", "coverage", "time"]
-    .map(family => groups.find(group => group.family === family)?.links[0])
-    .filter((link): link is SummaryLink => Boolean(link));
+  return linksByFamily(summary)
+    .filter(group => ["parties", "money", "coverage", "time"].includes(group.family))
+    .flatMap(group => group.links)
+    .filter(link => link.neighbor.label !== "DocumentRef")
+    .sort((a, b) => SUPPORT_ORDER.indexOf(a.support_state) - SUPPORT_ORDER.indexOf(b.support_state)
+      || b.records.length - a.records.length)
+    .filter((link, index, links) => links.findIndex(other => other.type === link.type) === index)
+    .slice(0, 4);
 }
 
 /** Keys of the links whose records cite a document. */

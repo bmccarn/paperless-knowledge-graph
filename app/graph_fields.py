@@ -24,11 +24,14 @@ def normalize_name(value) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split()) if isinstance(value, str) else ""
 
 
-def owner_rule(setting, persons) -> tuple[str, str | None, int]:
-    """Return (status, owner uuid, match count), ranked by documents, links, then UUID."""
+def owner_matches(setting, persons) -> tuple[str, str | None, list[dict]]:
+    """Return (status, owner uuid, every matching person), ranked by documents, links, then UUID.
+
+    The owner is the first match; the others are possible duplicates of it.
+    """
     target = normalize_name(setting)
     if not target:
-        return "unset", None, 0
+        return "unset", None, []
     matches = {}
     for person in persons:
         aliases = person.get("aliases")
@@ -36,7 +39,13 @@ def owner_rule(setting, persons) -> tuple[str, str | None, int]:
         if any(normalize_name(name) == target for name in names):
             matches[person["uuid"]] = person
     if not matches:
-        return "not_found", None, 0
-    owner = min(matches.values(), key=lambda p: (-p.get("evidence_doc_count", 0),
-                                                -p.get("link_count", 0), p["uuid"]))
-    return ("found" if len(matches) == 1 else "chosen"), owner["uuid"], len(matches)
+        return "not_found", None, []
+    ranked = sorted(matches.values(), key=lambda p: (-p.get("evidence_doc_count", 0),
+                                                     -p.get("link_count", 0), p["uuid"]))
+    return ("found" if len(ranked) == 1 else "chosen"), ranked[0]["uuid"], ranked
+
+
+def owner_rule(setting, persons) -> tuple[str, str | None, int]:
+    """Return (status, owner uuid, match count); see owner_matches."""
+    status, owner, matches = owner_matches(setting, persons)
+    return status, owner, len(matches)

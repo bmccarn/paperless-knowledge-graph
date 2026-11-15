@@ -103,3 +103,23 @@ test("on a phone each row shows type and date under the title", async t => {
   await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).waitFor({ state: "visible" });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 });
+
+test("a reload after an error keeps the last rows, shows progress and locks selection", async t => {
+  const page = await documentsPage(t);
+  await page.getByText("303 indexed documents", { exact: true }).waitFor();
+  const search = page.getByRole("textbox", { name: "Search indexed documents" });
+  await search.fill("fixture-error");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Synthetic document search failure" }).waitFor();
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/documents?**", async route => { await held; await route.continue(); });
+  await search.fill("January");
+  await page.getByRole("button", { name: "Search documents", exact: true }).click();
+  await page.getByRole("progressbar", { name: "Loading documents" }).waitFor();
+  const checkbox = page.getByRole("checkbox", { name: "Select document 101", exact: true });
+  assert.equal(await checkbox.isDisabled(), true);
+  release();
+  await page.getByText("1 matching indexed documents", { exact: true }).waitFor();
+  assert.equal(await checkbox.isDisabled(), false);
+});

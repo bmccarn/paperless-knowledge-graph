@@ -149,7 +149,8 @@ function DocumentsTable() {
         const total = data.total || 0;
         if (page > 0 && page * PAGE_SIZE >= total) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1));
       },
-      (e) => { if (active) setResult({ key: requestKey, error: errMsg(e, "Failed to load documents") }); },
+      // Keep the last rows, so Retry reloads them with a progress bar instead of skeletons.
+      (e) => { if (active) setResult(prev => ({ key: requestKey, data: prev.data, error: errMsg(e, "Failed to load documents") })); },
     );
     return () => { active = false; };
   }, [requestKey, query, typeFilter, page, sortField, sortDir, entity]);
@@ -359,7 +360,7 @@ function DocumentsTable() {
                         checked={selected.size > 0 && selected.size === documents.length}
                         aria-label="Select documents on this page"
                         onCheckedChange={toggleSelectAll}
-                        disabled={!documents.length}
+                        disabled={loading || !documents.length}
                       />
                     </TableHead>
                     <TableHead className="w-11 md:w-9"><span className="sr-only">Details</span></TableHead>
@@ -393,6 +394,7 @@ function DocumentsTable() {
                               aria-label={`Select document ${docId}`}
                               checked={selected.has(docId)}
                               onCheckedChange={() => toggleSelect(docId)}
+                              disabled={loading}
                             />
                           </TableCell>
                           <TableCell>

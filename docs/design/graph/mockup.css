@@ -150,7 +150,7 @@ body:has(.board:target) .index { display: none }
 .dt::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dot) }
 
 /* inspector */
-.insp { border-left: 1px solid var(--border); padding: 24px 24px 32px; overflow: hidden; min-height: 0; background: var(--bg) }
+.insp { border-left: 1px solid var(--border); padding: 24px 24px 32px; overflow-y: auto; min-height: 0; background: var(--bg) }
 .insp h3 { font-size: 13px; font-weight: 600; margin: 24px 0 8px }
 .in-top { display: flex; align-items: center; justify-content: space-between; gap: 8px }
 .in-k { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-muted) }
@@ -205,7 +205,7 @@ body:has(.board:target) .index { display: none }
 .fsheet { position: absolute; top: 0; left: 0; bottom: 0; width: 360px; background: var(--overlay); border-right: 1px solid var(--border); box-shadow: var(--shadow-overlay); display: flex; flex-direction: column; z-index: 3 }
 .fs-h { display: flex; justify-content: space-between; align-items: center; padding: 16px 16px 8px 24px }
 .fs-h h2 { font: 400 22px/28px 'Geist Serif', Georgia, serif }
-.fs-b { padding: 0 24px; overflow: hidden; flex: 1; min-height: 0 }
+.fs-b { padding: 0 24px; overflow-y: auto; flex: 1; min-height: 0 }
 .fs-b fieldset, .pfs fieldset { padding: 14px 0; border-bottom: 1px solid var(--border) }
 legend { font-size: 13px; font-weight: 600; padding: 0; margin-bottom: 8px; float: left; width: 100% }
 legend + * { clear: both }
@@ -259,7 +259,7 @@ legend + * { clear: both }
 .tbl-h { font: 400 18px/24px 'Geist Serif', Georgia, serif }
 .tbl-live { color: var(--fg-muted) }
 .tbl-top .chips { border: 0; padding: 0; height: auto; margin-left: auto }
-.tbl-scroll { flex: 1; min-height: 0; overflow: hidden; border-top: 1px solid var(--border-strong) }
+.tbl-scroll { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--border-strong) }
 .tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums }
 .tbl th { height: 36px; text-align: left; font-size: 12px; font-weight: 500; color: var(--fg-muted); padding: 0 8px; border-bottom: 1px solid var(--border-strong); white-space: nowrap }
 .tbl th button { display: inline-flex; align-items: center; gap: 4px; color: inherit; font-weight: inherit; font-size: inherit }
@@ -330,7 +330,7 @@ legend + * { clear: both }
 .ph { height: 56px; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--border); flex: none }
 .ph-t { flex: 1; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .ph-tl { padding-left: 12px; font: 400 22px/28px 'Geist Serif', Georgia, serif }
-.pm { flex: 1; overflow: hidden; padding-bottom: 72px }
+.pm { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 72px }
 .pe-h { padding: 16px }
 .pe-name { font: 400 22px/28px 'Geist Serif', Georgia, serif; margin: 6px 0 8px }
 .pfacts div { grid-template-columns: 80px 1fr }

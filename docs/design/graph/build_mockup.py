@@ -699,43 +699,52 @@ def screen_hub():
                         caption="Alex Rivera: <span class=num>390</span> links in <span class=num>10</span> families. Large hub: the top <span class=num>2</span> of each family are shown.")
 
 
+def filter_groups(touch=False):
+    """The seven filter groups with live counts for the current focus."""
+    ck = "ck ck-t" if touch else "ck"
+    fam_counts = [("parties", 3), ("money", 2), ("coverage", 3), ("places", 2), ("time", 2), ("doclinks", 1),
+                  ("loose", 1), ("other", 2)]
+    fams = "".join(f'<label class="{ck}"><input type="checkbox" checked><span>{FAM_NAME[f]}</span><span class="num ck-n">{n}</span></label>'
+                   for f, n in fam_counts)
+    fams += f'<label class="{ck}"><input type="checkbox"><span>Evidence</span><span class="num ck-n">31</span></label>'
+    sup = "".join(f'<label class="{ck}"><input type="radio" name="sup"{" checked" if w == "Supported only" else ""}><span>{w}</span><span class="num ck-n">{n}</span></label>'
+                  for w, n in (("All", 16), ("Supported only", 13), ("Inferred only", 3)))
+    types = "".join(f'<button class="tchip" aria-pressed="{str(k in ("insurance", "financial_invoice")).lower()}"><span class="dot" style="--dot:var(--doc-{k.replace("_", "-")})"></span>{w}</button>'
+                    for k, w in DOC_TYPES)
+    docs = "".join(f'<button aria-pressed="{str(n == 1).lower()}">{n}</button>' for n in (1, 2, 3, 5, 10))
+    return f'''<fieldset><legend>Relationship families</legend>{fams}</fieldset>
+<fieldset><legend>Support</legend>{sup}</fieldset>
+<fieldset><legend>Confidence</legend><div class="range"><span>Minimum</span><span class="num range-v">0.70</span></div>
+<div class="slider" role="presentation"><span class="sl-fill" style="width:70%"></span><span class="sl-th" style="left:70%"></span></div>
+<label class="{ck}"><input type="checkbox" checked><span>Include links with no score</span><span class="num ck-n">4</span></label></fieldset>
+<fieldset><legend>Evidence documents per link</legend><div class="seg{" seg-t" if touch else ""}">{docs}</div></fieldset>
+<fieldset><legend>Document date</legend><div class="months"><label><span>From</span><button class="sel">Jan 2026{icon("chevron-down", 14)}</button></label><label><span>To</span><button class="sel">Nov 2026{icon("chevron-down", 14)}</button></label></div></fieldset>
+<fieldset><legend>Document type</legend><div class="tchips">{types}</div></fieldset>
+<fieldset><legend>Owner</legend><label class="{ck}"><input type="checkbox"><span>Hide the owner entity</span></label></fieldset>'''
+
+
 def screen_filters():
-    focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto), filtered: 11 of 16 links")
+    focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto), filtered: 10 of 16 links")
     H = CV_H - SHELF_H - 52
     W = 1256
-    # inferred links, a bill dated before January 2026, and a link whose only document is a Legal one
-    hidden = ("14 Larkspur Ct", "Bayline Auto Body", "Telematics plug TX-2", "Premium, Oct 2025, $588", "Northgate Credit Union")
+    # inferred links, the Honda link (lowest confidence 0.62), a bill dated before January 2026,
+    # and a link whose only document is a Legal one
+    hidden = ("14 Larkspur Ct", "Bayline Auto Body", "Telematics plug TX-2", "2014 Honda Fit",
+              "Premium, Oct 2025, $588", "Northgate Credit Union")
     svg, ov = neighborhood_svg(W, H, 808, 352, 210, focus, POLICY_N, hidden=hidden,
                                blocks=[(0, 0, 372, H), (W - 52, H - 118, W - 14, H - 14)])
     chips = ('<div class="chips" aria-label="Active filters">'
              + "".join(f'<button class="fchip">{t}{icon("x", 14)}</button>' for t in
-                       ("Supported only", "From Jan 2026", "Insurance, Invoice"))
+                       ("Supported only", "Confidence 0.70 or more", "From Jan 2026", "Insurance, Invoice"))
              + '<button class="lnk">Reset filters</button></div>')
-    fam_counts = [("parties", 3, True), ("money", 2, True), ("coverage", 3, True), ("places", 2, True),
-                  ("time", 2, True), ("doclinks", 1, True), ("loose", 1, False), ("other", 2, True)]
-    fams = "".join(f'<label class="ck"><input type="checkbox"{" checked" if on else ""}><span>{FAM_NAME[f]}</span><span class="num ck-n">{n}</span></label>'
-                   for f, n, on in fam_counts)
-    fams += '<label class="ck"><input type="checkbox"><span>Evidence</span><span class="num ck-n">31</span></label>'
-    types = "".join(f'<button class="tchip" aria-pressed="{str(k in ("insurance", "financial_invoice")).lower()}"><span class="dot" style="--dot:var(--doc-{k.replace("_", "-")})"></span>{w}</button>'
-                    for k, w in DOC_TYPES)
     sheet = f'''<section class="fsheet" aria-label="Filters">
 <div class="fs-h"><h2>Filters</h2><button class="ib" aria-label="Close filters">{icon("x")}</button></div>
-<div class="fs-b">
-<fieldset><legend>Relationship families</legend>{fams}</fieldset>
-<fieldset><legend>Support</legend><label class="ck"><input type="radio" name="sup"><span>All</span><span class="num ck-n">16</span></label><label class="ck"><input type="radio" name="sup" checked><span>Supported only</span><span class="num ck-n">13</span></label><label class="ck"><input type="radio" name="sup"><span>Inferred only</span><span class="num ck-n">3</span></label></fieldset>
-<fieldset><legend>Confidence</legend><div class="range"><span>Minimum</span><span class="num range-v">0.70</span></div>
-<div class="slider" role="presentation"><span class="sl-fill" style="width:70%"></span><span class="sl-th" style="left:70%"></span></div>
-<label class="ck"><input type="checkbox" checked><span>Include links with no score</span><span class="num ck-n">4</span></label></fieldset>
-<fieldset><legend>Evidence documents per link</legend><div class="seg"><button aria-pressed="true">1</button><button aria-pressed="false">2</button><button aria-pressed="false">3</button><button aria-pressed="false">5</button><button aria-pressed="false">10</button></div></fieldset>
-<fieldset><legend>Document date</legend><div class="months"><label><span>From</span><button class="sel">Jan 2026{icon("chevron-down", 14)}</button></label><label><span>To</span><button class="sel">Nov 2026{icon("chevron-down", 14)}</button></label></div></fieldset>
-<fieldset><legend>Document type</legend><div class="tchips">{types}</div></fieldset>
-<fieldset><legend>Owner</legend><label class="ck"><input type="checkbox"><span>Hide the owner entity</span></label></fieldset>
-</div>
-<div class="fs-f"><button class="btn">Reset filters</button><button class="btn pri"><span>Show <span class="num">11</span> links</span></button></div>
+<div class="fs-b">{filter_groups()}</div>
+<div class="fs-f"><button class="btn">Reset filters</button><button class="btn pri"><span>Show <span class="num">10</span> links</span></button></div>
 </section>'''
     canvas = f'{chips}<div class="stage" style="height:{H}px">{svg}{ov}</div>{shelf(POLICY_DOCS[:4], more=4)}'
-    return graph_screen(canvas, "", filters=3, extra=sheet,
-                        caption="<span class=num>11</span> of <span class=num>16</span> links match. <span class=num>5</span> are hidden by filters.")
+    return graph_screen(canvas, "", filters=4, extra=sheet,
+                        caption="<span class=num>10</span> of <span class=num>16</span> links match. <span class=num>6</span> are hidden by filters.")
 
 
 PATHS = [  # nodes, links (type, weight, support), weakest
@@ -786,6 +795,13 @@ def path_svg(W, H, sel=0):
             dash = ' stroke-dasharray="6 4"' if s == "inferred" else ""
             cls = "pth-on" if on else "pth-off"
             out_l.append(f'<path d="{d}" class="{cls}"{dash}/>')
+            if on:  # 6 px arrowhead at 90 % along the curve
+                t_ = 0.9
+                px = (1 - t_) ** 3 * ax + 3 * (1 - t_) ** 2 * t_ * mx + 3 * (1 - t_) * t_ ** 2 * mx + t_ ** 3 * bx
+                py = (1 - t_) ** 3 * ay + 3 * (1 - t_) ** 2 * t_ * ay + 3 * (1 - t_) * t_ ** 2 * by + t_ ** 3 * by
+                dx = 3 * (1 - t_) ** 2 * (mx - ax) + 6 * (1 - t_) * t_ * 0 + 3 * t_ ** 2 * (bx - mx)
+                dy = 6 * (1 - t_) * t_ * (by - ay)
+                out_t.append(f'<path d="M0,0L-6,-3.5L-6,3.5Z" class="lk-arrow" transform="translate({px:.1f},{py:.1f}) rotate({math.degrees(math.atan2(dy, dx)):.1f})"/>')
             if on:  # beside the curve's midpoint, on its outer side
                 ty = (ay + by) / 2
                 anchor, tx = ("middle", mx) if abs(by - ay) < 1 else (("end", mx - 14) if by < ay else ("start", mx + 14))
@@ -852,7 +868,7 @@ TABLE_ROWS = [  # on canvas, family, type, dir, other, label, support, docs, con
     (False, "money", "TAXED_BY", "in", "County Tax Office", "Organization", "supported", 22, "0.88", "2 Mar 2026"),
     (True, "places", "RESIDES_IN", "out", "Port Ellery", "Location", "supported", 20, "No score", "2 Nov 2026"),
     (True, "service", "SERVED_IN", "out", "US Navy", "Organization", "supported", 19, "0.90", "11 Nov 2025"),
-    (False, "money", "PAYS", "out", "Lakeside HOA", "Organization", "mixed", 15, "0.71", "1 Oct 2026"),
+    (False, "money", "PAYS", "out", "Lakeside HOA", "Organization", "mixed", 15, "0.71", "1 Oct 2026"),  # 14 stated, 1 inferred
     (True, "service", "FILED_WITH", "out", "County Tax Office", "Organization", "supported", 14, "0.89", "14 Apr 2026"),
     (True, "parties", "SIGNED_WITH", "out", "Dana Whitlock", "Person", "supported", 12, "0.86", "1 Jun 2026"),
     (False, "parties", "WORKS_WITH", "out", "Sam Okafor", "Person", "inferred", 11, "0.58", "9 Sep 2026"),
@@ -867,15 +883,37 @@ TABLE_ROWS = [  # on canvas, family, type, dir, other, label, support, docs, con
 ]
 
 
+FILLER = [  # rows 21 to 50 of the first page: name, label, family, type, docs
+    (n, lab, fam, typ, d) for (n, lab, fam, typ), d in zip(
+        [(n, lab, "parties", t) for n, lab, t, _ in HUB_PARTIES_MORE[4:]]
+        + [("Port Ellery Water", "Organization", "money", "BILLED_BY"), ("Coastal Credit Partners", "Organization", "money", "LOAN_FROM"),
+           ("Car loan CL-5512", "FinancialItem", "money", "PAYS"), ("Property tax 2026", "FinancialItem", "money", "TAXED_BY"),
+           ("Dental plan DP-90", "InsurancePolicy", "coverage", "COVERED_BY"), ("Umbrella policy UP-12", "InsurancePolicy", "coverage", "INSURED_UNDER"),
+           ("Blood pressure log", "MedicalResult", "health", "PATIENT_IN"), ("Allergy, penicillin", "Condition", "health", "DIAGNOSED_WITH"),
+           ("Navy Reserve", "Organization", "service", "SERVED_IN"), ("DMV, Port Ellery office", "Organization", "service", "FILED_WITH"),
+           ("Harbor View Apartments", "Location", "places", "RESIDED_AT"), ("2 Harbor Way", "Address", "places", "ADDRESS_OF"),
+           ("Passport renewal, 2021", "Event", "time", "RENEWED_ON"), ("Lease start, Jun 2024", "DateEvent", "time", "STARTS_ON"),
+           ("Lease 2024", "Contract", "doclinks", "REFERENCED_IN"), ("Tax return 2025", "Contract", "doclinks", "AMENDED_BY"),
+           ("Fitness club", "Organization", "loose", "RELATED_TO"), ("Bike, trail model", "Product", "loose", "ASSOCIATED_WITH"),
+           ("Home router", "System", "other", "USER_OF"), ("Parking permit", "Other", "other", "HOLDS"),
+           ("Sam Okafor", "Person", "loose", "RELATED_TO"), ("Library card", "Other", "other", "HOLDS"),
+           ("Laptop, work issued", "Product", "other", "ASSIGNED"), ("Riverside 10K", "Event", "loose", "RELATED_TO")],
+        [5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1])
+]
+
+
 def screen_table():
-    sup = {"supported": "Supported", "inferred": "Inferred", "mixed": "Stated in 2, inferred in 1"}
+    sup = {"supported": "Supported", "inferred": "Inferred", "mixed": "Stated in 14, inferred in 1"}
     body = "".join(
         f'<tr{" aria-selected=true class=is-sel" if i == 3 else ""}><td class="c-on">{icon("check", 14) if on else "<span class=sr>Not on canvas</span>"}</td>'
         f'<td>{FAM_NAME[f]}</td><td>{words(t)}</td><td class="c-dir">{icon("arrow-right" if d == "out" else "arrow-left", 14)}{"Out" if d == "out" else "In"}</td>'
         f'<td class="c-ent">{swatch(lab, 14)}<span>{esc(o)}</span></td><td class="c-mut">{KINDS[lab][4]}</td>'
         f'<td class="{"c-inf" if s != "supported" else "c-mut"}">{sup[s]}</td><td class="num c-r">{n}</td>'
         f'<td class="num c-r{" c-mut" if c == "No score" else ""}">{c}</td><td class="num c-mut">{dd}</td></tr>'
-        for i, (on, f, t, d, o, lab, s, n, c, dd) in enumerate(TABLE_ROWS))
+        for i, (on, f, t, d, o, lab, s, n, c, dd) in enumerate(
+            TABLE_ROWS + [(False, fam, typ, "out", n, lab, "supported", d, "No score" if k % 7 == 3 else f"0.{88 - k}", f"{1 + k % 27} Sep 2026")
+                          for k, (n, lab, fam, typ, d) in enumerate(FILLER)]))
+    assert len(TABLE_ROWS) + len(FILLER) == 50
     head = ("<tr><th>On canvas</th><th><button>Family</button></th><th><button>Relationship</button></th>"
             "<th>Direction</th><th><button>Other entity</button></th><th>Type</th><th><button>Support</button></th>"
             f'<th aria-sort="descending" class="c-r"><button>Documents{icon("arrow-down", 14)}</button></th>'
@@ -1117,19 +1155,9 @@ def phone_path():
 
 
 def phone_filters():
-    fam_counts = [("parties", 3, True), ("money", 2, True), ("coverage", 3, True), ("places", 2, True),
-                  ("time", 2, True), ("doclinks", 1, True), ("loose", 1, False), ("other", 2, True)]
-    fams = "".join(f'<label class="ck ck-t"><input type="checkbox"{" checked" if on else ""}><span>{FAM_NAME[f]}</span><span class="num ck-n">{n}</span></label>'
-                   for f, n, on in fam_counts)
-    types = "".join(f'<button class="tchip" aria-pressed="{str(k in ("insurance", "financial_invoice")).lower()}"><span class="dot" style="--dot:var(--doc-{k.replace("_", "-")})"></span>{w}</button>'
-                    for k, w in DOC_TYPES)
     return f'''<div class="pwrap pfull"><header class="ph"><p class="ph-t ph-tl">Filters</p><button class="ib ib-t" aria-label="Close filters">{icon("x", 20)}</button></header>
-<main class="pm pfs">
-<fieldset><legend>Relationship families</legend>{fams}</fieldset>
-<fieldset><legend>Support</legend><div class="seg seg-w seg-t"><button aria-pressed="false">All</button><button aria-pressed="true">Supported only</button><button aria-pressed="false">Inferred only</button></div></fieldset>
-<fieldset><legend>Document type</legend><div class="tchips">{types}</div></fieldset>
-</main>
-<div class="fs-f pfs-f"><button class="btn btn-t">Reset filters</button><button class="btn pri btn-t"><span>Show <span class="num">11</span> links</span></button></div></div>'''
+<main class="pm pfs">{filter_groups(touch=True)}</main>
+<div class="fs-f pfs-f"><button class="btn btn-t">Reset filters</button><button class="btn pri btn-t"><span>Show <span class="num">10</span> links</span></button></div></div>'''
 
 
 SCREENS = [

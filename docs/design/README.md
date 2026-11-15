@@ -23,6 +23,19 @@ This folder holds the reference material for the interface redesign in direction
 | `graph/08-phone-graph.html` | Phone graph and bottom sheet wireframe. |
 | `graph/09-table.html` | Accessible table view wireframe. |
 | `graph/wf.css` | Shared wireframe styles. Desktop frames are 1440 × 900; phone frames are 390 × 844. Yellow notes explain each screen. |
+| `graph/mockup.html` | The high-fidelity graph mockup in direction C. It holds 15 screens: nine desktop screens at 1440 × 900 and six phone screens at 390 × 844. The address fragment picks the screen, for example `mockup.html#hub`. Add `?theme=light` or press `t` to switch themes. It embeds the same fonts as `answer-mockup.html`. |
+| `graph/mockup.css` | Styles for the graph mockup. `build_mockup.py` inlines this file. The `--on-cat-*` tokens set the icon color on filled nodes and exist only in the mockup. |
+| `graph/build_mockup.py` | Writes `graph/mockup.html` from `tokens.css`, `graph/mockup.css` and the font faces in `answer-mockup.html`. Run `python3 docs/design/graph/build_mockup.py docs/design` from the repository root. It needs only the Python standard library, and it holds the Lucide icon paths it uses (ISC license). |
+| `graph/screenshots/encoding-dark.png` | Mockup screen `encoding` in the dark theme. |
+| `graph/screenshots/encoding-light.png` | Mockup screen `encoding` in the light theme. |
+| `graph/screenshots/hub-dark.png` | Mockup screen `hub` in the dark theme. |
+| `graph/screenshots/link-light.png` | Mockup screen `link` in the light theme. |
+| `graph/screenshots/neighborhood-dark.png` | Mockup screen `neighborhood` in the dark theme. |
+| `graph/screenshots/neighborhood-light.png` | Mockup screen `neighborhood` in the light theme. |
+| `graph/screenshots/path-dark.png` | Mockup screen `path` in the dark theme. |
+| `graph/screenshots/phone-entity-dark.png` | Mockup screen `phone-entity` in the dark theme. |
+| `graph/screenshots/phone-graph-light.png` | Mockup screen `phone-graph` in the light theme. |
+| `graph/screenshots/table-light.png` | Mockup screen `table` in the light theme. |
 
 ## Reference limits
 
@@ -36,7 +49,7 @@ Run `node frontend/tests/design-reference-ui.mjs` after installing the frontend 
 
 The wireframes show structure and behavior. They do not show the final look.
 
-- **Colors and shapes.** The wireframes use placeholder hex colors and an earlier shape set. The issue's palette tables set the real node colors, shapes and icons. The issue proposes a pentagon for agreements and a star for time; the graph mockup settles them. A high-fidelity mockup in direction C replaces these wireframes before graph build work starts.
+- **Colors and shapes.** The wireframes use placeholder hex colors and an earlier shape set. The issue's palette tables set the real node colors, shapes and icons. The issue proposes a pentagon for agreements and a star for time; the graph mockup settles them. The high-fidelity mockup, `graph/mockup.html`, replaces these wireframes for the look of the graph.
 - **Status colors.** Inferred links appear in amber in some wireframes. In the build, inferred links use a dash and a word, never a color.
 
 These wireframe parts are not part of this redesign:

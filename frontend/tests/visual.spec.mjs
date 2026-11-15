@@ -176,6 +176,7 @@ const extraStates = [
     ["not-checked", "What premium does the January statement list?", "Fast"],
     ["retry", "What premium is due? state-retry"],
     ["failed", "Run stream-error synthetic scenario"],
+    ["real", "How did my auto insurance change at renewal? real-answer"],
   ].map(([state, question, mode]) => ({ ...mainStates[0], name: `ask-${state}`, state, prepare: async page => {
     if (mode) await page.getByRole("button", { name: mode, exact: true }).click();
     await page.getByPlaceholder("Ask a question...").fill(question);

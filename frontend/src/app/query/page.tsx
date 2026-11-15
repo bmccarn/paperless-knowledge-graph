@@ -33,11 +33,9 @@ import {
   Send,
   Loader2,
   History,
-  Users,
   Copy,
   Check,
   ChevronRight,
-  Search,
 } from "lucide-react";
 
 interface Source {
@@ -151,7 +149,6 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
-  entities?: Array<{ name?: string; label?: string }>;
   timestamp?: number;
   queryTime?: number;
   query_time_ms?: number;
@@ -394,7 +391,7 @@ function QueryContent() {
     let completed = false;
     // Accumulates the final answer and its trust artifacts; nothing shows until the complete event.
     const acc: Message = {
-      role: "assistant", content: "", sources: [], entities: [], cached: false,
+      role: "assistant", content: "", sources: [], cached: false,
       follow_ups: [], trace: [], timeline_events: [],
     };
     const snapshot = (): Message => ({ ...acc, timestamp: Date.now(), queryTime: Date.now() - startTime });
@@ -410,7 +407,6 @@ function QueryContent() {
             completed = true;
             if (event.answer) acc.content = event.answer;
             acc.sources = event.sources || [];
-            acc.entities = event.entities_found || [];
             acc.cached = event.cached || false;
             acc.confidence = event.confidence;
             acc.follow_ups = event.follow_up_suggestions || [];
@@ -649,7 +645,8 @@ function QueryContent() {
           </Tooltip>
         </div>
 
-        <div ref={messagesRef} className="flex-1 overflow-y-auto app-scroll">
+        {/* Positioned, so absolute descendants (sr-only text) overflow this column and not the app frame, which scrollIntoView would then shift. */}
+        <div ref={messagesRef} className="relative flex-1 overflow-y-auto app-scroll">
           <div className="@container max-w-3xl min-[1180px]:max-w-[1028px] mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
             <QueryModes value={queryMode} onChange={setQueryMode} />
             {messages.length === 0 && !loading && (
@@ -724,27 +721,6 @@ function QueryContent() {
                   <TimelineDates events={msg.timeline_events}
                     receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={source => openSource(source, msg.source_dates)} />
 
-                  {msg.entities && msg.entities.length > 0 && (
-                    <div className="space-y-1.5 px-1">
-                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
-                        <Users className="h-3 w-3" /> Entities ({msg.entities.length})
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {msg.entities.map((ent, j) => (
-                          <a
-                            key={j}
-                            href={`/graph?q=${encodeURIComponent(ent.name || "")}`}
-                            className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1.5 text-xs hover:bg-accent transition-colors cursor-pointer min-h-[36px]"
-                          >
-                            <Search className="h-2.5 w-2.5 text-muted-foreground" />
-                            <span className="font-medium">{ent.name}</span>
-                            {ent.label && <span className="text-muted-foreground text-xs">· {ent.label}</span>}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {sources.length > 0 && (
                     <SourceList id={`sources-${i}`} sources={sources} claims={claims} sourceDates={msg.source_dates}
                       active={activeClaims[i]} paperlessBaseUrl={paperlessBaseUrl} onOpen={source => openSource(source, msg.source_dates)} />
@@ -760,18 +736,10 @@ function QueryContent() {
             {/* Follow-up suggestions */}
             {followUpSuggestions.length > 0 && !loading && (
               <div className="space-y-2 pt-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-1">
-                  Suggested follow-ups
-                </p>
-                <div className="flex flex-wrap gap-2">
+                <p className="label-12 font-medium text-fg-muted">Suggested follow-ups</p>
+                <div className="flex flex-col items-start gap-2">
                   {followUpSuggestions.map((suggestion, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleSubmit(suggestion)}
-                      className="text-left text-xs border rounded-lg px-3 py-2.5 hover:bg-accent transition-colors max-w-full md:max-w-[300px] break-words min-h-[44px] flex items-center"
-                    >
-                      {suggestion}
-                    </button>
+                    <Button key={i} variant="outline" className="h-auto min-h-11 whitespace-normal text-left justify-start" onClick={() => handleSubmit(suggestion)}>{suggestion}</Button>
                   ))}
                 </div>
               </div>

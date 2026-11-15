@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimRanges, proseBlocks, utf16Index } from "../.test-build/claim-prose.js";
+import { claimRanges, emphasize, proseBlocks, quoteWindow, utf16Index } from "../.test-build/claim-prose.js";
 
 // The backend counts offsets in code points (Python len); "🏠" is one code point and two UTF-16 units.
 const TEXT = "The policy covers the house on Elm Street 🏠.\n\n## Premium\n**Amount:** The January statement lists a premium of $25.";
@@ -45,4 +45,38 @@ test("no claims gives the plain Markdown blocks", () => {
   const blocks = proseBlocks("# Title\n1. One\n\nPlain **bold**.", []);
   assert.deepEqual(blocks.map(block => [block.kind, block.pieces.map(piece => piece.text).join("")]),
     [["h2", "Title"], ["ol", "One"], ["blank", ""], ["p", "Plain **bold**."]]);
+});
+
+// A whole indexed chunk: the header repeats the claim's dates, the amount comes later.
+const PASSAGE = "Auto Policy Declarations Policy number: CX-AUTO-440192 Named insured: Jordan Example Policy period: "
+  + "March 1, 2025 to March 1, 2026. Liability: $100,000 each person. Collision deductible: $500. Six-month premium: $612.00. Due on the effective date.";
+const CLAIM = "The declarations for the March 1, 2025 to March 1, 2026 term list a six-month premium of $612.00.";
+
+test("the quote window starts shortly before the amount the claim states, not at the dates in the header", () => {
+  const { start, values } = quoteWindow(CLAIM, PASSAGE);
+  const shown = PASSAGE.slice(start);
+  assert.ok(start > 0 && PASSAGE[start - 1] === " ", "starts on a word boundary");
+  assert.ok(shown.indexOf("$612.00") <= 40, "the amount is near the start of the window");
+  assert.deepEqual(values, ["$612.00", "March 1, 2025", "March 1, 2026"]);
+});
+
+test("values match whole tokens only", () => {
+  assert.deepEqual(quoteWindow("The fee is $25.", "Late fee $250. Other fee $25.50.").values, []);
+  assert.deepEqual(quoteWindow("The fee is $25.", "Late fee $250. Fee: $25.").values, ["$25"]);
+  // Single digits are too common to anchor on.
+  assert.deepEqual(quoteWindow("Invoice 88-2031 lists 3 items.", "Invoice 88-2031, 3 items").values, ["88", "2031"]);
+});
+
+test("a quoted name is a value; with no match the window starts at the beginning", () => {
+  const passage = "x ".repeat(40) + "Product: Cordless drill kit, model CT-18V.";
+  assert.deepEqual(quoteWindow('The warranty names "Cordless drill kit".', passage).values, ["Cordless drill kit"]);
+  assert.ok(quoteWindow('The warranty names "Cordless drill kit".', passage).start > 0);
+  assert.deepEqual(quoteWindow("The policy covers the house.", PASSAGE), { start: 0, values: [] });
+});
+
+test("emphasize splits the text around each matched value, case-insensitively", () => {
+  assert.deepEqual(emphasize("Premium: $612.00, due March 1, 2025.", ["$612.00", "march 1, 2025"]), [
+    { text: "Premium: " }, { text: "$612.00", match: true }, { text: ", due " }, { text: "March 1, 2025", match: true }, { text: "." },
+  ]);
+  assert.deepEqual(emphasize("No values here.", []), [{ text: "No values here." }]);
 });

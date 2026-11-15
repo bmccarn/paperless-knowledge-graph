@@ -45,9 +45,15 @@ const claimResults: ClaimResult[] = ["supported", "unsupported", "conflicting", 
 const otherLabel = "Vehicle";
 const claimText = "The renewal declarations list an annual premium of $1,284.00. The policy period ends on 1 March 2027.";
 const claims = [
-  { status: "supported", start: 0, end: 61, references: [{ document_id: 1, quote: "Total annual premium ........ $1,284.00", source_title: "Renewal declarations 2026–2027" }] },
-  { status: "supported", start: 62, end: 101, references: [{ document_id: 2, quote: "Policy period: 03/01/2026 to 03/01/2027, 12:01 a.m. standard time at the residence premises.", source_title: "Homeowners policy booklet" }] },
+  { claim: claimText.slice(0, 61), status: "supported", start: 0, end: 61, references: [{ document_id: 1, quote: "Total annual premium ........ $1,284.00", source_title: "Renewal declarations 2026–2027" }] },
+  { claim: claimText.slice(62, 101), status: "supported", start: 62, end: 101, references: [{ document_id: 2, quote: "Policy period: 03/01/2026 to 03/01/2027, 12:01 a.m. standard time at the residence premises.", source_title: "Homeowners policy booklet" }] },
 ];
+const manyReferences = { ...claims[0], references: [
+  ...claims[0].references,
+  { document_id: 3, quote: "Premium notice. Amount due for the 2026–2027 term: $1,284.00.", source_title: "Premium notice" },
+  { document_id: 4, quote: "Payment received: $1,284.00. Thank you.", source_title: "Payment receipt" },
+  { document_id: 5, quote: "Your renewal documents are enclosed.", source_title: "Agent letter" },
+] };
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -77,7 +83,7 @@ export default function GalleryPage() {
   const [page, setPage] = useState(0);
   const [claim, setClaim] = useState<number | null>(null);
   return (
-    <div className="h-full overflow-y-auto" data-gallery-scroll>
+    <div className="relative h-full overflow-y-auto" data-gallery-scroll>
       <div className="mx-auto max-w-6xl space-y-10 p-4 md:px-12 md:py-10" data-gallery-content>
         <header className="space-y-2">
           <h1 className="page-title">Component gallery</h1>
@@ -135,11 +141,12 @@ export default function GalleryPage() {
             </div>
           </div>
           <Row name="Active note"><MarginNote id="gallery-note" n={1} claim={claims[0]} sourceDates={{ "1": "2026-01-28" }} active onSelect={() => {}} /></Row>
+          <Row name="Four references"><MarginNote id="gallery-note-many" n={1} claim={manyReferences} sourceDates={{ "1": "2026-01-28" }} active onSelect={() => {}} /></Row>
           <Row name="Not checked"><ClaimProse id="gallery-unchecked" text={claimText} state="not_checked" claims={claims} active={null} onSelect={() => {}} /></Row>
         </Section>
 
         <Section id="claim-table-sources" title="Claim table and sources">
-          <ClaimTable id="gallery-claim-table" defaultOpen claims={claims.map((c, i) => ({ ...c, claim: claimText.slice(c.start, c.end) || `Claim ${i + 1}` }))}
+          <ClaimTable id="gallery-claim-table" defaultOpen claims={claims}
             omitted={[{ id: "u3", claim: "The deductible is $500.", omission_reason: "source_rejection" }]}
             sourceDates={{ "1": "2026-01-28" }} active={claim} onSelect={setClaim} />
           <SourceList id="gallery-sources" claims={claims} sourceDates={{ "1": "2026-01-28" }} active={claim} paperlessBaseUrl="" onOpen={() => {}}

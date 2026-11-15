@@ -18,6 +18,15 @@ try {
   assert.equal(marker.status(), 200);
   assert.equal((await marker.json()).fixture, 'paperless-accuracy-ui-v1');
   await page.goto(`${base}/graph`);
+  await page.locator('canvas').first().waitFor({ state: 'visible' });
+  assert.equal(await page.getByRole('button', { name: /^(2D|3D)$/ }).count(), 0, 'Graph dimension controls must be removed');
+  assert.equal(await page.getByLabel('Graph dimensions', { exact: true }).count(), 0);
+  const labels = page.getByRole('checkbox', { name: 'Show labels', exact: true });
+  assert.equal(await labels.isEnabled(), true);
+  assert.equal(await labels.isChecked(), true);
+  await labels.uncheck();
+  assert.equal(await labels.isChecked(), false);
+  await labels.check();
   await page.getByRole('button', { name: /Alex Example/ }).click();
   const summary = page.locator('summary').filter({ hasText: 'Evidence from document #101' });
   assert.match(await summary.innerText(), /inferred/);

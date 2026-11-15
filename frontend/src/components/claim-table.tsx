@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { StatusLabel } from "@/components/status-label";
-import { claimResult } from "@/components/claim-prose";
+import { claimResult, Quote } from "@/components/claim-prose";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatAnswerInline } from "@/lib/answer-format";
@@ -76,7 +76,7 @@ export function ClaimTable({ id, claims, omitted = [], sourceDates, active, onSe
                       const date = sourceDates?.[String(ref.document_id)];
                       return (
                         <span key={j} className="block">
-                          {ref.quote && <q className="quote mb-1 line-clamp-3 text-fg [quotes:none]">{ref.quote}</q>}
+                          {ref.quote && <Quote claim={claim.claim} text={ref.quote} expanded={!!current} className="mb-1" />}
                           <span className="block">{ref.source_title || `Document ${ref.document_id}`}{date && <> · <span className="tabular-nums">{formatSourceDate(date)}</span></>}</span>
                         </span>
                       );

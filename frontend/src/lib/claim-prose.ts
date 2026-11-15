@@ -79,3 +79,62 @@ export function proseBlocks(text: string, ranges: ClaimRange[]): Block[] {
   }
   return blocks;
 }
+
+// Values a claim states, most telling first: amounts, quoted names, dates, then other numbers.
+const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
+const VALUE_PATTERNS = [
+  /\$\s?\d+(?:,\d{3})*(?:\.\d+)?/g,
+  /["“]([^"”\n]{2,80})["”]/g,
+  new RegExp(`${MONTH} \\d{1,2}(?:, \\d{4})?|\\d{1,2} ${MONTH} \\d{4}|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}/\\d{2,4}`, "g"),
+  // Single digits only as a percentage: alone they also number lists and sections.
+  /\d[\d,.]*\d%?|\d%/g,
+];
+/** Characters of context kept before the first matched value, so it falls inside a three-line quote. */
+const CONTEXT = 40;
+const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A value as a whole token: "$25" must not match inside "$250" or "$25.50". */
+const valuePattern = (values: string[]) =>
+  new RegExp(`(?<![\\w$])(?:${values.map(escape).join("|")})(?![\\w]|[.,]\\d)`, "gi");
+
+/**
+ * The values a claim states that also appear in a quote, and where a short view of the quote should start:
+ * a word boundary just before the first match of the highest-ranked value, or 0 when nothing matches.
+ * `rank` is that value's kind (0 for an amount), or the number of kinds when nothing matches.
+ */
+export function quoteWindow(claim: string, quote: string): { start: number; values: string[]; rank: number } {
+  let rest = claim;
+  const found: string[] = [];
+  let anchor = -1;
+  let rank = VALUE_PATTERNS.length;
+  for (const [kindIndex, pattern] of VALUE_PATTERNS.entries()) {
+    const kind: string[] = [];
+    // Blank each value out so a later pattern does not take its digits again.
+    rest = rest.replace(pattern, (match, quoted?: string) => {
+      kind.push(typeof quoted === "string" ? quoted : match);
+      return " ".repeat(match.length);
+    });
+    const present = kind.filter(value => valuePattern([value]).test(quote));
+    if (anchor < 0 && present.length) {
+      anchor = Math.min(...present.map(value => quote.search(valuePattern([value]))));
+      rank = kindIndex;
+    }
+    found.push(...present);
+  }
+  if (anchor <= CONTEXT) return { start: 0, values: found, rank };
+  const space = quote.indexOf(" ", anchor - CONTEXT);
+  return { start: space >= 0 && space < anchor ? space + 1 : anchor, values: found, rank };
+}
+
+/** Split text into plain and matched pieces for emphasis. */
+export function emphasize(text: string, values: string[]): Array<{ text: string; match?: boolean }> {
+  if (!values.length) return [{ text }];
+  const pieces: Array<{ text: string; match?: boolean }> = [];
+  let at = 0;
+  for (const match of text.matchAll(valuePattern(values))) {
+    if (match.index > at) pieces.push({ text: text.slice(at, match.index) });
+    pieces.push({ text: match[0], match: true });
+    at = match.index + match[0].length;
+  }
+  if (at < text.length) pieces.push({ text: text.slice(at) });
+  return pieces;
+}

@@ -215,3 +215,70 @@ test("at 390 px the claim table stacks without horizontal scroll, and selecting 
     await note.elementHandle(), { timeout: 3000 });
   if (artifacts) await page.screenshot({ path: `${artifacts}/claim-table-390.png`, fullPage: true });
 });
+
+// Long passages, a claim with six references and a list of four claims, as real answers have.
+const REAL = "How did my auto insurance change at renewal? real-answer";
+const twoFrames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+/** The window and every ancestor of the answer column; only the column itself may scroll. */
+const frameShift = page => page.evaluate(() => {
+  const shifted = [];
+  for (let element = document.querySelector("article[aria-label=Answer]").closest(".overflow-y-auto").parentElement; element; element = element.parentElement)
+    if (element.scrollTop) shifted.push(`${element.tagName} ${element.scrollTop}`);
+  return { scrollY, shifted };
+});
+
+for (const width of [1440, 390]) test(`at ${width} px only the answer column scrolls, when the answer arrives and after a claim number click`, async t => {
+  const { page, answer } = await ask(t, width, REAL);
+  await twoFrames(page);
+  assert.deepEqual(await frameShift(page), { scrollY: 0, shifted: [] });
+  // A DOM click: Playwright's click scrolls the button into view itself.
+  await answer.getByRole("button", { name: "Claim 4", exact: true }).evaluate(button => button.click());
+  await twoFrames(page);
+  assert.deepEqual(await frameShift(page), { scrollY: 0, shifted: [] });
+  if (artifacts) await page.screenshot({ path: `${artifacts}/real-answer-${width}.png` });
+});
+
+/** Whether the emphasized value is inside the quote's visible (clamped) box. */
+const showsValue = (quote, value) => quote.evaluate((q, value) => {
+  const box = q.getBoundingClientRect();
+  const match = [...q.querySelectorAll("strong")].find(strong => strong.textContent === value)?.getBoundingClientRect();
+  return Boolean(match && match.height && match.top >= box.top - 0.5 && match.bottom <= box.bottom + 0.5);
+}, value);
+
+test("a margin quote and its claim table quote show the amount the claim states, past the passage header", async t => {
+  const { answer } = await ask(t, 1440, REAL);
+  for (const [n, amount] of [[1, "$612.00"], [2, "$655.00"], [3, "$500"]]) {
+    const quote = answer.getByRole("note", { name: `Claim ${n} source` }).locator("q").first();
+    assert.ok(await showsValue(quote, amount), `note ${n} shows ${amount}`);
+    assert.ok((await quote.innerText()).startsWith("… "), `note ${n} marks the cut start`);
+  }
+  const table = await openClaimTable(answer);
+  const row = table.getByRole("row").filter({ has: answer.page().getByRole("button", { name: "Select claim 3", exact: true }) });
+  assert.ok(await showsValue(row.locator("q"), "$500"), "the table row shows $500");
+});
+
+test("a claim with six references shows the two that state its amount, and a control opens the other four", async t => {
+  const { page, answer } = await ask(t, 1440, REAL);
+  const note = answer.getByRole("note", { name: "Claim 1 source" });
+  assert.equal(await note.locator("q").count(), 2);
+  for (const quote of await note.locator("q").all()) assert.ok((await quote.innerText()).includes("$612.00"));
+  const more = note.getByRole("button", { name: "and 4 more", exact: true });
+  assert.equal(await more.getAttribute("aria-expanded"), "false");
+  await more.click();
+  assert.equal(await note.locator("q").count(), 6);
+  assert.equal(await note.getByRole("button", { name: "Show fewer", exact: true }).getAttribute("aria-expanded"), "true");
+  const table = await openClaimTable(answer);
+  const row = table.getByRole("row").filter({ has: page.getByRole("button", { name: "Select claim 1", exact: true }) });
+  assert.equal(await row.locator("q").count(), 6, "the claim table keeps every reference");
+});
+
+test("no block in the old style remains under the answer", async t => {
+  const { page, answer } = await ask(t, 1440, REAL);
+  await page.getByText("Suggested follow-ups", { exact: true }).waitFor();
+  assert.equal(/Entities/i.test(await answer.innerText()), false, "no entities block");
+  const allCaps = await page.locator("main").evaluate(main => [...main.querySelectorAll("*")]
+    .filter(element => getComputedStyle(element).textTransform === "uppercase" && element.textContent.trim())
+    .map(element => element.textContent.trim()));
+  assert.deepEqual(allCaps, []);
+  assert.equal(await page.getByRole("button", { name: "When is the next premium due?", exact: true }).count(), 1);
+});

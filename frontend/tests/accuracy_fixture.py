@@ -222,6 +222,68 @@ def claims_answer(result):
     result['verification']['supported_claims'] = sentences
     result['source_dates'] = {'101': '2026-01-31'}
 
+
+# Evidence shaped like real retrieval: whole indexed chunks whose first lines are the document header.
+POLICY_HEADER = ('Cedar Example Insurance Company Auto Policy Declarations Policy number: CX-AUTO-440192 '
+                 'Named insured: Jordan Example, 14 Birch Lane, Springfield Policy period: March 1, 2025 to '
+                 'March 1, 2026, 12:01 a.m. standard time at the address of the named insured. Agent: Morgan Example, '
+                 'Cedar Example Agency. Vehicle: 2021 Solara Wagon, garaged at the address above. ')
+RENEWAL_HEADER = POLICY_HEADER.replace('Declarations', 'Renewal Declarations').replace(
+    'March 1, 2025 to March 1, 2026', 'March 1, 2026 to March 1, 2027')
+REAL_SOURCES = [
+    (9001, 'Auto policy declarations 2025', '2025-03-01',
+     POLICY_HEADER + 'Coverages and limits apply as shown on this page. Liability: $100,000 each person. '
+     'Collision deductible: $500. Comprehensive deductible: $250. Six-month premium: $612.00. '
+     'Premium is due in full on the effective date unless an installment plan is selected.'),
+    (9002, 'Auto policy renewal 2026', '2026-03-01',
+     RENEWAL_HEADER + 'Coverages and limits apply as shown on this page. Liability: $100,000 each person. '
+     'Collision deductible: $1,000, raised from $500 at the request of the named insured. '
+     'Comprehensive deductible: $250. Six-month premium: $655.00.'),
+    (9003, 'Insurance card 2025', '2025-03-01',
+     'Cedar Example Insurance Company proof of insurance card. Keep this card in the vehicle. Policy number: '
+     'CX-AUTO-440192. Effective March 1, 2025. Expires March 1, 2026. Vehicle: 2021 Solara Wagon.'),
+    (9004, 'Premium billing statement', '2025-02-10',
+     'Cedar Example Insurance Company billing statement. Statement date: February 10, 2025. Account: '
+     'Jordan Example, 14 Birch Lane, Springfield. Policy number: CX-AUTO-440192. Previous balance: $0.00. '
+     'Payments received: none. Six-month premium for the term beginning March 1, 2025: $612.00. Amount due by March 1, 2025: $612.00.'),
+    (9005, 'Agent welcome letter', None,
+     'Dear Jordan Example, thank you for choosing Cedar Example Agency for your auto insurance. Your declarations '
+     'page lists your coverages, limits and deductibles. Contact Morgan Example with any questions about your policy.'),
+    (9006, 'Payment confirmation', '2025-02-27',
+     'Cedar Example Insurance Company payment confirmation. Confirmation number: PAY-20250227-0192. Policy number: '
+     'CX-AUTO-440192. Payer: Jordan Example. Payment method: bank transfer. Amount paid: $612.00 on February 27, 2025.'),
+]
+
+
+def real_answer(result):
+    """A list of four claims over long passages; claim 1 has six references, two of which state no value."""
+    sentences = [
+        'The Cedar Example auto policy declarations for the March 1, 2025 to March 1, 2026 term list a six-month premium of $612.00.',
+        'The renewal declarations for the March 1, 2026 to March 1, 2027 term list a six-month premium of $655.00.',
+        'The March 1, 2025 to March 1, 2026 declarations list a collision deductible of $500.',
+        'The renewal raised the collision deductible from $500 to $1,000 at the request of the named insured.',
+    ]
+    candidate = '\n'.join('- ' + sentence for sentence in sentences)
+    by_id = {doc_id: (title, quote) for doc_id, title, _, quote in REAL_SOURCES}
+    ref = lambda doc_id: {'document_id': doc_id, 'source_title': by_id[doc_id][0], 'quote': by_id[doc_id][1]}
+    # The backend's order; the two references without the amount come first.
+    references = [[9003, 9001, 9005, 9004, 9006, 9002], [9002], [9001], [9002]]
+    claims = []
+    for index, (sentence, ids) in enumerate(zip(sentences, references)):
+        start = candidate.index(sentence)
+        claims.append({'id': f'u{index + 1}', 'claim': sentence, 'start': start, 'end': start + len(sentence),
+                       'status': 'supported', 'references': [ref(doc_id) for doc_id in ids]})
+    result['answer'] = candidate
+    result['sources'] = [{'document_id': doc_id, 'title': title, 'doc_type': 'insurance', 'excerpt': quote}
+                         for doc_id, title, _, quote in REAL_SOURCES]
+    result['source_dates'] = {str(doc_id): date for doc_id, _, date, _ in REAL_SOURCES if date}
+    result['claim_ledger'].update(candidate_text=candidate, claims=claims)
+    result['claim_ledger']['summary'].update(total=4, audited=4, supported=4)
+    result['verification']['supported_claims'] = sentences
+    result['entities_found'] = [{'name': 'Jordan Example', 'label': 'Person'}, {'name': 'CX-AUTO-440192', 'label': 'Policy'}]
+    result['follow_up_suggestions'] = ['When is the next premium due?', 'What does the comprehensive deductible cover?']
+
+
 def saved_conversations():
     """Three saved answers that only exist as stored messages: re-verification fails, legacy, and pre-candidate."""
     question = 'What premium does the January statement list?'
@@ -549,6 +611,8 @@ class Handler(BaseHTTPRequestHandler):
                 result['finalization']['timeline'] = receipt
             if 'margin-claims' in question.lower():
                 claims_answer(result)
+            if 'real-answer' in question.lower():
+                real_answer(result)
             answer_state(result, question.lower())
             if 'markup' in question.lower():
                 markup = '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'

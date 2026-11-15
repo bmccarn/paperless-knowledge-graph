@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   askAbout,
+  canvasName,
   documentsByDate,
   entityName,
   keyFacts,
@@ -117,4 +118,13 @@ test("the legend lists only the drawn kinds and link styles", () => {
   // A cap of 1 hides links into pills: the aggregate style appears, the hidden kinds do not.
   const capped = legendItems(neighborhoodLayout(summary(links.slice(0, 2)), 1));
   assert.deepEqual(capped, { labels: ["Person", "Organization"], styles: ["supported", "aggregate"] });
+});
+
+test("the canvas name counts drawn-family links and only fully inferred ones; a mixed link is not inferred", () => {
+  const links = [link("parties", "EMPLOYED_BY", "a", [1], { inferred: [1] }), link("money", "PAID_TO", "b", [2, 3], { inferred: [3] }),
+    link("money", "OWES", "c", [4]), link("evidence", "MENTIONS", "d", [5], { inferred: [5] })];
+  const data = summary(links);
+  assert.equal(canvasName(data, neighborhoodLayout(data, 6)), "Neighborhood of Focus: 3 links in 2 families, 1 inferred");
+  const one = summary([link("parties", "EMPLOYED_BY", "a", [1])]);
+  assert.equal(canvasName(one, neighborhoodLayout(one, 6)), "Neighborhood of Focus: 1 link in 1 family, 0 inferred");
 });

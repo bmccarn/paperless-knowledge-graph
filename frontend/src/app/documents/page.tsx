@@ -197,7 +197,7 @@ export default function DocumentsPage() {
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold tracking-tight">Documents</h1>
+            <h1 className="page-title">Documents</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {loading ? "Loading documents…" : error ? "Document results unavailable" : `${total} ${query || typeFilter ? "matching indexed documents" : "indexed documents"}`}
             </p>

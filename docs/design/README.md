@@ -6,7 +6,7 @@ This folder holds the reference material for the interface redesign in direction
 
 | File | What it is |
 |---|---|
-| `tokens.css` | The design tokens for both themes: surfaces, text, status colors, the highlighter, node-kind and document-type palettes, graph link colors, radius, sizes, motion and the focus ring. Once `globals.css` holds these values, it is the source, and this file is kept only as the frozen input of the mockups. |
+| `tokens.css` | The frozen input of the mockups: the design tokens for both themes as the mockups use them. The token source for the app is `frontend/src/app/globals.css`; change tokens there. |
 | `answer-mockup.html` | A static Ask page in direction C. It shows a Verified answer with claim underlines, margin notes and a source list, then short Documented, Partial and Withheld examples. Open it in a browser and resize it to see the three layouts (margin column at 1180 px and wider, inline notes, phone). Change `data-theme` on the `<html>` element to switch themes. It embeds Geist, Geist Mono, Geist Serif and Source Serif 4, which are licensed under the SIL Open Font License 1.1. |
 | `quality-bar.md` | The checklist every new screen must pass before review. |
 | `categories.md` | Document-type labels and colors, and the relationship families with their keyword prefixes. |

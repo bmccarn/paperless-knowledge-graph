@@ -1,6 +1,6 @@
 # Quality bar
 
-Every new or changed screen meets each rule below before review. The reviewer checks the pull request against this list. The values come from `tokens.css` and the redesign issue.
+Every new or changed screen meets each rule below before review. The reviewer checks the pull request against this list. The values come from `frontend/src/app/globals.css`, the token source, and the redesign issue.
 
 ## Evidence and trust
 

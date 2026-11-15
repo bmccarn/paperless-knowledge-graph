@@ -27,7 +27,7 @@ async function findEntities(query: string, current: () => boolean): Promise<Row[
   for (let offset = 0; rows.length < 5 && current(); offset += 50) {
     const data = await graphSearch(query, undefined, 50, offset);
     rows.push(...data.results.filter((node: SearchNode) => !node.labels.includes("Document") && !node.labels.includes("DocumentRef"))
-      .map((node: SearchNode) => ({ title: node.properties.name, href: `/graph?q=${encodeURIComponent(node.properties.name)}` })));
+      .map((node: SearchNode) => ({ title: node.properties.name, href: `/graph?focus=${encodeURIComponent(node.properties.uuid)}` })));
     if (!data.has_more) break;
   }
   return rows.slice(0, 5);

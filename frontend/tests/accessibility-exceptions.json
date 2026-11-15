@@ -18,21 +18,39 @@
     ]
   },
   {
-    "rule": "color-contrast",
+    "rule": "aria-prohibited-attr",
     "route": "/graph?focus=nb-rowan",
-    "state": "selected-node",
-    "issue": 131,
+    "state": "selected-group",
+    "issue": 133,
     "targets": [
-      "[\".w-fit\"]"
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
     ]
   },
   {
-    "rule": "font-size",
+    "rule": "aria-prohibited-attr",
     "route": "/graph?focus=nb-rowan",
-    "state": "selected-node",
-    "issue": 131,
+    "state": "legend",
+    "issue": 133,
     "targets": [
-      "[\"p.mb-3.text-[11px].leading-relaxed.text-muted-foreground\"]"
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
+    ]
+  },
+  {
+    "rule": "aria-prohibited-attr",
+    "route": "/graph?focus=nb-desk",
+    "state": "evidence-marked",
+    "issue": 133,
+    "targets": [
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
+    ]
+  },
+  {
+    "rule": "aria-prohibited-attr",
+    "route": "/graph?focus=nb-renewal",
+    "state": "selected-link",
+    "issue": 133,
+    "targets": [
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
     ]
   }
 ]

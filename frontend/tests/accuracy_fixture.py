@@ -101,6 +101,9 @@ NB_ENTITIES.update({'nb-desk': ('Organization', 'Front desk'), 'nb-markup': ('Or
                     'nb-unnamed': ('Organization', ''), 'nb-gadget': ('Gadget', 'Loaner gadget')})
 for rel_type, target in [('PAID_TO', 'nb-markup'), ('EMPLOYED_BY', 'nb-unnamed'), ('OWNS_VEHICLE', 'nb-gadget')]:
     nb_link('nb-desk', rel_type, target, 2)
+# A renewal notice whose one link is stated in one document and inferred in another.
+NB_ENTITIES.update({'nb-renewal': ('Contract', 'Renewal notice 2026'), 'nb-car': ('Product', '2014 Honda Fit')})
+nb_link('nb-renewal', 'COVERS', 'nb-car', 2, inferred={1})
 
 
 # The sample person and organization also open as a neighborhood, for the inspector's source checks.

@@ -157,14 +157,16 @@ try {
   const fitted = await page.locator('canvas').first().evaluate(element => element.__zoom.k);
   assert.ok(Math.abs(fitted - zoomed) / zoomed < 0.1, `Fit view: ${fitted} vs initial fit ${zoomed}`);
 
-  // A pill press adds up to 25 neighbors of its family at the end of its sector; other sectors keep their places.
+  // A Shift+click on a pill adds up to 25 neighbors of its family at the end of its sector; other sectors keep their places.
   const before = await open(page);
   const pill = before['+23 Parties and roles'];
   // The renderer refreshes its hit canvas at most every 800 ms; the tooltip shows the pill is under the pointer.
   await page.waitForTimeout(900);
   await page.mouse.move(box.x + pill.x, box.y + pill.y);
   await page.getByText('+23 Parties and roles', { exact: true }).waitFor({ state: 'visible' });
+  await page.keyboard.down('Shift');
   await page.mouse.click(box.x + pill.x, box.y + pill.y);
+  await page.keyboard.up('Shift');
   // Over 40 nodes, labels that would overlap are skipped; the pill count shows the 22 added neighbors.
   await page.waitForFunction(() => window.__frame['+1 Parties and roles']);
   await page.waitForTimeout(300);
@@ -175,7 +177,7 @@ try {
     assert.deepEqual([after[name].worldX, after[name].worldY], [before[name].worldX, before[name].worldY], `${name} keeps its place`);
   await page.screenshot({ path: path.join(artifacts, 'graph-neighborhood-more.png') });
 
-  // A node selected at the right edge stays visible when the inspector narrows the canvas.
+  // A node selected at the right edge stays visible beside the inspector.
   // Pan the node next to the right edge with a background drag.
   const start = after['Policy HO-5130 (home)'];
   await page.mouse.move(box.x + 30, box.y + 30);
@@ -188,8 +190,7 @@ try {
   await page.mouse.move(box.x + edge.x, box.y + edge.y);
   await page.getByText('Policy HO-5130 (home) · Insurance policy', { exact: true }).waitFor({ state: 'visible' });
   await page.mouse.click(box.x + edge.x, box.y + edge.y);
-  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
-  await page.waitForFunction(width => document.querySelector('canvas').clientWidth < width, box.width);
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).getByRole('heading', { name: 'Policy HO-5130 (home)' }).waitFor();
   await page.waitForTimeout(300);
   const selected = (await page.evaluate(() => window.__frame))['Policy HO-5130 (home)'];
   const narrowed = await page.locator('canvas').first().boundingBox();

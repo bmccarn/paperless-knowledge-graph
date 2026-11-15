@@ -28,7 +28,7 @@ try {
   await inspector.getByRole("heading", { name: "Policy HO-5130 (home)", exact: true }).waitFor();
   const historyLength = await page.evaluate(() => history.length);
   // Focusing the selected neighbor pushes, clears the old selection and retains view/filter state.
-  await inspector.getByRole("button", { name: "Load neighbors into graph", exact: true }).click();
+  await inspector.getByRole("button", { name: "Focus this entity", exact: true }).click();
   await page.waitForURL(url => url.searchParams.get("focus") === "nb-coverage-1");
   assert.equal(await page.evaluate(() => history.length), historyLength + 1);
   assert.equal(new URL(page.url()).searchParams.get("sel"), null);
@@ -52,7 +52,7 @@ try {
   await page.goto(`${base}/graph?focus=nb-rowan&sel=nb-coverage-1`);
   await inspector.waitFor();
   const beforeClose = await page.evaluate(() => history.length);
-  await inspector.getByRole("button", { name: "Close node inspector", exact: true }).click();
+  await inspector.getByRole("button", { name: "Clear selection", exact: true }).click();
   await page.waitForURL(url => !url.searchParams.has("sel"));
   assert.equal(await page.evaluate(() => history.length), beforeClose);
 

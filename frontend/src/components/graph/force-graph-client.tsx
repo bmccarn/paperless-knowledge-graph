@@ -49,7 +49,7 @@ interface Props {
   showLabels: boolean;
   selectedNodeId: string | null;
   selectedLinkId: string | null;
-  onSelectNode: (node: ExplorerNode) => void;
+  onSelectNode: (node: ExplorerNode, event?: MouseEvent) => void;
   onSelectLink: (link: ExplorerLink) => void;
   onClear: () => void;
   onReady: (handle: GraphHandle | null) => void;
@@ -59,6 +59,8 @@ interface Props {
   focusId?: string | null;
   /** The node whose inspector row has keyboard focus. */
   keyboardNodeId?: string | null;
+  /** Links the hovered or focused evidence chip supports, marked like a selected link. */
+  markedLinkIds?: ReadonlySet<string>;
 }
 
 const KINDS = ["people", "org", "place", "money", "agree", "thing", "health", "time", "docs"];
@@ -109,6 +111,7 @@ export function ForceGraphClient({
   positions,
   focusId = null,
   keyboardNodeId = null,
+  markedLinkIds,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
@@ -247,6 +250,9 @@ export function ForceGraphClient({
     [onReady],
   );
 
+  // A selected pill does not fade the other nodes and links; a selected entity does.
+  const entitySelected = Boolean(selectedNodeId) && !graph.nodes.some(node => node.id === selectedNodeId && node.label === "Aggregate");
+
   const font = useCallback((weight: number) => `${weight} ${LABEL_FONT}px ${paint?.font}`, [paint]);
 
   /** A "+N Family" pill box around (0, 0) in screen pixels. */
@@ -267,10 +273,17 @@ export function ForceGraphClient({
         const width = pillWidth(ctx, node.name);
         const pill = new Path2D();
         pill.roundRect(-width / 2 + 0.5, -PILL_HEIGHT / 2 + 0.5, width - 1, PILL_HEIGHT - 1, (PILL_HEIGHT - 1) / 2);
+        const selected = node.id === selectedNodeId;
+        if (selected) {
+          // A selected pill takes the node selection: a 10 px --mark halo and a --fg ring.
+          ctx.strokeStyle = colors.mark;
+          ctx.lineWidth = 20;
+          ctx.stroke(pill);
+        }
         ctx.fillStyle = colors.surface;
         ctx.fill(pill);
-        ctx.strokeStyle = colors["border-strong"];
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = selected ? colors.fg : colors["border-strong"];
+        ctx.lineWidth = selected ? 2 : 1;
         ctx.stroke(pill);
         ctx.fillStyle = colors.fg;
         ctx.textAlign = "center";
@@ -283,7 +296,7 @@ export function ForceGraphClient({
       const r = nodeRadius(nodeDocs(node));
       const extent = shapeExtent(node.label, r);
       const selected = node.id === selectedNodeId;
-      const faded = Boolean(selectedNodeId) && !selected;
+      const faded = entitySelected && !selected;
       const color = faded ? colors["graph-faded"] : kind === "unknown" ? colors["fg-subtle"] : colors[`cat-${kind}`];
       const shape = (radius: number) => new Path2D(shapePath(node.label, radius));
       const ring = (path: Path2D, stroke: string, width: number, dash: number[] = []) => {
@@ -325,10 +338,10 @@ export function ForceGraphClient({
       }
       ctx.restore();
     },
-    [paint, pillWidth, selectedNodeId, hoveredId, keyboardNodeId],
+    [paint, pillWidth, selectedNodeId, entitySelected, hoveredId, keyboardNodeId],
   );
 
-  const selectedLink = (link: RenderLink) => link.id === selectedLinkId;
+  const selectedLink = (link: RenderLink) => link.id === selectedLinkId || Boolean(markedLinkIds?.has(link.id));
   const nodeLinked = useCallback((link: RenderLink) =>
     Boolean(selectedNodeId) && (endpointId(link.source) === selectedNodeId || endpointId(link.target) === selectedNodeId), [selectedNodeId]);
 
@@ -374,7 +387,7 @@ export function ForceGraphClient({
       ctx.lineCap = "butt";
       ctx.setLineDash((aggregate ? [3, 3] : link.props.implied === true ? [6, 4] : []).map(value => value / scale));
       ctx.strokeStyle = aggregate ? colors["border-strong"]
-        : selectedNodeId && !nodeLinked(link) ? colors.border : colors["graph-edge"];
+        : entitySelected && !nodeLinked(link) ? colors.border : colors["graph-edge"];
       ctx.lineWidth = width / scale;
       ctx.stroke();
       ctx.setLineDash([]);
@@ -397,7 +410,7 @@ export function ForceGraphClient({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [paint, selectedNodeId, selectedLinkId, nodeLinked],
+    [paint, selectedNodeId, selectedLinkId, markedLinkIds, nodeLinked, entitySelected],
   );
 
   // Labels go last, in one pass, so no node paints over them and the skip rule sees every label.
@@ -446,7 +459,7 @@ export function ForceGraphClient({
         const x = node.x! * scale, y = node.y! * scale;
         const outward: [number, number] | null = focus && node !== focus ? [node.x! - focus.x!, node.y! - focus.y!] : null;
         const extent = shapeExtent(node.label, nodeRadius(nodeDocs(node)));
-        const dim = Boolean(selectedNodeId) && node.id !== selectedNodeId;
+        const dim = entitySelected && node.id !== selectedNodeId;
         labels.push({ x: node.x!, y: node.y!, text, weight, color: dim ? colors["fg-subtle"] : colors.fg, chip: false,
           candidates: labelCandidates(x, y, extent, ctx.measureText(text).width, outward),
           rule: important(node) ? "force" : all ? "all" : "optional" });
@@ -487,7 +500,7 @@ export function ForceGraphClient({
       ctx.restore();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [paint, data, focusId, selectedNodeId, selectedLinkId, hoveredId, keyboardNodeId, showLabels, nodeLinked, pillWidth, font, dimensions],
+    [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, nodeLinked, pillWidth, font, dimensions],
   );
 
   const hover = useCallback((node: RenderNode | null) => {
@@ -558,7 +571,7 @@ export function ForceGraphClient({
             ctx.fill();
           }}
           onNodeHover={hover}
-          onNodeClick={(node) => onSelectNode(node)}
+          onNodeClick={(node, event) => onSelectNode(node, event)}
           onBackgroundClick={onClear}
           onLinkClick={(link) =>
             onSelectLink({

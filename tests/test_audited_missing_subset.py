@@ -120,6 +120,7 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
                 partial = result['verification']['partial']
                 self.assertEqual([u['claim'].removeprefix('- ') for u in partial['omitted_units']], [LAB, DOSE])
                 self.assertEqual([u['status'] for u in partial['omitted_units']], ['unsupported', 'missing'])
+                self.assertEqual([u['id'] for u in partial['omitted_units']], ['u3', 'u2'])
                 self.assertEqual((partial['omitted_count'], partial['original_total'], partial['original_supported']), (2, 3, 2))
                 self.assertEqual(result['claim_ledger']['candidate_text'], text([CHARGE]))
                 self.assertNotIn('5 mg', result['answer'])
@@ -143,3 +144,11 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['finalization']['answer_verified'])
         self.assertNotIn('$321', result['answer'])
         self.assertEqual(len(auditor.contexts), 2)
+
+    async def test_omitted_ids_from_later_rounds_name_the_original_units(self):
+        # The middle unit goes first, so the second round renumbers the survivors.
+        auditor = RoundAuditor({'5 mg': 'unsupported'}, {'laboratory.': 'unsupported'})
+        result = await AnswerFinalizer(auditor).finalize('What is recorded?', '\n'.join([CHARGE, DOSE, LAB]), pack(SOURCE))
+        self.assertEqual(result['finalization']['disposition'], 'partial')
+        self.assertEqual([(u['id'], u['claim']) for u in result['verification']['partial']['omitted_units']],
+                         [('u2', DOSE), ('u3', LAB)])

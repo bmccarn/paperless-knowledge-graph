@@ -29,7 +29,7 @@ from app.source_text import certifying_text, certified_document_context
 from app import source_quantities
 from app.source_dates import source_dates, date_supported, without_dates, date_context, VALUE_UNITS
 
-POLICY_VERSION = "source-audit-v28"
+POLICY_VERSION = "source-audit-v29"
 
 ABSTENTION = ("I could not verify a complete answer from the retrieved source text. "
               "Please review the source documents or narrow the question before relying on specific facts.")
@@ -1260,6 +1260,7 @@ class AnswerFinalizer:
         # its own ledger; each round's receipt nests in the previous one.
         summary = ledger["summary"]
         base_candidate, base_ledger, base_observations, receipt, omitted = candidate, ledger, observations, ledger, []
+        original_ids = {}  # subset unit id -> original candidate unit id, after the first round
         for _round in range(2):
             base_summary = base_ledger["summary"]
             if not (self.allow_subset and disposition == "unsupported" and base_ledger["complete"]
@@ -1306,7 +1307,9 @@ class AnswerFinalizer:
                     'source_diagnostics': subset_ledger['source_diagnostics'],
                     'temporal_disposition': subset_status,
                 }
-                omitted = omitted + selection["omitted_units"]
+                omitted = omitted + [{**unit, 'id': original_ids.get(unit['id'], unit['id']),
+                                      'dependency_ids': [original_ids.get(i, i) for i in unit.get('dependency_ids', [])]}
+                                     for unit in selection["omitted_units"]]
                 if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
                         and subset_status in {"supported", "qualified"}):
                     partial = {"original_candidate_digest": ledger["candidate_digest"],
@@ -1319,6 +1322,8 @@ class AnswerFinalizer:
                     disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
                     break
                 base_candidate, base_ledger, base_observations = subset, subset_ledger, subset_observations
+                original_ids = {unit['id']: original_ids.get(kept, kept)
+                                for unit, kept in zip(subset_units, selection['retained_ids'])}
                 receipt = receipt['subset_audit']
             except EvidenceReservationError as exc:
                 receipt['subset_evidence_diagnostic'] = {'reason': exc.reason}

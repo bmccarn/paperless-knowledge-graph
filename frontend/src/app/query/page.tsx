@@ -751,9 +751,9 @@ function QueryContent() {
         {/* Input */}
         <div ref={composerRef} className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl min-[1180px]:max-w-[996px] mx-auto space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label htmlFor="question" className="label-14">Ask a question</label>
-              <div className="w-full md:w-auto"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="question" className="label-14 shrink-0">Ask a question</label>
+              <div className="min-w-0 flex-1 md:flex-none"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
               <Textarea

@@ -3,6 +3,7 @@
 The model's explanation is transient editor input. Neither it nor these checks
 certifies a fact; original references and the finalizer's other gates still apply.
 """
+import difflib
 import json
 
 
@@ -94,8 +95,25 @@ def _bounded_text(value, limit):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
 
 
-def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None):
-    """Reject malformed protocols; downgrade semantic inconsistency without retry."""
+def unknown_handle_class(handle, allowed):
+    """Content-free shape of an unknown handle relative to the offered ones, for logs."""
+    if any(span_id.startswith(handle) for span_id in allowed):
+        return 'truncated'
+    if any(handle.startswith(span_id) for span_id in allowed):
+        return 'extended'
+    if any(span_id.split(':')[:2] == handle.split(':')[:2] for span_id in allowed):
+        return 'same_chunk'
+    if any(difflib.SequenceMatcher(None, handle, span_id).ratio() >= 0.9 for span_id in allowed):
+        return 'near_miss'
+    return 'other'
+
+
+def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None,
+                    reject_unknown_handle_units=False, unknown_handle_misses=None):
+    """Reject malformed protocols; downgrade semantic inconsistency without retry.
+
+    An unknown handle rejects the batch, unless reject_unknown_handle_units makes it
+    reject only its own unit, which can then never be supported."""
     def unique_object(pairs):
         result = {}
         for key, value in pairs:
@@ -139,8 +157,11 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None)
                 raise SourceAuditProtocolError('invalid_references') from None
         _require(isinstance(refs, list) and all(isinstance(ref, dict) and set(ref) == {'span_id'}
                  and isinstance(ref['span_id'], str) and bool(ref['span_id']) for ref in refs), 'invalid_references')
-        if allowed_span_ids is not None:
-            _require(all(ref['span_id'] in allowed_span_ids for ref in refs), 'unknown_source_handle')
+        unknown = [ref['span_id'] for ref in refs
+                   if allowed_span_ids is not None and ref['span_id'] not in allowed_span_ids]
+        if unknown_handle_misses is not None:
+            unknown_handle_misses.extend(unknown_handle_class(handle, allowed_span_ids) for handle in unknown)
+        _require(not unknown or reject_unknown_handle_units, 'unknown_source_handle')
         _require(isinstance(row['temporal_scope'], str) and row['temporal_scope'] in SCOPES
                  and isinstance(row['temporal_assertion'], str) and row['temporal_assertion'] in ASSERTIONS
                  and row['comparison_scope'] in ('retrieved_documents', None)
@@ -156,6 +177,8 @@ def parse_decisions(text, unit_ids, *, allowed_span_ids=None, source_scope=None)
                    if checks[facet] in ('not_established', 'contradicted')]
         if assumptions:
             reasons.append('semantic_assumptions')
+        if unknown:
+            reasons.append('unknown_source_handle')
         if (checks['temporal'] == 'not_applicable'
                 and (row['temporal_scope'] != 'none'
                      or row['temporal_assertion'] not in {'none', 'source_observation'})):

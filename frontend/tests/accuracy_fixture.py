@@ -184,6 +184,8 @@ DOCS[0].update(title='January premium statement', doc_type='insurance')
 DOCS.extend({'paperless_id': 9000 + index, 'title': f'Synthetic archive {index:03d}',
              'doc_type': 'invoice' if index % 2 == 0 else 'medical', 'date': '2026-09-01'}
             for index in range(301))
+# Stored dates come in several forms; Documents shows each as "01 Sep 2026". 9015 and 9022 are in no graph.
+DOCS[17]['date'], DOCS[24]['date'] = 'September 1, 2026', '1 SEP 26'
 SEARCH_NODES = copy.deepcopy(NODES) + [
     {'labels': ['Organization'], 'props': {'uuid': f'synthetic-search-{index:03d}',
         'name': f'Search Fixture Entity {index:03d}', 'description': 'Synthetic pageable graph search fixture.'}}

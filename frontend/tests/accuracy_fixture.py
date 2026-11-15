@@ -194,14 +194,13 @@ class Handler(BaseHTTPRequestHandler):
                 if query == 'fixture-error':
                     return self.reply({'detail': 'Synthetic document search failure'}, 503)
                 matches = [doc for doc in DOCS if query in (' '.join(str(v) for v in doc.values())).lower()]
-                facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
-                matches = [doc for doc in matches if not selected_type or doc['doc_type'] == selected_type]
                 entity = get('entity')
                 if entity:
                     # The synthetic links stand in for source_doc_ids and MENTIONS.
                     linked = {other for rel in RELS for uid, other in ((rel['start'], rel['end']), (rel['end'], rel['start'])) if uid == entity}
                     matches = [doc for doc in matches if f"doc-{doc['paperless_id']}" in linked]
-                    facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
+                facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
+                matches = [doc for doc in matches if not selected_type or doc['doc_type'] == selected_type]
                 sort = get('sort', 'title')
                 matches.sort(key=lambda doc: (str(doc.get(sort, '')), doc['paperless_id']), reverse=get('direction') == 'desc')
                 offset, limit = int(get('offset', '0')), int(get('limit', '25'))

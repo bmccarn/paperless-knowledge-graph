@@ -791,11 +791,11 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     number = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
     def numbers(value):
         return {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,])(" + number + r")(?!\w|[.,]\d)", value)}
+    # Sources may glue a unit word to a grouped amount (500,000BI). Bare,
+    # signed or single-letter-suffixed tokens (5MM, 10AM, AP1234567) stay unread.
+    glued = r"(\d{1,3}(?:,\d{3})+)(?=[A-Z]{2,}\b)"
     def source_numbers(value):
-        # Sources may glue a unit word to a grouped amount (500,000BI). Bare,
-        # signed or single-letter-suffixed tokens (5MM, 10AM, AP1234567) stay unread.
-        return numbers(value) | {Decimal(n.replace(",", "")) for n in
-                                 re.findall(r"(?<![\w.,+-])(\d{1,3}(?:,\d{3})+)(?=[A-Z]{2,}\b)", value)}
+        return numbers(value) | {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,+-])" + glued, value)}
     missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in source_numbers(source)}
     if missing_numbers:
         mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
@@ -803,6 +803,8 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     available_units = set()
     for source, reference in zip(numeric_sources, references):
         source_pairs.update(source_quantities.prose_quantities(source))
+        source_pairs.update((Decimal(n.replace(",", "")), unit) for unit, n in
+                            re.findall(r"(?<![\w.,+-])(USD|EUR|GBP|CAD|AUD|JPY|[$€£])\s*" + glued, source))
         source_pairs.update(source_quantities.table_quantities(
             reference['quote'], reference.get('source_quantity_tables', [])))
         available_units.update(source_quantities.unit_names(source))

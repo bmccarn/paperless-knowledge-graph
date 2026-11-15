@@ -69,6 +69,8 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         quote = [{"quote": "$250,000/500,000BI; $250,000PD"}]
         self.assertEqual(value_mismatches("$250,000/500,000 bodily injury and $250,000 property damage", quote), {})
         self.assertEqual(value_mismatches("$600,000 bodily injury", quote)["values"], ["600000"])
+        self.assertEqual(value_mismatches("The property damage limit is $250,000.", [{"quote": "$250,000PD"}]), {})
+        self.assertIn("quantities", value_mismatches("The limit is $250,000.", [{"quote": "$-250,000PD"}]))
         # Only comma-grouped amounts before a whole uppercase word are read.
         for claim, source in [("5", "5MM"), ("5", "5M"), ("3", "3ABCD12EF3GH45678"),
                               ("10", "10AM"), ("1234567", "AP1234567"), ("5,000", "5,000MMX9"),

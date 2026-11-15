@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import json
 import re
 import uuid
@@ -13,7 +14,7 @@ from app.config import settings
 from app.retry import retry_db
 from app.relationship_support import merge_support_properties, support_records
 from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, link_support, owner_matches
-from app.relationship_families import classify_relationship
+from app.relationship_families import FAMILIES, classify_relationship
 
 logger = logging.getLogger(__name__)
 
@@ -940,6 +941,57 @@ class GraphStore:
                 "properties": record["props"],
                 "relationships": record["relationships"],
             }
+
+    async def get_overview(self) -> dict:
+        """Compact entity map, with undirected pairs and no evidence content."""
+        _, owner, _ = await self.get_owner_matches()
+        async with self.driver.session() as session:
+            result = await session.run(f"""
+                MATCH (n) WHERE NOT n:Document AND n.uuid IS NOT NULL
+                RETURN n.uuid AS id, head(labels(n)) AS label,
+                       coalesce(toStringOrNull(n.name), toStringOrNull(n.title), '') AS name,
+                       {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
+                       COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count,
+                       COUNT {{ (n)-[r]-(m) WHERE NOT m:Document AND m.uuid IS NOT NULL
+                               AND m <> n AND NOT type(r) IN $evidence }} AS entity_links,
+                       COUNT {{ (n)--(:Document) }} AS document_links
+            """, evidence=EVIDENCE_TYPES)
+            rows = [dict(row) async for row in result]
+            unlinked = sum(not row["entity_links"] and row["document_links"] > 0 for row in rows)
+            linked = sorted((row for row in rows if row["entity_links"]),
+                            key=lambda row: (-row["link_count"], row["id"]))
+            truncated = len(linked) > 8000
+            nodes = sorted(linked[:8000], key=lambda row: row["id"])
+            indices = {row["id"]: i for i, row in enumerate(nodes)}
+            result = await session.run("""
+                MATCH (a)-[r]->(b)
+                WHERE a.uuid IN $ids AND b.uuid IN $ids AND NOT a:Document AND NOT b:Document
+                      AND a <> b AND NOT type(r) IN $evidence
+                RETURN a.uuid AS source, b.uuid AS target, type(r) AS type,
+                       r { .support_records, .source_doc, .source_doc_ids, .inferred, .implied } AS props
+            """, ids=list(indices), evidence=EVIDENCE_TYPES)
+            pairs, keys = {}, []
+            family_indices = {key: i for i, key in enumerate(f[0] for f in FAMILIES if f[0] != "evidence")}
+            async for row in result:
+                pair = tuple(sorted((indices[row["source"]], indices[row["target"]])))
+                merged = pairs.setdefault(pair, {"documents": set(), "inferred": [], "families": 0})
+                records = support_records(row["props"])
+                merged["documents"].update(records)
+                merged["inferred"].extend([record["inferred"] for record in records.values()] or
+                                          [bool(row["props"].get("inferred") or row["props"].get("implied"))])
+                merged["families"] |= 1 << family_indices[classify_relationship(row["type"])[0]]
+                keys.append(f"{row['source']}~{row['type']}~{row['target']}")
+        links = []
+        for (source, target), merged in sorted(pairs.items()):
+            inferred = merged["inferred"]
+            support = 2 if all(inferred) else 1 if any(inferred) else 0
+            links.append([source, target, len(merged["documents"]), support, merged["families"]])
+        version = hashlib.sha256(json.dumps([list(indices), sorted(keys)], separators=(',', ':')).encode()).hexdigest()
+        return {"version": version, "columns": ["id", "label", "name", "evidence_doc_count", "link_count"],
+                "nodes": [[row["id"], row["label"], row["name"][:60], row["evidence_doc_count"], row["link_count"]]
+                          for row in nodes],
+                "links": links, "link_columns": ["source", "target", "weight", "support", "families"],
+                "owner": indices.get(owner), "unlinked": unlinked, "truncated": truncated}
 
     async def get_node_summary(self, node_uuid: str) -> Optional[dict]:
         # shortcut: return all links; revisit server paging above about 2,000 links per entity.

@@ -277,7 +277,7 @@ export default function EntityReviewPage() {
               {!loading && !error && <span className="label-13 text-fg-muted tabular-nums">{candidates.length}</span>}
             </div>
             {loading ? (
-              <div aria-busy="true" aria-label="Loading candidates" className="divide-y divide-border">
+              <div role="status" aria-busy="true" aria-label="Loading candidates" className="divide-y divide-border">
                 {[0, 1, 2].map((row) => (
                   <div key={row} className="space-y-3 py-5">
                     <Skeleton className="h-4 w-56" />

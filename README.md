@@ -147,7 +147,8 @@ To run only the databases and start the backend directly on your machine, use [`
 | `POSTGRES_HOST` / `POSTGRES_PORT` | PostgreSQL host and port | `pgvector` / `5432` |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | PostgreSQL credentials | `knowledge_graph` / `kguser` / none |
 | `REDIS_URL` | Redis URL. The compose file sets it to `redis://redis:6379`. | `redis://localhost:6379` |
-| `OWNER_NAME` | Your name, used in query prompts | none |
+| `OWNER_NAME` | Your name, used in query prompts and the graph owner rule | none |
+| `OWNER_ALIASES` | Other names of the owner, separated by semicolons, used only by the graph owner rule | none |
 | `OWNER_CONTEXT` | Short context about you, used in query prompts | none |
 | `MAX_CONCURRENT_DOCS` | Documents processed in parallel | `10` |
 | `AUTO_SYNC_INTERVAL_MINUTES` | Minutes between automatic incremental syncs. `0` turns this off. | `0` |
@@ -226,10 +227,13 @@ After changing models, test extraction on one small and one large document befor
 
 `GET /graph/node/{uuid}?summary=1` returns `focus`, `links`, `documents`,
 `owner_status` and `owner_match_count`. The default node response is unchanged.
-The owner rule matches Person names or aliases against `OWNER_NAME` after Unicode
-NFKC normalization, case-folding and whitespace normalization. Multiple matches
-rank by evidence document count descending, non-evidence link count descending,
-then UUID ascending. Evidence counts use nonempty `source_doc_ids`, otherwise
+The owner rule matches Person names or aliases against `OWNER_NAME` and each
+entry of `OWNER_ALIASES` after Unicode NFKC normalization, case-folding and
+whitespace normalization. `OWNER_ALIASES` separates names with semicolons,
+because names can contain commas, for example `Rowan T Vale; Vale, Rowan T`.
+Empty entries are ignored, and aliases count only when `OWNER_NAME` is set.
+Multiple matches rank by evidence document count descending, non-evidence link
+count descending, then UUID ascending. Evidence counts use nonempty `source_doc_ids`, otherwise
 distinct linked Document nodes. The rule only reads the graph.
 
 | `owner_status` | Meaning | `owner_match_count` |

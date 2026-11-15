@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
 
     owner_name: str = ""
+    owner_aliases: str = ""
     owner_context: str = ""
 
     max_concurrent_docs: int = 10

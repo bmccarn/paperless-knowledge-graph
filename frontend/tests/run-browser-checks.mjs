@@ -65,8 +65,8 @@ try {
     { BACKEND_URL: backend, NEXT_TELEMETRY_DISABLED: "1", HOSTNAME: "127.0.0.1", PORT: String(uiPort) });
   await ready(`${base}/api/_fixture`, ui);
   let failed = false;
-  for (const suite of ["design-reference-ui", "query-page-ui", "dashboard-status-ui", "completion-ui", "accuracy-ui", "graph-support-ui", "graph-zoom-ui", "hubs-ui", "entity-review-ui", "tokens-type-ui"]) {
-    const args = ["query-page-ui", "completion-ui", "dashboard-status-ui", "tokens-type-ui"].includes(suite) ? ["--test", `tests/${suite}.mjs`] : [`tests/${suite}.mjs`];
+  for (const suite of ["design-reference-ui", "query-page-ui", "dashboard-status-ui", "completion-ui", "accuracy-ui", "graph-support-ui", "graph-zoom-ui", "hubs-ui", "entity-review-ui", "tokens-type-ui", "gallery-ui"]) {
+    const args = ["query-page-ui", "completion-ui", "dashboard-status-ui", "tokens-type-ui", "gallery-ui"].includes(suite) ? ["--test", `tests/${suite}.mjs`] : [`tests/${suite}.mjs`];
     const check = start(process.execPath, args, {
       UI_TEST_BASE_URL: base, UI_TEST_ARTIFACTS: path.join(artifacts, suite),
     });

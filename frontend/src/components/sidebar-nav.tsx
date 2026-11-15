@@ -46,6 +46,8 @@ export function SidebarNav() {
     return () => clearInterval(i);
   }, []);
 
+  if (pathname === "/gallery") return null;
+
   return (
     <>
       {/* Desktop sidebar */}

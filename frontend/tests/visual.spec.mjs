@@ -19,7 +19,17 @@ const mainStates = [
   { name: "logs", route: "/debug", ready: page => page.getByText("Connected", { exact: true }) },
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByText("This page could not be found.", { exact: true }) },
 ];
+const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  ...["dialog", "sheet"].map(kind => ({ ...gallery, name: `gallery-${kind}`, state: kind, prepare: async page => {
+    await page.getByRole("button", { name: `Open ${kind}`, exact: true }).click();
+    await page.getByRole("dialog").waitFor();
+  } })),
+  { ...gallery, name: "gallery-tooltip", state: "tooltip", prepare: async page => {
+    await page.getByRole("button", { name: "Add to archive", exact: true }).hover();
+    await page.clock.runFor(300);
+    await page.getByRole("tooltip").waitFor();
+  } },
   { ...mainStates[0], name: "ask-history", state: "history-sheet", phoneOnly: true, prepare: async page => {
     await page.getByRole("button", { name: "Open conversations", exact: true }).click();
     await page.getByRole("dialog").waitFor();
@@ -58,24 +68,31 @@ test.beforeEach(async ({ page, baseURL, request }, info) => {
   });
 });
 
-// #113 adds the gallery here once its route exists.
-for (const state of [...mainStates, ...extraStates]) test(`${state.name} ${state.state || "main"}`, async ({ page }, info) => {
+for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name} ${state.state || "main"}`, async ({ page }, info) => {
   test.skip(state.phoneOnly && !info.project.name.startsWith("phone"), "The conversation sheet is phone-only");
   await page.goto(state.route);
   await state.ready(page).waitFor();
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
-  await page.mouse.move(0, 0);
+  if (state.state !== "tooltip") await page.mouse.move(0, 0);
   if (state.name === "graph") await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.
   if (state.name === "graph") await page.waitForFunction(() => window.__visualGraphPainted === true);
   await page.clock.runFor(2500);
   await page.clock.pauseAt(new Date(fixedTime.getTime() + 120000));
+  if (state.name === "gallery") await page.evaluate(() => {
+    let element = document.querySelector("[data-gallery-content]");
+    while (element) {
+      element.style.height = "auto";
+      element.style.overflow = "visible";
+      element = element.parentElement;
+    }
+  });
   let capture;
   await expect(async () => {
     const previous = capture;
-    capture = await page.screenshot({ animations: "disabled", caret: "hide" });
+    capture = await page.screenshot({ fullPage: state.name === "gallery", animations: "disabled", caret: "hide" });
     expect(previous && capture.equals(previous), "Consecutive captures must match").toBe(true);
   }).toPass({ timeout: 5000 });
   await mkdir(info.outputDir, { recursive: true });

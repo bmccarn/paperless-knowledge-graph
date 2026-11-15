@@ -22,19 +22,19 @@ export function Pager({ page, pageCount, pageSize, total, onPage, disabled = fal
     { label: `Last ${noun}`, Icon: ChevronsRight, to: pageCount - 1, off: atEnd },
   ];
   return (
-    <nav aria-label={`${noun} navigation`} className="flex items-center justify-between gap-2 border-t px-4 py-2">
+    <nav aria-label={`${noun} navigation`} className="flex flex-wrap items-center justify-between gap-2 tabular-nums border-t px-4 py-2">
       <p className="text-xs text-muted-foreground">
         {total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, total)} of {total}
       </p>
       <div className="flex items-center gap-1">
         {buttons.slice(0, 2).map(({ label, Icon, to, off }) => (
-          <Button key={label} variant="ghost" size="icon" className="h-8 w-8" onClick={() => onPage(to)} aria-label={label} disabled={off}>
+          <Button key={label} variant="ghost" size="icon-sm" onClick={() => onPage(to)} aria-label={label} disabled={off}>
             <Icon className="h-3.5 w-3.5" />
           </Button>
         ))}
-        <span className="text-xs text-muted-foreground px-2">{page + 1} / {pageCount}</span>
+        <span aria-live="polite" className="text-xs text-muted-foreground px-2">{page + 1} / {pageCount}</span>
         {buttons.slice(2).map(({ label, Icon, to, off }) => (
-          <Button key={label} variant="ghost" size="icon" className="h-8 w-8" onClick={() => onPage(to)} aria-label={label} disabled={off}>
+          <Button key={label} variant="ghost" size="icon-sm" onClick={() => onPage(to)} aria-label={label} disabled={off}>
             <Icon className="h-3.5 w-3.5" />
           </Button>
         ))}

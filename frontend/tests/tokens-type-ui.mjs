@@ -90,6 +90,16 @@ for (const theme of ["dark", "light"]) test(`${theme} token pairs reach their co
   assert.deepEqual(failures, []);
 });
 
+test("light raised surfaces differ from cards", async t => {
+  const { page } = await open(t, { theme: "light" });
+  await visit(page, "/");
+  const tokens = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return [style.getPropertyValue("--raised").trim(), style.getPropertyValue("--surface").trim()];
+  });
+  assert.notEqual(tokens[0], tokens[1]);
+});
+
 test("--sunken differs between the themes", async t => {
   const values = [];
   for (const theme of ["dark", "light"]) {

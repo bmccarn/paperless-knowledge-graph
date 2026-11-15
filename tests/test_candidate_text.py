@@ -20,7 +20,7 @@ from app.graph import graph_store, source_dates
 from tests.test_answer_finalization import PACK, SupportedAuditor
 from tests.test_partial_answers import MixedAuditor, SOURCE
 from tests.test_query_delivery import RetrievedEngine
-from tests.test_question_pipeline import QuestionPipelineTests
+from tests import test_question_pipeline as pipeline_controls
 from tests.test_source_dates import pack
 
 UNAUDITED = "Unaudited quick answer — verify the source documents before relying on it.\n\n"
@@ -175,6 +175,18 @@ class DeliveredCandidateTextTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("candidate_text", json.dumps(result))
                     self.assertEqual(result["source_dates"], {})
 
+    async def test_corpus_change_during_the_date_lookup_is_rejected(self):
+        async def changing(ids):
+            invalidate_on_sync()
+            return await indexed_dates(ids)
+        for mode in ("quick", "strict", "timeline"):
+            with self.subTest(mode=mode), patch.object(graph_store, "get_document_dates", AsyncMock(side_effect=changing)):
+                invalidate_on_sync()
+                result = await self.engine.query("Recorded premium?", mode=mode)
+                self.assertEqual(result["finalization"]["disposition"], "corpus_changed")
+                self.assertNotIn("candidate_text", json.dumps(result))
+                self.assertEqual(result["source_dates"], {})
+
 
 class SourceDateLookupTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_calendar_dates_are_returned_and_failures_omit_dates(self):
@@ -188,9 +200,9 @@ class SourceDateLookupTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SavedAnswerTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = QuestionPipelineTests.asyncSetUp
-    asyncTearDown = QuestionPipelineTests.asyncTearDown
-    model = QuestionPipelineTests.model
+    asyncSetUp = pipeline_controls.QuestionPipelineTests.asyncSetUp
+    asyncTearDown = pipeline_controls.QuestionPipelineTests.asyncTearDown
+    model = pipeline_controls.QuestionPipelineTests.model
 
     async def reopen(self, metadata_rows, dates):
         now = datetime.now(timezone.utc)

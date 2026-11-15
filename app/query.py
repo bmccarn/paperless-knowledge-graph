@@ -532,10 +532,10 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         metrics_token = CURRENT_QUERY_METRICS.set(metrics)
         try:
             result = await self._query(question, conversation_history, mode)
-            await self._check_delivery_snapshot(result)
-            # Read at delivery, after the snapshot check, so cached and rejected results agree.
+            # Read before the final snapshot check, which must be the last await.
             result["source_dates"] = await source_dates(graph_store,
                 [s["document_id"] for s in result.get("sources", []) if type(s.get("document_id")) is int])
+            await self._check_delivery_snapshot(result)
             return result
         finally:
             CURRENT_QUERY_METRICS.reset(metrics_token)
@@ -696,6 +696,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             if result.get("mode") == "timeline":
                 result["finalization"]["timeline"] = {"status": "unavailable", "reason": "corpus_changed"}
             result["sources"] = []
+            result["source_dates"] = {}
             result["claim_ledger"] = empty_ledger("")
             claim_summary = result["claim_ledger"]["summary"]
             missing = ["Stable completed source index required."]

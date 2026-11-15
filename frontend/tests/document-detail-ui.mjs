@@ -53,7 +53,11 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Mark extraction wrong", exact: true }).click();
     const resolution = page.getByRole("combobox", { name: "Resolution", exact: true });
     await resolution.click();
+    assert.equal(await page.locator("main").evaluate(element => Boolean(element.closest("[inert]"))), true);
+    await page.keyboard.press("Tab");
+    assert.equal(await page.getByRole("listbox").evaluate(element => element.contains(document.activeElement)), true);
     await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("main").closest("[inert]"));
     assert.ok(await resolution.evaluate(element => element === document.activeElement));
     await resolution.click();
     await page.getByRole("option", { name: "Checked original extraction; no correction needed" }).click();

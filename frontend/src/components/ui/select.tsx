@@ -50,9 +50,18 @@ function SelectContent({
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const setContent = React.useCallback((content: HTMLDivElement | null) => {
+    if (!content?.isConnected) return
+    // Radix traps focus and hides the background; inert also removes its tab stops.
+    const background = Array.from(content.ownerDocument.body.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && !element.contains(content) && !element.inert)
+    background.forEach(element => { element.inert = true })
+    return () => { background.forEach(element => { element.inert = false }) }
+  }, [])
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
+        ref={setContent}
         data-slot="select-content"
         className={cn(
           "relative z-50 max-h-(--radix-select-content-available-height) max-w-(--radix-select-content-available-width) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-md border bg-overlay text-fg shadow-(--shadow-overlay)",

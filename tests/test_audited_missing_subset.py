@@ -1,6 +1,7 @@
 """A completed absence verdict can be omitted only after fresh subset validation."""
 import unittest
 from app.answer_finalization import AnswerFinalizer
+from app.answer_observations import ObservationCandidate
 from tests.test_partial_answers import MixedAuditor, SOURCE
 from tests.test_source_dates import pack
 
@@ -12,6 +13,26 @@ class MissingAuditor(MixedAuditor):
             if assessment['status'] == 'unsupported':
                 assessment.update(status='missing', references=[])
         return result
+
+
+class RoundAuditor(MixedAuditor):
+    """Overrides the status of units holding a marker, per audit round."""
+    def __init__(self, *rounds):
+        super().__init__()
+        self.rounds = rounds
+
+    async def audit_answer_units(self, question, units, spans, plan):
+        result = await super().audit_answer_units(question, units, spans, plan)
+        overrides = self.rounds[len(self.contexts) - 1] if len(self.contexts) <= len(self.rounds) else {}
+        for assessment, unit in zip(result['assessments'], units):
+            for marker, status in overrides.items():
+                if marker in unit['text']:
+                    assessment.update(status=status, references=[] if status == 'missing' else assessment['references'])
+        return result
+
+
+CHARGE, DOSE = 'The invoice records a $321 USD service charge.', 'The laboratory records a 5 mg dose.'
+LAB, NAME = 'The invoice comes from the laboratory.', 'The record names a service charge.'
 
 
 class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
@@ -83,3 +104,57 @@ class AuditedMissingSubsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit['available_span_count'], 2)
         self.assertEqual(audit['selection_coverage'][0]['selected_document_ids'], [101, 102])
         self.assertTrue(all('content' not in s and 'date_context_before' not in s for s in audit['spans']))
+
+    async def test_second_subset_round_omits_a_newly_rejected_survivor(self):
+        lines = [CHARGE, DOSE, LAB]
+        for answer, text in [('\n'.join(lines), '\n'.join),
+                             (ObservationCandidate(tuple(lines)), lambda kept: '\n\n'.join('- ' + x for x in kept))]:
+            with self.subTest(observations=not isinstance(answer, str)):
+                auditor = RoundAuditor({'laboratory.': 'unsupported'}, {'5 mg': 'missing'})
+                result = await AnswerFinalizer(auditor).finalize('What is recorded?', answer, pack(SOURCE))
+                self.assertEqual(result['finalization']['disposition'], 'partial')
+                self.assertTrue(result['finalization']['answer_verified'])
+                self.assertEqual(len(auditor.contexts), 3)
+                if isinstance(answer, str):
+                    self.assertEqual(auditor.contexts, [text(lines), text([CHARGE, DOSE]), text([CHARGE])])
+                partial = result['verification']['partial']
+                self.assertEqual([u['claim'].removeprefix('- ') for u in partial['omitted_units']], [LAB, DOSE])
+                self.assertEqual([u['status'] for u in partial['omitted_units']], ['unsupported', 'missing'])
+                self.assertEqual([u['id'] for u in partial['omitted_units']], ['u3', 'u2'])
+                self.assertEqual((partial['omitted_count'], partial['original_total'], partial['original_supported']), (2, 3, 2))
+                self.assertEqual(result['claim_ledger']['candidate_text'], text([CHARGE]))
+                self.assertNotIn('5 mg', result['answer'])
+
+    async def test_subset_rounds_are_bounded(self):
+        auditor = RoundAuditor({'names': 'unsupported'}, {'laboratory.': 'unsupported'}, {'5 mg': 'unsupported'})
+        result = await AnswerFinalizer(auditor).finalize('What is recorded?', '\n'.join([CHARGE, DOSE, LAB, NAME]), pack(SOURCE))
+        self.assertEqual(result['finalization']['disposition'], 'unsupported')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertNotIn('$321', result['answer'])
+        self.assertNotIn('partial', result['verification'])
+        self.assertEqual(len(auditor.contexts), 3)
+        # The stored ledger stays the original audit, with each subset round nested under it.
+        ledger = result['claim_ledger']
+        self.assertEqual([c['status'] for c in ledger['claims']], ['supported'] * 3 + ['unsupported'])
+        self.assertEqual(result['verification']['unsupported_claims'], [NAME])
+        self.assertIn('rejection_reasons', ledger['claims'][3])
+        self.assertEqual(ledger['subset_audit']['summary']['unsupported'], 1)
+        second = ledger['subset_audit']['subset_audit']
+        self.assertEqual(second['summary']['unsupported'], 1)
+        self.assertTrue(all('content' not in s for s in second['spans']))
+
+    async def test_conflict_in_a_subset_round_prevents_partial_delivery(self):
+        auditor = RoundAuditor({'laboratory.': 'unsupported'}, {'5 mg': 'conflicting'})
+        result = await AnswerFinalizer(auditor).finalize('What is recorded?', '\n'.join([CHARGE, DOSE, LAB]), pack(SOURCE))
+        self.assertEqual(result['finalization']['disposition'], 'unsupported')
+        self.assertFalse(result['finalization']['answer_verified'])
+        self.assertNotIn('$321', result['answer'])
+        self.assertEqual(len(auditor.contexts), 2)
+
+    async def test_omitted_ids_from_later_rounds_name_the_original_units(self):
+        # The middle unit goes first, so the second round renumbers the survivors.
+        auditor = RoundAuditor({'5 mg': 'unsupported'}, {'laboratory.': 'unsupported'})
+        result = await AnswerFinalizer(auditor).finalize('What is recorded?', '\n'.join([CHARGE, DOSE, LAB]), pack(SOURCE))
+        self.assertEqual(result['finalization']['disposition'], 'partial')
+        self.assertEqual([(u['id'], u['claim']) for u in result['verification']['partial']['omitted_units']],
+                         [('u2', DOSE), ('u3', LAB)])

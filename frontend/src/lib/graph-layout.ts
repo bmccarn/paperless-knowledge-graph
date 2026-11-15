@@ -150,12 +150,12 @@ export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Rec
   const sectors: LayoutSector[] = [];
   present.forEach((family, index) => {
     const members = placed.get(family) ?? [];
-    // Caps count links: take neighbors in rank order while their links fit (the first always fits).
+    // Caps count links: take neighbors in rank order while their links fit.
     const budget = cap + (extra[family] ?? 0);
     let drawn = 0;
     const shown: Neighbor[] = [];
     for (const member of members) {
-      if (shown.length && drawn + member.links.length > budget) break;
+      if (drawn + member.links.length > budget) break;
       shown.push(member);
       drawn += member.links.length;
     }
@@ -197,7 +197,8 @@ export function showMore(summary: NodeSummary, cap: number, extra: Record<string
   for (let added = MORE_STEP; added > 0; added--) {
     const next = { ...extra, [family]: (extra[family] ?? 0) + added };
     const { layout, sector } = shown(next);
-    if (layout.entities <= VIEW_LIMIT && sector!.drawn > before.drawn) return next;
+    const addedLinks = sector!.drawn - before.drawn;
+    if (layout.entities <= VIEW_LIMIT && addedLinks > 0 && addedLinks <= MORE_STEP) return next;
   }
   return extra;
 }

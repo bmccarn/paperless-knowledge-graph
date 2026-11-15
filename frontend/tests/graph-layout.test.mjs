@@ -104,8 +104,16 @@ test("caps and presses count links, not neighbors", () => {
   assert.deepEqual([sector({}).shown, sector({}).drawn, sector({}).hidden], [1, 2, 58]);
   const once = showMore(data, 2, {}, "parties");
   assert.equal(sector(once).drawn - sector({}).drawn, 24, "one press draws at most 25 more links");
-  // A neighbor whose links exceed the cap is still drawn when it ranks first.
-  assert.equal(neighborhoodLayout(data, 1).sectors[0].shown, 1);
+  // A neighbor whose links exceed the cap is not drawn, even when it ranks first.
+  assert.deepEqual([neighborhoodLayout(data, 1).sectors[0].shown, neighborhoodLayout(data, 1).sectors[0].hidden], [0, 60]);
+  // Budget the cap leaves unused never lets a press draw more than 25 links.
+  docId = 1;
+  const slack = summary([link("parties", "a", 5), link("parties", "b", 4), link("parties", "b", 1, { type: "SIGNED_BY" }),
+    ...Array.from({ length: 30 }, (_, i) => link("parties", `c-${String(i).padStart(2, "0")}`, 1))]);
+  const layer = extra => neighborhoodLayout(slack, 2, extra).sectors[0];
+  assert.equal(layer({}).drawn, 1, "b's two links do not fit the one link left");
+  const press = showMore(slack, 2, {}, "parties");
+  assert.ok(layer(press).drawn - layer({}).drawn <= 25, `press drew ${layer(press).drawn - layer({}).drawn}`);
 });
 
 test("a two-family neighbor sits once, in the family with more evidence documents", () => {

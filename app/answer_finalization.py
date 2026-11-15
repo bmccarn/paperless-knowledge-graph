@@ -791,7 +791,12 @@ def value_mismatches(text: str, references: list[dict], *, date_order: str = "md
     number = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
     def numbers(value):
         return {Decimal(n.replace(",", "")) for n in re.findall(r"(?<![\w.,])(" + number + r")(?!\w|[.,]\d)", value)}
-    missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in numbers(source)}
+    def source_numbers(value):
+        # Sources may glue a unit word to a grouped amount (500,000BI). Bare,
+        # signed or single-letter-suffixed tokens (5MM, 10AM, AP1234567) stay unread.
+        return numbers(value) | {Decimal(n.replace(",", "")) for n in
+                                 re.findall(r"(?<![\w.,+-])(\d{1,3}(?:,\d{3})+)(?=[A-Z]{2,}\b)", value)}
+    missing_numbers = numbers(numeric_text) - {value for source in numeric_sources for value in source_numbers(source)}
     if missing_numbers:
         mismatches["values"] = sorted(str(value) for value in missing_numbers)[:30]
     source_pairs = set()
@@ -1251,67 +1256,78 @@ class AnswerFinalizer:
         partial = None
         # Only the final completed, nonconflicting audit is eligible. Never reuse
         # an earlier ledger after a failed repair/audit, or slice within a unit.
+        # A complete subset audit that rejects more units gets one more round on
+        # its own ledger; each round's receipt nests in the previous one.
         summary = ledger["summary"]
-        if (self.allow_subset and disposition == "unsupported" and ledger["complete"]
-                and summary.get("audited") == summary.get("total")
-                and 0 < summary.get("supported", 0) < summary.get("total", 0)
-                and not ledger.get("rejection_reasons")
-                and all(c["status"] in {"supported", "unsupported", "missing"}
-                        and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
-                                 & set(c.get("rejection_reasons", []))) for c in ledger["claims"])):
+        base_candidate, base_ledger, base_observations, receipt, omitted = candidate, ledger, observations, ledger, []
+        for _round in range(2):
+            base_summary = base_ledger["summary"]
+            if not (self.allow_subset and disposition == "unsupported" and base_ledger["complete"]
+                    and base_summary.get("audited") == base_summary.get("total")
+                    and 0 < base_summary.get("supported", 0) < base_summary.get("total", 0)
+                    and not base_ledger.get("rejection_reasons")
+                    and all(c["status"] in {"supported", "unsupported", "missing"}
+                            and not ({"invalid_attribution", "answer_value_mismatch", "invalid_comparison_scope", "invalid_temporal_assertion"}
+                                     & set(c.get("rejection_reasons", []))) for c in base_ledger["claims"])):
+                break
             subset_observations = None
             try:
-                if observations:
-                    subset_observations, selection = observations.supported_subset(ledger['claims'])
+                if base_observations:
+                    subset_observations, selection = base_observations.supported_subset(base_ledger['claims'])
                     subset = subset_observations.text if subset_observations else None
                 else:
-                    selection = supported_revision(candidate, ledger["claims"], answer_units)
+                    selection = supported_revision(base_candidate, base_ledger["claims"], answer_units)
                     subset = selection.pop("candidate")
             except (ValueError, TypeError, KeyError):
                 subset, selection = None, {'reason': 'invalid_candidate_units'}
                 disposition, error = 'audit_failed', 'The partial answer units did not match the audited candidate.'
-            ledger["subset_selection"] = selection
-            if subset:
-                ledger["subset_audit_batches"] = subset_diagnostics = []
-                ledger['subset_audit'] = subset_progress = empty_ledger(subset, subset_observations)
-                subset_progress['audit_batches'] = subset_diagnostics
-                try:
-                    subset_units = subset_observations.units() if subset_observations else answer_units(subset)
-                    reservations = subset_source_reservations(candidate, ledger, subset_units, selection['retained_ids'])
-                    async with asyncio.timeout(self._audit_timeout(subset, subset_observations)):
-                        subset_ledger = await self._audit(question, subset, evidence_pack, plan,
-                            diagnostics=subset_diagnostics, observations=subset_observations, source_reservations=reservations,
-                            progress=subset_progress)
-                    subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
-                    ledger['subset_audit'] = {
-                        'candidate_digest': subset_ledger['candidate_digest'],
-                        'unitization': subset_ledger['unitization'],
-                        'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
-                        'rejection_reasons': subset_ledger.get('rejection_reasons', []),
-                        'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
-                        'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
-                        'selection_coverage': subset_ledger['selection_coverage'],
-                        'source_diagnostics': subset_ledger['source_diagnostics'],
-                        'temporal_disposition': subset_status,
-                    }
-                    if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
-                            and subset_status in {"supported", "qualified"}):
-                        omitted = selection["omitted_units"]
-                        partial = {"original_candidate_digest": ledger["candidate_digest"],
-                                   "original_total": summary["total"], "original_supported": summary["supported"],
-                                   "omitted_count": len(omitted),
-                                   "omitted_units": omitted}
-                        candidate, ledger, disposition = subset, subset_ledger, "partial"
-                    elif not subset_ledger['complete']:
-                        disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
-                except EvidenceReservationError as exc:
-                    ledger['subset_evidence_diagnostic'] = {'reason': exc.reason}
-                    disposition = 'audit_failed'
-                    error = 'The partial answer could not retain its required source evidence.'
-                except TimeoutError:
-                    disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
-                except Exception:
-                    disposition, error = "audit_failed", "The partial answer source audit was unavailable or returned invalid data."
+            receipt["subset_selection"] = selection
+            if not subset:
+                break
+            receipt["subset_audit_batches"] = subset_diagnostics = []
+            receipt['subset_audit'] = subset_progress = empty_ledger(subset, subset_observations)
+            subset_progress['audit_batches'] = subset_diagnostics
+            try:
+                subset_units = subset_observations.units() if subset_observations else answer_units(subset)
+                reservations = subset_source_reservations(base_candidate, base_ledger, subset_units, selection['retained_ids'])
+                async with asyncio.timeout(self._audit_timeout(subset, subset_observations)):
+                    subset_ledger = await self._audit(question, subset, evidence_pack, plan,
+                        diagnostics=subset_diagnostics, observations=subset_observations, source_reservations=reservations,
+                        progress=subset_progress)
+                subset_status, _ = temporal_acceptance(question, subset, subset_ledger, plan, evidence_pack, evaluated_at)
+                receipt['subset_audit'] = {
+                    'candidate_digest': subset_ledger['candidate_digest'],
+                    'unitization': subset_ledger['unitization'],
+                    'complete': subset_ledger['complete'], 'summary': subset_ledger['summary'],
+                    'rejection_reasons': subset_ledger.get('rejection_reasons', []),
+                    'claims': subset_ledger['claims'], 'audit_batches': subset_diagnostics,
+                    'spans': subset_ledger['spans'], 'available_span_count': subset_ledger['available_span_count'],
+                    'selection_coverage': subset_ledger['selection_coverage'],
+                    'source_diagnostics': subset_ledger['source_diagnostics'],
+                    'temporal_disposition': subset_status,
+                }
+                omitted = omitted + selection["omitted_units"]
+                if (subset_ledger["complete"] and subset_ledger["summary"]["supported"] == subset_ledger["summary"]["total"]
+                        and subset_status in {"supported", "qualified"}):
+                    partial = {"original_candidate_digest": ledger["candidate_digest"],
+                               "original_total": summary["total"], "original_supported": summary["supported"],
+                               "omitted_count": len(omitted),
+                               "omitted_units": omitted}
+                    candidate, ledger, disposition = subset, subset_ledger, "partial"
+                    break
+                elif not subset_ledger['complete']:
+                    disposition, error = 'incomplete', 'The partial answer source audit did not complete.'
+                    break
+                base_candidate, base_ledger, base_observations = subset, subset_ledger, subset_observations
+                receipt = receipt['subset_audit']
+            except EvidenceReservationError as exc:
+                receipt['subset_evidence_diagnostic'] = {'reason': exc.reason}
+                disposition = 'audit_failed'
+                error = 'The partial answer could not retain its required source evidence.'
+            except TimeoutError:
+                disposition, error = "timeout", "The partial answer source audit exceeded its time budget."
+            except Exception:
+                disposition, error = "audit_failed", "The partial answer source audit was unavailable or returned invalid data."
         temporal_disposition, current = temporal_acceptance(
             question, candidate, ledger, plan, evidence_pack, evaluated_at)
         if disposition in {"supported", "qualified", "current_unresolved"}:
@@ -1339,13 +1355,15 @@ class AnswerFinalizer:
             verification["missing_evidence"] = ["Some claims were omitted because they could not be verified."]
         revision = hashlib.sha256(candidate.encode()).hexdigest()
         # Public manifest records exactly what was sent without duplicating full OCR.
-        for audit in (ledger, ledger.get('subset_audit', {})):
+        audit = ledger
+        while audit:
             for claim in audit.get('claims', []):
                 if 'semantic_decision' in claim:
                     claim['semantic_decision'] = {key: value for key, value in claim['semantic_decision'].items()
                                                   if key not in {'source_basis', 'unresolved_assumptions'}}
             if 'spans' in audit:
                 audit['spans'] = [{k: v for k, v in span.items() if k not in {"content", "boundary_before", "boundary_after", "date_context_before"}} for span in audit['spans']]
+            audit = audit.get('subset_audit')
         result = {"answer": public_answer, "verification": verification, "claim_ledger": ledger,
                 "current_state": current,
                 "finalization": {"policy_version": POLICY_VERSION, "disposition": disposition,

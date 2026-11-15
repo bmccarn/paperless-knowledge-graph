@@ -32,7 +32,7 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Claim ledger**: Structured claims with supporting evidence and verification status bound to one exact answer candidate. A complete ledger means every unit was audited, not that the answer or archive is complete.
 
-**Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
+**Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. A complete subset audit that rejects more units allows one more subset round; at most two rounds run, and the last audit must support every delivered unit. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
 
 **Documented state**: An audited observation or comparison scoped to retrieved dated records. It does not establish active real-world status or archive completeness.
 

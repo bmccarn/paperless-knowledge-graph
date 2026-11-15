@@ -2,7 +2,7 @@ import unittest
 import asyncio
 import copy
 
-from app.answer_finalization import AnswerFinalizer, answer_units, values_match
+from app.answer_finalization import AnswerFinalizer, answer_units, value_mismatches, values_match
 
 
 PACK = {"items": [{"id": "policy-jan-v1", "document_id": 101, "chunk_index": 0,
@@ -64,6 +64,17 @@ class AnswerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(answer[unit["start"]:unit["end"]], unit["text"])
         self.assertFalse(values_match("### Premium $999", [{"quote": "$321.00"}]))
         self.assertEqual(answer_units("---\n***\n___"), [])
+
+    def test_grouped_source_amount_with_uppercase_suffix_is_read(self):
+        quote = [{"quote": "$250,000/500,000BI; $250,000PD"}]
+        self.assertEqual(value_mismatches("$250,000/500,000 bodily injury and $250,000 property damage", quote), {})
+        self.assertEqual(value_mismatches("$600,000 bodily injury", quote)["values"], ["600000"])
+        # Only comma-grouped amounts before a whole uppercase word are read.
+        for claim, source in [("5", "5MM"), ("5", "5M"), ("3", "3ABCD12EF3GH45678"),
+                              ("10", "10AM"), ("1234567", "AP1234567"), ("5,000", "5,000MMX9"),
+                              ("250,000", "-250,000PD")]:
+            with self.subTest(claim=claim, source=source):
+                self.assertIn("values", value_mismatches(f"The amount is {claim}.", [{"quote": source}]))
 
     async def test_requested_short_source_reaches_auditor_among_long_distractors(self):
         from app.evidence import build_evidence_pack

@@ -148,7 +148,7 @@ only verifier/editor retries. The native qualification harness uses one SDK atte
 production transport retries must be separately recorded, never called native stages.
 
 For D document packets and audited batch counts B0 (initial), B1 (optional repair)
-and Bs (optional subset), the pipeline native-call ceiling after retrieval is
+and Bs (optional subset, summed over at most two rounds), the pipeline native-call ceiling after retrieval is
 `1 planner + 2D readers + 1 composer + 2(B0+B1+Bs) auditors + 1 editor + 1 coverage`.
 Absent optional passes contribute zero. Each B is bounded by the existing audit
 unit/batch settings. Publish both this computed ceiling and the per-stage counts.

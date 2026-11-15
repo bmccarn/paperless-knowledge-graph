@@ -200,3 +200,22 @@ for (const [term, path] of [["Alex Example", "/graph"], ["synthetic unmatched qu
   await page.waitForURL(url => url.pathname === path);
   if (asked) assert.equal((await asked).postDataJSON().question, term);
 });
+
+test("the three columns show each saved answer's state and question, the duplicate count and the archive by type", async t => {
+  const { page } = await fixturePage(t);
+  assert.ok((await page.request.post(`${base}/api/_fixture/reset`)).ok());
+  assert.ok((await page.request.post(`${base}/api/_fixture/saved-answers`)).ok());
+  // Later suites expect no saved conversations.
+  t.after(() => page.request.post(`${base}/api/_fixture/reset`));
+  await page.goto(base);
+  const answers = page.getByRole("region", { name: "Recent answers" }).getByRole("listitem");
+  await answers.first().waitFor();
+  assert.deepEqual(await answers.allInnerTexts(), [
+    "Not checked\nWhat premium does the January statement list?",
+    "Not checked\nWhat premium does the January statement list?",
+    "Verified\nWhat premium does the January statement list?",
+  ]);
+  assert.match(await page.getByRole("region", { name: "Possible duplicates" }).innerText(), /3 pairs to review/);
+  const types = await page.getByRole("region", { name: "Archive by type" }).getByRole("listitem").allInnerTexts();
+  assert.deepEqual(types.map(row => row.replace(/\s+/g, " ")), ["Invoice 151", "Medical 150", "Financial statement 1", "Insurance 1"]);
+});

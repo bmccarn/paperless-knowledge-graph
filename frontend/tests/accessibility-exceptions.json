@@ -5,12 +5,10 @@
     "state": "main",
     "issue": 137,
     "targets": [
-      "[\".border-transparent\"]",
       "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(1) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
       "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(2) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
       "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(3) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
-      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(4) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]",
-      "[\".hover\\\\:bg-primary\\\\/90.px-4.has-\\\\[\\\\>svg\\\\]\\\\:px-3\"]"
+      "[\".group.hover\\\\:shadow-lg.hover\\\\:shadow-primary\\\\/5:nth-child(4) > .pt-5.pb-4[data-slot=\\\"card-content\\\"] > .items-start.justify-between.flex > .space-y-2 > .text-muted-foreground\\\\/70.text-xs\"]"
     ]
   },
   {
@@ -57,8 +55,6 @@
     "issue": 134,
     "targets": [
       "[\".bg-emerald-500\\\\/15\"]",
-      "[\".border-border.bg-muted.gap-1\\\\.5\"]",
-      "[\".border-border.bg-muted.transition-\\\\[color\\\\,box-shadow\\\\]\"]",
       "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
       "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
       "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
@@ -81,9 +77,9 @@
     "issue": 134,
     "targets": [
       "[\"p.text-[10px].uppercase.text-muted-foreground.tracking-wider\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -94,8 +90,6 @@
     "issue": 134,
     "targets": [
       "[\".bg-emerald-500\\\\/15\"]",
-      "[\".border-border.bg-muted.gap-1\\\\.5\"]",
-      "[\".border-border.bg-muted.transition-\\\\[color\\\\,box-shadow\\\\]\"]",
       "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
       "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
       "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
@@ -119,20 +113,10 @@
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "color-contrast",
-    "route": "/documents/101",
-    "state": "main",
-    "issue": 135,
-    "targets": [
-      "[\".\\\\[a\\\\&\\\\]\\\\:hover\\\\:bg-primary\\\\/90\"]",
-      "[\".hover\\\\:bg-primary\\\\/90\"]"
     ]
   },
   {
@@ -151,7 +135,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -162,7 +146,7 @@
     "issue": 136,
     "targets": [
       "[\"p.text-[10px].text-muted-foreground.mt-1.break-all\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -184,29 +168,20 @@
       "[\"div.px-3.py-2.text-[11px].font-medium.uppercase.tracking-wider.text-muted-foreground\"]",
       "[\"p.border-t.p-3.text-[11px].leading-relaxed.text-muted-foreground\"]",
       "[\"span.hidden.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2.sm:block\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
     ]
   },
   {
-    "rule": "color-contrast",
-    "route": "/hubs",
-    "state": "main",
-    "issue": 138,
-    "targets": [
-      "[\".bg-primary.text-primary-foreground.px-3\"]"
-    ]
-  },
-  {
     "rule": "font-size",
     "route": "/hubs",
     "state": "main",
     "issue": 138,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -216,8 +191,7 @@
     "state": "history-sheet",
     "issue": 120,
     "targets": [
-      "[\"#radix-_r_0_ > .overflow-x-hidden.overflow-y-auto.flex-1 > .pb-2.space-y-0\\\\.5.px-2 > .text-muted-foreground\\\\/60.py-6.text-center\"]",
-      "[\".bg-primary.text-primary-foreground.px-2\\\\.5\"]"
+      "[\"#radix-_r_0_ > .overflow-x-hidden.overflow-y-auto.flex-1 > .pb-2.space-y-0\\\\.5.px-2 > .text-muted-foreground\\\\/60.py-6.text-center\"]"
     ]
   },
   {
@@ -235,7 +209,6 @@
     "state": "main",
     "issue": 120,
     "targets": [
-      "[\".bg-primary.text-primary-foreground.px-2\\\\.5\"]",
       "[\".text-muted-foreground\\\\/60\"]"
     ]
   },
@@ -245,20 +218,8 @@
     "state": "main",
     "issue": 120,
     "targets": [
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
-    ]
-  },
-  {
-    "rule": "color-contrast",
-    "route": "/query",
-    "state": "verified",
-    "issue": 120,
-    "targets": [
-      "[\".bg-muted\\\\/70.px-2.py-1:nth-child(1) > .capitalize.text-\\\\[9px\\\\].text-muted-foreground\"]",
-      "[\".bg-muted\\\\/70.px-2.py-1:nth-child(2) > .capitalize.text-\\\\[9px\\\\].text-muted-foreground\"]",
-      "[\".py-1\\\\.5.bg-primary.text-primary-foreground\"]",
-      "[\".rounded-br-md > .whitespace-pre-wrap\"]"
     ]
   },
   {
@@ -273,11 +234,11 @@
       "[\"p.text-[10px].font-medium.text-muted-foreground.flex.items-center.gap-1.uppercase.tracking-wider\"]",
       "[\"span\"]",
       "[\"span.font-medium.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[8px].px-1.py-0.shrink-0\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].px-1.py-0.hidden.sm:inline-flex\"]",
-      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.focus-visible:ring-ring/50.focus-visible:ring-[3px].aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[8px].px-1.py-0.shrink-0\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px]\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-full.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.border-border.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[9px]\"]",
+      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].px-1.py-0.hidden.sm:inline-flex\"]",
+      "[\"span.items-center.justify-center.rounded-full.border.border-transparent.px-2.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:ring-destructive/20.dark:aria-invalid:ring-destructive/40.aria-invalid:border-destructive.transition-[color,box-shadow].overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[9px].gap-1.py-0.hidden.sm:inline-flex\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]",
       "[\"span.text-[10px].text-muted-foreground\"]",
       "[\"span.text-[10px].text-muted-foreground.flex.items-center.gap-1\"]"

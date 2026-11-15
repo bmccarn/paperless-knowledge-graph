@@ -201,6 +201,7 @@ function CopyButton({ text }: { text: string }) {
 function QueryContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
+  const selectedConversation = searchParams.get("conversation") || "";
   const initialDraft = searchParams.get("draft") || "";
 
   const paperlessBaseUrl = usePaperlessUrl();
@@ -479,6 +480,18 @@ function QueryContent() {
       }
     }
   };
+
+  const loadSelectedConversation = useEffectEvent((id: string) => loadConversation({ id, title: "" }));
+  useEffect(() => {
+    if (!selectedConversation) return;
+    const timer = setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("conversation");
+      window.history.replaceState(null, "", url);
+      loadSelectedConversation(selectedConversation);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [selectedConversation]);
 
   const handleDeleteConversation = async (id: string) => {
     await deleteConversation(id);

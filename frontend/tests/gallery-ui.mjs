@@ -21,7 +21,7 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     await page.getByRole("heading", { name: "Component gallery", exact: true }).waitFor();
     await page.evaluate(() => document.fonts.ready);
     await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; }" });
-    for (const name of ["Buttons", "Fields and selection", "Cards and badges", "Table and pager", "Progress, skeleton and scroll area", "Dialog, sheet and tooltip"]) {
+    for (const name of ["Buttons", "Fields and selection", "Cards and badges", "Table and pager", "Progress, skeleton and scroll area", "Dialogs, sheet, tooltip and toast"]) {
       assert.equal(await page.getByRole("heading", { name, exact: true }).count(), 1);
     }
     assert.ok(await page.locator("[data-slot=button]").evaluateAll(buttons => buttons.every(button => button.textContent.trim() || button.getAttribute("aria-label"))));
@@ -55,10 +55,10 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     const pager = page.getByRole("navigation", { name: "page navigation", exact: true });
     await pager.getByRole("button", { name: "Next page", exact: true }).click();
     assert.match(await pager.textContent(), /11–20 of 23/);
-    for (const kind of ["dialog", "sheet"]) {
+    for (const kind of ["dialog", "sheet", "alert dialog"]) {
       const trigger = page.getByRole("button", { name: `Open ${kind}`, exact: true });
       await trigger.click();
-      const dialog = page.getByRole("dialog");
+      const dialog = page.getByRole(kind === "alert dialog" ? "alertdialog" : "dialog");
       await dialog.waitFor();
       if (kind === "sheet") {
         const box = await dialog.boundingBox();

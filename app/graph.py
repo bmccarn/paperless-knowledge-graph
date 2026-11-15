@@ -1301,7 +1301,7 @@ class GraphStore:
                     WITH collect({{p: p, weights: weights, inferred: inferred, keys: keys, weakest: weakest}}) AS rows
                     RETURN size(rows) AS checked, [row IN rows[..$k] | {{
                         nodes: [x IN nodes(row.p) | {{id: x.uuid, label: head(labels(x)),
-                                                      name: coalesce(x.name, x.title)}}],
+                                                      name: coalesce(x.name, x.title, '')}}],
                         links: [i IN range(0, size(row.keys) - 1) | {{
                             key: row.keys[i], source: startNode(relationships(row.p)[i]).uuid,
                             type: type(relationships(row.p)[i]), target: endNode(relationships(row.p)[i]).uuid,

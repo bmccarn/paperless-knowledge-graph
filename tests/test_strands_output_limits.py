@@ -119,6 +119,27 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.assertTrue(all(client.is_closed for client in self.clients))
 
+    async def test_audit_batches_share_the_complete_source_prefix_on_the_wire(self):
+        spans = evidence_spans(PACK)
+        plan = {'evaluated_at': '2026-01-01', 'answer_context': QUOTE}
+        for unit_id in ('u1', 'u2'):
+            result = await self.orchestrator.audit_answer_units('What is recorded?',
+                [{'id': unit_id, 'text': QUOTE}], spans, plan)
+            self.assertEqual(result['assessments'][0]['unit_id'], unit_id)
+        prompts = []
+        for request in self.requests:
+            content = request['messages'][-1]['content']
+            prompt = content if isinstance(content, str) else ''.join(block['text'] for block in content)
+            payload = json.loads(prompt)
+            self.assertEqual(payload['source_spans'], spans)
+            prefix = json.dumps({'source_spans': spans}, ensure_ascii=False)[:-1].encode('utf-8')
+            self.assertTrue(prompt.encode('utf-8').startswith(prefix))
+            self.assertLess(prompt.index('"source_spans"'), prompt.index('"expected_unit_ids"'))
+            self.assertLess(prompt.index('"source_spans"'), prompt.index('"units"'))
+            prompts.append(prompt.encode('utf-8'))
+        self.assertNotEqual(prompts[0], prompts[1])
+        self.assertEqual(self.requests[0]['messages'][0], self.requests[1]['messages'][0])
+
     @contextmanager
     def public_queries(self):
         invalidate_on_sync()

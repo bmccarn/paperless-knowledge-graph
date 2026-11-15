@@ -161,7 +161,11 @@ The app sends every model request through LiteLLM's OpenAI-compatible API, so ea
 
 The classifier, extractor, query engine, entity helpers, conversation titles and the default for `/models` all use `GEMINI_MODEL`. Strands uses `STRANDS_MODEL` when it is set. `/models` lists the routes your LiteLLM proxy reports. The app does not send a thinking-level setting, so do not configure the unsupported `minimal` level for Gemini 3.8 Flash in the proxy.
 
-Query cache keys include the query model and the Strands model, so changing either one does not return stale cached answers. Ingestion fingerprints include the extraction model and the source policy version. After you change the extraction model, the next normal sync rebuilds the affected documents. You don't need to wipe the graph, run Reindex All or redo OCR in Paperless. Changing models does not change the OCR hash that document feedback uses.
+Ordinary final synthesis uses the model selected for a question. Existing failure handling can use `FALLBACK_MODEL` or a helper draft; every candidate still needs its own complete audit. The optional question pipeline uses Strands composition. JSON helpers for query decomposition, gap analysis and entity extraction use `GEMINI_MODEL`, then `FALLBACK_MODEL` after parse errors or rate limits. Strands planning, auditing and editing keep their separate route.
+
+Audit requests serialize shared source context before candidate and batch fields. This ordering permits prefix caching without changing the audit schema or rejection rules. The pinned Strands Chat Completions transport does not place cache breakpoints. Cache reads depend on the gateway and provider configuration and must be measured after deployment; offline tests establish identical source-prefix bytes only.
+
+Query cache keys include the selected answer route, the primary JSON helper route and the Strands route, so changing any of these routes does not return stale cached answers. Ingestion fingerprints include the extraction model and the source policy version. After you change the extraction model, the next normal sync rebuilds the affected documents. You don't need to wipe the graph, run Reindex All or redo OCR in Paperless. Changing models does not change the OCR hash that document feedback uses.
 
 ### Extraction
 

@@ -161,6 +161,16 @@ try {
   const bounds = await restored.boundingBox();
   assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 788, 'Restored selected row is above the phone tab bar');
 
+  // An expanded Focus inspector must leave usable rows when the phone switches to Table.
+  await page.keyboard.press('n');
+  await page.getByRole('button', { name: 'Expand inspector', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse inspector', exact: true }).waitFor();
+  await page.keyboard.press('t');
+  await table.waitFor();
+  assert.ok(await table.evaluate(element => element.parentElement.parentElement.clientHeight) >= 48,
+    'Switching from an expanded Focus inspector leaves room for Table rows');
+  assert.equal(await page.getByRole('button', { name: /^(Expand|Collapse) inspector$/ }).count(), 0);
+
   // Selecting the focus entity does not select one of its self-link rows.
   const self = structuredClone(hub);
   self.links.push({ ...hub.links[0], key: 'nb-rowan~ASSOCIATED_WITH~nb-rowan', family: 'loose', neighbor: hub.focus });

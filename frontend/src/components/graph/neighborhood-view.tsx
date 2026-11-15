@@ -83,8 +83,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, [focusId, attempt]);
 
   const cap = summary ? familyCap(summary.focus.is_hub, phone) : 0;
-  const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra, phone ? PHONE_PILL_RADIUS : PILL_RADIUS),
-    [summary, cap, extra, phone]);
+  // The phone View button and inspector peek leave a shorter canvas; give its pills more room.
+  const pillRadius = phone ? PHONE_PILL_RADIUS + (urlState.selection ? 100 : 0) : PILL_RADIUS;
+  const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra, pillRadius),
+    [summary, cap, extra, pillRadius]);
   const { graph, positions } = useMemo(() => {
     // The canvas sizes and rings nodes from these fields of the summary.
     const fields = new Map<string, Record<string, unknown>>(summary ? [
@@ -160,7 +162,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
 
   const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
   // On phone the inspector is a bottom sheet: a 300 px peek, or expanded over all but 120 px of the canvas.
-  const expanded = phone && expandedSheet === sheetKey;
+  const expanded = phone && !isTable && expandedSheet === sheetKey;
   let inspector = null;
   if (summary && layout) {
     if (selectedLink) inspector = <LinkInspector summary={summary} link={selectedLink} onClose={clearSelection} />;
@@ -300,7 +302,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             aria-label="Evidence inspector"
             className={`shrink-0 overflow-y-auto border-t border-border bg-background max-md:rounded-t-xl max-md:shadow-(--shadow-overlay) md:h-auto md:w-[380px] md:border-l md:border-t-0 ${expanded ? "max-md:min-h-0 max-md:flex-1" : "h-[300px]"} ${selected || leaf ? "" : "max-md:hidden"}`}
           >
-            {phone && selected && (
+            {phone && selected && !isTable && (
               <button type="button" aria-expanded={expanded} onClick={() => setExpandedSheet(expanded ? null : sheetKey)}
                 className="sticky top-0 z-10 flex h-8 w-full items-center justify-center bg-background">
                 <span aria-hidden className="h-1 w-9 rounded-full bg-border-strong" />

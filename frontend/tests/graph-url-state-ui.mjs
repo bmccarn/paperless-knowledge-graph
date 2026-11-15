@@ -40,6 +40,20 @@ try {
   await page.goForward();
   await page.waitForURL(url => url.searchParams.get("focus") === "nb-coverage-1");
 
+  // An older neighborhood link opens Focus. While Focus is the only view, no switcher shows and keys 1, n and 2 change nothing.
+  await page.goto(`${base}/graph?focus=nb-rowan&view=neighborhood`);
+  await page.getByText("Rowan Vale: 105 links in 9 families.", { exact: false }).waitFor();
+  await page.locator("canvas").first().waitFor();
+  assert.equal(await page.getByRole("toolbar", { name: "View" }).count(), 0);
+  const keysUrl = page.url();
+  const keysHistory = await page.evaluate(() => history.length);
+  for (const key of ["1", "n", "2", "t", "p"]) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(100);
+    assert.equal(page.url(), keysUrl, `key ${key}`);
+    assert.equal(await page.evaluate(() => history.length), keysHistory, `key ${key}`);
+  }
+
   // A summary link key restores the renderer's selected link and its label after reload.
   const key = "nb-rowan~COVERS~nb-coverage-1";
   await page.goto(`${base}/graph?${new URLSearchParams({ focus: "nb-rowan", sel: key })}`);

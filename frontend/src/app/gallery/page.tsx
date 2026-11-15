@@ -13,6 +13,7 @@ import { ClaimProse, MarginNote } from "@/components/claim-prose";
 import { ClaimTable } from "@/components/claim-table";
 import { SourceList } from "@/components/source-list";
 import { KindShape, TypeDot } from "@/components/kind-shape";
+import { GraphLegend } from "@/components/graph/graph-legend";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
 import { ArrowDown, ArrowUp, Check, FileText, Plus } from "lucide-react";
@@ -157,6 +158,10 @@ export default function GalleryPage() {
           <Row name="Shape">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} />)}</Row>
           <Row name="Icon">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} icon />)}</Row>
           <Row name="Faded">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} faded />)}</Row>
+        </Section>
+
+        <Section id="graph-legend" title="Graph legend">
+          <GraphLegend items={{ labels: [...NODE_LABELS.filter(label => !label.startsWith("Document")), "Other"], styles: ["supported", "inferred", "aggregate"] }} />
         </Section>
 
         <Section id="document-types" title="Document types">

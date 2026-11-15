@@ -12,9 +12,14 @@ export const linkWidth = (weight: number) => clamp(1 + 0.75 * Math.log2(Math.max
 /** With this many nodes or fewer, every node is labeled. */
 export const LABEL_ALL = 40;
 
-/** The canvas label: the name cut at 28 characters, or the kind and a short id when the node has no name. */
+/** The name, or the kind and a short id when the node has none; never the full id. */
+export function displayName(name: string, id: string, label: string): string {
+  return name && name !== id ? name : `${nodeLabelText(label)} ${id.replace(/^doc-/, "").slice(0, 6)}`;
+}
+
+/** The canvas label: the display name cut at 28 characters. */
 export function nodeLabel(name: string, id: string, label: string): string {
-  const text = name && name !== id ? name : `${nodeLabelText(label)} ${id.replace(/^doc-/, "").slice(0, 6)}`;
+  const text = displayName(name, id, label);
   return text.length > 28 ? `${text.slice(0, 27)}…` : text;
 }
 

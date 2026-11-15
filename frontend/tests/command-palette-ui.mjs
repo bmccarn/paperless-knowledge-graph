@@ -43,8 +43,11 @@ for (const width of [1440, 390]) test(`palette keyboard and navigation at ${widt
   await input.fill("Example");
   await page.getByRole("option", { name: "Example Utility", exact: true }).waitFor();
   assert.equal(await page.getByRole("group", { name: "Entities", exact: true }).getByRole("option").count(), 2);
-  await page.getByRole("option", { name: "Example Utility", exact: true }).click();
-  await page.waitForURL("**/graph?q=Example%20Utility");
+  // Enter on an entity row opens that entity's neighborhood.
+  for (let step = 0; step < 10 && await page.locator(`[id="${await input.getAttribute("aria-activedescendant")}"]`).innerText() !== "Example Utility"; step++)
+    await input.press("ArrowDown");
+  await input.press("Enter");
+  await page.waitForURL("**/graph?focus=org-1");
   await page.keyboard.press("Control+k");
   await input.fill("Older verified");
   await page.getByRole("option", { name: "Older verified answer", exact: true }).waitFor();

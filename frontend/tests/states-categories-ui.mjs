@@ -72,7 +72,7 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
   assert.ok(!/\d+\s*%/.test(await page.getByRole("region", { name: "Evidence levels", exact: true }).innerText()), "no percentage appears");
 
   for (const [label, kind] of Object.entries(kinds)) {
-    assert.equal(await page.locator(`[data-kind="${kind}"]`, { hasText: new RegExp(`^${label}$`) }).count(), 3, `${label} in shape, icon and faded rows`);
+    assert.equal(await page.getByRole("region", { name: "Entity kinds", exact: true }).locator(`[data-kind="${kind}"]`, { hasText: new RegExp(`^${label}$`) }).count(), 3, `${label} in shape, icon and faded rows`);
     assert.ok(tree.includes(label), `${label} is missing from the accessibility tree`);
   }
   // Outlined types keep the family color as a stroke over a --bg fill; faded nodes keep their shape and change only color.

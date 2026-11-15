@@ -2,21 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import { Focus, Loader2 } from "lucide-react";
+import { Focus, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { NodeDetailPanel } from "@/components/node-detail-panel";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { errMsg } from "@/lib/utils";
 import { getGraphNodeSummary } from "@/lib/api";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
+  drawableLinks,
   familyCap,
   neighborhoodLayout,
   showMore,
   VIEW_LIMIT,
   type NodeSummary,
 } from "@/lib/graph-layout";
+import { documentsByDate, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
 import type { GraphHandle } from "./force-graph-client";
+import { EvidenceShelf } from "./evidence-shelf";
+import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
+import { GraphLegend, LegendContent } from "./graph-legend";
 
 const ForceGraphClient = dynamic(
   () => import("./force-graph-client").then((module) => module.ForceGraphClient),
@@ -32,7 +36,6 @@ const subscribePhone = (change: () => void) => {
 
 /** `/graph?focus=<id>`: the focus entity and its capped neighbors in fixed radial sectors. */
 export function NeighborhoodView({ focusId }: { focusId: string }) {
-  const router = useRouter();
   const [summary, setSummary] = useState<NodeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -41,6 +44,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
+  const [markedDoc, setMarkedDoc] = useState<number | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
   const handleRef = useRef<GraphHandle | null>(null);
 
@@ -76,24 +80,32 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     return { graph, positions: new Map(layout?.nodes.map(({ id, x, y }) => [id, { x, y }])) };
   }, [layout, summary]);
 
-  const openFocus = useCallback((id: string) => router.push(`/graph?focus=${encodeURIComponent(id)}`), [router]);
-  const selectNode = useCallback((node: ExplorerNode) => {
+  /** "+N more": add up to 25 neighbors of the family to its sector. */
+  const addMore = useCallback((family: string) => {
     if (!summary) return;
-    if (node.label === "Aggregate") {
-      // shortcut: a pill press adds neighbors; the inspector's pill member list arrives with #131.
-      const next = showMore(summary, cap, extra, node.id.slice("pill:".length));
-      if (next !== extra) setExtra(next);
-      else if (layout && layout.entities >= VIEW_LIMIT) setAtLimit(true);
-      return;
-    }
+    const next = showMore(summary, cap, extra, family);
+    if (next !== extra) setExtra(next);
+    else if (layout && layout.entities >= VIEW_LIMIT) setAtLimit(true);
+  }, [summary, cap, extra, layout]);
+  // A pill click selects it and lists its members; Shift+click adds them, as "+N more" does.
+  const selectNode = useCallback((node: ExplorerNode, event?: MouseEvent) => {
+    if (node.label === "Aggregate" && event?.shiftKey) return addMore(node.id.slice("pill:".length));
     setSelectedNodeId(node.id);
     setSelectedLinkId(null);
     setKeyboardNodeId(null);
-  }, [summary, cap, extra, layout]);
-  const selectLink = useCallback((link: ExplorerLink) => {
-    setSelectedLinkId(link.id);
+  }, [addMore]);
+  const selectLinkKey = useCallback((key: string) => {
+    setSelectedLinkId(key);
     setSelectedNodeId(null);
+    setKeyboardNodeId(null);
   }, []);
+  const selectLink = useCallback((link: ExplorerLink) => {
+    // A pill's dashed link stands for the pill.
+    if (link.props.aggregate === true) {
+      setSelectedNodeId(link.target);
+      setSelectedLinkId(null);
+    } else selectLinkKey(link.id);
+  }, [selectLinkKey]);
   const clearSelection = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedLinkId(null);
@@ -101,8 +113,32 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, []);
   const onReady = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
 
-  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId && node.label !== "Aggregate");
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;
+  const documents = useMemo(() => (summary ? documentsByDate(summary) : []), [summary]);
+  const markedLinkIds = useMemo(() => (summary && markedDoc !== null ? linksOfDocument(summary, markedDoc) : undefined), [summary, markedDoc]);
+  const legend = useMemo(() => layout && legendItems(layout), [layout]);
+  const leaf = summary !== null && drawableLinks(summary).length === 0;
+  const selectedLink = summary?.links.find(link => link.key === selectedLinkId);
+  const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
+  const pill = selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
+  const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
+  const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
+
+  let inspector = null;
+  if (summary && layout) {
+    if (selectedLink) inspector = <LinkInspector summary={summary} link={selectedLink} onClose={clearSelection} />;
+    else if (pill) {
+      const drawn = new Set(layout.links.map(link => link.key));
+      const next = showMore(summary, cap, extra, pill.family);
+      const adds = next === extra ? 0 : neighborhoodLayout(summary, cap, next).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
+      inspector = (
+        <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} {...rowEvents}
+          links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);
+    }
+    else if (selectedNodeId && selectedNodeId !== summary.focus.id && positions.has(selectedNodeId))
+      inspector = <NeighborInspector summary={summary} neighborId={selectedNodeId} onClose={clearSelection} {...rowEvents} />;
+    else inspector = <FocusInspector summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -116,7 +152,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             </p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout}>
+        <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
           <Focus className="h-4 w-4" />
           Fit view
         </Button>
@@ -134,43 +170,63 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           The canvas shows at most {VIEW_LIMIT} entities. No more neighbors can be added to this view.
         </p>
       )}
-      <div className="relative flex min-h-0 flex-1">
-        <section className="relative min-w-0 flex-1" aria-label="Graph workspace">
-          {layout ? (
-            <ForceGraphClient
-              graph={graph}
-              positions={positions}
-              focusId={focusId}
-              keyboardNodeId={keyboardNodeId}
-              showLabels
-              selectedNodeId={selectedNodeId}
-              selectedLinkId={selectedLinkId}
-              onSelectNode={selectNode}
-              onSelectLink={selectLink}
-              onClear={clearSelection}
-              onReady={onReady}
-            />
-          ) : !error && (
-            <div role="status" className="flex h-full items-center justify-center gap-2 text-sm">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Loading neighbors…
-            </div>
+      <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <section className="relative min-h-0 flex-1" aria-label="Graph workspace">
+            {leaf ? (
+              <div className="flex h-full items-center justify-center p-8">
+                <p className="max-w-sm text-balance text-center copy-14 text-fg-muted">
+                  No direct links extracted. This entity appears in {plural(documents.length, "document")}.
+                </p>
+              </div>
+            ) : layout ? (
+              <ForceGraphClient
+                graph={graph}
+                positions={positions}
+                focusId={focusId}
+                keyboardNodeId={keyboardNodeId}
+                markedLinkIds={markedLinkIds}
+                showLabels
+                selectedNodeId={selectedNodeId}
+                selectedLinkId={selectedLinkId}
+                onSelectNode={selectNode}
+                onSelectLink={selectLink}
+                onClear={clearSelection}
+                onReady={onReady}
+              />
+            ) : !error && (
+              <div role="status" className="flex h-full items-center justify-center gap-2 text-sm">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Loading neighbors…
+              </div>
+            )}
+            {legend && !leaf && (
+              <>
+                <GraphLegend items={legend} className="absolute bottom-4 left-4 hidden md:block" />
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button variant="outline" size="icon-lg" aria-label="Legend" className="absolute right-3 top-3 md:hidden"><Info /></Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="rounded-t-xl px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-4">
+                    <SheetTitle className="heading-16">Legend</SheetTitle>
+                    <div><LegendContent items={legend} /></div>
+                  </SheetContent>
+                </Sheet>
+              </>
+            )}
+          </section>
+          {summary && (
+            <EvidenceShelf documents={documents} entityId={summary.focus.id} marked={markedDocs} onMark={setMarkedDoc}
+              className={selected ? "max-md:hidden" : undefined} />
           )}
-        </section>
-        {selectedNode && (
+        </div>
+        {inspector && (
           <aside
+            key={selectedLinkId ?? selectedNodeId ?? "focus"}
             aria-label="Evidence inspector"
-            className="absolute inset-y-0 right-0 z-30 w-full overflow-y-auto border-l bg-card shadow-xl sm:static sm:w-80 sm:shrink-0 xl:w-[380px]"
+            className={`h-[300px] shrink-0 overflow-y-auto border-t border-border bg-background md:h-auto md:w-[380px] md:border-l md:border-t-0 ${selected ? "" : "max-md:hidden"}`}
           >
-            <NodeDetailPanel
-              key={selectedNode.id}
-              node={selectedNode}
-              onClose={clearSelection}
-              onExpandNeighbors={openFocus}
-              expanding={false}
-              onSelectNode={(node) => (positions.has(node.id) ? selectNode(node) : openFocus(node.id))}
-              onFocusNode={setKeyboardNodeId}
-            />
+            {inspector}
           </aside>
         )}
       </div>

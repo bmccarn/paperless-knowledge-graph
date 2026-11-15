@@ -27,6 +27,21 @@ const statusWith = (extra, routes = {}) => async page => {
   await page.route("**/api/status", route => route.fulfill({ json: { ...healthy, ...extra } }));
   for (const [path, json] of Object.entries(routes)) await page.route(`**/api${path}`, route => route.fulfill({ json }));
 };
+const graphText = page => page.addInitScript(() => {
+  window.__graphText = {};
+  const fillText = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText = function (text, ...rest) {
+    const point = new DOMPoint(0, 0).matrixTransform(this.getTransform());
+    if (this.canvas.isConnected) window.__graphText[text] = { x: point.x / devicePixelRatio, y: point.y / devicePixelRatio };
+    return fillText.call(this, text, ...rest);
+  };
+});
+const graphReady = async page => {
+  await page.waitForFunction(() => window.__visualGraphPainted === true);
+  // Let the initial fit run and the renderer refresh its hit canvas (at most every 800 ms).
+  await page.clock.runFor(1000);
+};
+
 const extraStates = [
   ...["initial", "results", "empty", "error"].map(state => ({
     ...mainStates[0], name: `palette-${state}`, state: `palette-${state}`,
@@ -207,6 +222,41 @@ const extraStates = [
     await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
     await page.getByRole("complementary", { name: "Evidence inspector" }).waitFor();
   } },
+  // The hub with the parties pill selected: its hidden links in the inspector.
+  { ...mainStates[9], name: "graph-neighborhood-group", state: "selected-group", seed: graphText, prepare: async page => {
+    await graphReady(page);
+    const box = await page.locator("canvas").first().boundingBox();
+    const pill = await page.evaluate(() => window.__graphText["+23 Parties and roles"]);
+    await page.mouse.click(box.x + pill.x, box.y + pill.y);
+    await page.getByRole("list", { name: "Parties and roles group" }).waitFor();
+  } },
+  // The legend collapsed on desktop, and its sheet on phone.
+  { ...mainStates[9], name: "graph-neighborhood-legend", state: "legend", prepare: async page => {
+    await page.getByRole("button", { name: "Legend", exact: true }).click();
+    if (page.viewportSize().width < 768) await page.getByRole("dialog", { name: "Legend" }).waitFor();
+  } },
+  // A chip in focus marks the link its document supports.
+  { name: "graph-neighborhood-evidence", route: "/graph?focus=nb-desk", state: "evidence-marked",
+    ready: page => page.getByText("Front desk: 3 links in 3 families.", { exact: false }), prepare: async page => {
+      await graphReady(page);
+      await page.getByRole("region", { name: /^Evidence/ }).getByRole("link").first().focus();
+    } },
+  // The mixed link selected from the inspector: "Stated in 1, inferred in 1" and its documents.
+  { name: "graph-neighborhood-link", route: "/graph?focus=nb-renewal", state: "selected-link",
+    ready: page => page.getByText("Renewal notice 2026: 1 links in 1 families.", { exact: false }), prepare: async page => {
+      await graphReady(page);
+      // On a phone the inspector opens with a selection: select the focus first.
+      if (page.viewportSize().width < 768) {
+        const canvas = page.locator("canvas").first();
+        const box = await canvas.boundingBox();
+        const zoom = await canvas.evaluate(element => element.__zoom);
+        await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
+      }
+      await page.getByRole("complementary", { name: "Evidence inspector" }).getByRole("button", { name: /^2014 Honda Fit/ }).click();
+      await page.getByText("Stated in 1, inferred in 1", { exact: true }).waitFor();
+    } },
+  { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
+    ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
 ];
 
 test.beforeEach(async ({ page, baseURL, request }, info) => {

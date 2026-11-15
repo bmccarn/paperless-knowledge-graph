@@ -161,6 +161,17 @@ try {
   await page.screenshot({ path: path.join(artifacts, 'graph-phone-sheet-expanded.png') });
   await page.getByRole('button', { name: 'Collapse inspector', exact: true }).click();
   assert.equal(Math.round((await visible()).height), 300, 'Collapsing returns to the peek');
+  // A sheet closed while expanded reopens at its peek.
+  await page.getByRole('button', { name: 'Expand inspector', exact: true }).click();
+  await sheet.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit view', exact: true }).click();
+  await page.waitForTimeout(900);
+  const again = await label('Juniper Okafor');
+  const area = await page.locator('canvas').first().boundingBox();
+  await page.mouse.click(area.x + again.x, area.y + again.y);
+  await sheet.getByRole('heading', { name: 'Juniper Okafor' }).waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(Math.round((await visible()).height), 300, 'A reopened sheet starts at its peek');
 
   assert.deepEqual(errors, []);
   console.log('PASS graph_phone canvas name, keyboard zoom, bottom sheet peek, pills and labels clear at 390 px');

@@ -135,6 +135,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const clearSelection = useCallback(() => {
     navigate({ selection: null });
     setKeyboardNodeId(null);
+    setExpandedSheet(null);
   }, [navigate]);
   const onReady = useCallback((camera: Camera | null) => { cameraRef.current = camera; }, []);
 

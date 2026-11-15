@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { QueryModes, QueryModel, type QueryMode } from "@/components/query-controls";
 import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
@@ -55,6 +56,8 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
 }
 
 export default function GalleryPage() {
+  const [mode, setMode] = useState<QueryMode>("strict");
+  const [model, setModel] = useState("example");
   const [loading, setLoading] = useState(false);
   const [descending, setDescending] = useState(false);
   const [selected, setSelected] = useState<string | null>("Home inventory");
@@ -66,6 +69,12 @@ export default function GalleryPage() {
           <h1 className="page-title">Component gallery</h1>
           <p className="text-sm text-fg-muted">The shared controls for reading, reviewing and exploring your archive.</p>
         </header>
+
+        <Section id="ask-controls" title="Ask controls">
+          <Row name="Query mode"><QueryModes value={mode} onChange={setMode} /></Row>
+          <Row name="Model"><QueryModel models={[{ id: "example", name: "Example model" }]} value={model} defaultModel="example" onChange={setModel} /></Row>
+          <Row name="Delete confirmation"><AlertDialog><AlertDialogTrigger asChild><Button variant="outline">Delete conversation</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete conversation?</AlertDialogTitle><AlertDialogDescription>The conversation and its messages will be permanently deleted.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction asChild><Button variant="destructive">Delete conversation</Button></AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Row>
+        </Section>
 
         <Section id="inspection-controls" title="Document inspection">
           <Row name="Alerts">{(["default", "warning", "destructive", "success"] as const).map(variant => <Alert key={variant} variant={variant}><AlertTitle>{variant === "default" ? "Information" : variant === "destructive" ? "Error" : variant === "warning" ? "Warning" : "Success"}</AlertTitle><AlertDescription>Review the original source before resolving this report.</AlertDescription></Alert>)}</Row>

@@ -351,7 +351,9 @@ class EvidenceResolutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resolve.await_count, 2)
         organization = bindings.lookup("NES", "Organization")
         self.assertTrue(all(edge[0] == organization and edge[1] == "Organization" for edge in relations if edge[4] == "SIGNED_FOR"))
-        self.assertEqual(self.decisions.store_entity_embedding.await_count, 2)
+        calls = self.decisions.store_entity_embedding.await_args_list
+        self.assertEqual(sum(call.kwargs.get("only_missing", False) for call in calls), 2)
+        self.assertEqual(sum(not call.kwargs.get("only_missing", False) for call in calls), 2)
         self.assertIsNone(pipeline._document_bindings.get())
 
     async def test_missing_relationship_binding_fails_closed_not_creates_endpoint(self):

@@ -100,8 +100,18 @@ test("at 390 px only the active note is visible, and a claim number opens it", a
   assert.equal(await visibleNotes(), 0);
   await answer.getByRole("button", { name: "Claim 2", exact: true }).click();
   assert.equal(await visibleNotes(), 1);
-  assert.ok(await answer.getByRole("note", { name: "Claim 2 source" }).isVisible());
+  const note = answer.getByRole("note", { name: "Claim 2 source" });
+  assert.ok(await note.isVisible());
   assert.ok(await noHorizontalScroll(page), "no horizontal scroll");
+  // Clicking the selected claim's number again scrolls back to its note.
+  const inView = () => note.evaluate(element => { const r = element.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; });
+  await page.setViewportSize({ width: 390, height: 600 });
+  await note.evaluate(element => { element.closest(".overflow-y-auto").scrollTop = 1e6; });
+  await page.waitForFunction(element => element.getBoundingClientRect().top < 0, await note.elementHandle(), { timeout: 3000 });
+  // A DOM click: Playwright's click would scroll the button, and so the note, into view itself.
+  await answer.getByRole("button", { name: "Claim 2", exact: true }).evaluate(button => button.click());
+  await page.waitForFunction(element => element.getBoundingClientRect().top >= 0, await note.elementHandle(), { timeout: 3000 });
+  assert.ok(await inView());
   if (artifacts) await page.screenshot({ path: `${artifacts}/phone-390.png`, fullPage: true });
 });
 

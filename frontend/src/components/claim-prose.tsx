@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { StatusLabel, STATUSES } from "@/components/status-label";
 import { formatAnswerInline } from "@/lib/answer-format";
 import { formatSourceDate, type AnswerState, type ClaimResult } from "@/lib/answer-state";
@@ -46,14 +46,13 @@ export function ClaimProse({ id, text, state, claims = [], sourceDates }: {
   id: string; text: string; state: AnswerState; claims?: LedgerClaim[]; sourceDates?: Record<string, string>;
 }) {
   const [active, setActive] = useState<number | null>(null);
-  const scrollTo = useRef<number | null>(null);
   const ranges = UNDERLINED.has(state) ? claimRanges(text, claims) : [];
   const noteId = (n: number) => `note-${id}-${n}`;
-  useEffect(() => {
-    if (scrollTo.current === null) return;
-    document.getElementById(noteId(scrollTo.current))?.scrollIntoView({ block: "nearest" });
-    scrollTo.current = null;
-  });
+  const openNote = (n: number) => {
+    setActive(n);
+    // After the render that shows the note on a phone; also when the claim was already selected.
+    requestAnimationFrame(() => document.getElementById(noteId(n))?.scrollIntoView({ block: "nearest" }));
+  };
 
   const inline = (block: Block, key: number) => block.pieces.map((piece, i) => {
     const html = { __html: formatAnswerInline(piece.text) };
@@ -67,7 +66,7 @@ export function ClaimProse({ id, text, state, claims = [], sourceDates }: {
           dangerouslySetInnerHTML={html} />
         {piece.last && <>
           <button type="button" aria-label={`Claim ${n}`} aria-controls={noteId(n)} aria-current={current}
-            onClick={() => { scrollTo.current = n; setActive(n); }}
+            onClick={() => openNote(n)}
             className="cite relative ml-0.5 leading-none font-sans text-fg-muted hover:text-fg aria-[current=true]:text-fg after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']">{n}</button>
           <MarginNote id={noteId(n)} n={n} claim={claims[n - 1]} sourceDates={sourceDates} active={active === n} onSelect={() => setActive(n)} />
         </>}

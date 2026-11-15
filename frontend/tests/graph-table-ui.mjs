@@ -94,10 +94,12 @@ try {
   await page.waitForURL(url => !url.searchParams.has('view'));
   for (const [pressed, view] of [['t', 'table'], ['n', null], ['4', 'table'], ['1', null]]) {
     const before = await page.evaluate(() => window.history.length);
+    if (view === null) await table.locator('tbody tr').first().focus();
     await page.keyboard.press(pressed);
     await page.waitForURL(url => url.searchParams.get('view') === view);
     assert.equal(await page.evaluate(() => window.history.length), before + 1);
     assert.equal(new URL(page.url()).searchParams.get('sel'), key);
+    assert.equal(await page.locator(':focus').getAttribute('data-graph-view'), view ?? 'focus', 'View keys keep focus on the switcher');
   }
   for (const tag of ['input', 'textarea', 'div']) {
     await page.evaluate(tag => { const field = document.createElement(tag); field.id = 'typing-guard'; if (tag === 'div') field.contentEditable = 'true'; document.body.append(field); field.focus(); }, tag);
@@ -133,6 +135,15 @@ try {
     await page.evaluate(() => document.fonts.ready);
     await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; }' });
     await page.screenshot({ path: path.join(artifacts, `table-${width}-${theme}.png`) });
+    if (width === 390) {
+      await table.locator('tbody tr').first().focus();
+      await page.keyboard.press('n');
+      await page.waitForURL(url => !url.searchParams.has('view'));
+      assert.equal(await page.locator(':focus').getAttribute('data-graph-view'), 'sheet');
+      await page.keyboard.press('t');
+      await table.waitFor();
+      assert.equal(await page.locator(':focus').getAttribute('data-graph-view'), 'sheet');
+    }
   }
 
   // Invalid URL selections do not leave an empty inspector. A restored row is visible and the table's Tab stop.

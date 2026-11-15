@@ -19,6 +19,7 @@ const OMISSIONS: Record<string, string> = {
   source_rejection: "No source passage matched it.",
   dependency_omitted: "It depends on a claim that was left out.",
   dependency_unknown: "Its link to the other claims could not be checked.",
+  audit_reply_invalid: "The source check returned an invalid reply for it.",
 };
 
 const cell = "h-auto whitespace-normal py-3 align-top max-md:p-0";

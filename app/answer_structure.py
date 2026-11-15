@@ -233,7 +233,8 @@ def supported_revision(answer, claims, unitize):
     omitted = [{
         'id': c['id'], 'claim': c['claim'], 'status': c['status'],
         'rejection_reasons': c.get('rejection_reasons', []), 'value_mismatches': c.get('value_mismatches', {}),
-        'omission_reason': ('source_rejection' if c['status'] != 'supported' else
+        'omission_reason': ('audit_reply_invalid' if c['status'] == 'unchecked' else
+                            'source_rejection' if c['status'] != 'supported' else
                             'dependency_unknown' if c['id'] in unknown else 'dependency_omitted'),
         'dependency_ids': sorted(dependencies[c['id']] - keep),
     } for c in claims if c['id'] not in keep]

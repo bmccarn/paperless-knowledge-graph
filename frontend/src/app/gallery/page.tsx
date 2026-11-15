@@ -6,6 +6,9 @@ import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
 import { ArrowDown, ArrowUp, Check, FileText, Plus } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +62,12 @@ export default function GalleryPage() {
           <h1 className="page-title">Component gallery</h1>
           <p className="text-sm text-fg-muted">The shared controls for reading, reviewing and exploring your archive.</p>
         </header>
+
+        <Section id="inspection-controls" title="Document inspection">
+          <Row name="Alerts">{(["default", "warning", "destructive", "success"] as const).map(variant => <Alert key={variant} variant={variant}><AlertTitle>{variant === "default" ? "Information" : variant === "destructive" ? "Error" : variant === "warning" ? "Warning" : "Success"}</AlertTitle><AlertDescription>Review the original source before resolving this report.</AlertDescription></Alert>)}</Row>
+          <Row name="Resolution"><Select defaultValue="reviewed"><SelectTrigger aria-label="Example resolution" className="max-w-sm"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reviewed">Reindexed and checked correction</SelectItem><SelectItem value="dismissed">Checked original extraction; no correction needed</SelectItem></SelectContent></Select></Row>
+          <Row name="Disclosure"><Collapsible><CollapsibleTrigger asChild><Button variant="outline">Original source text</Button></CollapsibleTrigger><CollapsibleContent className="ocr pt-3">The January statement lists a premium of $25.</CollapsibleContent></Collapsible></Row>
+        </Section>
 
         <Section id="answer-states" title="Answer states">
           <Row name="Medium">{answerStates.map(state => <StatusLabel key={state} status={state} />)}</Row>

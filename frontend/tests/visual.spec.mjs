@@ -21,6 +21,17 @@ const mainStates = [
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  { ...mainStates[3], name: "document-ocr", state: "ocr-open", prepare: async page => {
+    await page.getByRole("button", { name: "Original OCR text" }).click();
+    await page.getByRole("region", { name: "Original OCR text" }).focus();
+  } },
+  { ...mainStates[3], name: "document-feedback", state: "feedback", prepare: async page => {
+    await page.getByRole("textbox", { name: "Extraction review report" }).fill("Check the premium against the original statement.");
+    await page.getByRole("button", { name: "Mark extraction wrong", exact: true }).click();
+    await page.getByRole("combobox", { name: "Resolution", exact: true }).scrollIntoViewIfNeeded();
+  } },
+  { name: "document-missing", route: "/documents/999999", state: "missing", ready: page => page.getByRole("heading", { name: "Document not found", exact: true }) },
+  { name: "document-empty", route: "/documents/102", state: "empty", ready: page => page.getByText("No entities extracted.", { exact: false }) },
   ...["dialog", "sheet"].map(kind => ({ ...gallery, name: `gallery-${kind}`, state: kind, prepare: async page => {
     await page.getByRole("button", { name: `Open ${kind}`, exact: true }).click();
     await page.getByRole("dialog").waitFor();

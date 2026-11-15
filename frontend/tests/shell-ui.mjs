@@ -71,13 +71,13 @@ test("backend health distinguishes degraded, failed and recovered polls", { time
   }
 });
 
-test("document failures keep a page heading without claiming the document is gone", async t => {
+test("document failures show the document not found state with retry", async t => {
   const context = await browser.newContext();
   t.after(() => context.close());
   const page = await context.newPage();
   await page.route("**/api/document/101/detail", route => route.fulfill({ status: 503, json: { detail: "Unavailable" } }));
   await page.goto(`${base}/documents/101`);
-  await page.getByRole("heading", { name: "Document unavailable", level: 1 }).waitFor();
+  await page.getByRole("heading", { name: "Document not found", level: 1 }).waitFor();
   assert.equal(await page.locator("h1").count(), 1);
   assert.ok(await page.getByRole("button", { name: "Retry loading document" }).isVisible());
 });

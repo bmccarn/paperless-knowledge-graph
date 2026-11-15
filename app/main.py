@@ -1200,8 +1200,8 @@ async def documents(q: str = "", doc_type: str = "", limit: int = 25,
 
 
 @app.get("/graph/node/{node_uuid}")
-async def graph_node(node_uuid: str):
-    node = await graph_store.get_node(node_uuid)
+async def graph_node(node_uuid: str, summary: bool = False):
+    node = await graph_store.get_node_summary(node_uuid) if summary else await graph_store.get_node(node_uuid)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node

@@ -21,6 +21,19 @@ const mainStates = [
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  { ...mainStates[3], name: "document-ocr", state: "ocr-open", prepare: async page => {
+    await page.getByRole("button", { name: "Original OCR text" }).click();
+    await page.getByRole("region", { name: "Original OCR text" }).focus();
+  } },
+  ...["feedback", "resolution"].map(state => ({ ...mainStates[3], name: `document-${state}`, state, prepare: async page => {
+    await page.getByRole("textbox", { name: "Extraction review report" }).fill("Check the premium against the original statement.");
+    await page.getByRole("button", { name: "Mark extraction wrong", exact: true }).click();
+    const resolution = page.getByRole("combobox", { name: "Resolution", exact: true });
+    await resolution.scrollIntoViewIfNeeded();
+    if (state === "resolution") await resolution.click();
+  } })),
+  { name: "document-missing", route: "/documents/999999", state: "missing", ready: page => page.getByRole("heading", { name: "Document not found", exact: true }) },
+  { name: "document-empty", route: "/documents/102", state: "empty", ready: page => page.getByText("No entities extracted.", { exact: false }) },
   { ...mainStates[0], name: "phone-more", state: "more-sheet", phoneOnly: true, prepare: async page => {
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("dialog", { name: "More", exact: true }).waitFor();

@@ -320,6 +320,7 @@ export function ForceGraphClient({
         const size = r >= 14 ? 16 : 12;
         ctx.translate(-size / 2, -size / 2 + (kind === "thing" ? r * 0.16 : 0));
         ctx.scale(size / 24, size / 24);
+        ctx.lineCap = "round"; // lucide draws its dots as zero-length round-capped segments
         ring(icon, outlined || kind === "unknown" ? color : faded ? colors.bg : colors[`on-cat-${kind}`], size < 16 ? 2 : 1.9);
       }
       ctx.restore();

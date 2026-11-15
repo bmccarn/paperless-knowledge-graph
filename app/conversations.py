@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 from app.config import settings
+from app.graph import graph_store, source_dates
 from app.timeline import restore_timeline
 from app.answer_coverage import (restore_pipeline_metadata, has_question_pipeline_metadata,
                                 restore_question_coverage, restored_sources, question_followups)
@@ -209,6 +210,13 @@ async def get_conversation(conv_id: str) -> Optional[dict]:
                 "mode": metadata.get("mode"),
                 "created_at": m["created_at"].isoformat(),
             })
+
+        # Saved answers store no dates; read them now from the indexed documents.
+        dates = await source_dates(graph_store, [s['document_id'] for m in messages for s in m['sources'] or []
+                                                    if type(s.get('document_id')) is int])
+        for message in messages:
+            message['source_dates'] = {str(s['document_id']): dates[str(s['document_id'])]
+                                       for s in message['sources'] or [] if str(s.get('document_id')) in dates}
 
         return {
             "id": str(conv["id"]),

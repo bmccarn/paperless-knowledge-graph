@@ -3,6 +3,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
+from datetime import date
 from typing import Any, Optional
 
 from neo4j import AsyncGraphDatabase
@@ -13,6 +14,23 @@ from app.retry import retry_db
 from app.relationship_support import merge_support_properties, support_records
 
 logger = logging.getLogger(__name__)
+
+
+def _calendar_date(value: str) -> bool:
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+async def source_dates(store, document_ids: list[int]) -> dict[str, str]:
+    """Calendar dates for answer sources; a failed lookup omits dates, never the answer."""
+    try:
+        dates = await store.get_document_dates(list(dict.fromkeys(document_ids)))
+        return {str(doc_id): value[:10] for doc_id, value in dates.items() if _calendar_date(value[:10])}
+    except Exception:
+        logger.warning("Source date lookup failed", exc_info=True)
+        return {}
 
 # Node fields a merge unions; the drift fallback restores them three-way.
 MERGED_LIST_FIELDS = ("aliases", "alias_records", "identity_hints")

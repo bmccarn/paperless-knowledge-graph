@@ -10,7 +10,8 @@ const mode = visualMode();
 const fixedTime = new Date("2026-09-04T12:00:00Z");
 const mainStates = [
   { name: "ask", route: "/query", ready: page => page.getByPlaceholder("Ask a question...") },
-  { name: "status", route: "/", ready: page => page.getByRole("heading", { name: "Status", exact: true }) },
+  // The empty Recent answers line appears only after the status and all three columns have loaded.
+  { name: "status", route: "/", ready: page => page.getByText("No answers yet.", { exact: false }) },
   { name: "documents", route: "/documents", ready: page => page.getByText("303 indexed documents", { exact: true }) },
   { name: "document", route: "/documents/101", ready: page => page.getByRole("heading", { name: "January premium statement", exact: true }) },
   { name: "entities", route: "/entities/review", ready: page => page.getByText("Cedar Lab 1", { exact: true }) },
@@ -20,6 +21,11 @@ const mainStates = [
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
+const statusWith = (extra, routes = {}) => async page => {
+  const healthy = await (await page.request.get("/api/status")).json();
+  await page.route("**/api/status", route => route.fulfill({ json: { ...healthy, ...extra } }));
+  for (const [path, json] of Object.entries(routes)) await page.route(`**/api${path}`, route => route.fulfill({ json }));
+};
 const extraStates = [
   ...["empty", "error"].map(state => ({
     name: `logs-${state}`, route: "/debug", state,
@@ -52,6 +58,25 @@ const extraStates = [
       const history = page.getByRole("button", { name: "Open conversations", exact: true });
       if (await history.isVisible()) await history.click();
       await page.getByRole("button", { name: "Older verified answer", exact: true }).waitFor();
+  } },
+  { ...mainStates[1], name: "status-answers", state: "recent-answers", seed: page => page.request.post("/api/_fixture/saved-answers"),
+    ready: page => page.getByRole("region", { name: "Recent answers" }).getByText("Verified", { exact: true }) },
+  { ...mainStates[1], name: "status-stale", state: "stale", ready: page => page.getByRole("button", { name: "Sync now", exact: true }),
+    seed: statusWith({ freshness: {
+      stale: true, paperless_documents: 310, indexed_documents: 303, missing_documents: 7, missing_embedding_documents: 2,
+      latest_paperless_title: "Synthetic late arrival", latest_paperless_modified: "2026-09-04T11:30:00+00:00",
+      drift: { missing_from_graph: [{ id: 9400, title: "Synthetic late arrival" }], missing_embeddings: [{ id: 9401 }] },
+    } }) },
+  { ...mainStates[1], name: "status-task", state: "task", ready: page => page.getByRole("log", { name: "Sync log" }),
+    seed: statusWith({ active_tasks: { "visual-sync": { status: "running", type: "sync" } } }, { "/task/visual-sync": {
+      status: "running", total_docs: 303, processed: 41, skipped: 2, errors: 1, current_doc: "Synthetic archive 044",
+      elapsed_seconds: 30, docs_per_minute: 88, estimated_remaining_seconds: 175,
+      recent_results: Array.from({ length: 12 }, (_, index) => ({ doc_id: 9032 + index, title: `Synthetic archive ${String(32 + index).padStart(3, "0")}`,
+        status: index === 4 ? "error" : index === 7 ? "skipped" : "processed", entities: 3, error: "Synthetic extraction timeout" })),
+    } }) },
+  { ...mainStates[1], name: "status-reindex", state: "reindex-dialog", prepare: async page => {
+    await page.getByRole("button", { name: "Full reindex", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor();
   } },
   { ...mainStates[3], name: "document-ocr", state: "ocr-open", prepare: async page => {
     await page.getByRole("button", { name: "Original OCR text" }).click();

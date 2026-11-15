@@ -49,11 +49,12 @@ test("metadata-only freshness drift is explained and offers targeted repair", as
     drift: { changed_since_index: [{ id: 101, title: "Corrected source title" }] } };
   await page.route("**/api/status", route => route.fulfill({ json: status }));
   await page.goto(base);
-  await page.getByText("Knowledge graph may be stale", { exact: true }).waitFor();
+  await page.getByText("The index is behind Paperless.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
   assert.equal(await page.getByText("Changed since indexing:", { exact: true }).count(), 1);
   await page.getByText(/Corrected source title/).waitFor();
   await page.getByRole("button", { name: "Repair drift", exact: true }).click();
-  await page.getByRole("dialog").waitFor();
+  await page.getByRole("alertdialog", { name: "Repair drift?" }).waitFor();
   await record(page, "metadata-freshness-repair");
 });
 

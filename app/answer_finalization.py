@@ -1364,10 +1364,11 @@ class AnswerFinalizer:
                              "penalties": [] if supported else verification["missing_evidence"],
                              "dimensions": {"claim_support": ledger["summary"].get("support_ratio", 0),
                                             "audit_coverage": ledger["summary"].get("audit_coverage", 0)}}}
+        # Only text that is actually delivered; the ledger digest ignores this key.
+        if supported or (disposition == "unaudited" and evidence_pack.get("items") and candidate):
+            ledger["candidate_text"] = candidate
         result["timeline_events"] = []
         if mode == "timeline":
-            if supported:
-                ledger["candidate_text"] = candidate
             events, receipt = project_timeline(public_answer, ledger, result["finalization"], self.date_order)
             result["timeline_events"] = events
             result["finalization"]["timeline"] = receipt

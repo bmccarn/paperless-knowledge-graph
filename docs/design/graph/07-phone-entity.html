@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>WF7 Phone entity page</title>
+<link rel="stylesheet" href="wf.css">
+<style>body{width:390px}.ph{width:390px;height:844px;position:relative;overflow:hidden;border-bottom:1px solid var(--line)}
+.bar{height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.tabs{display:flex;border-bottom:1px solid var(--line)}.tabs span{flex:1;text-align:center;padding:12px 0;color:var(--ink2)}.tabs span.on{color:var(--ink);box-shadow:inset 0 -2px 0 #7fb2ff}
+.li{display:flex;align-items:center;gap:10px;min-height:48px;padding:0 16px;border-bottom:1px solid #182433}.li .n{margin-left:auto;color:var(--ink3);font-size:12px}
+.notes{position:static;width:auto;margin:12px 16px;box-shadow:none}</style></head>
+<body>
+<div class="ph">
+  <div class="bar"><span>←</span><b style="font-size:15px">Policy HM-4471 (auto)</b><span class="spacer" style="flex:1"></span><span>⌕</span></div>
+  <div style="padding:12px 16px">
+    <div style="display:flex;gap:8px;align-items:center"><span class="sq" style="background:var(--k-money)"></span><span class="muted">InsurancePolicy · 12 documents</span></div>
+    <div style="margin-top:8px;font-size:13px"><span class="muted">Insurer</span> Harbor Mutual Insurance<br><span class="muted">Term</span> 2026-04-01 → 2026-10-01</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><span class="btn primary" style="flex:1;text-align:center;padding:10px">Ask about this</span><span class="btn" style="padding:10px">Path…</span><span class="btn" style="padding:10px">★</span></div>
+  </div>
+  <div class="tabs"><span class="on">Links 12</span><span>Evidence 12</span><span>Graph</span></div>
+  <div class="li" style="background:var(--panel)"><b>Parties</b><span class="n">2</span></div>
+  <div class="li"><span class="sq" style="background:var(--k-org)"></span>Harbor Mutual Insurance<span class="n"><span class="tag sup">9 docs</span> ›</span></div>
+  <div class="li"><span class="dot" style="background:var(--k-person)"></span>Alex Rivera<span class="n"><span class="tag sup">7</span> ›</span></div>
+  <div class="li" style="background:var(--panel)"><b>Coverage</b><span class="n">5 · 1 inferred</span></div>
+  <div class="li"><span class="sq" style="background:var(--k-thing)"></span>2019 Subaru Outback<span class="n"><span class="tag sup">7</span> ›</span></div>
+  <div class="li"><span class="sq" style="background:var(--k-thing)"></span>2014 Honda Fit<span class="n"><span class="tag inf">inferred</span> ›</span></div>
+  <div class="li muted">+3 more coverage links</div>
+  <div class="li" style="background:var(--panel)"><b>Money</b><span class="n">2</span></div>
+  <div class="li" style="background:var(--panel)"><b>Places</b><span class="n">1 · inferred</span></div>
+  <div class="li" style="background:var(--panel)"><b>Time</b><span class="n">2</span></div>
+  <span class="n-pin" style="left:350px;top:66px">1</span>
+  <span class="n-pin" style="left:240px;top:236px">2</span>
+  <span class="n-pin" style="left:330px;top:400px">3</span>
+</div>
+<div class="notes">
+  <h3>WF7 · Phone: the entity page is the graph</h3>
+  <ol>
+    <li>On a phone (&lt; 768 px) the default is a list, not a canvas. Search is one tap away.</li>
+    <li>Three tabs: Links (grouped by family), Evidence (documents with quotes), Graph (WF8). Tab state is in the URL.</li>
+    <li>Rows are 48 px tall, above the 44 px touch minimum. Each row opens that link’s evidence (WF6 as a full-screen sheet); the chevron opens the neighbor’s page.</li>
+  </ol>
+</div>
+</body></html>

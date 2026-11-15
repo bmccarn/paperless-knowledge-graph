@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 import sys
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
@@ -43,6 +43,7 @@ RELS[0]['props'].update(source_doc_ids=[101], inferred=True, support_records=[js
 
 LOCK = threading.RLock()
 NOW = '2026-09-04T12:00:00+00:00'
+clock_tick = 0
 DOCS = [dict(node['props']) for node in NODES if 'Document' in node['labels']]
 DOCS[0].update(title='January premium statement', doc_type='insurance')
 DOCS.extend({'paperless_id': 9000 + index, 'title': f'Synthetic archive {index:03d}',
@@ -72,7 +73,9 @@ SOURCE_TEXT = 'January statement: the premium is $25. This is synthetic document
 
 
 def timestamp():
-    return datetime.now(timezone.utc).isoformat()
+    global clock_tick
+    clock_tick += 1
+    return (datetime.fromisoformat(NOW) + timedelta(seconds=clock_tick)).isoformat()
 
 
 def document(doc_id):
@@ -191,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
                 if query == 'fixture-error':
                     return self.reply({'detail': 'Synthetic document search failure'}, 503)
                 matches = [doc for doc in DOCS if query in (' '.join(str(v) for v in doc.values())).lower()]
-                facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in {doc['doc_type'] for doc in matches}}
+                facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
                 matches = [doc for doc in matches if not selected_type or doc['doc_type'] == selected_type]
                 sort = get('sort', 'title')
                 matches.sort(key=lambda doc: (str(doc.get(sort, '')), doc['paperless_id']), reverse=get('direction') == 'desc')
@@ -255,6 +258,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.stream(body)
         with LOCK:
             if route == '/_fixture/reset':
+                global clock_tick
+                clock_tick = 0
                 FEEDBACK.clear()
                 CONVERSATIONS.clear()
                 TASKS.clear()
@@ -332,7 +337,7 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             conv = CONVERSATIONS.get(conv_id)
             if conv:
-                conv['messages'].append({'role': 'user', 'content': question, 'timestamp': int(time.time() * 1000)})
+                conv['messages'].append({'role': 'user', 'content': question, 'timestamp': int(datetime.fromisoformat(NOW).timestamp() * 1000)})
                 conv['message_count'] = len(conv['messages'])
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -419,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if conv:
                     conv['messages'].append({'role': 'assistant', 'content': result['answer'],
-                                             'timestamp': int(time.time() * 1000), **{key: value for key, value in result.items() if key != 'answer'}})
+                                             'timestamp': int(datetime.fromisoformat(NOW).timestamp() * 1000), **{key: value for key, value in result.items() if key != 'answer'}})
                     conv['message_count'] = len(conv['messages'])
             emit({'type': 'complete', **result})
         except (BrokenPipeError, ConnectionResetError):

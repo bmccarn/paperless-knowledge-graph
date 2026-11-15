@@ -8,6 +8,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      update_visual_baselines:
+        description: Generate approved screenshot baselines for this branch
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -90,11 +95,17 @@ jobs:
     name: Frontend validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
     defaults:
       run:
         working-directory: frontend
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      UI_PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      UI_BASELINE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines && '1' || '0' }}
+      # Enable in the first PR after #111 merges, together with CI-generated baselines.
+      UI_VISUAL_GATE: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -129,16 +140,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Chromium
-        run: npx --no-install playwright install --with-deps chromium
-
       - name: Run production browser regressions
         run: npm run test:browser
+
+      - name: Upload screenshot comparison and accessibility results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: browser-comparison
+          path: frontend/.browser-artifacts/
+          if-no-files-found: warn
+
+      - name: Upload CI-generated baselines
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: visual-baselines
+          path: frontend/tests/baselines/
+          if-no-files-found: error
 
   build:
     name: Build and push
     needs: [backend, frontend]
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

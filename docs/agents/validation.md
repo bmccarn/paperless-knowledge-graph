@@ -34,3 +34,36 @@ Use disposable local datastores and Paperless from `examples/README.md`. Importi
 Start with recent history and follow the affected data paths through callers, storage, and frontend consumers. For each finding, record the trigger, practical consequence, exact source location, recommended change, and a behavior check. Report measured timings separately from performance hypotheses.
 
 Prioritize data integrity and incorrect answers, then reliability, performance, and maintainability. Capture architecture candidates using `improve-codebase-architecture` and `codebase-design`; use `code-review` for a specified commit/branch diff and a known spec.
+
+## Screenshot and accessibility checks
+
+The browser runner's final stage uses `playwright/test` against the same synthetic
+backend and frontend. `tests/visual.spec.mjs` captures one main state per existing
+page in desktop dark, desktop light, phone dark and phone light. Dialogs, expanded
+rows and final answers are additional captures without screenshot gates. Add the
+component gallery to this matrix in #113. Each capture attaches its axe violations,
+incomplete results and visible text below 12 px to the HTML comparison report.
+
+CI runs in `mcr.microsoft.com/playwright:v1.65.1-noble`. Screenshots use a fixed
+clock, UTC, en-US, device scale factor 1, loaded fonts, disabled animation and
+seeded graph randomness. Do not create application baselines on a developer machine.
+
+Screenshot comparison stays capture-only until #111 merges. In the first PR
+after #111, generate baselines with the manual workflow, commit the approved
+images and set `UI_VISUAL_GATE` to `"1"`. Comparison uses zero differing pixels
+and zero per-pixel threshold. Missing baselines fail without writing files.
+
+To update baselines, dispatch **Container Images** on the ticket branch with
+`update_visual_baselines` selected. Download the `visual-baselines` artifact,
+review the `browser-comparison` artifact, and copy approved images into
+`frontend/tests/baselines/`. Commit the images in the ticket PR. Run ordinary CI
+again after the commit. The manual update never publishes application images.
+The `browser-comparison` artifact includes `visual/comparison/index.html`, captures,
+expected images and differences. CI uploads it even when a browser check fails.
+
+`frontend/tests/accessibility-exceptions.json` records existing violations by
+rule, route, state, affected targets and issue number. New targets and violations
+fail. Remove a page's exceptions when its redesign fixes them; do not disable a
+whole axe rule. `font-size` is the visible-text check and has the same exception
+policy while the existing pages are converted. Incomplete axe results are reported
+for review and do not fail the run.

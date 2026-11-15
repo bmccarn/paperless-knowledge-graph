@@ -4,6 +4,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 import { useState, type ReactNode } from "react";
 import { QueryModes, QueryModel, type QueryMode } from "@/components/query-controls";
+import { CommandPalette } from "@/components/command-palette";
+import { Kbd } from "@/components/ui/kbd";
 import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
@@ -64,6 +66,7 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
 }
 
 export default function GalleryPage() {
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [mode, setMode] = useState<QueryMode>("strict");
   const [model, setModel] = useState("example");
   const [loading, setLoading] = useState(false);
@@ -77,6 +80,12 @@ export default function GalleryPage() {
           <h1 className="page-title">Component gallery</h1>
           <p className="text-sm text-fg-muted">The shared controls for reading, reviewing and exploring your archive.</p>
         </header>
+
+        <Section id="search-controls" title="Search">
+          <Row name="Keyboard hint"><Kbd>Ctrl K</Kbd><Kbd>Enter</Kbd><Kbd>Esc</Kbd></Row>
+          <Row name="Command palette"><Button variant="outline" data-palette-trigger onClick={() => setPaletteOpen(true)}>Open palette</Button></Row>
+          {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} returnFocus={() => document.querySelector<HTMLButtonElement>("[data-palette-trigger]")?.focus()} />}
+        </Section>
 
         <Section id="ask-controls" title="Ask controls">
           <Row name="Query mode"><QueryModes value={mode} onChange={setMode} /></Row>

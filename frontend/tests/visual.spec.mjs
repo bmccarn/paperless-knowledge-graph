@@ -27,6 +27,19 @@ const statusWith = (extra, routes = {}) => async page => {
   for (const [path, json] of Object.entries(routes)) await page.route(`**/api${path}`, route => route.fulfill({ json }));
 };
 const extraStates = [
+  ...["initial", "results", "empty", "error"].map(state => ({
+    ...mainStates[0], name: `palette-${state}`, state: `palette-${state}`,
+    seed: async page => { await page.request.post("/api/_fixture/saved-answers"); },
+    prepare: async page => {
+      await page.getByRole("button", { name: "Search pages and archive", exact: true }).click();
+      const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
+      if (state !== "initial") {
+        await input.fill(state === "results" ? "Example" : state === "error" ? "fixture-error" : "unmatched-archive-term");
+        await page.clock.runFor(200);
+        await page.getByText(state === "error" ? "Some searches failed." : state === "empty" ? "0 results" : "2 results", { exact: true }).waitFor();
+      }
+    },
+  })),
   ...["empty", "error"].map(state => ({
     name: `logs-${state}`, route: "/debug", state,
     seed: page => page.route("**/api/logs?**", route => route.fulfill(state === "error"

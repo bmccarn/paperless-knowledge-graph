@@ -63,7 +63,7 @@ async def _entity_image(tx, uuids: list[str]) -> tuple[dict, dict]:
 
 
 def _merge_risk_flags(primary: dict, duplicate: dict, edges: list[dict]) -> list[str]:
-    from app.entity_steward import extract_identifiers
+    from app.entity_policy import extract_identifiers
     skip = {"uuid", "name", "source_doc_ids", *MERGED_LIST_FIELDS}
     flags = []
     if set(primary.get("source_doc_ids") or []) & set(duplicate.get("source_doc_ids") or []):
@@ -71,9 +71,9 @@ def _merge_risk_flags(primary: dict, duplicate: dict, edges: list[dict]) -> list
     pair = {primary["uuid"], duplicate["uuid"]}
     if any({edge["start"].get("uuid"), edge["end"].get("uuid")} == pair for edge in edges):
         flags.append("direct_edge")
-    identifiers = [dict(i.split(":", 1) for i in extract_identifiers({k: v for k, v in node.items() if k not in skip}))
-                   for node in (primary, duplicate)]
-    if any(identifiers[0][key] != value for key, value in identifiers[1].items() if key in identifiers[0]):
+    # identity_hints is skipped here; it has its own flag below.
+    identifiers = [extract_identifiers({k: v for k, v in node.items() if k not in skip}) for node in (primary, duplicate)]
+    if any(not set(values) & set(identifiers[1][key]) for key, values in identifiers[0].items() if key in identifiers[1]):
         flags.append("conflicting_identifiers")
     hints = [set(node.get("identity_hints") or []) for node in (primary, duplicate)]
     if all(hints) and hints[0] != hints[1]:

@@ -435,6 +435,16 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reindex.await_args.args[0], [11, 22])
 
 
+class MergeRiskFlagTests(unittest.TestCase):
+    def test_identifier_conflict_needs_the_same_property_with_no_shared_value(self):
+        def flags(left, right):
+            return graph_module._merge_risk_flags({"uuid": "a", **left}, {"uuid": "b", **right}, [])
+        self.assertIn("conflicting_identifiers", flags({"policy_number": "POL-1111"}, {"policy_number": "POL-2222"}))
+        self.assertNotIn("conflicting_identifiers", flags({"policy_number": ["POL-1111", "POL-3333"]},
+                                                          {"policy_number": ["pol-3333"]}))
+        self.assertNotIn("conflicting_identifiers", flags({"policy_number": "POL-1111"}, {"reference_number": "REF-2222"}))
+
+
 class StewardRecommendationTests(unittest.TestCase):
     def test_merge_suggestion_requires_both_low_risk_and_confident_assessment(self):
         for deterministic_risk, agent_risk, confidence in [

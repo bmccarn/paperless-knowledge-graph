@@ -175,9 +175,16 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(path['length'] == 4 and path['nodes'][1] == P + 'hub' for path in body['paths']))
         self.assertLess(elapsed, 5)
 
+    async def test_cap_stops_the_search_before_it_is_exhausted(self):
+        with patch('app.graph.PATH_CANDIDATES', 100):
+            body = (await get(self.store, a=P + 'hub-a', b=P + 'hub-b', max_len=4)).json()
+        self.assertFalse(body['exhausted'])
+        self.assertEqual(len(body['paths']), 5)
+
     async def test_budget_stops_a_real_search(self):
+        # No owner setting, so the path query is the first database call the budget can cut.
         with patch.object(main, 'PATH_SEARCH_SECONDS', 0.001):
-            response = await get(self.store, a=P + 'hub-a', b=P + 'hub-b', max_len=4)
+            response = await get(self.store, owner='', a=P + 'hub-a', b=P + 'hub-b', max_len=4)
         self.assertEqual(response.json(), {'detail': 'path_search_timeout'})
         # The same store still answers afterwards.
         self.assertEqual((await get(self.store, a=P + 'a', b=P + 'b', max_len=2)).status_code, 200)

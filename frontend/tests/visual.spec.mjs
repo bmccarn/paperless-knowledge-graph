@@ -63,7 +63,7 @@ for (const state of [...mainStates, ...extraStates]) test(`${state.name} ${state
   test.skip(state.phoneOnly && !info.project.name.startsWith("phone"), "The conversation sheet is phone-only");
   await page.goto(state.route);
   await state.ready(page).waitFor();
-  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
+  await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   await page.mouse.move(0, 0);
   if (state.name === "graph") await page.locator("canvas").first().waitFor({ state: "visible" });

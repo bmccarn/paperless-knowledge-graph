@@ -24,16 +24,16 @@ def normalize_name(value) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split()) if isinstance(value, str) else ""
 
 
-def owner_matches(setting, persons, aliases="") -> tuple[str, str | None, list[dict]]:
+def owner_matches(setting, persons, owner_aliases="") -> tuple[str, str | None, list[dict]]:
     """Return (status, owner uuid, every matching person), ranked by documents, links, then UUID.
 
-    `aliases` holds other names of the owner, separated by semicolons; they count only with a `setting`.
+    `owner_aliases` holds other names of the owner, separated by semicolons; they count only with a `setting`.
     The owner is the first match; the others are possible duplicates of it.
     """
     target = normalize_name(setting)
     if not target:
         return "unset", None, []
-    targets = {target, *map(normalize_name, (aliases or "").split(";"))} - {""}
+    targets = {target, *map(normalize_name, (owner_aliases or "").split(";"))} - {""}
     matches = {}
     for person in persons:
         aliases = person.get("aliases")

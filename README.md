@@ -229,9 +229,9 @@ The owner rule matches Person names or aliases against `OWNER_NAME` and each
 entry of `OWNER_ALIASES` after Unicode NFKC normalization, case-folding and
 whitespace normalization. `OWNER_ALIASES` separates names with semicolons,
 because names can contain commas, for example `Rowan T Vale; Vale, Rowan T`.
-Empty entries are ignored, and aliases count only when `OWNER_NAME` is set. Multiple matches
-rank by evidence document count descending, non-evidence link count descending,
-then UUID ascending. Evidence counts use nonempty `source_doc_ids`, otherwise
+Empty entries are ignored, and aliases count only when `OWNER_NAME` is set.
+Multiple matches rank by evidence document count descending, non-evidence link
+count descending, then UUID ascending. Evidence counts use nonempty `source_doc_ids`, otherwise
 distinct linked Document nodes. The rule only reads the graph.
 
 | `owner_status` | Meaning | `owner_match_count` |

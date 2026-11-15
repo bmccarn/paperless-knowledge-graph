@@ -18,7 +18,7 @@ for (const width of [1440, 390]) test(`palette keyboard and navigation at ${widt
   const writes = [];
   page.on("request", request => { if (request.method() !== "GET") writes.push(request.url()); });
   await page.goto(`${base}/query`);
-  const opener = page.getByRole("button", { name: "Search pages and archive", exact: true });
+  const opener = page.getByRole("button", { name: "Search pages and archive, Ctrl K", exact: true });
   await opener.click();
   const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
   await input.fill("do");
@@ -83,7 +83,7 @@ test("debounce, stale results, paging and retry", async t => {
   await page.goto(`${base}/documents`);
   await page.clock.install();
   await page.clock.pauseAt(new Date(Date.now() + 10000));
-  await page.getByRole("button", { name: "Search pages and archive", exact: true }).click();
+  await page.getByRole("button", { name: "Search pages and archive, Ctrl K", exact: true }).click();
   const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
   await input.fill("f");
   await page.clock.runFor(200);

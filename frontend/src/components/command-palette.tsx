@@ -149,7 +149,7 @@ export function CommandPalette({ open, onOpenChange, returnFocus }: {
 }
 
 export function PaletteSearchButton({ onClick, className }: { onClick: () => void; className?: string }) {
-  return <Button variant="outline" className={className} onClick={onClick} aria-label="Search pages and archive">
+  return <Button variant="outline" className={className} onClick={onClick} aria-label="Search pages and archive, Ctrl K">
     <Search className="size-4" strokeWidth={1.75} aria-hidden="true" />
     Search <Kbd aria-hidden="true" className="ml-auto hidden md:inline-flex">Ctrl K</Kbd>
   </Button>;

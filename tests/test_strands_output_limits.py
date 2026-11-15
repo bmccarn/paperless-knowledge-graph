@@ -142,6 +142,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(content[0]['text'].encode('utf-8'), prefix)
         self.assertNotEqual(prompts[0], prompts[1])
         self.assertEqual(self.requests[0]['messages'][0], self.requests[1]['messages'][0])
+        self.assertEqual(self.requests[0]['response_format'], self.requests[1]['response_format'])
 
     @contextmanager
     def public_queries(self):
@@ -491,6 +492,10 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 fields = audit_schema['properties']['assessments']['items']['properties']
                 self.assertEqual(list(fields['checks']['properties']), ['subject', 'predicate', 'record_role', 'conditions', 'temporal', 'comparison'])
                 self.assertNotIn('not_applicable', fields['checks']['properties']['predicate']['enum'])
+        # The repair audit sends the same marked source part and schema as the first audit.
+        audits = [r for r in structured if r not in editor_requests]
+        self.assertEqual(len({json.dumps(r['messages'][-1]['content'][0]) for r in audits}), 1)
+        self.assertEqual(len({json.dumps(r['response_format']) for r in audits}), 1)
         self.assertEqual(format['type'], 'json_schema')
         self.assertTrue(format['json_schema']['strict'])
         schema = format['json_schema']['schema']

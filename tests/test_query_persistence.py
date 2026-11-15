@@ -119,6 +119,23 @@ class QueryPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(row["metadata"]["finalization"]["complete"])
                 self.assertNotIn("999", row["content"])
 
+    async def test_two_round_partial_roundtrips_final_candidate_and_all_omissions(self):
+        from app.answer_finalization import AnswerFinalizer
+        from tests.test_audited_missing_subset import RoundAuditor, CHARGE, DOSE, LAB
+        from tests.test_partial_answers import SOURCE
+        from tests.test_source_dates import pack
+        result = await AnswerFinalizer(RoundAuditor({'laboratory.': 'unsupported'}, {'5 mg': 'unsupported'})).finalize(
+            "Recorded charges?", "\n".join([CHARGE, DOSE, LAB]), pack(SOURCE))
+        payload = {**final_payload(), **result}
+        with patch(__name__ + ".final_payload", return_value=payload):
+            await self.test_ordinary_and_sse_persist_identical_complete_metadata()
+        for row in self.saved.messages:
+            if row["role"] == "assistant":
+                self.assertEqual(row["metadata"]["claim_ledger"]["candidate_text"], CHARGE)
+                partial = row["metadata"]["verification"]["partial"]
+                self.assertEqual([u["claim"] for u in partial["omitted_units"]], [LAB, DOSE])
+                self.assertEqual(partial["omitted_count"], 2)
+
     async def test_stream_error_does_not_persist_draft_as_assistant(self):
         self.engine.behavior = "error"
         with self.assertLogs("app.main", "ERROR") as logs:

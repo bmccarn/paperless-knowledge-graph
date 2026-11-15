@@ -665,6 +665,9 @@ function QueryContent() {
               const claims: TableClaim[] = audited ? msg.claim_ledger?.claims ?? [] : [];
               const omitted = audited ? msg.verification?.partial?.omitted_units ?? [] : [];
               const select = (n: number) => setActiveClaims(current => ({ ...current, [i]: n }));
+              // Audited sources carry no type; the evidence pack has it for the same document.
+              const sources = (msg.sources ?? []).map(s => s.doc_type ? s
+                : { ...s, doc_type: msg.evidence_pack?.items?.find(item => item.document_id === s.document_id && item.doc_type)?.doc_type });
               return (
               <article key={i} aria-label="Answer" className="space-y-4 @min-[58rem]:pr-[356px]">
                 {view.state === "failed" ? (
@@ -728,8 +731,8 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {msg.sources && msg.sources.length > 0 && (
-                    <SourceList id={`sources-${i}`} sources={msg.sources} claims={claims} sourceDates={msg.source_dates}
+                  {sources.length > 0 && (
+                    <SourceList id={`sources-${i}`} sources={sources} claims={claims} sourceDates={msg.source_dates}
                       active={activeClaims[i]} paperlessBaseUrl={paperlessBaseUrl} onOpen={source => openSource(source, msg.source_dates)} />
                   )}
 

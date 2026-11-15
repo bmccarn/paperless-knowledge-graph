@@ -68,9 +68,19 @@ const extraStates = [
     await page.getByRole("button", { name: "Open conversations", exact: true }).click();
     await page.getByRole("dialog").waitFor();
   } },
+  { ...gallery, name: "gallery-alert-dialog", state: "alert-dialog", prepare: async page => {
+    await page.getByRole("button", { name: "Open alert dialog", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
   { ...mainStates[4], name: "entities-dialog", state: "merge-dialog", prepare: async page => {
-    await page.getByRole("button", { name: "Merge right into left", exact: true }).first().click();
-    await page.getByRole("dialog").waitFor();
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
+  { ...mainStates[4], name: "entities-merged", state: "merged-toast", prepare: async page => {
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Merge", exact: true }).click();
+    // The toast focuses its Undo, which holds it open through the clock jump below.
+    await page.getByRole("status", { name: "Notifications" }).getByRole("button", { name: "Undo", exact: true }).waitFor();
   } },
   { ...mainStates[2], name: "documents-expanded", state: "expanded", prepare: async page => {
     await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).click();

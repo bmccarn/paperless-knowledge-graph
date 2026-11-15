@@ -2,7 +2,6 @@
 
 import { useState, type ReactNode } from "react";
 import { QueryModes, QueryModel, type QueryMode } from "@/components/query-controls";
-import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
@@ -27,6 +26,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Pager } from "@/components/pager";
+import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { Toast } from "@/components/ui/toast";
 
 const variants = ["default", "secondary", "outline", "ghost", "destructive", "link"] as const;
 const sizes = ["xs", "sm", "default", "lg"] as const;
@@ -72,7 +73,7 @@ export default function GalleryPage() {
         <Section id="ask-controls" title="Ask controls">
           <Row name="Query mode"><QueryModes value={mode} onChange={setMode} /></Row>
           <Row name="Model"><QueryModel models={[{ id: "example", name: "Example model" }]} value={model} defaultModel="example" onChange={setModel} /></Row>
-          <Row name="Delete confirmation"><AlertDialog><AlertDialogTrigger asChild><Button variant="outline">Delete conversation</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete conversation?</AlertDialogTitle><AlertDialogDescription>The conversation and its messages will be permanently deleted.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction variant="destructive">Delete conversation</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Row>
+          <Row name="Delete confirmation"><AlertDialog><AlertDialogTrigger asChild><Button variant="outline">Delete conversation</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete conversation?</AlertDialogTitle><AlertDialogDescription>The conversation and its messages will be permanently deleted.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction asChild><Button variant="destructive">Delete conversation</Button></AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></Row>
         </Section>
 
         <Section id="inspection-controls" title="Document inspection">
@@ -185,12 +186,15 @@ export default function GalleryPage() {
         </section>
 
         <section aria-labelledby="overlays-title" className="space-y-4">
-          <h2 id="overlays-title" className="text-base font-semibold">Dialog, sheet and tooltip</h2>
+          <h2 id="overlays-title" className="text-base font-semibold">Dialogs, sheet, tooltip and toast</h2>
           <div className="flex flex-wrap gap-2">
+            <AlertDialog><AlertDialogTrigger asChild><Button variant="secondary">Open alert dialog</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Merge Cedar Laboratory into Cedar Lab?</AlertDialogTitle><AlertDialogDescription>Cedar Lab keeps its name and takes over the relationships of Cedar Laboratory. You can undo the merge later.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction>Merge</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
             <Dialog><DialogTrigger asChild><Button variant="secondary">Open dialog</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Review document</DialogTitle><DialogDescription>Compare the extracted title with the source document.</DialogDescription></DialogHeader><p className="doc-title">Annual statement</p><DialogFooter><DialogClose asChild><Button>Done</Button></DialogClose></DialogFooter></DialogContent></Dialog>
             <Sheet><SheetTrigger asChild><Button variant="secondary">Open sheet</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>Source document</SheetTitle><SheetDescription>A source stays within reach while you review.</SheetDescription></SheetHeader><p className="doc-title px-4">Annual statement</p><SheetFooter><SheetClose asChild><Button>Done</Button></SheetClose></SheetFooter></SheetContent></Sheet>
             <Tooltip><TooltipTrigger asChild><Button variant="outline"><Plus />Add to archive</Button></TooltipTrigger><TooltipContent>Add a document for review</TooltipContent></Tooltip>
           </div>
+          {/* Inline and untimed here; pages use Toaster, which times out and announces. */}
+          <Toast toast={{ id: 0, text: "Merged Cedar Laboratory into Cedar Lab.", action: { label: "Undo", onClick: () => {} } }} onDismiss={() => {}} className="animate-none" />
         </section>
       </div>
     </div>

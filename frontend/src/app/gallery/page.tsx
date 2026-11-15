@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { TabBar } from "@/components/sidebar-nav";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
+import { StreamStatus, VerdictLine } from "@/components/answer-status";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
@@ -88,6 +89,12 @@ export default function GalleryPage() {
 
         <Section id="evidence-levels" title="Evidence levels">
           <Row name="Level">{(["high", "medium", "low"] as const).map(level => <EvidenceLevel key={level} level={level} />)}</Row>
+        </Section>
+
+        <Section id="verdict-lines" title="Verdict lines">
+          <VerdictLine state="verified" reason="All 3 claims match passages in 2 documents." level="high" seconds={8.4} />
+          <VerdictLine state="withheld" reason="The source audit exceeded its time budget." level="low" seconds={31.2} />
+          <StreamStatus step="Retrieving source evidence" seconds={4} />
         </Section>
 
         <Section id="node-kinds" title="Entity kinds">

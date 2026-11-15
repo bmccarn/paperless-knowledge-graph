@@ -111,7 +111,8 @@ try {
   await visible('supported');
   await visible('January statement: the premium is $25.');
   await capture('query-supported');
-  await page.getByRole('link', { name: 'Document 101', exact: true }).first().click();
+  await page.getByRole('button', { name: /January premium statement/ }).last().click();
+  await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).click();
   await page.waitForURL('**/documents/101');
   await visible('Original OCR text');
   record('query_supported_citation', 'Accepted answer displays supported claim and complete quote; Document 101 citation opens original document inspection.');
@@ -120,7 +121,7 @@ try {
     await page.goto(`${base}/query`);
     await page.getByPlaceholder('Ask a question...').fill(`Run ${scenario} synthetic scenario`);
     await page.getByPlaceholder('Ask a question...').press('Enter');
-    await visible('Connection lost.');
+    await visible('The answer failed. Your question was not answered.');
     assert.ok(!(await page.locator('body').innerText()).includes('DO_NOT_KEEP_UNSUPPORTED_$999'));
     await capture(`query-${scenario}`);
     record(`query_${scenario}`, 'Uncompleted provisional draft is removed instead of finalized.');

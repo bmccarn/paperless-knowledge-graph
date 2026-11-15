@@ -118,12 +118,13 @@ def final_answer(question):
             'query_plan': {'mode': 'strict', 'intent': 'lookup', 'domain': 'insurance', 'requires_current': False},
             'verification': {'status': 'verified', 'supported_claims': [claim], 'unsupported_claims': [],
                              'stale_or_conflicting_claims': [], 'missing_evidence': []},
-            'claim_ledger': {'complete': True, 'claims': [{'id': 'unit-0', 'claim': claim, 'start': 0,
+            'claim_ledger': {'complete': True, 'candidate_text': claim, 'unitization': 'prose_v1',
+                             'claims': [{'id': 'unit-0', 'claim': claim, 'start': 0,
                               'end': len(claim), 'status': 'supported', 'references': [reference],
                               'document_id': 101, 'source_title': 'January premium statement',
                               'evidence_ids': ['doc-101-chunk-0'], 'evidence_quote': quote,
                               'temporal_scope': 'historical'}],
-                             'summary': {'supported': 1, 'unsupported': 0, 'conflicting': 0, 'missing': 0,
+                             'summary': {'total': 1, 'audited': 1, 'supported': 1, 'unsupported': 0, 'conflicting': 0, 'missing': 0,
                                          'unchecked': 0, 'support_ratio': 1, 'audit_coverage': 1}},
             'source_summary': {'source_count': 1, 'trust_score': 0.8, 'trust_level': 'high',
                                'verification_status': 'verified', 'audit_status': 'claim_audited',
@@ -133,9 +134,98 @@ def final_answer(question):
                                        'title': 'January premium statement', 'excerpt': SOURCE_TEXT}],
                               'coverage': {'evidence_item_count': 1, 'source_document_count': 1}},
             'evidence': {'score': 0.8, 'level': 'high'},
-            'finalization': {'status': 'supported', 'complete': True},
+            'source_dates': {'101': '2026-01-31'},
+            'finalization': {'status': 'supported', 'disposition': 'supported', 'complete': True, 'answer_verified': True},
             'trace': [{'step': 'source_audit', 'status': 'ok', 'detail': 'Synthetic complete source support assessment'}],
             'timeline_events': []}
+
+
+# app.answer_finalization.ABSTENTION; that module needs backend packages the frontend job does not install.
+ABSTENTION = ('I could not verify a complete answer from the retrieved source text. '
+              'Please review the source documents or narrow the question before relying on specific facts.')
+# The backend's missing-evidence sentence for each withheld disposition.
+WITHHELD = {
+    'unsupported': 'Not every material claim has validated source support.',
+    'incomplete': 'Not every material claim has validated source support.',
+    'current_unresolved': 'The audited claims do not establish current-world status or a sufficiently scoped source report.',
+    'timeout': 'The source audit exceeded its time budget.',
+    'audit_failed': 'The source audit was unavailable or returned invalid data.',
+}
+SECOND_SOURCE = {'document_id': 102, 'title': 'Utility statement — February', 'doc_type': 'financial_statement',
+                 'chunk_index': 0, 'excerpt': 'Synthetic source text for Utility statement — February.', 'date': '2026-02-28'}
+DRAFT_MARKER = 'WITHHELD_DRAFT_MARKER_$777'
+
+
+def answer_state(result, question):
+    """Apply a `state-<name>` token from the question; Fast mode is always unaudited."""
+    claim = result['claim_ledger']['claims'][0]['claim']
+    final, ledger = result['finalization'], result['claim_ledger']
+    if result['mode'] == 'quick':
+        result['answer'] = 'Unaudited quick answer — verify the source documents before relying on it.\n\n' + claim
+        final.update(disposition='unaudited', complete=False, answer_verified=False)
+        result['verification'].update(status='unaudited')
+        result['evidence'].update(score=0.25, level='low', audit_status='unaudited')
+        result['confidence'] = 0.25
+    elif 'state-documented' in question:
+        result['sources'].append(copy.deepcopy(SECOND_SOURCE))
+        result['source_dates'] = {'101': '2026-01-31', '102': '2026-02-28'}
+        result['answer'] += '\n\nThese are documented facts. Current status as of 2026-09-04 is not established by the retrieved evidence.'
+        final.update(disposition='qualified', documented_qualification=True)
+        result['evidence'].update(score=0.65, level='medium', audit_status='qualified')
+        result['confidence'] = 0.65
+    elif 'state-retry' in question:
+        result['answer'] = 'The document index changed while this answer was being checked. Retry after indexing finishes.'
+        result['claim_ledger'] = {'claims': [], 'summary': {}, 'complete': False}
+        result['source_dates'] = {}
+        final.update(disposition='corpus_changed', complete=False, answer_verified=False, cited_document_ids=[])
+        result['verification'].update(status='corpus_changed', supported_claims=[],
+                                      missing_evidence=['The document index changed during the source check.'])
+        result['evidence'].update(score=0.0, level='low', audit_status='corpus_changed')
+        result['confidence'] = 0.0
+    else:
+        disposition = next((key for key in WITHHELD if f'state-withheld-{key}' in question), None)
+        if disposition is None:
+            return
+        # The draft and the stale summary still read as verified; only the disposition decides the state.
+        result['answer'] = ABSTENTION + ' ' + DRAFT_MARKER
+        result['sources'].append(copy.deepcopy(SECOND_SOURCE))
+        result['source_dates'] = {'101': '2026-01-31', '102': '2026-02-28'}
+        ledger.pop('candidate_text')
+        ledger['claims'][0].update(claim=DRAFT_MARKER, status='unsupported')
+        final.update(disposition=disposition, complete=False, answer_verified=False, cited_document_ids=[])
+        result['verification'].update(status=disposition, supported_claims=[], unsupported_claims=[DRAFT_MARKER],
+                                      missing_evidence=[WITHHELD[disposition]])
+        result['evidence'].update(score=0.0, level='low', audit_status=disposition)
+        result['confidence'] = 0.0
+
+
+def saved_conversations():
+    """Three saved answers that only exist as stored messages: re-verification fails, legacy, and pre-candidate."""
+    question = 'What premium does the January statement list?'
+    verified = final_answer(question)
+    verified.pop('source_dates')
+    unverifiable = copy.deepcopy(verified)
+    unverifiable.update(confidence=0.0, claim_ledger={'claims': [], 'summary': {}, 'complete': False},
+                        evidence={'score': 0.0, 'level': 'low', 'audit_status': 'unavailable'})
+    unverifiable['finalization'].update(disposition='stored_binding_unavailable', complete=False, answer_verified=False,
+                                        cited_document_ids=[])
+    unverifiable['verification'].update(status='unavailable', supported_claims=[],
+                                        missing_evidence=['Saved verification could not be validated.'])
+    legacy = {key: value for key, value in copy.deepcopy(verified).items()
+              if key not in ('finalization', 'evidence', 'claim_ledger')}
+    legacy.update(answer='The January statement lists a premium of $25.', confidence=0.8,
+                  verification={'status': 'needs_review'})
+    older = copy.deepcopy(verified)
+    older['claim_ledger'].pop('candidate_text')
+    older['finalization'].update(answer_digest=hashlib.sha256(older['answer'].encode()).hexdigest())
+    for title, message in (('Saved answer that fails re-verification', unverifiable),
+                           ('Legacy answer without finalization', legacy),
+                           ('Older verified answer', older)):
+        key = f'synthetic-conversation-{len(CONVERSATIONS) + 1}'
+        stored = {'role': 'assistant', 'content': message.pop('answer'), 'query_time_ms': 8400,
+                  'source_dates': {'101': '2026-01-31'}, **message}
+        CONVERSATIONS[key] = {'id': key, 'title': title, 'message_count': 2, 'last_message_at': NOW,
+                              'messages': [{'role': 'user', 'content': question}, stored]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -286,6 +376,9 @@ class Handler(BaseHTTPRequestHandler):
                 MERGES.clear()
                 PROCESSED.update({doc['paperless_id']: NOW for doc in DOCS})
                 return self.reply({'fixture': 'paperless-accuracy-ui-v1', 'status': 'reset'})
+            if route == '/_fixture/saved-answers':
+                saved_conversations()
+                return self.reply({'status': 'seeded'})
             if route in ('/entity-review/merge', '/entity-review/split', '/entity-review/ignore'):
                 REVIEWED.add(body.get('left_uuid') or body.get('primary_uuid'))
                 if route == '/entity-review/merge':
@@ -385,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                 result['answer'] = claim + ' [Document 101](/documents/101)'
                 result['claim_ledger']['unitization'] = 'observations_v1'
                 result['claim_ledger']['claims'][0].update(id='u1', claim=claim, start=0, end=len(claim))
+                result['claim_ledger']['candidate_text'] = claim
                 result['verification']['supported_claims'] = [claim]
                 result['answer'] += '\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question.'
                 result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1},
@@ -423,8 +517,11 @@ class Handler(BaseHTTPRequestHandler):
                 events, receipt = project_timeline(result['answer'], ledger, result['finalization'])
                 result['timeline_events'] = events
                 result['finalization']['timeline'] = receipt
+            answer_state(result, question.lower())
             if 'markup' in question.lower():
-                result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
+                markup = '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
+                result['answer'] += markup
+                result['claim_ledger']['candidate_text'] += markup
             if 'coverage' in question.lower():
                 unavailable = 'unavailable' in question.lower()
                 partial_coverage = 'partial' in question.lower()

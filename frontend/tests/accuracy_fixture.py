@@ -550,10 +550,6 @@ class Handler(BaseHTTPRequestHandler):
                     node = {'labels': ['Document'], 'props': doc} if doc else None
                 if node is None:
                     return self.reply({'detail': 'Unknown synthetic node'}, 404)
-                if get('summary') in ('1', 'true'):  # the sample graph's entities open with no links
-                    return self.reply({'focus': {'id': uid, 'label': node['labels'][0], 'name': node['props'].get('name', ''),
-                                                 'aliases': [], 'evidence_doc_count': 0, 'link_count': 0, 'is_hub': False,
-                                                 'is_owner': False}, 'links': [], 'documents': {}, 'owner_status': 'found'})
                 relationships = []
                 for rel in RELS:
                     if uid not in (rel['start'], rel['end']):

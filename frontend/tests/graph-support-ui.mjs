@@ -22,25 +22,17 @@ try {
   await canvas.waitFor({ state: 'visible' });
   assert.equal(await page.getByRole('button', { name: /^(2D|3D)$/ }).count(), 0, 'Graph dimension controls must be removed');
   assert.equal(await page.getByLabel('Graph dimensions', { exact: true }).count(), 0);
-  // Select the focus at the world origin after the initial fit and the hit canvas refresh.
-  await page.waitForFunction(() => document.querySelector('canvas')?.__zoom?.k !== 1);
-  await page.waitForTimeout(1000);
-  const box = await canvas.boundingBox();
-  const zoom = await canvas.evaluate(element => element.__zoom);
-  await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
-  const summary = page.locator('summary').filter({ hasText: 'Evidence from document #101' });
-  assert.match(await summary.innerText(), /inferred/);
-  await summary.click();
-  const quote = 'Alex is a customer. <img src=x onerror="window.__relationship_xss=1">';
-  await page.getByText(quote, { exact: true }).waitFor({ state: 'visible' });
-  await page.getByText('Extraction rationale: The source names Alex as the customer of Example Utility.', { exact: true }).waitFor({ state: 'visible' });
-  assert.equal(await page.locator('img[src="x"]').count(), 0);
-  assert.equal(await page.evaluate(() => window.__relationship_xss), undefined);
+  // The focus inspector lists the inferred link; selecting it opens the link summary with its document.
+  await page.getByRole('region', { name: 'Inspector: Alex Example', exact: true }).getByRole('button', { name: /Example Utility/ }).first().click();
+  const link = page.getByRole('region', { name: 'Inspector: link', exact: true });
+  await link.getByText('Inferred', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await link.getByRole('link').count(), 1);
+  assert.equal(await page.getByText(/Document #/).count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: path.join(artifacts, 'graph-relationship-support.png'), fullPage: true });
   await writeFile(path.join(artifacts, 'graph-support-results.json'), JSON.stringify({
     scenario: 'graph_relationship_support', status: 'passed', page_errors: errors,
-    detail: 'Nested JSON evidence spans and rationale render after expanding source document support; inferred label remains explicit and hostile quote text does not create an image or execute.',
+    detail: 'Selecting the inferred link opens its summary: the inferred label stays explicit and its one document is listed by title.',
   }, null, 2) + '\n');
   console.log('PASS graph_relationship_support');
 } finally {

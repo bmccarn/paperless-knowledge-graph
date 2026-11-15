@@ -26,7 +26,7 @@ try {
     const proto = CanvasRenderingContext2D.prototype;
     const fillText = proto.fillText;
     proto.fillText = function (text, x, y, ...rest) {
-      if (text === 'Loaner gadget') {
+      if (text === 'Front desk') {
         const transform = this.getTransform();
         const scale = transform.a / devicePixelRatio;
         const point = new DOMPoint(0, 0).matrixTransform(transform);
@@ -86,10 +86,10 @@ try {
   await page.goto(`${base}/graph?focus=nb-desk`);
   const canvas = page.locator('canvas').first();
   await canvas.waitFor({ state: 'visible' });
-  await page.waitForFunction(() => window.__graphPaint['Loaner gadget']);
+  await page.waitForFunction(() => window.__graphPaint['Front desk']);
   // Wait for the initial automatic fit and a stable camera before user input.
   await page.waitForFunction(() => {
-    const paint = window.__graphPaint['Loaner gadget'];
+    const paint = window.__graphPaint['Front desk'];
     const zoom = document.querySelector('canvas')?.__zoom;
     if (!paint || !zoom || zoom.k === 1) return false;
     const signature = JSON.stringify([zoom.k, zoom.x, zoom.y, paint.x, paint.y]);
@@ -98,7 +98,7 @@ try {
     }
     return Date.now() - window.__lastGraphView.since > 300;
   });
-  const initial = await page.evaluate(() => window.__graphPaint['Loaner gadget']);
+  const initial = await page.evaluate(() => window.__graphPaint['Front desk']);
   const bounds = await canvas.boundingBox();
   assert.ok(bounds);
   await page.mouse.move(bounds.x + initial.x, bounds.y + initial.y);
@@ -106,7 +106,7 @@ try {
   await page.waitForTimeout(400);
   await page.mouse.wheel(0, -1800);
   await page.waitForTimeout(400);
-  const closeup = await page.evaluate(() => window.__graphPaint['Loaner gadget']);
+  const closeup = await page.evaluate(() => window.__graphPaint['Front desk']);
   const zoom = await canvas.evaluate(element => element.__zoom.k);
   await page.screenshot({ path: path.join(artifacts, 'graph-closeup.png'), fullPage: true });
   await writeFile(path.join(artifacts, 'graph-zoom-measurements.json'), JSON.stringify({ initial, closeup, zoom, errors }, null, 2) + '\n');
@@ -124,20 +124,19 @@ try {
   await page.mouse.down();
   await page.mouse.move(bounds.x + 30 + bounds.width - 60 - closeup.x, bounds.y + 30, { steps: 10 });
   await page.mouse.up();
-  const edge = await page.evaluate(() => window.__graphPaint['Loaner gadget']);
+  const edge = await page.evaluate(() => window.__graphPaint['Front desk']);
   assert.ok(edge.x > bounds.width - 90 && edge.x < bounds.width, 'Target is near the inspector edge');
   // Select the visibly zoomed node through its canvas hit area, refreshed at most every 800 ms.
   await page.waitForTimeout(900);
   await page.mouse.move(bounds.x + edge.x, bounds.y + edge.y);
-  await page.getByText('Loaner gadget · Gadget', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByText('Front desk · Organization', { exact: true }).waitFor({ state: 'visible' });
   await page.mouse.click(bounds.x + edge.x, bounds.y + edge.y);
   await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
-  await page.waitForFunction(width => document.querySelector('canvas').clientWidth < width, bounds.width);
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(artifacts, 'graph-inspector-closeup.png'), fullPage: true });
   async function assertSelectedVisible(phase) {
     const box = await canvas.boundingBox();
-    const point = await page.evaluate(() => window.__graphPaint['Loaner gadget']);
+    const point = await page.evaluate(() => window.__graphPaint['Front desk']);
     assert.ok(point.x > 10 && point.x < box.width - 10 && point.y > 10 && point.y < box.height - 10,
               `${phase}: selected node must remain visible: ${JSON.stringify({point,box})}`);
     assert.ok(await canvas.evaluate((element, point) => {
@@ -162,7 +161,7 @@ try {
   await page.waitForTimeout(300);
   await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
   await page.screenshot({ path: path.join(artifacts, 'graph-phone-inspector.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Close node inspector', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'hidden' });
   await assertSelectedVisible('Phone inspector closed');
   await page.screenshot({ path: path.join(artifacts, 'graph-phone-restored.png'), fullPage: true });

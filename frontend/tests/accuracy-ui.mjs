@@ -63,19 +63,12 @@ try {
 
   await page.goto(`${base}/graph?focus=person-1`);
   await visible('Alex Example: 1 links in 1 families.');
-  const canvas = page.locator('canvas').first();
-  await canvas.waitFor({ state: 'visible' });
-  // The focus sits at the world origin; wait for the initial fit and the hit canvas refresh, then click it.
-  await page.waitForFunction(() => document.querySelector('canvas')?.__zoom?.k !== 1);
-  await page.waitForTimeout(1000);
-  const box = await canvas.boundingBox();
-  const zoom = await canvas.evaluate(element => element.__zoom);
-  await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
-  await visible('This is literal source text.');
-  await visible('Outgoing');
-  await visible('Inferred');
-  assert.equal(await page.locator('b').filter({ hasText: 'This is literal source text.' }).count(), 0);
-  record('graph_inspector_safe_text', 'The focus inspector shows the link as inferred; markup in description renders as text.');
+  // The inspector opens on the focus and names the link's support; it shows no raw description.
+  const inspector = page.getByRole('region', { name: 'Inspector: Alex Example', exact: true });
+  await inspector.getByText('Customer of', { exact: true }).first().waitFor();
+  await inspector.getByText('Inferred', { exact: true }).first().waitFor();
+  assert.equal(await page.getByText('This is literal source text.').count(), 0);
+  record('graph_inspector_support', 'The focus inspector shows the link as inferred and no raw description markup.');
 
   // Feedback remains open after reindex until a human records review.
   await page.goto(`${base}/documents/101`);

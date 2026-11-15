@@ -46,7 +46,12 @@ incomplete results and visible text below 12 px to the HTML comparison report.
 
 CI runs in `mcr.microsoft.com/playwright:v1.65.1-noble`. Screenshots use a fixed
 clock, UTC, en-US, device scale factor 1, loaded fonts, disabled animation and
-seeded graph randomness. Do not create application baselines on a developer machine.
+seeded graph randomness. The shared Playwright configuration disables partial rasterization
+with `--disable-partial-raster` for both comparison and baseline updates. Chromium
+159.0.8154.6 produced intermittent differences at antialiased edges with partial
+rasterization enabled, even with identical layout and fonts. Do not create application
+baselines on a developer machine. Recheck capture determinism when the pinned
+Playwright image changes.
 
 CI enables screenshot comparison with `UI_VISUAL_GATE` set to `"1"` and the
 approved CI-generated images in the repository. Comparison uses zero differing pixels

@@ -42,6 +42,12 @@ class ModelIdentityTests(unittest.TestCase):
             self.assertEqual(values["FALLBACK_MODEL"], defaults.fallback_model)
             self.assertEqual(values["EMBEDDING_MODEL"], defaults.embedding_model)
             self.assertEqual(values["STRANDS_MODEL"], "")
+            self.assertEqual(values["ENTITY_STEWARD_AUTO_MERGE"], "shadow")
+            self.assertEqual(int(values["ENTITY_STEWARD_AUTO_MERGE_MAX_PER_RUN"]),
+                             defaults.entity_steward_auto_merge_max_per_run)
+        # Shadow records would-merge pairs; only an explicit "on" lets the steward merge.
+        self.assertEqual(defaults.entity_steward_auto_merge, "shadow")
+        self.assertEqual(defaults.entity_steward_auto_merge_max_per_run, 10)
 
     def test_model_upgrade_changes_fingerprint_not_source_identity(self):
         document = {"id": 101, "title": "Synthetic record", "content": "Premium: 125 USD", "tags": [3, 1]}

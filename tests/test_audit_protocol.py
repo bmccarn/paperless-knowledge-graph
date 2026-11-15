@@ -130,5 +130,5 @@ class AuditProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['finalization']['answer_verified'], expected_calls == 2)
                 self.assertNotIn('private', str(result['claim_ledger']['audit_batches']))
                 if expected_calls == 2:
-                    correction_prompt = agent.return_value.invoke_async.await_args_list[1].args[0]
+                    correction_prompt = ''.join(block['text'] for block in agent.return_value.invoke_async.await_args_list[1].args[0])
                     self.assertNotIn('private malformed', correction_prompt)

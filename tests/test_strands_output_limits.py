@@ -106,7 +106,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             return AsyncOpenAI(http_client=client, **kwargs)
 
         self.patches = [patch.object(module, "Agent", Agent),
-            patch.object(module, "OpenAIModel", OpenAIModel),
+            patch.object(module, "OpenAIModel", module.with_cache_control(OpenAIModel)),
             patch.object(module, "STRANDS_AVAILABLE", True),
             patch.object(module.settings, "strands_enabled", True),
             patch("strands.models.openai.openai.AsyncOpenAI", side_effect=client_factory)]
@@ -137,6 +137,9 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertLess(prompt.index('"source_spans"'), prompt.index('"expected_unit_ids"'))
             self.assertLess(prompt.index('"source_spans"'), prompt.index('"units"'))
             prompts.append(prompt.encode('utf-8'))
+            # One cache breakpoint, at the end of the shared sources and nowhere else.
+            self.assertEqual([block.get('cache_control') for block in content], [{'type': 'ephemeral'}, None])
+            self.assertEqual(content[0]['text'].encode('utf-8'), prefix)
         self.assertNotEqual(prompts[0], prompts[1])
         self.assertEqual(self.requests[0]['messages'][0], self.requests[1]['messages'][0])
 

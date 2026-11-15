@@ -68,7 +68,7 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
     assert.equal(await meter.count(), 1);
     assert.equal(await meter.locator("[aria-hidden] > span.bg-fg-muted").count(), { high: 3, medium: 2, low: 1 }[level]);
   }
-  assert.ok(!/\d+\s*%/.test(await page.locator("#evidence-levels").locator("..").innerText()), "no percentage appears");
+  assert.ok(!/\d+\s*%/.test(await page.getByRole("region", { name: "Evidence levels", exact: true }).innerText()), "no percentage appears");
 
   for (const [label, kind] of Object.entries(kinds)) {
     assert.equal(await page.locator(`[data-kind="${kind}"]`, { hasText: new RegExp(`^${label}$`) }).count(), 3, `${label} in shape, icon and faded rows`);
@@ -95,7 +95,8 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
   });
   assert.equal(faded.fill, fadedToken);
 
-  for (const label of types) assert.ok(tree.includes(label), `${label} is missing from the accessibility tree`);
+  const typeTree = await page.getByRole("region", { name: "Document types", exact: true }).ariaSnapshot();
+  for (const label of types) assert.ok(typeTree.includes(label), `${label} is missing from the accessibility tree`);
 
   await page.addScriptTag({ path: require.resolve("axe-core/axe.min.js") });
   const violations = await page.evaluate(async () => (await window.axe.run(document, {

@@ -280,12 +280,16 @@ def radial(neigh, cx, cy, R, pills=None, keep_slot=False):
         members = [n for n in neigh if n[2] == f]
         start = i * sw - sw / 2
         n = len(members)
+        # A side sector gives its family label a slot; a top or bottom one stacks the label beyond the
+        # node labels instead, so its nodes keep even spacing. A hub pill always takes a slot.
+        slot = keep_slot and (bool(pills and pills.get(f)) or abs(math.sin(math.radians(start + sw / 2))) >= 0.3)
         q = n // 2  # the label's slot; with two middle slots, the one nearer the horizontal axis has more room
         if n % 2 and abs(math.sin(math.radians(start + (q + 1.5) / (n + 1) * sw))) > abs(math.sin(math.radians(start + (q + 0.5) / (n + 1) * sw))) + 1e-9:
             q += 1
-        sectors.append((f, start, start + sw, n, pills.get(f, 0) if pills else 0, start + (q + 0.5) / (n + 1) * sw))
+        sectors.append((f, start, start + sw, n, pills.get(f, 0) if pills else 0,
+                        start + (q + 0.5) / (n + 1) * sw if slot else start + sw / 2))
         for j, it in enumerate(members):
-            frac = (j + (j >= q) + 0.5) / (n + 1) if keep_slot else (j + 0.5) / n
+            frac = (j + (j >= q) + 0.5) / (n + 1) if slot else (j + 0.5) / n
             if keep_slot and n == 2 and pills and pills.get(f):  # a hub family: two nodes either side of its pill
                 frac = (0.2, 0.8)[j]
             a = start + frac * sw
@@ -384,7 +388,7 @@ class Placer:
             return cands[0]
         return None
 
-    def check(self, where):
+    def check(self, where, node_gap=True):
         bad = []
         for i, (b, kind, name) in enumerate(self.boxes):
             if kind not in ("label", "chip"):
@@ -396,6 +400,9 @@ class Placer:
             if b[0] < 0 or b[1] < 0 or b[2] > self.W or b[3] > self.H:
                 bad.append(f"{name} outside the canvas")
         bad += [f"{name} reads as another node's label" for b, at, name in self.owners if not self.owner_ok(b, at)]
+        nodes = [(b, name) for b, kind, name in self.boxes if kind == "node" and node_gap]
+        bad += [f"{n1} too close to {n2}" for i, (a, n1) in enumerate(nodes) for b, n2 in nodes[i + 1:]
+                if math.hypot((a[0] + a[2] - b[0] - b[2]) / 2, (a[1] + a[3] - b[1] - b[3]) / 2) < (a[2] - a[0] + b[2] - b[0]) / 2]  # 4 px between shapes
         assert not bad, f"{where}: " + "; ".join(bad)
 
 
@@ -506,8 +513,10 @@ def neighborhood_svg(W, H, cx, cy, R, focus, neigh, pills=None, sel_node=None, s
                 overlay.append(f'<button class="{cls}" style="left:{(pb[0] + pb[2]) / 2:.1f}px;top:{(pb[1] + pb[3]) / 2:.1f}px"'
                                f' aria-label="{extra} more in {esc(name)}">{esc(text)}</button>')
                 continue
-            top = py - lh / 2 if side else (py - lh if down < 0 else py)
-            cands = [(px, top + d, anchor) for d in (0, -9, 9, -18, 18)]
+            if side:
+                cands = [(px, py - lh / 2 + d, anchor) for d in (0, -9, 9, -18, 18)]
+            else:  # outward along the ray until clear of the node labels
+                cands = [(px, py - lh - d if down < 0 else py + d, anchor) for d in range(0, 81, 8)]
             fam_jobs.append((cands, lw, lh, rows, n + extra, name))
     # the focus label, then the selected link's label, both on chips over the converging links
     fy = cy + fe + 18
@@ -560,7 +569,8 @@ def neighborhood_svg(W, H, cx, cy, R, focus, neigh, pills=None, sel_node=None, s
                        f'{" " + f"<tspan class=sl-n>{total}</tspan>" if q == len(rows) - 1 else ""}</tspan>'
                        for q, t in enumerate(rows))
         sec.append(f'<text text-anchor="{anchor}" class="sl">{body}</text>')
-    pl.check(where)
+    # shortcut: the 16 nodes on the 390 px phone ring touch, as they did before; a wider ring or smaller nodes would fix it
+    pl.check(where, node_gap=show_sectors)
     nodes.append(kind_svg(focus["label"], cx, cy, fr, hub=focus.get("hub", False)))
     svg = (f'<svg class="canvas" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" '
            f'aria-label="{esc(focus.get("aria", ""))}">{"".join(sec)}{"".join(links)}{"".join(nodes)}{"".join(labels)}</svg>')

@@ -36,6 +36,23 @@ const extraStates = [
     ready: page => state === "error" ? page.getByRole("alert").filter({ hasText: "Could not load documents" }) : page.getByText("No documents found for this hub search.", { exact: true }),
   })),
 
+  { ...mainStates[0], name: "ask-model", state: "model-select", prepare: async page => {
+    await page.getByRole("combobox", { name: "Model", exact: true }).click();
+    await page.getByRole("listbox").waitFor();
+  } },
+  { ...mainStates[0], name: "ask-delete", state: "delete-confirmation",
+    seed: page => page.request.post("/api/_fixture/saved-answers"), prepare: async page => {
+      const history = page.getByRole("button", { name: "Open conversations", exact: true });
+      if (await history.isVisible()) await history.click();
+      await page.getByRole("button", { name: "Delete Older verified answer", exact: true }).click();
+      await page.getByRole("alertdialog").waitFor();
+  } },
+  { ...mainStates[0], name: "ask-conversations", state: "conversations",
+    seed: page => page.request.post("/api/_fixture/saved-answers"), prepare: async page => {
+      const history = page.getByRole("button", { name: "Open conversations", exact: true });
+      if (await history.isVisible()) await history.click();
+      await page.getByRole("button", { name: "Older verified answer", exact: true }).waitFor();
+  } },
   { ...mainStates[3], name: "document-ocr", state: "ocr-open", prepare: async page => {
     await page.getByRole("button", { name: "Original OCR text" }).click();
     await page.getByRole("region", { name: "Original OCR text" }).focus();

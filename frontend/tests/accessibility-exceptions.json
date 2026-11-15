@@ -33,32 +33,5 @@
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
     ]
-  },
-  {
-    "rule": "color-contrast",
-    "route": "/query",
-    "state": "history-sheet",
-    "issue": 120,
-    "targets": [
-      "[\"#radix-_r_0_ > .overflow-x-hidden.overflow-y-auto.flex-1 > .pb-2.space-y-0\\\\.5.px-2 > .text-muted-foreground\\\\/60.text-center.py-6\"]"
-    ]
-  },
-  {
-    "rule": "color-contrast",
-    "route": "/query",
-    "state": "main",
-    "issue": 120,
-    "targets": [
-      "[\".text-muted-foreground\\\\/60\"]"
-    ]
-  },
-  {
-    "rule": "color-contrast",
-    "route": "/query",
-    "state": "failed",
-    "issue": 120,
-    "targets": [
-      "[\".text-muted-foreground\\\\/60\"]"
-    ]
   }
 ]

@@ -33,7 +33,7 @@ class PaperlessFixture:
             response.raise_for_status()
         return copy.deepcopy(self.documents[doc_id])
 
-    async def get_skip_tag_ids(self):
+    async def get_skip_tag_ids(self, *, refresh=False):
         return {99}
 
     has_any_tag = staticmethod(PaperlessClient.has_any_tag)
@@ -641,6 +641,65 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'failed')
         self.assertEqual(self.graph.documents[1]['title'], 'Existing usable document')
         self.assertEqual(self.graph.deleted, [])
+
+    async def test_sync_refreshes_empty_skip_tags_and_purges_newly_held_document(self):
+        client = PaperlessClient()
+        tags = []
+        client.get_all_tags = AsyncMock(side_effect=lambda: list(tags))
+        client.get_all_documents = self.paperless.get_all_documents
+        client.get_document = self.paperless.get_document
+        with patch.object(pipeline, 'paperless_client', client):
+            self.assertEqual((await pipeline.sync_documents())['processed'], 1)
+            tags.append({'id': 42, 'name': 'needs-review'})
+            self.paperless.documents[1]['tags'] = [42]
+            result = await pipeline.sync_documents()
+        self.assertEqual(result['held'], 1)
+        self.assertEqual(result['deleted'], 1)
+        self.assertFalse(self.graph.documents or self.embeddings.chunks or self.embeddings.hashes)
+        self.assertEqual(client.get_all_tags.await_count, 2)
+
+    async def test_sync_keeps_refreshed_tags_for_processing_and_purge_checks(self):
+        self.existing()
+        self.paperless.documents[1]['tags'] = [42]
+        self.paperless.documents[2] = document(2)
+        client = PaperlessClient()
+        client.get_all_tags = AsyncMock(return_value=[{'id': 42, 'name': 'needs-review'}])
+        client.get_document = self.paperless.get_document
+
+        async def snapshot(**kwargs):
+            # Another caller refreshes the shared cache while this run scans.
+            client._skip_tag_ids = {88}
+            return [dict(document(2), tags=[88])]
+
+        client.get_all_documents = snapshot
+        with patch.object(pipeline, 'paperless_client', client):
+            result = await pipeline.sync_documents()
+        self.assertEqual(result['processed'], 1)
+        self.assertEqual(result['deleted'], 1)
+        self.assertIn(2, self.graph.documents)
+        self.assertNotIn(1, self.graph.documents)
+        self.assertEqual(client.get_all_tags.await_count, 1)
+
+    async def test_freshness_refreshes_tags_for_each_new_snapshot(self):
+        from app import main
+        client = PaperlessClient()
+        tags = []
+        client.get_all_tags = AsyncMock(side_effect=lambda: list(tags))
+        client.get_all_documents = self.paperless.get_all_documents
+        self.graph.get_counts = AsyncMock(return_value={'documents': 0})
+        with patch.object(main, 'paperless_client', client), \
+             patch.object(main, 'graph_store', self.graph), \
+             patch.object(main, 'embeddings_store', self.embeddings), \
+             patch.object(main, '_freshness_cache', None), \
+             patch.object(main, '_freshness_cache_at', 0):
+            first = await main._freshness_snapshot(force=True)
+            tags.append({'id': 42, 'name': 'needs-review'})
+            self.paperless.documents[1]['tags'] = [42]
+            second = await main._freshness_snapshot(force=True)
+        self.assertEqual(first['paperless_documents'], 1)
+        self.assertEqual(second['paperless_documents'], 0)
+        self.assertEqual(second['skip_tag_documents'], 1)
+        self.assertEqual(client.get_all_tags.await_count, 2)
 
     async def test_skip_tag_purges_all_derived_state(self):
         self.existing()

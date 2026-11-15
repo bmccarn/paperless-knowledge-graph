@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime
 
 import httpx
@@ -9,12 +10,15 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+SKIP_TAG_CACHE_TTL_SECONDS = 60
+
 
 class PaperlessClient:
     def __init__(self):
         self.base_url = settings.paperless_url.rstrip("/")
         self.headers = {"Authorization": f"Token {settings.paperless_token}"}
         self._skip_tag_ids: set[int] | None = None
+        self._skip_tag_ids_at = 0.0
 
     async def _get(self, path: str, params: dict | None = None) -> dict:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -59,7 +63,7 @@ class PaperlessClient:
         """Fetch a single document by ID."""
         return await self._get(f"/api/documents/{doc_id}/")
 
-    async def should_purge_document(self, doc_id: int) -> bool:
+    async def should_purge_document(self, doc_id: int, *, skip_tag_ids: set[int] | None = None) -> bool:
         """Confirm deletion or a skip tag before purging a snapshot omission."""
         try:
             doc = await self.get_document(doc_id)
@@ -67,7 +71,9 @@ class PaperlessClient:
             if exc.response.status_code == 404:
                 return True
             raise
-        return self.has_any_tag(doc, await self.get_skip_tag_ids())
+        if skip_tag_ids is None:
+            skip_tag_ids = await self.get_skip_tag_ids()
+        return self.has_any_tag(doc, skip_tag_ids)
 
     async def get_tags(self, page: int = 1, page_size: int = 100) -> dict:
         """Fetch Paperless tags."""
@@ -86,14 +92,16 @@ class PaperlessClient:
             page += 1
         return all_tags
 
-    async def get_skip_tag_ids(self) -> set[int]:
-        """Resolve configured hold/skip tag names to Paperless tag IDs."""
-        if self._skip_tag_ids is not None:
+    async def get_skip_tag_ids(self, *, refresh: bool = False) -> set[int]:
+        """Resolve skip tags, caching successful lookups for at most 60 seconds."""
+        now = time.monotonic()
+        if not refresh and self._skip_tag_ids is not None and now - self._skip_tag_ids_at < SKIP_TAG_CACHE_TTL_SECONDS:
             return set(self._skip_tag_ids)
 
         configured_names = self._configured_skip_tag_names()
         if not configured_names:
             self._skip_tag_ids = set()
+            self._skip_tag_ids_at = now
             return set()
 
         tags = await self.get_all_tags()
@@ -118,6 +126,7 @@ class PaperlessClient:
             logger.warning("Configured Paperless skip tags not found: %s", ", ".join(sorted(missing)))
 
         self._skip_tag_ids = resolved
+        self._skip_tag_ids_at = now
         return set(resolved)
 
     @staticmethod

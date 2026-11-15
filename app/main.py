@@ -208,8 +208,8 @@ async def _freshness_snapshot(force: bool = False) -> dict:
     ):
         return _freshness_cache
 
+    skip_tag_ids = await paperless_client.get_skip_tag_ids(refresh=True)
     paperless_docs_list = await paperless_client.get_all_documents(page_size=100)
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
     indexable_docs_list, held_docs_list = paperless_client.partition_indexable_documents(
         paperless_docs_list,
         skip_tag_ids,

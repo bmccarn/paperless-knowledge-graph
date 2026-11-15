@@ -3,49 +3,85 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  MessageSquare,
-  Network,
-  FileText,
-  Moon,
-  Sun,
-  CircleCheck,
-  CircleX,
-  CircleHelp,
-  Users,
-  Terminal,
-  GitMerge,
-  FolderKanban,
-} from "lucide-react";
+import { LayoutDashboard, MessageSquare, Network, FileText, Moon, Sun, CircleCheck, CircleX, CircleHelp, Users, Terminal, FolderKanban, Ellipsis } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetTrigger, SheetContent, SheetTitle, SheetHeader, SheetClose } from "@/components/ui/sheet";
 import { useEffect, useState } from "react";
 import { getStatus } from "@/lib/api";
 
-const mobileNavItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/query", label: "Query", icon: MessageSquare },
-  { href: "/graph", label: "Graph", icon: Network },
-  { href: "/documents", label: "Docs", icon: FileText },
-  { href: "/entities/review", label: "Review", icon: GitMerge },
-  { href: "/hubs", label: "Hubs", icon: FolderKanban },
-  { href: "/debug", label: "Debug", icon: Terminal },
-];
-
-const desktopNavItems = [
+const primaryItems = [
   { href: "/query", label: "Ask", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/graph", label: "Graph", icon: Network },
   { href: "/entities/review", label: "Entities", icon: Users },
+];
+const secondaryItems = [
   { href: "/", label: "Status", icon: LayoutDashboard },
   { href: "/hubs", label: "Hubs", icon: FolderKanban },
   { href: "/debug", label: "Logs", icon: Terminal },
 ];
 
+function isCurrent(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+}
+
+function BackendHealth({ healthy }: { healthy: boolean | null }) {
+  const Icon = healthy === true ? CircleCheck : healthy === false ? CircleX : CircleHelp;
+  return <p role="status" className="label-12 flex items-center gap-2 px-2 py-1 text-fg-muted">
+    <Icon aria-hidden="true" className={cn("size-3.5", healthy === true ? "text-verified" : healthy === false ? "text-error" : "text-fg-muted")} strokeWidth={1.75} />
+    {healthy === true ? "Backend up" : healthy === false ? "Backend down" : "Checking backend"}
+  </p>;
+}
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  return <Button variant="ghost" className="w-full justify-start gap-2 px-2 text-fg-muted" aria-label="Toggle theme"
+    onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
+    <Sun className="size-4 dark:hidden" strokeWidth={1.75} aria-hidden="true" />
+    <Moon className="hidden size-4 dark:block" strokeWidth={1.75} aria-hidden="true" />
+    Toggle theme
+  </Button>;
+}
+
+export function TabBar({ pathname, healthy, className }: { pathname: string; healthy: boolean | null; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const tabClass = "flex min-w-0 flex-col items-center justify-center gap-1 rounded-md text-fg-muted transition-colors hover:bg-raised hover:text-foreground data-[active=true]:bg-raised data-[active=true]:text-foreground";
+  return <Sheet open={open} onOpenChange={setOpen}>
+    <div className={cn("fixed inset-x-0 bottom-0 z-40 border-t bg-surface pb-[env(safe-area-inset-bottom)] md:hidden", className)}>
+      <nav aria-label="Phone" className="grid h-(--tabbar) grid-cols-5 px-1">
+        {primaryItems.map(item => <Link key={item.href} href={item.href}
+          aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
+          data-active={isCurrent(pathname, item.href)} className={tabClass}>
+          <item.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          <span className="label-12">{item.label}</span>
+        </Link>)}
+        <SheetTrigger className={tabClass} data-active={secondaryItems.some(item => isCurrent(pathname, item.href))}>
+          <Ellipsis className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          <span className="label-12">More</span>
+        </SheetTrigger>
+      </nav>
+    </div>
+    <SheetContent side="bottom" aria-describedby={undefined} className="max-h-[85dvh] overflow-y-auto rounded-t-xl gap-0 pb-[env(safe-area-inset-bottom)]">
+      <SheetHeader><SheetTitle>More</SheetTitle></SheetHeader>
+      <nav aria-label="More" className="px-4 pb-3">
+        {secondaryItems.map(item => <SheetClose asChild key={item.href}>
+          <Link href={item.href} aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
+            className={cn("label-14 flex min-h-11 items-center gap-2 rounded-md px-2 hover:bg-raised", isCurrent(pathname, item.href) && "bg-raised")}>
+            <item.icon className="size-4" strokeWidth={1.75} aria-hidden="true" />{item.label}
+          </Link>
+        </SheetClose>)}
+      </nav>
+      <div className="space-y-2 border-t px-4 py-3">
+        <ThemeToggle />
+        <BackendHealth healthy={healthy} />
+      </div>
+    </SheetContent>
+  </Sheet>;
+}
+
 export function SidebarNav() {
   const pathname = usePathname();
-  const { resolvedTheme, setTheme } = useTheme();
   const [healthy, setHealthy] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -60,75 +96,23 @@ export function SidebarNav() {
 
   if (pathname === "/gallery") return null;
 
-  return (
-    <>
-      <aside aria-label="App navigation" className="hidden md:flex w-[200px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-6">
-        <p className="mb-6 px-2 font-[family-name:var(--font-geist-serif-regular)] text-xl leading-6">Knowledge Graph</p>
-        <nav aria-label="Main" className="space-y-0.5">
-          {desktopNavItems.map((item, index) => {
-            const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const HealthIcon = healthy === true ? CircleCheck : healthy === false ? CircleX : CircleHelp;
-            return (
-              <div key={item.href}>
-                {index === 4 && <p className="label-12 mt-4 mb-1 border-t px-2 pt-3 text-fg-subtle">More</p>}
-                <Link href={item.href} aria-current={active ? "page" : undefined}
-                  className={cn("label-14 flex h-8 items-center gap-2 rounded-md px-2 transition-colors", active ? "bg-raised text-foreground" : "text-muted-foreground hover:bg-raised hover:text-foreground")}>
-                  <item.icon className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                  {item.label}
-                </Link>
-                {item.href === "/" && <p role="status" className="label-12 flex items-center gap-2 px-2 py-1 text-fg-muted">
-                  <HealthIcon aria-hidden="true" className={cn("size-3.5", healthy === true ? "text-verified" : healthy === false ? "text-error" : "text-fg-muted")} strokeWidth={1.75} />
-                  {healthy === true ? "Backend up" : healthy === false ? "Backend down" : "Checking backend"}
-                </p>}
-              </div>
-            );
-          })}
-        </nav>
-        <Button variant="ghost" className="mt-4 w-full justify-start gap-2 px-2" aria-label="Toggle theme"
-          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
-          <Sun className="size-4 dark:hidden" strokeWidth={1.75} aria-hidden="true" />
-          <Moon className="hidden size-4 dark:block" strokeWidth={1.75} aria-hidden="true" />
-          Toggle theme
-        </Button>
-      </aside>
-
-      {/* Mobile bottom tab bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden border-t bg-card/95 backdrop-blur-md safe-area-bottom">
-        <nav className="flex items-center px-1 py-1">
-          {mobileNavItems.map((item) => {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                    aria-label={item.href === "/" ? "Home" : item.label}
-                    aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] py-1 px-0.5 rounded-lg transition-colors",
-                  active
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-              >
-                <item.icon className="h-5 w-5" />
-                <span className="text-[10px] mt-0.5 font-medium">{item.href === "/" ? "Home" : item.label}</span>
-              </Link>
-            );
-          })}
-          <button
-            aria-label="Toggle theme"
-                onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-            className="flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] py-1 px-0.5 rounded-lg text-muted-foreground"
-          >
-            <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-            <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            <span className="text-[10px] mt-0.5 font-medium">Theme</span>
-          </button>
-        </nav>
+  return <>
+    <aside aria-label="App navigation" className="hidden md:flex w-[200px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-6">
+      <p className="mb-6 px-2 font-[family-name:var(--font-geist-serif-regular)] text-xl leading-6">Knowledge Graph</p>
+      <nav aria-label="Main" className="space-y-0.5">
+        {[...primaryItems, ...secondaryItems].map((item, index) => <div key={item.href}>
+          {index === 4 && <p className="label-12 mt-4 mb-1 border-t px-2 pt-3 text-fg-subtle">More</p>}
+          <Link href={item.href} aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
+            className={cn("label-14 flex h-8 items-center gap-2 rounded-md px-2 transition-colors", isCurrent(pathname, item.href) ? "bg-raised text-foreground" : "text-muted-foreground hover:bg-raised hover:text-foreground")}>
+            <item.icon className="size-4" strokeWidth={1.75} aria-hidden="true" />{item.label}
+          </Link>
+        </div>)}
+      </nav>
+      <div className="mt-auto space-y-2 border-t pt-3">
+        <ThemeToggle />
+        <BackendHealth healthy={healthy} />
       </div>
-    </>
-  );
+    </aside>
+    <TabBar pathname={pathname} healthy={healthy} />
+  </>;
 }

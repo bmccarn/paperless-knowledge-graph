@@ -304,6 +304,8 @@ function QueryContent() {
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [queryMode, setQueryMode] = useState<QueryMode>("strict");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const viewVersion = useRef(0);
   const activeConversation = useRef<string | null>(null);
@@ -322,6 +324,17 @@ function QueryContent() {
     setSelectedSource(null);
   };
   useEffect(() => () => { viewVersion.current++; busy.current = false; }, []);
+  useEffect(() => {
+    const composer = composerRef.current;
+    const messages = messagesRef.current;
+    if (!composer || !messages) return;
+    const observer = new ResizeObserver(() => {
+      messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
+    });
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
+
 
   const loadConversations = useCallback(async () => {
     try {
@@ -767,7 +780,7 @@ function QueryContent() {
           </Tooltip>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={messagesRef} className="flex-1 overflow-y-auto app-scroll">
           <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
             {messages.length === 0 && !streamingContent && (
               <div className="text-center py-12 md:py-16 space-y-3">
@@ -1136,7 +1149,7 @@ function QueryContent() {
         </div>
 
         {/* Input */}
-        <div className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
+        <div ref={composerRef} className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
             {/* Mode and model selectors */}
             <div className="flex flex-wrap items-center gap-2">

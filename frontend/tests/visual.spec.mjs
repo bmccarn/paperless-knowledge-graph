@@ -21,6 +21,10 @@ const mainStates = [
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  { ...mainStates[0], name: "phone-more", state: "more-sheet", phoneOnly: true, prepare: async page => {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("dialog", { name: "More", exact: true }).waitFor();
+  } },
   ...["dialog", "sheet"].map(kind => ({ ...gallery, name: `gallery-${kind}`, state: kind, prepare: async page => {
     await page.getByRole("button", { name: `Open ${kind}`, exact: true }).click();
     await page.getByRole("dialog").waitFor();

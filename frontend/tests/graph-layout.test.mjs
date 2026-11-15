@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  RING_RADIUS,
+  crossLinks,
   drawableLinks,
   familyCap,
   neighborhoodLayout,
@@ -175,4 +177,68 @@ test("fixed sectors: parties at 12 o'clock, then clockwise; same input gives sam
   // Shuffled input gives byte-identical output.
   const shuffled = { ...data, links: [...data.links].reverse() };
   assert.equal(JSON.stringify(neighborhoodLayout(shuffled, 2)), JSON.stringify(layout));
+});
+
+// Links among the hub's neighbors, as GET /graph/subgraph returns them.
+function between(source, target, documents, type = "RELATED_TO", family = "loose") {
+  return { key: `${source}~${type}~${target}`, type, family, source, target, support_state: "supported",
+    stated_count: documents, inferred_count: 0,
+    records: Array.from({ length: documents }, (_, index) => ({ doc_id: 1000 + index, inferred: false, confidence: 0.9 })) };
+}
+const response = links => ({ links, documents: {}, total: links.length, truncated: false });
+
+test("links between neighbors: drawn neighbors only, each once, strongest first, no evidence and no pill member", () => {
+  const layout = neighborhoodLayout(hub(), familyCap(true, false));
+  const drawn = layout.nodes.filter(node => node.kind === "neighbor").map(node => node.id);
+  const hidden = "party-59";
+  assert.ok(!drawn.includes(hidden), "party-59 sits in the parties pill");
+  const [a, b, c] = drawn;
+  const result = crossLinks(layout, response([
+    between(a, b, 1), between(b, c, 3, "EMPLOYED_BY", "parties"), between(a, b, 1), between(a, hidden, 9),
+    between(a, c, 2, "MENTIONS", "evidence"), between(c, c, 4), between(a, "focus", 5), between(c, a, 3, "PAID_TO", "money"),
+  ]), 60);
+  assert.deepEqual(result.links.map(link => link.key), [`${b}~EMPLOYED_BY~${c}`, `${c}~PAID_TO~${a}`, `${a}~RELATED_TO~${b}`]);
+  assert.equal(result.total, 3);
+  assert.deepEqual(crossLinks(layout, response([between(a, b, 1)]), 60), crossLinks(layout, response([between(a, b, 1)]), 60),
+    "The same data gives the same curves");
+});
+
+test("links between neighbors: over the cap the strongest are drawn and the total counts all of them", () => {
+  const layout = neighborhoodLayout(hub(), familyCap(false, false), { parties: 60, money: 120 });
+  const drawn = layout.nodes.filter(node => node.kind === "neighbor").map(node => node.id);
+  const links = drawn.slice(1, 62).map((id, index) => between(drawn[0], id, 1 + (index % 5)));
+  assert.equal(links.length, 61);
+  const result = crossLinks(layout, response(links), 60);
+  assert.equal(result.links.length, 60);
+  assert.equal(result.total, 61);
+  assert.ok(result.links.every(link => link.link.records.length >= result.links.at(-1).link.records.length));
+  assert.equal(crossLinks(layout, { ...response(links), total: 700, truncated: true }, 30).total, 700, "A truncated response keeps its total");
+});
+
+test("each curve bows away from the focus, from either direction, and a pair across the ring passes at a quarter radius", () => {
+  // force-graph's control point: the chord midpoint plus curvature * length along (dy, -dx) / length.
+  const control = (start, end, curvature) => {
+    const dx = end.x - start.x, dy = end.y - start.y;
+    return { x: (start.x + end.x) / 2 + curvature * dy, y: (start.y + end.y) / 2 - curvature * dx };
+  };
+  const ring = degrees => ({ x: RING_RADIUS * Math.sin(degrees * Math.PI / 180), y: -RING_RADIUS * Math.cos(degrees * Math.PI / 180) });
+  const layoutOf = angles => ({ nodes: angles.map((angle, index) => ({ id: `n${index}`, kind: "neighbor", ...ring(angle) })), links: [], sectors: [], entities: 0 });
+  for (const [from, to] of [[0, 60], [60, 0], [350, 20], [100, 250], [250, 100]]) {
+    const layout = layoutOf([from, to]);
+    const [link] = crossLinks(layout, response([between("n0", "n1", 1)]), 60).links;
+    const [start, end] = layout.nodes;
+    const point = control(start, end, link.curvature);
+    const chord = Math.hypot((start.x + end.x) / 2, (start.y + end.y) / 2);
+    assert.ok(Math.abs(Math.hypot(point.x, point.y) - (chord + (RING_RADIUS - chord) / 2)) < 0.01, `${from} to ${to}: halfway to the ring`);
+    const arc = Math.min(Math.abs(to - from), 360 - Math.abs(to - from));
+    assert.ok(Math.abs(Math.abs(link.curvature) - Math.tan(arc * Math.PI / 720) / 4) < 1e-5, `${from} to ${to}: tan(d/4)/4`);
+  }
+  const across = layoutOf([30, 210]);
+  const [link] = crossLinks(across, response([between("n0", "n1", 1)]), 60).links;
+  const [start, end] = across.nodes;
+  const point = control(start, end, link.curvature);
+  // A quadratic curve's middle is (start + 2 * control + end) / 4.
+  const middle = { x: (start.x + 2 * point.x + end.x) / 4, y: (start.y + 2 * point.y + end.y) / 4 };
+  assert.ok(Math.abs(Math.hypot(middle.x, middle.y) - RING_RADIUS / 4) < 0.01, "It passes the focus at a quarter of the radius");
+  assert.equal(crossLinks(across, response([between("n0", "n1", 1)]), 60).links[0].curvature, link.curvature, "On the same side every time");
 });

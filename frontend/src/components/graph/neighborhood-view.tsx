@@ -7,19 +7,24 @@ import { Focus, Info, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { errMsg } from "@/lib/utils";
-import { ApiError, getGraphNodeSummary } from "@/lib/api";
+import { cn, errMsg } from "@/lib/utils";
+import { ApiError, getGraphNodeSummary, getGraphSubgraph } from "@/lib/api";
 import { graphNavigation, listedViews, parseGraphState, parseLinkKey, shownView } from "@/lib/graph-url-state";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
+  crossCap,
+  crossLinks,
   drawableLinks,
   familyCap,
   neighborhoodLayout,
   showMore,
   VIEW_LIMIT,
   type NodeSummary,
+  type Subgraph,
+  type SubgraphLink,
+  type SummaryLink,
 } from "@/lib/graph-layout";
-import { documentsByDate, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
+import { documentsByDate, entityName, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
 import type { GraphHandle } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
@@ -59,6 +64,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [markedDoc, setMarkedDoc] = useState<number | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
   const handleRef = useRef<GraphHandle | null>(null);
+  // The links between neighbors, for the drawn neighbor ids they were requested with.
+  const [cross, setCross] = useState<{ ids: string; data: Subgraph | null } | null>(null);
+  const [crossAttempt, setCrossAttempt] = useState(0);
+  const [crossSlow, setCrossSlow] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -79,6 +88,23 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
 
   const cap = summary ? familyCap(summary.focus.is_hub, phone) : 0;
   const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra), [summary, cap, extra]);
+  // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
+  const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
+  const wantCross = urlState.cross && crossIds.includes(",");
+  useEffect(() => {
+    if (!wantCross) return;
+    let active = true;
+    const slow = setTimeout(() => setCrossSlow(crossIds), 1000);
+    getGraphSubgraph(crossIds.split(","))
+      .then(data => { if (active) setCross({ ids: crossIds, data }); }, () => { if (active) setCross({ ids: crossIds, data: null }); })
+      .finally(() => clearTimeout(slow));
+    return () => { active = false; clearTimeout(slow); };
+  }, [wantCross, crossIds, crossAttempt]);
+  const crossLoading = wantCross && cross?.ids !== crossIds;
+  const crossFailed = wantCross && !crossLoading && !cross?.data;
+  // Until a new request returns, the last response still draws its links among the neighbors that remain.
+  const crossData = wantCross ? cross?.data : null;
+  const shownCross = useMemo(() => layout && crossData ? crossLinks(layout, crossData, crossCap(phone)) : null, [layout, crossData, phone]);
   const { graph, positions } = useMemo(() => {
     // The canvas sizes and rings nodes from these fields of the summary.
     const fields = new Map<string, Record<string, unknown>>(summary ? [
@@ -90,16 +116,20 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         const { evidence_doc_count, link_count, is_hub, is_owner } = fields.get(id) ?? {};
         return { id, name, label, props: { evidence_doc_count, link_count, is_hub, is_owner } };
       }),
-      links: (layout?.links ?? []).map(({ key, source, target, type, link }) => ({
+      // Array order is drawing order: links between neighbors go under the focus links.
+      links: [...(shownCross?.links ?? []).map(({ key, source, target, type, link, curvature }) => ({
+        id: key, source, target, type,
+        props: { implied: link.support_state === "inferred", source_doc_ids: link.records.map((record) => record.doc_id), curvature },
+      })), ...(layout?.links ?? []).map(({ key, source, target, type, link }) => ({
         id: key, source, target, type,
         props: link
           ? { implied: link.support_state === "inferred", source_doc_ids: link.records.map((record) => record.doc_id) }
           : { aggregate: true },
-      })),
+      }))],
       discarded: 0,
     };
     return { graph, positions: new Map(layout?.nodes.map(({ id, x, y }) => [id, { x, y }])) };
-  }, [layout, summary]);
+  }, [layout, summary, shownCross]);
 
   const navigate = useCallback((change: Parameters<typeof graphNavigation>[1]) => {
     const { href, method } = graphNavigation(new URLSearchParams(params), change);
@@ -137,9 +167,16 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;
   const documents = useMemo(() => (summary ? documentsByDate(summary) : []), [summary]);
   const markedLinkIds = useMemo(() => (summary && markedDoc !== null ? linksOfDocument(summary, markedDoc) : undefined), [summary, markedDoc]);
-  const legend = useMemo(() => layout && legendItems(layout), [layout]);
+  const legend = useMemo(() => layout && legendItems({ nodes: layout.nodes, links: [...layout.links, ...(shownCross?.links ?? [])] }), [layout, shownCross]);
   const leaf = summary !== null && drawableLinks(summary).length === 0;
-  const selectedLink = summary?.links.find(link => link.key === selectedLinkId);
+  /** A link between neighbors as a link of `from`, so the inspector rows and link summary can show it. */
+  const asLink = useCallback(({ source, target, ...link }: SubgraphLink, from: string): SummaryLink => {
+    const other = source === from ? target : source;
+    return { ...link, direction: source === from ? "out" : "in", neighbor: summary!.links.find(item => item.neighbor.id === other)!.neighbor };
+  }, [summary]);
+  const selectedCross = shownCross?.links.find(link => link.key === selectedLinkId);
+  const selectedLink = summary?.links.find(link => link.key === selectedLinkId)
+    ?? (selectedCross && asLink(selectedCross.link, selectedCross.source));
   const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
   const pill = selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
   const adds = useMemo(() => {
@@ -149,11 +186,27 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, [summary, cap, extra, pill]);
   const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
+  const crossCount = !urlState.cross ? null : !wantCross ? 0 : shownCross && !crossLoading ? shownCross.links.length : null;
+  const inferred = summary ? drawableLinks(summary).filter(link => link.support_state === "inferred").length : 0;
+  const canvasName = summary && layout ? `Neighborhood of ${entityName(summary.focus)}: ${plural(linkTotal, "link")} in ${plural(layout.sectors.length, "family", "families")}, ${inferred} inferred`
+    + (crossCount === null ? "." : `; ${plural(crossCount, "link")} between neighbors.`) : "";
+  let crossCaption = null;
+  if (crossLoading) crossCaption = crossSlow === crossIds ? "Loading links between neighbors" : null;
+  else if (crossFailed) crossCaption = (
+    <>Links between neighbors did not load.{" "}
+      <Button variant="link" size="xs" className="h-auto p-0 text-sm" onClick={() => { setCross(null); setCrossAttempt(value => value + 1); }}>Retry</Button>
+    </>);
+  else if (shownCross) crossCaption = shownCross.total === 0 ? "No links between these neighbors."
+    : shownCross.total > shownCross.links.length ? `Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`
+    : `${plural(shownCross.total, "link")} between neighbors.`;
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   let inspector = null;
   if (summary && layout) {
-    if (selectedLink) inspector = <LinkInspector summary={summary} link={selectedLink} onClose={clearSelection} />;
+    if (selectedCross && selectedLink) inspector = (
+      <LinkInspector summary={{ ...summary, documents: { ...cross?.data?.documents, ...summary.documents } }} link={selectedLink}
+        end={summary.links.find(link => link.neighbor.id === selectedCross.source)!.neighbor} onClose={clearSelection} />);
+    else if (selectedLink) inspector = <LinkInspector summary={summary} link={selectedLink} onClose={clearSelection} />;
     else if (pill) {
       const drawn = new Set(layout.links.map(link => link.key));
       inspector = (
@@ -161,7 +214,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);
     }
     else if (selectedNodeId && selectedNodeId !== summary.focus.id && positions.has(selectedNodeId))
-      inspector = <NeighborInspector summary={summary} neighborId={selectedNodeId} onClose={clearSelection} onFocusEntity={openFocus} {...rowEvents} />;
+      inspector = <NeighborInspector summary={summary} neighborId={selectedNodeId} onClose={clearSelection} onFocusEntity={openFocus} {...rowEvents}
+        crossLinks={shownCross?.links.filter(link => link.source === selectedNodeId || link.target === selectedNodeId).map(link => asLink(link.link, selectedNodeId))} />;
     else inspector = <FocusInspector summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
   }
 
@@ -196,8 +250,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           <h1 className="page-title">Graph</h1>
           {summary && layout && (
             <p className="mt-1 text-sm text-muted-foreground">
-              {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
-              {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
+              <span>
+                {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
+                {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
+              </span>
+              {" "}<span role="status">{crossCaption}</span>
             </p>
           )}
         </div>
@@ -241,6 +298,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
                 focusId={focusId}
                 keyboardNodeId={keyboardNodeId}
                 markedLinkIds={markedLinkIds}
+                name={canvasName}
                 showLabels
                 selectedNodeId={selectedNodeId}
                 selectedLinkId={selectedLinkId}
@@ -256,17 +314,25 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
               </div>
             )}
             {legend && !leaf && (
-              <>
+              <div className="absolute right-3 top-3 flex gap-2 md:right-4">
+                {/* A switch: on phone only its track shows, at the 44 px touch size. */}
+                <button type="button" aria-pressed={urlState.cross} onClick={() => navigate({ cross: !urlState.cross })}
+                  className="inline-flex h-8 items-center gap-2 rounded-md border border-border-strong bg-surface pl-2.5 pr-3 label-12 font-medium text-fg hover:bg-raised max-md:size-11 max-md:justify-center max-md:p-0">
+                  <span aria-hidden className={cn("relative h-[18px] w-8 shrink-0 rounded-full border", urlState.cross ? "border-fg bg-fg" : "border-border-strong")}>
+                    <span className={cn("absolute top-[2px] size-3 rounded-full", urlState.cross ? "left-4 bg-bg" : "left-[2px] bg-fg-muted")} />
+                  </span>
+                  <span className="max-md:sr-only">Links between neighbors</span>
+                </button>
                 <Sheet>
                   <SheetTrigger asChild>
-                    <Button variant="outline" size="icon-lg" aria-label="Legend" className="absolute right-3 top-3 md:hidden"><Info /></Button>
+                    <Button variant="outline" size="icon-lg" aria-label="Legend" className="md:hidden"><Info /></Button>
                   </SheetTrigger>
                   <SheetContent side="bottom" className="rounded-t-xl px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-4">
                     <SheetTitle className="heading-16">Legend</SheetTitle>
                     <div><LegendContent items={legend} /></div>
                   </SheetContent>
                 </Sheet>
-              </>
+              </div>
             )}
           </section>
           {legend && !leaf && <GraphLegend items={legend} className="max-md:hidden" />}

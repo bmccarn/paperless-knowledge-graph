@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { StatusResponse } from "@/lib/types";
-import type { NodeSummary } from "@/lib/graph-layout";
+import type { NodeSummary, Subgraph } from "@/lib/graph-layout";
 
 export const API_URL = "/api";
 
@@ -186,6 +186,11 @@ export async function getGraphNode(uuid: string) {
 
 export async function getGraphNodeSummary(uuid: string): Promise<NodeSummary> {
   return apiFetch(`/graph/node/${encodeURIComponent(uuid)}?summary=1`);
+}
+
+/** The links among 2 to 150 entities, for the links between neighbors in Focus. */
+export async function getGraphSubgraph(ids: string[]): Promise<Subgraph> {
+  return apiFetch(`/graph/subgraph?${new URLSearchParams({ ids: ids.join(",") })}`);
 }
 
 /** Entities only, for the graph landing; `sort=documents` with an empty query lists the most connected. */

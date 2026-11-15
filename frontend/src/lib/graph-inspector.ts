@@ -107,7 +107,7 @@ export interface LegendItems { labels: string[]; styles: LinkStyle[] }
  * Only what is drawn: each node label once in category order (labels outside the kinds collapse to one
  * "Other" entry), then the link styles in view.
  */
-export function legendItems(layout: Pick<NeighborhoodLayout, "nodes" | "links">): LegendItems {
+export function legendItems(layout: Pick<NeighborhoodLayout, "nodes"> & { links: { link: Pick<SummaryLink, "support_state"> | null }[] }): LegendItems {
   const seen = new Set(layout.nodes.filter(node => node.kind !== "pill").map(node => node.label));
   const known = NODE_LABELS.filter(label => seen.has(label));
   const other = [...seen].some(label => nodeKind(label).kind === "unknown");

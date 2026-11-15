@@ -104,6 +104,20 @@ for rel_type, target in [('PAID_TO', 'nb-markup'), ('EMPLOYED_BY', 'nb-unnamed')
 # A renewal notice whose one link is stated in one document and inferred in another.
 NB_ENTITIES.update({'nb-renewal': ('Contract', 'Renewal notice 2026'), 'nb-car': ('Product', '2014 Honda Fit')})
 nb_link('nb-renewal', 'COVERS', 'nb-car', 2, inferred={1})
+# Links between the hub's drawn neighbors, for the curves in Focus: one inferred, one parallel pair, and one link to a
+# member of the parties pill, which is never drawn. Only GET /graph/subgraph reads them, so the summaries, document
+# counts and search order of every other page stay as they were; their document ids come after every other nb_link.
+NB_CROSS = []
+for start, rel_type, end, documents, inferred in [
+    ('nb-parties-1', 'EMPLOYED_BY', 'nb-parties-0', 4, ()), ('nb-parties-1', 'RELATED_TO', 'nb-parties-0', 1, ()),
+    ('nb-coverage-0', 'ISSUED_BY', 'nb-money-0', 5, ()), ('nb-money-1', 'PAID_TO', 'nb-money-0', 3, ()),
+    ('nb-coverage-0', 'COVERS', 'nb-other-0', 3, ()), ('nb-coverage-0', 'EFFECTIVE_FROM', 'nb-time-0', 2, ()),
+    ('nb-coverage-0', 'EXPIRES_ON', 'nb-time-1', 1, ()), ('nb-places-0', 'LOCATED_IN', 'nb-places-1', 2, ()),
+    ('nb-service-0', 'LOCATED_IN', 'nb-places-1', 1, ()), ('nb-service-1', 'LOCATED_IN', 'nb-places-1', 1, ()),
+    ('nb-other-1', 'USES_DEVICE', 'nb-other-0', 1, {0}), ('nb-health-1', 'RELATED_TO', 'nb-health-0', 1, {0}),
+    ('nb-loose-0', 'PARTICIPATED_IN', 'nb-loose-1', 2, ()), ('nb-parties-filler-00', 'EMPLOYED_BY', 'nb-parties-0', 1, ()),
+]:
+    NB_CROSS.append((start, rel_type, end, [(next(_nb_doc), index in inferred, 0.9) for index in range(documents)]))
 
 
 # The sample person and organization also open as a neighborhood, for the inspector's source checks.
@@ -548,6 +562,24 @@ class Handler(BaseHTTPRequestHandler):
                 offset, limit = int(get('offset', '0')), int(get('limit', '50'))
                 return self.reply({'total': len(rows), 'offset': offset, 'limit': limit,
                                    'has_more': offset + limit < len(rows), 'results': rows[offset:offset + limit]})
+            if route == '/graph/subgraph':
+                # GET /graph/subgraph: the links among 2 to 150 entities, outside evidence and without Document ends.
+                ids = [value.strip() for value in get('ids', '').split(',')]
+                if not 2 <= len(ids) <= 150 or not all(ids):
+                    return self.reply({'detail': 'Supply between 2 and 150 comma-separated entity ids'}, 400)
+                links = [{'key': f'{start}~{rel_type}~{end}', 'type': rel_type, 'family': classify_relationship(rel_type)[0],
+                          'source': start, 'target': end,
+                          'support_state': 'supported' if not any(f for _, f, _ in records) else 'inferred' if all(f for _, f, _ in records) else 'mixed',
+                          'stated_count': sum(not f for _, f, _ in records), 'inferred_count': sum(f for _, f, _ in records),
+                          'records': [{'doc_id': doc, 'inferred': flag, 'confidence': score} for doc, flag, score in records]}
+                         for start, rel_type, end, records in NB_LINKS + NB_CROSS
+                         if start in ids and end in ids and not start.startswith('doc-') and not end.startswith('doc-')
+                         and classify_relationship(rel_type)[0] != 'evidence']
+                total = len(links)
+                links = sorted(links, key=lambda link: (-len(link['records']), link['key']))[:600]
+                documents = sorted({record['doc_id'] for link in links for record in link['records']})
+                return self.reply({'links': links, 'total': total, 'truncated': total > len(links),
+                                   'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in documents}})
             if route.startswith('/graph/node/'):
                 uid = route.rsplit('/', 1)[1]
                 if uid in NB_ENTITIES and get('summary') in ('1', 'true'):

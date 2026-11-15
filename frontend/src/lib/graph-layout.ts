@@ -188,6 +188,41 @@ export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Rec
   return { nodes, links, sectors, entities: nodes.filter(node => node.kind !== "pill").length };
 }
 
+/** A link from `GET /graph/subgraph`: a summary link with `source` and `target` instead of `direction` and `neighbor`. */
+export interface SubgraphLink extends Omit<SummaryLink, "direction" | "neighbor"> { source: string; target: string }
+export interface Subgraph { links: SubgraphLink[]; documents: NodeSummary["documents"]; total: number; truncated: boolean }
+/** Links between neighbors drawn at most: 60, 30 on phone. */
+export const crossCap = (phone: boolean) => (phone ? 30 : 60);
+export interface CrossLink { key: string; source: string; target: string; type: string; family: string; link: SubgraphLink; curvature: number }
+
+/**
+ * Links between two drawn neighbors, each once, strongest first (supporting documents, then key), at most `cap`.
+ * Each curve's control point sits on the bisector of the shorter arc, halfway between the chord's midpoint and
+ * the ring, so it bows away from the focus. `curvature` is force-graph's: control-point offset over chord length,
+ * to the left of source-to-target in screen coordinates. `total` counts every link between drawn neighbors.
+ */
+export function crossLinks(layout: NeighborhoodLayout, subgraph: Subgraph, cap: number): { links: CrossLink[]; total: number } {
+  const at = new Map(layout.nodes.filter(node => node.kind === "neighbor").map(node => [node.id, node]));
+  const seen = new Set(layout.links.map(link => link.key));
+  const docs = (link: SubgraphLink) => new Set(link.records.map(record => record.doc_id)).size;
+  const kept = subgraph.links.filter(link => {
+    if (link.family === "evidence" || link.source === link.target || !at.has(link.source) || !at.has(link.target) || seen.has(link.key)) return false;
+    seen.add(link.key);
+    return true;
+  }).sort((a, b) => docs(b) - docs(a) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const links = kept.slice(0, cap).map(link => {
+    const start = at.get(link.source)!, end = at.get(link.target)!;
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const mx = (start.x + end.x) / 2, my = (start.y + end.y) / 2;
+    // force-graph puts the control point at the midpoint plus curvature * length along (dy, -dx) / length.
+    const outward = dy * mx - dx * my >= 0 ? 1 : -1;
+    const curvature = (RING_RADIUS - Math.hypot(mx, my)) / 2 / Math.hypot(dx, dy) * outward;
+    return { key: link.key, source: link.source, target: link.target, type: link.type, family: link.family, link,
+      curvature: Math.round(curvature * 1e6) / 1e6 };
+  });
+  return { links, total: subgraph.truncated ? subgraph.total : kept.length };
+}
+
 /**
  * One press of "+N more": draw up to 25 more links of the family, never past 150
  * entities in view. Returns the same object when nothing can be added.

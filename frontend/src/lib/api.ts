@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { StatusResponse } from "@/lib/types";
 import type { NodeSummary, Subgraph } from "@/lib/graph-layout";
+import { parseDocumentDate } from "@/lib/answer-state";
 
 export const API_URL = "/api";
 
@@ -185,7 +186,13 @@ export async function getGraphNode(uuid: string) {
 }
 
 export async function getGraphNodeSummary(uuid: string): Promise<NodeSummary> {
-  return apiFetch(`/graph/node/${encodeURIComponent(uuid)}?summary=1`);
+  const summary: NodeSummary = await apiFetch(`/graph/node/${encodeURIComponent(uuid)}?summary=1`);
+  // Stored dates can be named; every graph view compares calendar dates in ISO order.
+  for (const document of Object.values(summary.documents)) {
+    const parts = parseDocumentDate(document.date ?? "");
+    document.date = parts?.map((part, index) => String(part).padStart(index === 0 ? 4 : 2, "0")).join("-") ?? null;
+  }
+  return summary;
 }
 
 /** The links among 2 to 150 entities, for the links between neighbors in Focus. */

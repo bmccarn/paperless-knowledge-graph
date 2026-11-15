@@ -17,7 +17,7 @@ export const GRAPH_VIEWS: readonly GraphViewInfo[] = [
   { id: "focus", label: "Focus", question: "What is this entity linked to, and how do those things link to each other?", alias: "n", needsFocus: true, listed: true },
   { id: "explore", label: "Explore", question: "What lies two or three steps away, and where do the links loop back?", needsFocus: true, listed: false },
   { id: "timeline", label: "Timeline", question: "When was each link documented, and what arrived when?", needsFocus: true, listed: false },
-  { id: "table", label: "Table", question: "Every link of this entity, sorted and filtered.", alias: "t", needsFocus: true, listed: false },
+  { id: "table", label: "Table", question: "Every link of this entity, sorted and filtered.", alias: "t", needsFocus: true, listed: true },
   { id: "path", label: "Paths", question: "How are these two entities connected?", alias: "p", needsFocus: false, listed: false },
   { id: "overview", label: "Overview", question: "What is in the archive, and which parts hang together?", needsFocus: false, listed: false },
 ];

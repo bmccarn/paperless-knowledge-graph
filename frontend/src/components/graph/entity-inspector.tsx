@@ -134,7 +134,7 @@ function Actions({ name, children }: { name: string; children?: ReactNode }) {
 }
 
 /** The focus entity: kind, name, aliases, actions, key facts, support summary, links by family and documents. */
-export function FocusInspector({ summary, onClose, ...events }: { summary: NodeSummary; onClose?: () => void } & RowEvents) {
+export function FocusInspector({ summary, onClose, onOpenTable, ...events }: { summary: NodeSummary; onClose?: () => void; onOpenTable: () => void } & RowEvents) {
   const { focus } = summary;
   const name = entityName(focus);
   const documents = documentsByDate(summary);
@@ -151,6 +151,7 @@ export function FocusInspector({ summary, onClose, ...events }: { summary: NodeS
         <Button variant="outline" asChild>
           <Link href={`/documents?entity=${encodeURIComponent(focus.id)}`}><FileText /><span className="tabular-nums">{plural(documents.length, "document")}</span></Link>
         </Button>
+        <Button variant="outline" onClick={onOpenTable}>Open in table</Button>
       </Actions>
       {facts.length > 0 && (
         <>
@@ -262,8 +263,8 @@ export function LinkInspector({ summary, link, end = summary.focus, onClose }: {
 }
 
 /** A "+N" pill: the family's links that are not drawn, ranked, and the control that adds up to 25 to the canvas. */
-export function GroupInspector({ sector, links, adds, onAdd, onClose, ...events }: {
-  sector: LayoutSector; links: SummaryLink[]; adds: number; onAdd: () => void; onClose: () => void;
+export function GroupInspector({ sector, links, adds, onAdd, onClose, atLimit, onOpenTable, ...events }: {
+  sector: LayoutSector; links: SummaryLink[]; adds: number; onAdd: () => void; onClose: () => void; atLimit: boolean; onOpenTable: () => void;
 } & RowEvents) {
   const [all, setAll] = useState(false);
   return (
@@ -274,7 +275,7 @@ export function GroupInspector({ sector, links, adds, onAdd, onClose, ...events 
         this group, ranked by evidence documents.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button onClick={onAdd} disabled={!adds}><Plus />Add {adds || MORE_STEP} to the canvas</Button>
+        {atLimit ? <Button onClick={onOpenTable}>Open in table</Button> : <Button onClick={onAdd} disabled={!adds}><Plus />Add {adds || MORE_STEP} to the canvas</Button>}
       </div>
       {!adds && <p role="status" className="mt-2 label-12 text-fg-muted">The canvas shows at most {VIEW_LIMIT} entities.</p>}
       <ul aria-label={`${sector.name} group`} className="mt-3 border-t border-border pt-1.5">

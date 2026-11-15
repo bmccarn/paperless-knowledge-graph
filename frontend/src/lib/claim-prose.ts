@@ -83,10 +83,11 @@ export function proseBlocks(text: string, ranges: ClaimRange[]): Block[] {
 // Values a claim states, most telling first: amounts, quoted names, dates, then other numbers.
 const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
 const VALUE_PATTERNS = [
-  /\$\s?\d[\d,]*(?:\.\d+)?/g,
+  /\$\s?\d+(?:,\d{3})*(?:\.\d+)?/g,
   /["“]([^"”\n]{2,80})["”]/g,
   new RegExp(`${MONTH} \\d{1,2}(?:, \\d{4})?|\\d{1,2} ${MONTH} \\d{4}|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}/\\d{2,4}`, "g"),
-  /\d[\d,.]*\d/g,
+  // Single digits only as a percentage: alone they also number lists and sections.
+  /\d[\d,.]*\d%?|\d%/g,
 ];
 /** Characters of context kept before the first matched value, so it falls inside a three-line quote. */
 const CONTEXT = 40;

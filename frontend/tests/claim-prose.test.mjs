@@ -66,6 +66,9 @@ test("the quote window starts shortly before the amount the claim states, not at
 test("values match whole tokens only", () => {
   assert.deepEqual(quoteWindow("The fee is $25.", "Late fee $250. Other fee $25.50.").values, []);
   assert.deepEqual(quoteWindow("The fee is $25.", "Late fee $250. Fee: $25.").values, ["$25"]);
+  // A comma after an amount ends it; a percentage keeps a single digit.
+  assert.deepEqual(quoteWindow("It rose from $500, then to $1,000.", "Deductible: $500. Now $1,000.").values, ["$500", "$1,000"]);
+  assert.deepEqual(quoteWindow("The rate rose by 5%.", "Rate change: 5% from March.").values, ["5%"]);
   // Single digits are too common to anchor on.
   assert.deepEqual(quoteWindow("Invoice 88-2031 lists 3 items.", "Invoice 88-2031, 3 items").values, ["88", "2031"]);
 });

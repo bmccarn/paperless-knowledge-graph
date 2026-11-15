@@ -317,13 +317,10 @@ function QueryContent() {
   }, []);
 
 
-  const loadConversations = useCallback(async () => {
-    try {
-      const convs = await listConversations();
-      setConversations(convs);
-    } catch (e) {
+  const loadConversations = useCallback(() => {
+    return listConversations().then(setConversations).catch((e) => {
       console.error("Failed to load conversations:", e);
-    }
+    });
   }, []);
 
   useEffect(() => {

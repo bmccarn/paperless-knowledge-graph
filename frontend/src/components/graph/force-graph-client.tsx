@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, RefAttributes } from "react";
 import type {
   ForceGraphMethods,
@@ -109,24 +109,23 @@ export function ForceGraphClient({
 
   // Mutable force coordinates belong only to the renderer, never graph metadata.
   const data = useMemo(() => {
-    const nodes = graph.nodes.map((node) => {
-      const previous = renderNodes.current.get(node.id);
-      const rendered = {
-        ...node,
-        props: { ...node.props },
-        x: previous?.x,
-        y: previous?.y,
-        fx: previous?.fx,
-        fy: previous?.fy,
-      };
-      renderNodes.current.set(node.id, rendered);
-      return rendered;
-    });
+    const nodes: RenderNode[] = graph.nodes.map((node) => ({
+      ...node,
+      props: { ...node.props },
+    }));
     return {
       nodes,
       links: graph.links.map((link) => ({ ...link, props: { ...link.props } })),
     };
   }, [graph]);
+
+  useLayoutEffect(() => {
+    for (const node of data.nodes) {
+      const previous = renderNodes.current.get(node.id);
+      Object.assign(node, { x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy });
+      renderNodes.current.set(node.id, node);
+    }
+  }, [data]);
 
   useEffect(() => {
     if (!renderer.Component || !selectedNodeId ||

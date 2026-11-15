@@ -83,10 +83,10 @@ def bezier(p0, c, p2, n=24):
              (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * c[1] + t ** 2 * p2[1]) for t in (i / n for i in range(n + 1))]
 
 
-def cross_svg(neigh, cx, cy, R, links, sel=None):
+def cross_svg(neigh, cx, cy, R, links, sel=None, keep_slot=True):
     """Curves between two neighbors on the ring. The control point sits on the bisector of the shorter arc
     between them, halfway between the chord and the ring, so each curve bows toward the ring and away from the focus."""
-    slots, _ = bm.radial(neigh, cx, cy, R, None, keep_slot=True)
+    slots, _ = bm.radial(neigh, cx, cy, R, None, keep_slot=keep_slot)  # the same slot rule as the nodes
     at = {it[0]: (x, y, extent(it[1], radius(it[5])) + (4 if it[0] == OWNER else 0), a) for it, a, x, y in slots}
     out = []
     for a, b, typ, w, sup in links:
@@ -688,7 +688,7 @@ def phone_focus_svg(W, H, where):
     focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto): 16 links in 8 families, 3 inferred; 11 links between neighbors")
     svg, ov = bm.neighborhood_svg(W, H, 184, 170, 140, focus, POLICY_N, focus_r=14, show_sectors=False, where=where)
     i = svg.index("<line ")
-    return svg[:i] + cross_svg(POLICY_N, 184, 170, 140, CROSS) + svg[i:], ov
+    return svg[:i] + cross_svg(POLICY_N, 184, 170, 140, CROSS, keep_slot=False) + svg[i:], ov
 
 
 def phone_focus():
@@ -773,7 +773,7 @@ SCREENS = [
     ("phone-timeline", "phone", "Phone Timeline list", phone_timeline),
     ("phone-overview", "phone", "Phone Overview group list", phone_overview),
 ]
-MIN_LABELS = {"focus": 16, "explore": 21, "phone-explore": 10}  # every node except the root
+MIN_LABELS = {"focus": 16, "explore": 21, "phone-explore": 10, "phone-focus": 6}  # every node except the root
 
 
 def build(design_dir):

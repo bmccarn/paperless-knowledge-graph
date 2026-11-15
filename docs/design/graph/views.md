@@ -254,7 +254,7 @@ Links among a set of entities, for Focus and Explore.
 The whole-archive data for Overview, in a compact form.
 
 - Nodes: every entity with at least one link outside the `evidence` family to another entity, Documents excluded, sorted by id. Fields are given once in `columns`; names are cut at 60 characters.
-- Links: one row per pair of entities, all their relationships merged. `weight` is the count of distinct supporting documents. `support` is 0 (supported), 1 (mixed) or 2 (inferred), by the #109 rule over all records. `families` is a bit mask of the family indices of all the pair's links. The family filter hides a pair only when none of its families is shown.
+- Links: one row per pair of entities, all their relationships merged. `weight` is the count of distinct supporting documents. `support` is 0 (supported), 1 (mixed) or 2 (inferred), by the #109 rule over all records. `families` is a bit mask of the family indices of all the pair's links. The bit indices use the fixed family order without `evidence`: `parties`, `money`, `coverage`, `health`, `service`, `places`, `time`, `doclinks`, `loose`, `other`. The family filter hides a pair only when none of its families is shown.
 - `unlinked` counts entities that have only document links. `owner` is the owner's node index or null. `version` is a hash of the node ids and link keys, for the browser's layout cache.
 
 ```json

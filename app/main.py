@@ -1165,6 +1165,11 @@ async def graph_relationship_types():
     return result
 
 
+@app.get("/graph/overview")
+async def graph_overview():
+    return await graph_store.get_overview()
+
+
 @app.get("/graph/search")
 async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0,
                        sort: str = "relevance", exclude_documents: bool = False):
@@ -1207,6 +1212,14 @@ async def graph_node(node_uuid: str, summary: bool = False):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
+
+
+@app.get("/graph/subgraph")
+async def graph_subgraph(ids: str):
+    entity_ids = [value.strip() for value in ids.split(",")]
+    if not 2 <= len(entity_ids) <= 150 or not all(entity_ids):
+        raise HTTPException(status_code=400, detail="Supply between 2 and 150 comma-separated entity ids")
+    return await graph_store.get_links_among(list(dict.fromkeys(entity_ids)))
 
 
 PATH_SEARCH_SECONDS = 5

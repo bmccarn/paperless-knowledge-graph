@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF9 Table view</title>
+<link rel="stylesheet" href="wf.css"></head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="btn">←</span><span class="btn">→</span>
+    <div class="crumbs">Map › <b>Harbor Mutual Insurance</b></div>
+    <span class="spacer"></span>
+    <div class="seg"><span>Map</span><span>Neighborhood</span><span>Path</span><span class="on">Table</span></div>
+    <span class="btn">Export CSV</span>
+  </div>
+  <div style="padding:16px 20px;overflow:hidden">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <b>Links of Harbor Mutual Insurance</b><span class="muted">· same filters as the canvas · 37 rows</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="chip on">Owner hidden ✕</span><span class="btn">Filters</span>
+    </div>
+    <table role="grid" aria-label="Links of Harbor Mutual Insurance">
+      <tr><th>Family</th><th>Relationship</th><th>Direction</th><th>Other entity</th><th>Type</th><th>Support ▾</th><th>Documents</th><th>Lowest confidence</th><th>Latest document</th></tr>
+      <tr style="background:#172b44;outline:2px solid #7fb2ff"><td>Parties</td><td>ISSUED_BY</td><td>← in</td><td>Policy HM-4471 (auto)</td><td>InsurancePolicy</td><td><span class="tag sup">supported</span></td><td>9</td><td>0.93</td><td>2026-09-02</td></tr>
+      <tr><td>Parties</td><td>ISSUED_BY</td><td>← in</td><td>Policy HO-2210 (home)</td><td>InsurancePolicy</td><td><span class="tag sup">supported</span></td><td>6</td><td>0.90</td><td>2026-06-14</td></tr>
+      <tr><td>Money</td><td>PREMIUM_PAID_TO</td><td>← in</td><td>Premium, 6 mo · $612</td><td>FinancialItem</td><td><span class="tag sup">supported</span></td><td>4</td><td>0.88</td><td>2026-04-01</td></tr>
+      <tr><td>Parties</td><td>CONTRACTED_WITH</td><td>→ out</td><td>Bayline Claims Services</td><td>Organization</td><td><span class="tag sup">supported</span></td><td>2</td><td><span class="tag unk">no score</span></td><td>2025-11-20</td></tr>
+      <tr><td>Places</td><td>HEADQUARTERS_IN</td><td>→ out</td><td>Port Ellery</td><td>Location</td><td><span class="tag inf">inferred</span></td><td>1</td><td>0.61</td><td>2024-07-09</td></tr>
+      <tr><td>Other</td><td>SPONSORED_BY</td><td>← in</td><td>Riverside 10K</td><td>Event</td><td><span class="tag inf">inferred</span></td><td>1</td><td>0.55</td><td>2023-05-18</td></tr>
+      <tr><td colspan="9" class="muted">31 more rows · arrow keys move · Enter opens evidence · Space selects for compare</td></tr>
+    </table>
+    <span class="n-pin" style="position:relative;display:inline-block;margin-top:10px">1</span>
+  </div>
+</div>
+<div class="notes" style="left:24px;top:520px;width:520px">
+  <h3>WF9 · Table view: the non-visual equivalent</h3>
+  <ol>
+    <li>Every canvas state has a table with the same filters, the same selection and the same URL. It is a real <code>&lt;table&gt;</code> with sortable column headers (<code>aria-sort</code>), roving focus and a live region that reads “37 links, 9 inferred”. Screen-reader users and keyboard users get the full graph through this view; the canvas itself is <code>aria-hidden</code> with a text summary.</li>
+  </ol>
+</div>
+</body></html>

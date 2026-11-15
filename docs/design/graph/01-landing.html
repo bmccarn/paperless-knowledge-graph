@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF1 Graph landing</title>
+<link rel="stylesheet" href="wf.css"></head>
+<body>
+<div class="app">
+  <div class="top">
+    <h1>Graph</h1>
+    <div class="search">⌕ <span>Find a person, organization, policy or document…</span><span class="spacer"></span><kbd>/</kbd></div>
+    <div class="seg"><span class="on">Map</span><span>Neighborhood</span><span>Path</span><span>Table</span></div>
+    <span class="spacer"></span>
+    <span class="btn">Saved views ▾</span>
+  </div>
+  <div class="body" style="grid-template-columns: 300px 1fr 340px;">
+
+    <div class="rail">
+      <div class="h">Start from</div>
+      <div class="row sel"><span class="dot" style="background:var(--k-money)"></span>Policy HM-4471 (auto)<span class="n">opened 2 h ago</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-org)"></span>Harbor Mutual Insurance<span class="n">yesterday</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-person)"></span>Dana Whitlock<span class="n">3 d</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-health)"></span>Lipid panel 2026-03<span class="n">5 d</span></div>
+      <div class="h">Pinned</div>
+      <div class="row"><span class="sq" style="background:var(--k-place)"></span>14 Larkspur Ct (home)<span class="n">★</span></div>
+      <div class="row"><span class="sq" style="background:var(--k-org)"></span>Northgate Credit Union<span class="n">★</span></div>
+      <div class="h">Life areas</div>
+      <span class="chip">Insurance 14</span><span class="chip">Taxes</span><span class="chip">Medical</span><span class="chip">Vehicles</span><span class="chip">Home</span><span class="chip">Military</span>
+      <div class="h">Most connected (owner hidden)</div>
+      <div class="row"><span class="dot" style="background:var(--k-org)"></span>Coastal Power Co.<span class="n">61 docs</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-org)"></span>County Tax Office<span class="n">44 docs</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-person)"></span>Dana Whitlock<span class="n">39 docs</span></div>
+      <div class="row"><span class="dot" style="background:var(--k-org)"></span>Harbor Mutual Insurance<span class="n">33 docs</span></div>
+      <div class="row muted">Show 20 more…</div>
+    </div>
+
+    <div class="canvas">
+      <div style="position:absolute;left:20px;top:14px;">
+        <div style="font-size:16px;font-weight:600">Archive map</div>
+        <div class="muted">Entity types and how often they are linked. Click a type to list its entities. Documents appear as evidence, not as nodes.</div>
+      </div>
+      <svg width="800" height="700" viewBox="0 0 800 700" style="position:absolute;left:0;top:60px">
+
+        <g stroke="#6f8296" stroke-opacity=".55" fill="none">
+          <line x1="400" y1="300" x2="230" y2="190" stroke-width="7"/>
+          <line x1="400" y1="300" x2="590" y2="190" stroke-width="5"/>
+          <line x1="400" y1="300" x2="610" y2="380" stroke-width="4"/>
+          <line x1="400" y1="300" x2="220" y2="420" stroke-width="6"/>
+          <line x1="230" y1="190" x2="590" y2="190" stroke-width="3"/>
+          <line x1="590" y1="190" x2="680" y2="90" stroke-width="3"/>
+          <line x1="230" y1="190" x2="120" y2="290" stroke-width="2.5"/>
+          <line x1="220" y1="420" x2="120" y2="290" stroke-width="2"/>
+          <line x1="610" y1="380" x2="690" y2="500" stroke-width="2.5"/>
+          <line x1="400" y1="300" x2="400" y2="520" stroke-width="3"/>
+          <line x1="400" y1="520" x2="530" y2="570" stroke-width="5"/>
+          <line x1="230" y1="190" x2="330" y2="80" stroke-width="2"/>
+          <line x1="590" y1="190" x2="470" y2="80" stroke-width="2"/>
+        </g>
+        <g class="lbl small" text-anchor="middle">
+          <text x="300" y="235">WORKS_AT · 24</text>
+          <text x="520" y="255">COVERS · 12</text>
+          <text x="500" y="535">CONTAINS_RESULT · 85</text>
+        </g>
+
+        <rect x="190" y="150" width="80" height="80" rx="16" fill="#d95926"/>
+        <text class="lbl big" x="230" y="250" text-anchor="middle">Organization</text><text class="lbl small" x="230" y="264" text-anchor="middle">180</text>
+        <circle cx="400" cy="300" r="34" fill="#3987e5"/>
+        <text class="lbl big" x="400" y="352" text-anchor="middle">Person</text><text class="lbl small" x="400" y="366" text-anchor="middle">64</text>
+        <polygon points="590,160 620,190 590,220 560,190" fill="#199e70"/>
+        <text class="lbl big" x="590" y="238" text-anchor="middle">Address</text><text class="lbl small" x="590" y="252" text-anchor="middle">52</text>
+        <polygon points="680,68 702,90 680,112 658,90" fill="#199e70"/>
+        <text class="lbl" x="680" y="128" text-anchor="middle">Location 31</text>
+        <polygon points="610,352 634,366 634,394 610,408 586,394 586,366" fill="#c98500"/>
+        <text class="lbl big" x="610" y="426" text-anchor="middle">FinancialItem</text><text class="lbl small" x="610" y="440" text-anchor="middle">40</text>
+        <polygon points="690,482 706,491 706,509 690,518 674,509 674,491" fill="#c98500"/>
+        <text class="lbl" x="690" y="536" text-anchor="middle">Contract 12</text>
+        <polygon points="220,395 240,406 240,434 220,445 200,434 200,406" fill="#c98500"/>
+        <text class="lbl big" x="220" y="463" text-anchor="middle">InsurancePolicy</text><text class="lbl small" x="220" y="477" text-anchor="middle">15</text>
+        <polygon points="120,268 141,304 99,304" fill="#d55181"/>
+        <text class="lbl" x="120" y="322" text-anchor="middle">Product 47</text>
+        <polygon points="330,60 349,93 311,93" fill="#d55181"/>
+        <text class="lbl" x="330" y="110" text-anchor="middle">System 28</text>
+        <polygon points="393,500 407,500 407,513 420,513 420,527 407,527 407,540 393,540 393,527 380,527 380,513 393,513" fill="#9085e9"/>
+        <text class="lbl" x="400" y="560" text-anchor="middle">Condition 16</text>
+        <polygon points="522,546 538,546 538,562 554,562 554,578 538,578 538,594 522,594 522,578 506,578 506,562 522,562" fill="#9085e9"/>
+        <text class="lbl big" x="530" y="612" text-anchor="middle">MedicalResult</text><text class="lbl small" x="530" y="626" text-anchor="middle">44</text>
+        <circle cx="470" cy="80" r="9" fill="none" stroke="#0ca30c" stroke-width="4"/>
+        <text class="lbl" x="470" y="104" text-anchor="middle">Event 6 · Date 3</text>
+      </svg>
+
+      <div class="card" style="position:absolute;left:20px;right:20px;bottom:16px;display:flex;gap:18px;align-items:center">
+        <span class="sq" style="background:var(--k-doc);width:14px;height:16px"></span>
+        <div><b>120 documents</b> <span class="muted">supply the evidence · 35 documents are only referenced inside others</span></div>
+        <span class="spacer" style="flex:1"></span>
+        <span class="chip">invoice 42</span><span class="chip">tax 11</span><span class="chip">home 9</span><span class="chip">insurance 14</span><span class="chip">military 6</span><span class="chip">+4</span>
+      </div>
+      <span class="n-pin" style="left:150px;top:14px">1</span>
+      <span class="n-pin" style="left:300px;top:170px">2</span>
+      <span class="n-pin" style="left:26px;bottom:62px">3</span>
+    </div>
+
+    <div class="insp">
+      <div class="h">Check the graph</div>
+      <div class="card"><b>46 inferred links</b><div class="muted">Links that no source states explicitly.</div><div style="margin-top:6px"><span class="btn">Review in table</span></div></div>
+      <div class="card"><b>18 links without confidence</b><div class="muted">At least one source record has no score.</div></div>
+      <div class="card"><b>38 possible duplicates</b><div class="muted">Open entity review.</div></div>
+      <div class="h">Recently added · last 30 days</div>
+      <div class="row"><span class="sq" style="background:var(--k-doc)"></span>Harbor Mutual renewal notice<span class="n">+6 links</span></div>
+      <div class="row"><span class="sq" style="background:var(--k-doc)"></span>Coastal Power bill, Oct<span class="n">+3</span></div>
+      <div class="row"><span class="sq" style="background:var(--k-doc)"></span>Lab report, Oct 2<span class="n">+14</span></div>
+      <div class="row muted">See all 27 documents…</div>
+      <span class="n-pin" style="position:relative;display:inline-block;margin-top:8px">4</span>
+    </div>
+  </div>
+</div>
+<div class="notes" style="left:1080px;top:520px">
+  <h3>WF1 · Landing: search first, map second</h3>
+  <ol>
+    <li>The page opens on search plus an <b>archive map</b>, never on a force-directed sample. Focus goes to the search box; <kbd>/</kbd> returns to it.</li>
+    <li>The map is a type-level meta-graph: 13 entity types, area = entity count, edge width = √(entity-to-entity links). It never has more than 15 nodes, so it cannot become a hairball. Clicking a type opens the Table view filtered to that type; clicking an edge opens the table of those links.</li>
+    <li>Documents are a strip of evidence counts by document type, not nodes.</li>
+    <li>A trust queue lists inferred, unscored and duplicate items, plus recent ingests (from <code>Document.processed_at</code>).</li>
+  </ol>
+  <div class="muted" style="margin-top:6px">Names are synthetic. All counts are invented.</div>
+</div>
+</body></html>

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF6 Evidence inspector</title>
+<link rel="stylesheet" href="wf.css"></head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="btn">←</span><span class="btn">→</span>
+    <div class="crumbs">Map › Policy HM-4471 (auto) › <b>COVERS 2014 Honda Fit</b></div>
+    <span class="spacer"></span>
+    <div class="seg"><span>Map</span><span class="on">Neighborhood</span><span>Path</span><span>Table</span></div>
+  </div>
+  <div class="body" style="grid-template-columns: 1fr 520px;">
+    <div class="canvas">
+      <svg width="920" height="852" viewBox="0 0 920 852" style="position:absolute;left:0;top:0">
+        <g fill="none" stroke="#2a3a4c"><line x1="420" y1="420" x2="300" y2="230"/><line x1="420" y1="420" x2="560" y2="240"/><line x1="420" y1="420" x2="250" y2="560"/><line x1="420" y1="420" x2="420" y2="660"/></g>
+        <line x1="420" y1="420" x2="680" y2="520" stroke="#ffd166" stroke-width="6" stroke-opacity=".25"/>
+        <line x1="420" y1="420" x2="680" y2="520" stroke="#b7a46a" stroke-width="2.5" stroke-dasharray="6 4"/>
+        <polygon points="420,384 451,402 451,438 420,456 389,438 389,402" fill="#c98500"/><text class="lbl big" x="420" y="480" text-anchor="middle">Policy HM-4471 (auto)</text>
+        <polygon points="680,500 700,534 660,534" fill="#d55181"/><text class="lbl big" x="680" y="556" text-anchor="middle">2014 Honda Fit</text>
+        <g opacity=".3"><rect x="286" y="216" width="28" height="28" rx="6" fill="#d95926"/><circle cx="560" cy="240" r="12" fill="#3987e5"/><polygon points="250,546 262,558 250,570 238,558" fill="#199e70"/><polygon points="420,646 432,653 432,667 420,674 408,667 408,653" fill="#c98500"/></g>
+        <text class="lbl small" x="560" y="460">COVERS · 2 docs · 1 inferred</text>
+      </svg>
+      <span class="n-pin" style="left:560px;top:430px">1</span>
+    </div>
+    <div class="insp" style="padding:16px 20px">
+      <div class="muted">Link · family Coverage</div>
+      <div style="font-size:17px;font-weight:600;margin:4px 0">Policy HM-4471 (auto) <span class="muted" style="font-weight:400">COVERS</span> 2014 Honda Fit</div>
+      <div style="display:flex;gap:6px;align-items:center;margin:8px 0 12px">
+        <span class="tag inf">Inferred in 1 of 2 sources</span><span class="tag unk">Lowest confidence 0.62</span><span class="tag">2 documents</span>
+      </div>
+      <div class="card" style="background:#1a1710;border-color:#4a3d1c;font-size:12px">
+        <b>Why this is marked inferred.</b> One source states the link. The other source lists the vehicle but does not say this policy covers it; the extractor deduced the link. Read both before relying on it.
+      </div>
+      <span class="n-pin" style="position:relative;display:inline-block;margin:0 0 6px">2</span>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><span class="sq" style="background:var(--k-doc)"></span><b>Declarations page 2026</b><span class="spacer" style="flex:1"></span><span class="tag sup">stated</span></div>
+        <div class="muted" style="font-size:12px">insurance · 2026-04-01 · document 4120 · confidence 0.94</div>
+        <blockquote>“Vehicles covered under this policy: 1. 2019 Subaru Outback … 2. <mark>2014 Honda Fit</mark>, VIN ending 3381.”</blockquote>
+        <div style="display:flex;gap:6px"><span class="btn">Open document</span><span class="btn">Show in text</span><span class="btn">Wrong link?</span></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><span class="sq" style="background:var(--k-doc)"></span><b>Renewal notice</b><span class="spacer" style="flex:1"></span><span class="tag inf">inferred</span></div>
+        <div class="muted" style="font-size:12px">insurance · 2026-09-02 · document 4377 · confidence 0.62</div>
+        <blockquote>“Your renewal premium reflects changes to <mark>listed vehicles</mark> and drivers.”</blockquote>
+        <div style="font-size:12px"><span class="muted">Extractor rationale:</span> the notice refers to listed vehicles on HM-4471; the 2014 Honda Fit is listed on the same account.</div>
+        <div style="display:flex;gap:6px;margin-top:6px"><span class="btn">Open document</span><span class="btn">Show in text</span><span class="btn">Wrong link?</span></div>
+      </div>
+      <span class="n-pin" style="position:relative;display:inline-block;margin:0 0 6px">3</span>
+      <div class="h">Use this link</div>
+      <div style="display:flex;gap:6px"><span class="btn primary">Ask: “Is the Honda Fit still covered?”</span><span class="btn">Open both endpoints</span></div>
+      <details style="margin-top:10px"><summary class="muted">Raw properties</summary></details>
+    </div>
+  </div>
+</div>
+<div class="notes" style="left:24px;top:620px;width:420px">
+  <h3>WF6 · Why does the graph think this?</h3>
+  <ol>
+    <li>Selecting a link fades everything else to 30 % and gives the link a halo.</li>
+    <li>The header states support plainly: how many sources, how many inferred, the lowest confidence. Status uses a label and a dashed border, never colour alone.</li>
+    <li>One card per source document: title (not “Document #4120”), date, type, the quote with the matched words marked, and the rationale for inferred records. “Wrong link?” goes to the existing extraction feedback on /documents/[docId].</li>
+  </ol>
+</div>
+</body></html>

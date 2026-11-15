@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WF2 Focused entity</title>
+<link rel="stylesheet" href="wf.css"></head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="btn">←</span><span class="btn">→</span>
+    <div class="crumbs">Map › Harbor Mutual Insurance › <b>Policy HM-4471 (auto)</b></div>
+    <span class="spacer"></span>
+    <div class="search" style="flex-basis:300px">⌕ <span>Search…</span><span class="spacer"></span><kbd>/</kbd></div>
+    <div class="seg"><span>Map</span><span class="on">Neighborhood</span><span>Path</span><span>Table</span></div>
+    <span class="btn">Save view</span>
+  </div>
+  <div class="body" style="grid-template-columns: 1fr 400px;">
+    <div class="canvas">
+
+      <div style="position:absolute;left:12px;top:12px;display:flex;gap:8px;align-items:center;z-index:3">
+        <span class="muted">Hops</span><div class="seg"><span class="on">1</span><span>2</span><span>3</span></div>
+        <span class="muted" style="margin-left:8px">Documents</span><div class="seg"><span class="on">As evidence</span><span>As nodes</span></div>
+        <span class="chip on" style="margin:0 0 0 8px">Co-mentions: off</span>
+        <span class="btn">Filters · 1</span>
+      </div>
+      <svg width="1040" height="852" viewBox="0 0 1040 852" style="position:absolute;left:0;top:0">
+
+        <g fill="none" stroke="#1d2b3b" stroke-dasharray="2 6"><circle cx="500" cy="440" r="210"/><circle cx="500" cy="440" r="330"/></g>
+        <g class="lbl small" font-size="11" fill="#74859a">
+          <text x="500" y="105" text-anchor="middle">PARTIES</text>
+          <text x="850" y="350">COVERAGE</text>
+          <text x="760" y="740">MONEY</text>
+          <text x="250" y="600">PLACES</text>
+          <text x="120" y="330">TIME</text>
+        </g>
+
+        <g fill="none" stroke="#6f8296">
+          <line x1="500" y1="440" x2="420" y2="230" stroke-width="3.2"/>
+          <line x1="500" y1="440" x2="600" y2="230" stroke-width="2.4"/>
+          <line x1="500" y1="440" x2="720" y2="380" stroke-width="2.4"/>
+          <line x1="500" y1="440" x2="690" y2="560" stroke-width="1.6" stroke-dasharray="6 4" stroke="#b7a46a"/>
+          <line x1="500" y1="440" x2="600" y2="640" stroke-width="2"/>
+          <line x1="500" y1="440" x2="520" y2="670" stroke-width="1.4"/>
+          <line x1="500" y1="440" x2="330" y2="620" stroke-width="1.6" stroke-dasharray="6 4" stroke="#b7a46a"/>
+          <line x1="500" y1="440" x2="300" y2="400" stroke-width="1.4"/>
+          <line x1="500" y1="440" x2="320" y2="300" stroke-width="1.4"/>
+        </g>
+
+        <g class="lbl small">
+          <text x="430" y="330" text-anchor="end">ISSUED_BY · 9 docs</text>
+          <text x="560" y="320">INSURED · 7</text>
+          <text x="610" y="400">COVERS · 7</text>
+          <text x="600" y="510">COVERS · 1 · inferred</text>
+          <text x="570" y="560">PREMIUM_FOR · 4</text>
+          <text x="370" y="540" text-anchor="end">GARAGED_AT · 1 · inferred</text>
+          <text x="420" y="470" text-anchor="end">EFFECTIVE_FROM · 2</text>
+        </g>
+
+        <polygon points="500,404 531,422 531,458 500,476 469,458 469,422" fill="#c98500" stroke="#fff" stroke-width="3"/>
+        <circle cx="500" cy="440" r="48" fill="none" stroke="#7fb2ff" stroke-width="2" stroke-opacity=".6"/>
+        <text class="lbl big" x="500" y="505" text-anchor="middle">Policy HM-4471 (auto)</text>
+
+        <rect x="402" y="212" width="36" height="36" rx="8" fill="#d95926"/><text class="lbl" x="420" y="200" text-anchor="middle">Harbor Mutual Insurance</text>
+        <circle cx="600" cy="230" r="16" fill="#3987e5"/><text class="lbl" x="600" y="200" text-anchor="middle">Alex Rivera (owner)</text>
+        <polygon points="720,362 739,394 701,394" fill="#d55181"/><text class="lbl" x="748" y="388">2019 Subaru Outback</text>
+        <polygon points="690,546 706,575 674,575" fill="#d55181" opacity=".9"/><text class="lbl" x="714" y="568">2014 Honda Fit</text>
+        <polygon points="600,626 614,634 614,650 600,658 586,650 586,634" fill="#c98500"/><text class="lbl" x="622" y="648">Premium, 6 mo · $612</text>
+        <polygon points="520,658 532,665 532,679 520,686 508,679 508,665" fill="#c98500"/><text class="lbl" x="520" y="706" text-anchor="middle">Premium, 6 mo · $588</text>
+        <polygon points="330,604 346,620 330,636 314,620" fill="#199e70"/><text class="lbl" x="330" y="656" text-anchor="middle">14 Larkspur Ct</text>
+        <circle cx="300" cy="400" r="9" fill="none" stroke="#0ca30c" stroke-width="4"/><text class="lbl" x="284" y="404" text-anchor="end">2026-04-01 start</text>
+        <circle cx="320" cy="300" r="9" fill="none" stroke="#0ca30c" stroke-width="4"/><text class="lbl" x="304" y="304" text-anchor="end">2026-10-01 renewal</text>
+
+        <rect x="760" y="440" width="150" height="28" rx="14" fill="#162231" stroke="#3b5878" stroke-dasharray="3 3"/>
+        <text class="lbl" x="835" y="458" text-anchor="middle">3 coverage links filtered out</text>
+        <line x1="531" y1="440" x2="760" y2="454" stroke="#3b5878" stroke-dasharray="3 3"/>
+      </svg>
+
+      <div class="card" style="position:absolute;left:12px;right:12px;bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:nowrap;overflow:hidden">
+        <b style="white-space:nowrap">Evidence · 12 documents</b>
+        <span class="chip">Declarations page 2026 · 6 links</span>
+        <span class="chip">Renewal notice Sep · 4</span>
+        <span class="chip">ID cards · 3</span>
+        <span class="chip">Premium bill Apr · 2</span>
+        <span class="chip">+8</span>
+      </div>
+      <div class="legend" style="bottom:70px">
+        <div class="li"><span class="dot" style="background:var(--k-person)"></span>Person (circle)</div>
+        <div class="li"><span class="sq" style="background:var(--k-org)"></span>Organization (square)</div>
+        <div class="li"><span class="sq" style="background:var(--k-place);transform:rotate(45deg)"></span>Place (diamond)</div>
+        <div class="li"><span class="sq" style="background:var(--k-money)"></span>Money and agreements (hexagon)</div>
+        <div class="li"><span class="sq" style="background:var(--k-thing)"></span>Thing (triangle)</div>
+        <div class="li"><span class="dot" style="border:3px solid var(--k-time)"></span>Date or event (ring)</div>
+        <div class="li"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#6f8296" stroke-width="2"/></svg>supported</div>
+        <div class="li"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#b7a46a" stroke-width="2" stroke-dasharray="6 4"/></svg>inferred</div>
+        <div class="li muted">width = documents · only types in view</div>
+      </div>
+      <div class="status" style="bottom:70px">9 of 12 links shown · 1 hop · 12 evidence docs</div>
+      <span class="n-pin" style="left:120px;top:40px">1</span>
+      <span class="n-pin" style="left:540px;top:90px">2</span>
+      <span class="n-pin" style="left:900px;top:420px">3</span>
+      <span class="n-pin" style="left:150px;top:788px">4</span>
+      <span class="n-pin" style="left:30px;top:470px">5</span>
+    </div>
+    <div class="insp">
+      <div style="display:flex;gap:8px;align-items:center"><span class="sq" style="background:var(--k-money)"></span><span class="muted">InsurancePolicy</span><span class="spacer" style="flex:1"></span><span class="btn">✕</span></div>
+      <div style="font-size:18px;font-weight:600;margin:4px 0 2px">Policy HM-4471 (auto)</div>
+      <div class="muted">Also: HM4471-A · “auto policy”</div>
+      <div style="display:flex;gap:6px;margin:10px 0"><span class="btn primary">Ask about this</span><span class="btn">12 documents</span><span class="btn">Path from…</span><span class="btn">Pin</span></div>
+      <div class="card" style="font-size:12px">
+        <div><span class="muted">Insurer</span> Harbor Mutual Insurance <span class="tag sup">9 docs</span></div>
+        <div><span class="muted">Insured</span> Alex Rivera <span class="tag sup">7 docs</span></div>
+        <div><span class="muted">Term</span> 2026-04-01 → 2026-10-01 <span class="tag sup">2 docs</span></div>
+        <div><span class="muted">First seen</span> 2024-03-12 · <span class="muted">last</span> 2026-09-20</div>
+      </div>
+      <div class="h">Links by family · 12</div>
+      <div class="row sel"><b>Parties</b><span class="n">2 · all supported</span></div>
+      <div class="row"><b>Coverage</b><span class="n">5 · 1 inferred</span></div>
+      <div class="row" style="padding-left:20px"><span class="tag sup">7</span> COVERS 2019 Subaru Outback</div>
+      <div class="row" style="padding-left:20px"><span class="tag inf">1 inferred</span> COVERS 2014 Honda Fit</div>
+      <div class="row" style="padding-left:20px" class="muted"><span class="muted">+3 hidden by the active filter</span></div>
+      <div class="row"><b>Money</b><span class="n">2</span></div>
+      <div class="row"><b>Places</b><span class="n">1 · inferred</span></div>
+      <div class="row"><b>Time</b><span class="n">2</span></div>
+      <div class="h">Mentioned in · 12 documents</div>
+      <div class="row"><span class="sq" style="background:var(--k-doc)"></span>Declarations page 2026<span class="n">2026-04-01</span></div>
+      <div class="row"><span class="sq" style="background:var(--k-doc)"></span>Renewal notice<span class="n">2026-09-02</span></div>
+      <div class="row muted">Show all 12 in /documents →</div>
+    </div>
+  </div>
+</div>
+<div class="notes" style="left:1060px;top:600px;width:360px">
+  <h3>WF2 · Neighborhood of one entity</h3>
+  <ol>
+    <li>Depth counts <b>semantic hops</b> (entity to entity). A document is never a hop by default. Default 1; 2 and 3 are opt-in and capped (see WF3).</li>
+    <li>Radial sector layout: each relationship family has a fixed sector, so the same family is always in the same place. No force simulation runs for this view.</li>
+    <li>Per family at most 6 neighbors (2 for hubs, see WF3); the rest fold into a “+N more” node. Here the pill summarizes 3 links hidden by the active filter.</li>
+    <li>MENTIONS edges become this evidence shelf. A chip highlights the links that document supports.</li>
+    <li>The legend lists only the types and edge styles in view (issue #87).</li>
+  </ol>
+</div>
+</body></html>

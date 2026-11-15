@@ -28,6 +28,8 @@ const statusWith = (extra, routes = {}) => async page => {
   for (const [path, json] of Object.entries(routes)) await page.route(`**/api${path}`, route => route.fulfill({ json }));
 };
 const extraStates = [
+  { name: "graph-missing", route: "/graph?focus=removed-entity",
+    ready: page => page.getByText("This entity no longer exists. It may have been merged.", { exact: true }) },
   ...["initial", "results", "empty", "error"].map(state => ({
     ...mainStates[0], name: `palette-${state}`, state: `palette-${state}`,
     seed: async page => { await page.request.post("/api/_fixture/saved-answers"); },

@@ -193,14 +193,17 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
   const crossCount = !urlState.cross ? null : !wantCross ? 0 : shownCross && !crossLoading ? shownCross.links.length : null;
   let crossCaption = null;
+  // On phone the plain count and "none" are for screen readers only, so the canvas keeps its height.
+  let crossQuiet = false;
   if (crossLoading) crossCaption = crossSlow === crossIds ? "Loading links between neighbors" : null;
   else if (crossFailed) crossCaption = (
     <>Links between neighbors did not load.{" "}
       <Button variant="link" size="xs" className="h-auto p-0 text-sm" onClick={() => { setCross(null); setCrossAttempt(value => value + 1); }}>Retry</Button>
     </>);
-  else if (crossCount === 0 && !leaf) crossCaption = "No links between these neighbors.";
-  else if (shownCross) crossCaption = shownCross.total > shownCross.links.length ? `Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`
-    : `${plural(shownCross.total, "link")} between neighbors.`;
+  else if (crossCount === 0 && !leaf) [crossCaption, crossQuiet] = ["No links between these neighbors.", true];
+  else if (shownCross) [crossCaption, crossQuiet] = shownCross.total > shownCross.links.length
+    ? [`Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`, false]
+    : [`${plural(shownCross.total, "link")} between neighbors.`, true];
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
@@ -259,7 +262,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
                 {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
                 {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
               </span>
-              {" "}<span role="status">{crossCaption}</span>
+              {" "}<span role="status" className={crossQuiet ? "max-md:sr-only" : undefined}>{crossCaption}</span>
             </p>
           )}
         </div>

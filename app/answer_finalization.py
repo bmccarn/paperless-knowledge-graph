@@ -919,6 +919,13 @@ def audit_protocol_errors(raw: Any, units: list[dict]) -> list[str]:
     return errors
 
 
+def reply_gap_only(ledger):
+    """Every unchecked claim is from a batch whose reply stayed invalid after its correction."""
+    return (bool(ledger["claims"]) and not ledger.get("rejection_reasons")
+            and all(c["status"] != "unchecked" or "audit_reply_invalid" in c["rejection_reasons"]
+                    for c in ledger["claims"]))
+
+
 def subset_source_reservations(candidate, ledger, revised_units, retained_ids):
     """Bind unchanged survivors in order, including duplicate observation text."""
     claims = ledger['claims']
@@ -1234,9 +1241,11 @@ class AnswerFinalizer:
                             break
                     else:
                         disposition = "unsupported" if ledger["complete"] else "incomplete"
-                    if not summary["total"] or summary["audited"] != summary["total"]:
-                        # Failed audit execution stops here. A fully audited
-                        # candidate with invalid attribution can still be repaired.
+                    if not summary["total"] or (summary["audited"] != summary["total"]
+                                                and not (summary["audited"] and reply_gap_only(ledger))):
+                        # Failed audit execution stops here. A fully audited candidate with
+                        # invalid attribution, or one whose only gaps are invalid replies, can
+                        # still be repaired; the repair gets its own complete audit.
                         error = "The source audit did not complete."
                         break
                     if attempt == 0 and self.repairer:
@@ -1285,9 +1294,7 @@ class AnswerFinalizer:
         summary = ledger["summary"]
         # Claims left unchecked only by a batch whose reply stayed invalid may be
         # omitted like unsupported ones; the rest must pass a fresh subset audit.
-        reply_gap = (disposition == "incomplete" and bool(ledger["claims"]) and not ledger.get("rejection_reasons")
-                     and all(c["status"] != "unchecked" or "audit_reply_invalid" in c["rejection_reasons"]
-                             for c in ledger["claims"]))
+        reply_gap = disposition == "incomplete" and reply_gap_only(ledger)
         base_candidate, base_ledger, base_observations, receipt, omitted = candidate, ledger, observations, ledger, []
         original_ids = {}  # subset unit id -> original candidate unit id, after the first round
         for _round in range(2):

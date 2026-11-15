@@ -1,43 +1,35 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Toaster, type ToastMessage } from "@/components/ui/toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { StatusLabel } from "@/components/status-label";
+import { TypeDot } from "@/components/kind-shape";
 import { errMsg } from "@/lib/utils";
-import { getStatus, postSync, postReindex, postRepairDrift, getTask, cancelTask, graphSearch } from "@/lib/api";
+import { answerState, type AnswerMessage, type AnswerState } from "@/lib/answer-state";
+import {
+  getStatus, postSync, postReindex, postRepairDrift, getTask, cancelTask, graphSearch,
+  listConversations, getConversation, getEntityReviewCandidates, getDocuments,
+} from "@/lib/api";
 import type { FreshnessDocumentRef, FreshnessStatus, HealthyStatusResponse } from "@/lib/types";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  FileText,
-  GitBranch,
-  Database,
-  Binary,
-  Clock,
-  RefreshCw,
-  Play,
-  Loader2,
-  Search,
-  CheckCircle2,
-  XCircle,
-  Activity,
-  TrendingUp,
-  SkipForward,
-  AlertCircle,
-  AlertTriangle,
-} from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, CircleX, Search, SkipForward, TriangleAlert } from "lucide-react";
 
 interface TaskProgress {
   status: string;
@@ -62,6 +54,12 @@ interface TaskProgress {
   error?: string;
 }
 
+interface RecentAnswer { id: string; question: string; state: AnswerState }
+/** Each column is undefined while loading and null when its request failed. */
+interface Overview { answers?: RecentAnswer[] | null; duplicates?: number | null; types?: [string, number][] | null }
+
+const DUPLICATE_LIMIT = 50;
+
 function formatTime(seconds: number): string {
   if (!seconds || seconds <= 0) return "0:00";
   const m = Math.floor(seconds / 60);
@@ -79,8 +77,8 @@ function formatRefs(refs: (FreshnessDocumentRef | number)[] = []): string {
 }
 
 const DRIFT_ROWS: [string, keyof FreshnessStatus, Exclude<keyof NonNullable<FreshnessStatus["drift"]>, "sample_limit">][] = [
-  ["Missing graph docs", "missing_documents", "missing_from_graph"],
-  ["Extra graph docs", "extra_documents", "extra_in_graph"],
+  ["Missing from the graph", "missing_documents", "missing_from_graph"],
+  ["Extra in the graph", "extra_documents", "extra_in_graph"],
   ["Missing embeddings", "missing_embedding_documents", "missing_embeddings"],
   ["Extra embeddings", "extra_embedding_documents", "extra_embeddings"],
   ["Missing hashes", "missing_hash_documents", "missing_hashes"],
@@ -90,16 +88,64 @@ const DRIFT_ROWS: [string, keyof FreshnessStatus, Exclude<keyof NonNullable<Fres
 ];
 
 const TASK_LABELS: Record<string, string> = {
-  reindex: "Reindex",
+  reindex: "Full reindex",
   sync: "Sync",
-  "scheduled-sync": "Scheduled Sync",
-  "repair-drift": "Repair Drift",
-  "reindex-document": "Reindex Document",
-  entity_steward: "Entity Steward",
+  "scheduled-sync": "Scheduled sync",
+  "repair-drift": "Repair drift",
+  "reindex-document": "Document reindex",
+  entity_steward: "Entity steward",
 };
 
 function taskLabel(taskType: string): string {
-  return TASK_LABELS[taskType] || taskType.split(/[-_]/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+  const words = taskType.replace(/[-_]/g, " ");
+  return TASK_LABELS[taskType] || words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const TASK_STATES: Record<string, string> = {
+  running: "Running", cancelling: "Cancelling", completed: "Completed", failed: "Failed", cancelled: "Cancelled",
+};
+
+/** "The index was updated at 12:00." Adds the date when the update was not today. */
+function indexAge(lastSync: string | null): string {
+  if (!lastSync) return "The index has not been updated yet.";
+  const at = new Date(lastSync);
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  if (at.toDateString() === new Date().toDateString()) return `The index was updated at ${time}.`;
+  return `The index was updated on ${at.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at ${time}.`;
+}
+
+type StoredMessage = AnswerMessage & { role: string };
+
+/** The question and stored state of the last answer in each of the five newest conversations. */
+async function recentAnswers(): Promise<RecentAnswer[]> {
+  const list: { id: string }[] = (await listConversations(5)).slice(0, 5);
+  const conversations = await Promise.all(list.map((row) => getConversation(row.id)));
+  return conversations.flatMap((conversation): RecentAnswer[] => {
+    const messages: StoredMessage[] = conversation.messages ?? [];
+    const index = messages.findLastIndex((message) => message.role === "assistant");
+    if (index < 0) return [];
+    const question = messages.slice(0, index).findLast((message) => message.role === "user")?.content ?? conversation.title;
+    return [{ id: conversation.id, question, state: answerState(messages[index]).state }];
+  });
+}
+
+function Column({ title, value, error, onRetry, children }: {
+  title: string; value: unknown; error: string; onRetry: () => void; children: ReactNode;
+}) {
+  const id = `${title.toLowerCase().replace(/\s+/g, "-")}-title`;
+  return (
+    <section aria-labelledby={id} aria-busy={value === undefined} className="min-w-0 space-y-3 border-t border-border pt-3">
+      <h2 id={id} className="heading-16">{title}</h2>
+      {value === undefined ? (
+        <div className="space-y-2">{[0, 1, 2].map((row) => <Skeleton key={row} className="h-5" />)}</div>
+      ) : value === null ? (
+        <div role="alert" className="flex flex-wrap items-center gap-3 copy-14 text-error">
+          {error}
+          <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>
+        </div>
+      ) : children}
+    </section>
+  );
 }
 
 export default function DashboardPage() {
@@ -111,23 +157,14 @@ export default function DashboardPage() {
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{
-    open: boolean;
-    title: string;
-    description: string;
-    action: () => Promise<void>;
-    variant: "default" | "destructive";
-  }>({ open: false, title: "", description: "", action: async () => {}, variant: "default" });
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [confirm, setConfirm] = useState<"reindex" | "repair" | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [overview, setOverview] = useState<Overview>({});
+  const logRef = useRef<HTMLDivElement>(null);
+  const followLog = useRef(true);
+  const opener = useRef<HTMLButtonElement | null>(null);
 
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(null), 4000);
-      return () => clearTimeout(t);
-    }
-  }, [toast]);
+  const showToast = (text: string) => setToast({ id: Date.now(), text });
 
   const fetchStatus = useCallback(() => {
     getStatus()
@@ -142,11 +179,27 @@ export default function DashboardPage() {
       .catch((e) => setError(e.message));
   }, []);
 
+  const loadOverview = useCallback(() => {
+    setOverview({});
+    Promise.allSettled([
+      recentAnswers(),
+      getEntityReviewCandidates(DUPLICATE_LIMIT),
+      getDocuments("", "", 0, 1),
+    ]).then(([answers, duplicates, documents]) => setOverview({
+      answers: answers.status === "fulfilled" ? answers.value : null,
+      duplicates: duplicates.status === "fulfilled" ? duplicates.value.candidates.length : null,
+      types: documents.status === "fulfilled"
+        ? (Object.entries(documents.value.doc_types ?? {}) as [string, number][]).sort((a, b) => b[1] - a[1])
+        : null,
+    }));
+  }, []);
+
   useEffect(() => {
     fetchStatus();
+    loadOverview();
     const i = setInterval(fetchStatus, 10000);
     return () => clearInterval(i);
-  }, [fetchStatus]);
+  }, [fetchStatus, loadOverview]);
 
   // Auto-attach to running tasks on page load
   useEffect(() => {
@@ -177,6 +230,7 @@ export default function DashboardPage() {
         if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
           clearInterval(interval);
           fetchStatus();
+          loadOverview();
         }
       } catch {
         clearInterval(interval);
@@ -185,60 +239,34 @@ export default function DashboardPage() {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [activeTaskId, fetchStatus]);
+  }, [activeTaskId, fetchStatus, loadOverview]);
 
-  // Auto-scroll log
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Follow new log lines only while the log is scrolled to the bottom. Scroll the log itself, never the page.
+  useLayoutEffect(() => {
+    const log = logRef.current;
+    if (log && followLog.current) log.scrollTop = log.scrollHeight;
   }, [taskProgress?.recent_results]);
 
   const startTask = async (start: () => Promise<{ task_id?: string; status?: string }>, label: string, startedMsg: string, failMsg: string) => {
     try {
       const res = await start();
       if (res.status === "noop" || !res.task_id) {
-        setToast({ message: "No drift to repair", type: "success" });
+        showToast("No drift to repair.");
         fetchStatus();
         return;
       }
+      followLog.current = true;
       setActiveTaskId(res.task_id);
       setActiveTaskType(label);
       setTaskProgress(null);
-      setToast({ message: startedMsg, type: "success" });
+      showToast(startedMsg);
     } catch (e: unknown) {
       const msg = errMsg(e, failMsg);
-      setToast({ message: msg.includes("409") ? "A task is already running" : msg, type: "error" });
+      showToast(msg.includes("409") ? "A task is already running." : msg);
     }
   };
 
-  const handleSync = () => {
-    setConfirmDialog({
-      open: true,
-      title: "Sync New Documents",
-      description: "This will check for new or modified documents in Paperless and process them. Documents are reprocessed when their source or extraction configuration has changed.",
-      variant: "default",
-      action: () => startTask(postSync, "Sync", "Sync started successfully", "Failed to start sync"),
-    });
-  };
-
-  const handleReindex = () => {
-    setConfirmDialog({
-      open: true,
-      title: "Full Reindex",
-      description: "This will prepare and replace the index for every document. Existing document data remains available while its replacement is prepared. This can take a while; vector indexes and entity resolution run afterwards.",
-      variant: "destructive",
-      action: () => startTask(postReindex, "Reindex", "Full reindex started", "Failed to start reindex"),
-    });
-  };
-
-  const handleRepairDrift = () => {
-    setConfirmDialog({
-      open: true,
-      title: "Repair Freshness Drift",
-      description: "This will reindex only the exact drifted document IDs reported by freshness and clean up stale graph/vector/hash artifacts for IDs no longer in Paperless.",
-      variant: "default",
-      action: () => startTask(postRepairDrift, "Repair Drift", "Drift repair started", "Failed to start drift repair"),
-    });
-  };
+  const handleSync = () => startTask(postSync, "Sync", "Sync started.", "Failed to start sync");
 
   const handleDismiss = () => {
     setActiveTaskId(null);
@@ -251,7 +279,7 @@ export default function DashboardPage() {
       const result = await cancelTask(activeTaskId);
       setTaskProgress((prev) => prev ? { ...prev, status: result.status } : null);
     } catch (e) {
-      setToast({ message: errMsg(e, "Failed to cancel task"), type: "error" });
+      showToast(errMsg(e, "Failed to cancel task"));
     }
   };
 
@@ -272,82 +300,41 @@ export default function DashboardPage() {
     }
   };
 
+  const frame = (children: ReactNode) => (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-[1280px] space-y-6 p-4 md:px-12 md:py-10">{children}</div>
+      <Toaster toast={toast} onDismiss={() => setToast(null)} />
+    </div>
+  );
+
   if (error && !status)
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Card role="alert" className="max-w-md">
-          <CardContent className="pt-6 text-center">
-            <XCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
-            <h1 className="page-title">Status</h1>
-            <p className="font-medium mt-2">Connection Error</p>
-            <p className="text-sm text-muted-foreground mt-1">{error}</p>
-            <Button onClick={fetchStatus} className="mt-4" variant="outline">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return frame(<>
+      <h1 className="page-title">Status</h1>
+      <Alert variant="destructive">
+        <CircleX aria-hidden strokeWidth={1.75} />
+        <AlertTitle>The status could not be loaded.</AlertTitle>
+        <AlertDescription>
+          <p>{error}</p>
+          <Button onClick={fetchStatus} size="sm" variant="outline" className="mt-1">Retry</Button>
+        </AlertDescription>
+      </Alert>
+    </>);
 
   if (!status)
-    return (
-      <div className="space-y-6 p-8">
-        <h1 className="page-title">Status</h1>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
-          ))}
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Skeleton className="h-40 rounded-xl" />
-          <Skeleton className="h-40 rounded-xl" />
-        </div>
+    return frame(<>
+      <h1 className="page-title">Status</h1>
+      <div role="status" aria-busy="true" aria-label="Loading status" className="space-y-6">
+        <Skeleton className="h-6 max-w-xl" />
+        <div className="flex gap-2"><Skeleton className="h-9 w-44" /><Skeleton className="h-9 w-28" /><Skeleton className="h-9 w-28" /></div>
+        <div className="grid gap-6 md:grid-cols-3">{[0, 1, 2].map((column) => <Skeleton key={column} className="h-32" />)}</div>
       </div>
-    );
-
-  const totalEmbeddings = status.embeddings.document_chunks + status.embeddings.entity_embeddings;
-
-  const cards = [
-    {
-      title: "Documents",
-      value: status.graph.documents,
-      icon: FileText,
-      color: "text-blue-400",
-      bgColor: "bg-blue-500/10",
-      description: "Indexed documents",
-    },
-    {
-      title: "Entities",
-      value: status.graph.entities,
-      icon: Database,
-      color: "text-emerald-400",
-      bgColor: "bg-emerald-500/10",
-      description: "Knowledge nodes",
-    },
-    {
-      title: "Relationships",
-      value: status.graph.relationships,
-      icon: GitBranch,
-      color: "text-violet-400",
-      bgColor: "bg-violet-500/10",
-      description: "Graph connections",
-    },
-    {
-      title: "Embeddings",
-      value: totalEmbeddings,
-      icon: Binary,
-      color: "text-amber-400",
-      bgColor: "bg-amber-500/10",
-      description: `${status.embeddings.document_chunks} doc chunks + ${status.embeddings.entity_embeddings} entities`,
-    },
-  ];
+    </>);
 
   const tp = taskProgress;
   const isCancelling = tp?.status === "cancelling";
   const isRunning = !!activeTaskId && (!tp || tp.status === "running" || isCancelling);
   const isDone = tp?.status === "completed" || tp?.status === "failed" || tp?.status === "cancelled";
   const totalDone = (tp?.processed || 0) + (tp?.skipped || 0) + (tp?.errors || 0);
-  const progressPct = tp?.total_docs ? Math.round((totalDone / tp.total_docs) * 100) : 0;
   const freshness = status.freshness;
   const lastFailedExtraction = freshness?.last_failed_extraction;
   const freshnessDriftDetails = freshness
@@ -357,401 +344,225 @@ export default function DashboardPage() {
         detail: formatRefs(freshness.drift?.[refsKey]),
       })).filter((item) => item.count > 0)
     : [];
-  const embeddingCoverage = status.graph.documents > 0
-    ? Math.round((status.embeddings.docs_with_embeddings / status.graph.documents) * 100)
-    : 0;
-  const overviewRows: [string, ReactNode, string?][] = [
-    ["Graph Density", `${status.graph.entities > 0 ? (status.graph.relationships / status.graph.entities).toFixed(1) : "0"} rel/entity`],
-    ["Embedding Coverage", <>{embeddingCoverage}%<span className="text-muted-foreground text-xs ml-1">({status.embeddings.docs_with_embeddings}/{status.graph.documents} docs)</span></>],
-    ["Active Tasks", Object.keys(status.active_tasks).length],
-    ...(freshness
-      ? ([
-          ["Paperless Documents", freshness.paperless_documents.toLocaleString()],
-          ["Missing From Graph", freshness.missing_documents.toLocaleString(), freshness.missing_documents > 0 ? "text-sm font-medium text-amber-400" : undefined],
-        ] satisfies [string, ReactNode, string?][])
-      : []),
-  ];
+  const behind = !!freshness && (freshness.stale || freshnessDriftDetails.length > 0);
+  const { answers, duplicates, types } = overview;
 
-  return (
-    <div className="space-y-4 p-4 md:space-y-6 md:p-6 lg:p-8 h-full overflow-y-auto">
-      {/* Header with search */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="page-title">Status</h1>
-          <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1">
-            <Clock className="h-3.5 w-3.5" />
-            Last sync: {status.last_sync ? new Date(status.last_sync).toLocaleString() : "Never"}
+  return frame(<>
+    <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <h1 className="page-title">Status</h1>
+      <form
+        role="search"
+        onSubmit={(e) => { e.preventDefault(); handleSearch(); }}
+        className="flex w-full gap-2 md:max-w-sm"
+      >
+        <div className="relative flex-1">
+          <Search aria-hidden className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-muted" strokeWidth={1.75} />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search the knowledge graph..."
+            aria-label="Search the knowledge graph"
+            className="pl-9"
+          />
+        </div>
+        <Button type="submit" variant="outline" size="icon" aria-label="Search" loading={searching} disabled={!searchQuery.trim()}>
+          <Search strokeWidth={1.75} />
+        </Button>
+      </form>
+    </header>
+
+    <p className="heading-16 max-w-(--measure)">
+      The archive holds {status.graph.documents.toLocaleString()} documents and {status.graph.entities.toLocaleString()} entities.{" "}
+      {indexAge(status.last_sync)}
+    </p>
+
+    {error && (
+      <Alert variant="destructive">
+        <CircleX aria-hidden strokeWidth={1.75} />
+        <AlertTitle>{error}</AlertTitle>
+        <AlertDescription>Showing the last successful status. Counts may be out of date.</AlertDescription>
+      </Alert>
+    )}
+
+    {behind && (
+      <Alert variant="warning">
+        <TriangleAlert aria-hidden strokeWidth={1.75} />
+        <AlertTitle className="line-clamp-none">The index is behind Paperless.</AlertTitle>
+        <AlertDescription className="text-fg">
+          <p>
+            Paperless has {freshness.paperless_documents.toLocaleString()} documents and the index has {freshness.indexed_documents.toLocaleString()}.
+            {freshness.missing_documents > 0 && ` ${freshness.missing_documents.toLocaleString()} ${freshness.missing_documents === 1 ? "is" : "are"} missing from the index.`}
           </p>
-        </div>
-        <form
-          onSubmit={(e) => { e.preventDefault(); handleSearch(); }}
-          className="flex gap-2 w-full sm:w-auto sm:max-w-sm"
-        >
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search the knowledge graph..."
-              className="pl-9"
-            />
-          </div>
-          <Button type="submit" size="icon" aria-label="Search the knowledge graph" disabled={searching || !searchQuery.trim()}>
-            {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          </Button>
-        </form>
-      </div>
-
-      {error && (
-        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
-          <p className="font-medium">{error}</p>
-          <p className="text-muted-foreground mt-1">Showing the last successful status. Counts may be out of date.</p>
-        </div>
-      )}
-
-      {freshness?.stale && (
-        <Card className="border-amber-500/30 bg-amber-500/10">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex gap-3">
-                <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium">Knowledge graph may be stale</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Paperless has {freshness.paperless_documents.toLocaleString()} documents and the graph has {freshness.indexed_documents.toLocaleString()}.
-                    {freshness.missing_documents > 0 && (
-                      <span> {freshness.missing_documents.toLocaleString()} document{freshness.missing_documents === 1 ? "" : "s"} appear missing from the index.</span>
-                    )}
-                  </p>
-                  {freshnessDriftDetails.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {freshnessDriftDetails.map((item) => (
-                        <p key={item.label} className="text-xs text-muted-foreground">
-                          <span className="font-medium text-amber-200">{item.label}:</span>{" "}
-                          {item.count.toLocaleString()}
-                          {item.detail && <span> ({item.detail})</span>}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Button size="sm" onClick={handleSync} disabled={isRunning}>Sync now</Button>
+            {(freshnessDriftDetails.length > 0 || freshness.latest_paperless_title) && (
+              <Collapsible>
+                <CollapsibleTrigger className="group inline-flex min-h-8 items-center gap-1 label-13 text-fg underline underline-offset-4">
+                  Details<ChevronDown aria-hidden className="size-4 transition-transform duration-(--dur-3) group-data-[state=open]:rotate-180" strokeWidth={1.75} />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-1 pt-2 label-13 text-fg-muted">
+                  {freshnessDriftDetails.map((item) => (
+                    <p key={item.label}>
+                      <span className="font-medium text-fg">{item.label}:</span>{" "}
+                      <span className="tabular-nums">{item.count.toLocaleString()}</span>
+                      {item.detail && <span> ({item.detail})</span>}
+                    </p>
+                  ))}
                   {freshness.latest_paperless_title && (
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p>
                       Latest Paperless change: {freshness.latest_paperless_title}
                       {freshness.latest_paperless_modified && ` (${new Date(freshness.latest_paperless_modified).toLocaleString()})`}
                     </p>
                   )}
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                {freshnessDriftDetails.length > 0 && (
-                  <Button onClick={handleRepairDrift} disabled={isRunning} size="sm" variant="secondary" className="gap-2">
-                    {activeTaskType === "Repair Drift" && isRunning ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                    Repair drift
-                  </Button>
-                )}
-                <Button onClick={handleSync} disabled={isRunning} size="sm" className="gap-2">
-                  {activeTaskType === "Sync" && isRunning ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Play className="h-3.5 w-3.5" />
-                  )}
-                  Sync now
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {cards.map((card) => (
-          <Card
-            key={card.title}
-            className="group hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-border/50"
-          >
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-start justify-between">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">{card.title}</p>
-                  <p
-                    className="text-3xl font-bold tracking-tight tabular-nums"
-                  >
-                    {card.value.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">{card.description}</p>
-                </div>
-                <div className={`${card.bgColor} rounded-lg p-2.5`}>
-                  <card.icon className={`h-5 w-5 ${card.color}`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Quick Actions + Progress Panel */}
-        <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Activity className="h-4 w-4 text-primary" />
-              Quick Actions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex gap-3">
-              <Button
-                onClick={handleSync}
-                disabled={isRunning}
-                className="gap-2 flex-1"
-              >
-                {activeTaskType === "Sync" && isRunning ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                Sync New Docs
-              </Button>
-              <Button
-                onClick={handleReindex}
-                disabled={isRunning}
-                variant="secondary"
-                className="gap-2 flex-1"
-              >
-                {activeTaskType === "Reindex" && isRunning ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                Full Reindex
-              </Button>
-            </div>
-
-            {/* Rich Progress Panel */}
-            {tp && (
-              <div className="space-y-3 rounded-lg bg-accent/50 p-4">
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">{activeTaskType}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        tp.status === "completed" ? "default" :
-                        tp.status === "failed" ? "destructive" : "secondary"
-                      }
-                      className="gap-1"
-                    >
-                      {tp.status === "completed" ? (
-                        <CheckCircle2 className="h-3 w-3" />
-                      ) : tp.status === "failed" || tp.status === "cancelled" ? (
-                        <XCircle className="h-3 w-3" />
-                      ) : (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      )}
-                      {tp.status}
-                    </Badge>
-                    {tp.status === "running" && (
-                      <Button variant="destructive" size="sm" className="h-6 px-2 text-xs" onClick={handleCancel}>
-                        Cancel
-                      </Button>
-                    )}
-                    {isDone && (
-                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleDismiss}>
-                        Dismiss
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Progress bar */}
-                <Progress value={progressPct} className="h-2" />
-                {isCancelling && (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    Cancelling. Finishing documents already in progress before another task can start.
-                  </p>
-                )}
-
-                {/* Stats line */}
-                <p className="text-xs text-muted-foreground">
-                  {totalDone}/{tp.total_docs || "?"} docs
-                  {tp.skipped > 0 && <span> ({tp.skipped} skipped</span>}
-                  {tp.errors > 0 && <span>{tp.skipped > 0 ? ", " : " ("}{tp.errors} error{tp.errors !== 1 ? "s" : ""}</span>}
-                  {(tp.skipped > 0 || tp.errors > 0) && ")"}
-                  {tp.docs_per_minute > 0 && <span> — {tp.docs_per_minute} docs/min</span>}
-                  {isRunning && tp.estimated_remaining_seconds > 0 && (
-                    <span> — ~{formatTime(tp.estimated_remaining_seconds)} remaining</span>
-                  )}
-                </p>
-
-                {/* Current doc */}
-                {isRunning && tp.current_doc && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-                    <span className="truncate">{tp.current_doc}</span>
-                  </div>
-                )}
-
-                {/* Live log */}
-                {tp.recent_results && tp.recent_results.length > 0 && (
-                  <ScrollArea className="h-36 rounded-md border border-border/50 bg-background/50">
-                    <div className="p-2 space-y-1">
-                      {tp.recent_results.map((r, i) => (
-                        <div key={`${r.doc_id}-${i}`} className="flex items-start gap-1.5 text-xs">
-                          {r.status === "processed" ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                          ) : r.status === "skipped" ? (
-                            <SkipForward className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                          ) : (
-                            <AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
-                          )}
-                          <span className="truncate text-muted-foreground">
-                            {r.title || `Doc #${r.doc_id}`}
-                          </span>
-                          {r.status === "processed" && r.entities !== undefined && (
-                            <span className="shrink-0 text-muted-foreground/60 ml-auto">
-                              {r.entities}e
-                            </span>
-                          )}
-                          {r.status === "error" && r.error && (
-                            <span className="shrink-0 text-red-400/80 ml-auto truncate max-w-[120px]">
-                              {r.error}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                      <div ref={logEndRef} />
-                    </div>
-                  </ScrollArea>
-                )}
-
-                {/* Final summary */}
-                {isDone && (
-                  <div className="text-xs text-muted-foreground border-t border-border/50 pt-2">
-                    {tp.status === "completed" ? "✅" : "❌"} {activeTaskType} {tp.status} in {formatTime(tp.elapsed_seconds)}
-                    {" — "}{tp.processed} processed, {tp.skipped} skipped, {tp.errors} errors
-                  </div>
-                )}
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
+          </div>
+        </AlertDescription>
+      </Alert>
+    )}
 
-            {/* Existing active tasks (from other sessions) */}
-            {!tp && Object.keys(status.active_tasks).length > 0 && (
-              <div className="space-y-2">
-                {Object.entries(status.active_tasks).map(([id, info]) => {
-                  const taskStatus = typeof info === "object" ? info.status : info;
-                  const taskType = typeof info === "object" ? info.type : "";
-                  return (
-                    <div key={id} className="flex items-center gap-2 rounded-lg bg-accent/50 p-2.5">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                      <Badge variant="secondary" className="text-xs">{taskType ? taskLabel(taskType) : taskStatus}</Badge>
-                      <span className="text-xs text-muted-foreground truncate flex-1">{id}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {!tp && Object.keys(status.active_tasks).length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-2">
-                No active tasks — system is idle
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* System Overview */}
-        <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              System Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Status</span>
-                <Badge variant={error ? "destructive" : "default"} className="gap-1">
-                  {!error ? (
-                    <CheckCircle2 className="h-3 w-3" />
-                  ) : (
-                    <XCircle className="h-3 w-3" />
-                  )}
-                  {error ? "Unavailable" : status.status}
-                </Badge>
-              </div>
-              {overviewRows.map(([label, value, className = "text-sm font-medium"]) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{label}</span>
-                  <span className={className}>{value}</span>
-                </div>
-              ))}
-              {lastFailedExtraction && (
-                <div className="rounded-lg border border-red-500/25 bg-red-500/10 p-3">
-                  <p className="text-xs font-medium text-red-300">Last failed extraction</p>
-                  <p className="text-xs text-muted-foreground mt-1 truncate">
-                    {lastFailedExtraction.title || `Document #${lastFailedExtraction.doc_id}`}
-                  </p>
-                  {lastFailedExtraction.error && (
-                    <p className="text-xs text-red-300/80 mt-1 line-clamp-2">{lastFailedExtraction.error}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      {/* Confirmation Dialog */}
-      <Dialog open={confirmDialog.open} onOpenChange={(open) => setConfirmDialog((prev) => ({ ...prev, open }))}>
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {confirmDialog.variant === "destructive" && (
-                <AlertTriangle className="h-5 w-5 text-destructive" />
-              )}
-              {confirmDialog.title}
-            </DialogTitle>
-            <DialogDescription>{confirmDialog.description}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDialog((prev) => ({ ...prev, open: false }))}>
-              Cancel
-            </Button>
-            <Button
-              variant={confirmDialog.variant}
-              onClick={async () => {
-                setConfirmDialog((prev) => ({ ...prev, open: false }));
-                await confirmDialog.action();
-              }}
-            >
-              {confirmDialog.variant === "destructive" ? "Yes, Reindex Everything" : "Start"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Toast notification */}
-      {toast && (
-        <div
-          className={`fixed bottom-20 md:bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg transition-all animate-in slide-in-from-bottom-4 fade-in ${
-            toast.type === "success"
-              ? "bg-emerald-500/90 text-white"
-              : "bg-destructive/90 text-destructive-foreground"
-          }`}
-        >
-          {toast.type === "success" ? (
-            <CheckCircle2 className="h-4 w-4" />
-          ) : (
-            <XCircle className="h-4 w-4" />
-          )}
-          {toast.message}
-        </div>
-      )}
+    <div className="grid gap-2 sm:flex sm:flex-wrap">
+      <Button onClick={handleSync} disabled={isRunning} loading={isRunning && activeTaskType === "Sync"}>Sync new documents</Button>
+      <Button variant="outline" onClick={(e) => { opener.current = e.currentTarget; setConfirm("repair"); }} disabled={isRunning} loading={isRunning && activeTaskType === "Repair drift"}>Repair drift</Button>
+      <Button variant="outline" onClick={(e) => { opener.current = e.currentTarget; setConfirm("reindex"); }} disabled={isRunning} loading={isRunning && activeTaskType === "Full reindex"}>Full reindex</Button>
     </div>
-  );
+
+    {tp && (
+      <section aria-labelledby="task-title" className="space-y-3 rounded-[10px] border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="task-title" className="heading-16">
+            {activeTaskType} <span className="label-13 font-normal text-fg-muted">{TASK_STATES[tp.status] ?? tp.status}</span>
+          </h2>
+          {tp.status === "running" && <Button variant="destructive" size="sm" onClick={handleCancel}>Cancel</Button>}
+          {isDone && <Button variant="ghost" size="sm" onClick={handleDismiss}>Dismiss</Button>}
+        </div>
+        <Progress value={totalDone} max={tp.total_docs || 1} aria-label={`${activeTaskType} progress`} />
+        {isCancelling && (
+          <p role="status" className="label-13 text-fg-muted">
+            Cancelling. Finishing documents already in progress before another task can start.
+          </p>
+        )}
+        <p className="label-13 text-fg-muted tabular-nums">
+          {totalDone} of {tp.total_docs || "?"} documents
+          {tp.skipped > 0 && `, ${tp.skipped} skipped`}
+          {tp.errors > 0 && `, ${tp.errors} error${tp.errors !== 1 ? "s" : ""}`}.
+          {tp.docs_per_minute > 0 && ` ${tp.docs_per_minute} per minute.`}
+          {isRunning && tp.estimated_remaining_seconds > 0 && ` About ${formatTime(tp.estimated_remaining_seconds)} left.`}
+          {isDone && ` ${TASK_STATES[tp.status]} in ${formatTime(tp.elapsed_seconds)}.`}
+        </p>
+        {isRunning && tp.current_doc && <p className="truncate label-13 text-fg-muted">Now: {tp.current_doc}</p>}
+        {tp.recent_results?.length > 0 && (
+          <div
+            ref={logRef}
+            role="log"
+            aria-label={`${activeTaskType} log`}
+            tabIndex={0}
+            onScroll={(e) => {
+              const log = e.currentTarget;
+              followLog.current = log.scrollHeight - log.scrollTop - log.clientHeight < 8;
+            }}
+            className="max-h-40 overflow-y-auto rounded-md bg-sunken p-2"
+          >
+            <ol className="space-y-1">
+              {tp.recent_results.map((r, i) => (
+                <li key={`${r.doc_id}-${i}`} className="flex items-start gap-1.5 label-12 text-fg-muted">
+                  {r.status === "processed" ? (
+                    <CircleCheck aria-label="Processed" className="mt-0.5 size-3.5 shrink-0 text-verified" strokeWidth={1.75} />
+                  ) : r.status === "skipped" ? (
+                    <SkipForward aria-label="Skipped" className="mt-0.5 size-3.5 shrink-0" strokeWidth={1.75} />
+                  ) : (
+                    <CircleAlert aria-label="Error" className="mt-0.5 size-3.5 shrink-0 text-error" strokeWidth={1.75} />
+                  )}
+                  <span className="min-w-0 truncate">{r.title || `Document #${r.doc_id}`}</span>
+                  {r.status === "processed" && r.entities !== undefined && (
+                    <span className="ml-auto shrink-0 tabular-nums">{r.entities} entities</span>
+                  )}
+                  {r.status === "error" && r.error && (
+                    <span className="ml-auto max-w-[160px] shrink-0 truncate text-error">{r.error}</span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </section>
+    )}
+
+    {lastFailedExtraction && (
+      <Alert variant="destructive">
+        <CircleX aria-hidden strokeWidth={1.75} />
+        <AlertTitle className="line-clamp-none">
+          The last extraction failed: {lastFailedExtraction.title || `Document #${lastFailedExtraction.doc_id}`}
+        </AlertTitle>
+        {lastFailedExtraction.error && <AlertDescription><p className="line-clamp-2">{lastFailedExtraction.error}</p></AlertDescription>}
+      </Alert>
+    )}
+
+    <div className="grid gap-6 md:grid-cols-3">
+      <Column title="Recent answers" value={answers} error="Could not load recent answers." onRetry={loadOverview}>
+        {answers?.length ? (
+          <ul className="space-y-2">
+            {answers.map((answer) => (
+              <li key={answer.id} className="flex items-start gap-3">
+                <StatusLabel status={answer.state} size="sm" className="mt-0.5 w-24 shrink-0" />
+                <span className="min-w-0 line-clamp-2 label-13 text-fg">{answer.question}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="copy-14 text-fg-muted">
+            No answers yet. <Link href="/query" className="text-fg underline underline-offset-4">Ask a question</Link>
+          </p>
+        )}
+      </Column>
+      <Column title="Possible duplicates" value={duplicates} error="Could not load possible duplicates." onRetry={loadOverview}>
+        {duplicates ? (
+          <p className="copy-14 text-fg-muted">
+            <span className="heading-16 text-fg tabular-nums">{duplicates === DUPLICATE_LIMIT ? `${DUPLICATE_LIMIT}+` : duplicates}</span>{" "}
+            {duplicates === 1 ? "pair" : "pairs"} to review.{" "}
+            <Link href="/entities/review" className="text-fg underline underline-offset-4">Review on Entities</Link>
+          </p>
+        ) : (
+          <p className="copy-14 text-fg-muted">No possible duplicates right now.</p>
+        )}
+      </Column>
+      <Column title="Archive by type" value={types} error="Could not load document types." onRetry={loadOverview}>
+        {types?.length ? (
+          <ul className="space-y-1.5">
+            {types.map(([type, count]) => (
+              <li key={type} className="flex items-center justify-between gap-3">
+                <TypeDot type={type} />
+                <span className="label-13 text-fg tabular-nums">{count.toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="copy-14 text-fg-muted">No documents indexed yet. <button type="button" onClick={handleSync} className="text-fg underline underline-offset-4">Sync new documents</button></p>
+        )}
+      </Column>
+    </div>
+
+    <AlertDialog open={confirm !== null} onOpenChange={(open) => { if (!open) setConfirm(null); }}>
+      {/* Without a Trigger, Radix has nowhere to return focus; send it back to the button that opened the dialog. */}
+      <AlertDialogContent onCloseAutoFocus={(e) => { e.preventDefault(); opener.current?.focus(); }}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{confirm === "reindex" ? "Reindex every document?" : "Repair drift?"}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {confirm === "reindex"
+              ? "This prepares and replaces the index for every document. Existing document data stays available while each replacement is prepared. It can take a long time; vector indexes and entity resolution run afterwards."
+              : "This reindexes only the drifted documents that the freshness check reported, and removes graph, vector and hash data for documents no longer in Paperless."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={() => confirm === "reindex"
+            ? startTask(postReindex, "Full reindex", "Full reindex started.", "Failed to start reindex")
+            : startTask(postRepairDrift, "Repair drift", "Drift repair started.", "Failed to start drift repair")}>
+            {confirm === "reindex" ? "Full reindex" : "Repair drift"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>);
 }

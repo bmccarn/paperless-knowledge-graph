@@ -70,8 +70,9 @@ export function formatSourceDate(date: string): string {
 export function plainAnswer(answer: string): string {
   return answer
     .replace(/^Unaudited quick answer — verify the source documents before relying on it\.\n\n/, "")
-    .replace(/\n\nPartial answer: some claims could not be verified and were omitted\. This does not answer every part of your question\.$/, "")
+    // The backend appends the Partial notice first, then the Documented notice.
     .replace(/\n\nThese are documented facts\. Current status as of .+ is not established by the retrieved evidence\.$/, "")
+    .replace(/\n\nPartial answer: some claims could not be verified and were omitted\. This does not answer every part of your question\.$/, "")
     .replace(/ ?\[Document\s+\d+\]\([^)]*\)/g, "");
 }
 

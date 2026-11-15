@@ -92,6 +92,8 @@ test("the stored answer loses its citations, notices and Fast prefix", () => {
   assert.equal(plainAnswer(cited), candidate);
   assert.equal(plainAnswer(cited + "\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question."), candidate);
   assert.equal(plainAnswer(cited + "\n\nThese are documented facts. Current status as of 2026-09-04T12:00:00+00:00 is not established by the retrieved evidence."), candidate);
+  assert.equal(plainAnswer(cited + "\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question."
+    + "\n\nThese are documented facts. Current status as of 2026-09-04 is not established by the retrieved evidence."), candidate);
   assert.equal(plainAnswer("Unaudited quick answer — verify the source documents before relying on it.\n\n" + candidate), candidate);
   assert.equal(formatSourceDate("2026-09-01"), "1 Sep 2026");
 });

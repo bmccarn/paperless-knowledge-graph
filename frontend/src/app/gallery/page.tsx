@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 import { EvidenceLevel, StatusLabel } from "@/components/status-label";
+import { StreamStatus, VerdictLine } from "@/components/answer-status";
+import { Alert } from "@/components/ui/alert";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
@@ -72,6 +74,19 @@ export default function GalleryPage() {
 
         <Section id="evidence-levels" title="Evidence levels">
           <Row name="Level">{(["high", "medium", "low"] as const).map(level => <EvidenceLevel key={level} level={level} />)}</Row>
+        </Section>
+
+        <Section id="verdict-lines" title="Verdict lines">
+          <VerdictLine state="verified" reason="All 3 claims match passages in 2 documents." level="high" seconds={8.4} />
+          <VerdictLine state="withheld" reason="The source audit exceeded its time budget." level="low" seconds={31.2} />
+          <StreamStatus step="Retrieving source evidence" seconds={4} />
+        </Section>
+
+        <Section id="alerts" title="Alerts">
+          <Alert variant="info">The archive index was updated at 09:40.</Alert>
+          <Alert variant="success">Three documents were indexed.</Alert>
+          <Alert variant="warning">Two documents changed since the last sync.</Alert>
+          <Alert variant="error">The sync failed. No documents were changed.</Alert>
         </Section>
 
         <Section id="node-kinds" title="Entity kinds">

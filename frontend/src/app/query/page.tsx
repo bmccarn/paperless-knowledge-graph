@@ -3,6 +3,9 @@
 import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/timeline-dates";
 import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question-coverage";
 import { formatAnswerInline } from "@/lib/answer-format";
+import { answerView } from "@/lib/answer-state";
+import { StreamStatus, VerdictLine } from "@/components/answer-status";
+import { Alert } from "@/components/ui/alert";
 
 import { useState, useRef, useEffect, useEffectEvent, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -25,18 +28,14 @@ import {
   ExternalLink,
   History,
   Trash2,
-  Network,
   FileText,
   Users,
   Plus,
-  Clock,
   MessageSquare,
-  Zap,
   Copy,
   Check,
   Pencil,
   Search,
-  Gauge,
   Bot,
   Route,
   ShieldCheck,
@@ -104,6 +103,7 @@ interface Verification {
 }
 
 interface ClaimLedger {
+  candidate_text?: string;
   summary?: Record<string, number>;
   claims?: Array<{
     claim?: string;
@@ -155,8 +155,13 @@ interface Message {
   entities?: Array<{ name?: string; label?: string }>;
   timestamp?: number;
   queryTime?: number;
+  query_time_ms?: number;
+  /** No complete event arrived: a stream error, an HTTP error or a dropped stream. */
+  failed?: boolean;
   cached?: boolean;
   confidence?: number;
+  evidence?: { score?: number; level?: string };
+  source_dates?: Record<string, string>;
   follow_ups?: string[];
   source_summary?: SourceSummary;
   query_plan?: QueryPlan;
@@ -165,7 +170,7 @@ interface Message {
   claim_ledger?: ClaimLedger;
   evidence_pack?: EvidencePack;
   timeline_events?: TimelineEvent[];
-  finalization?: { timeline?: TimelineReceipt; pipeline_version?: string; answer_verified?: boolean;
+  finalization?: { disposition?: string; timeline?: TimelineReceipt; pipeline_version?: string; answer_verified?: boolean;
     question_coverage?: QuestionCoverageReceipt };
 }
 
@@ -186,22 +191,34 @@ const MODES: [QueryMode, string][] = [
   ["strict", "Strict"],
 ];
 
-const STAGE_LABELS: Record<string, string> = {
-  evidence_pack: "Ranking source evidence...",
-  verifier: "Checking claim support...",
-  verification_retrieval_repair: "Filling evidence gaps...",
-  answer_editor: "Reconciling unsupported details...",
-  evidence_grade: "Finalizing trust artifacts...",
-};
-
 function renderMarkdownContent(text: string) {
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
   let inCodeBlock = false;
   let codeContent: string[] = [];
+  let items: React.ReactNode[] = [];
+  let ordered = false;
+  const flushList = (key: number) => {
+    if (items.length === 0) return;
+    elements.push(ordered
+      ? <ol key={`list-${key}`} className="ml-6 list-decimal">{items}</ol>
+      : <ul key={`list-${key}`} className="ml-6 list-disc">{items}</ul>);
+    items = [];
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const bullet = line.startsWith("- ") || line.startsWith("* ");
+    const numbered = /^\d+\.\s/.test(line);
+    if (!inCodeBlock && (bullet || numbered)) {
+      if (items.length > 0 && ordered !== numbered) flushList(i);
+      ordered = numbered;
+      items.push(<li key={i} dangerouslySetInnerHTML={{ __html: formatAnswerInline(bullet ? line.slice(2) : line.replace(/^\d+\.\s/, "")) }} />);
+      continue;
+    }
+    // A blank line between list items keeps the list open.
+    if (!inCodeBlock && line.trim() === "" && items.length > 0) continue;
+    if (!inCodeBlock) flushList(i);
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         elements.push(
@@ -218,47 +235,21 @@ function renderMarkdownContent(text: string) {
     }
     if (inCodeBlock) { codeContent.push(line); continue; }
     if (line.startsWith("### ")) {
-      elements.push(<h3 key={i} className="text-sm font-semibold mt-3 mb-1">{line.slice(4)}</h3>);
+      elements.push(<h3 key={i} className="font-semibold mt-3 mb-1">{line.slice(4)}</h3>);
     } else if (line.startsWith("## ")) {
-      elements.push(<h2 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h2>);
+      elements.push(<h2 key={i} className="font-semibold mt-3 mb-1">{line.slice(3)}</h2>);
     } else if (line.startsWith("# ")) {
-      elements.push(<h1 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h1>);
-    } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      elements.push(
-        <li key={i} className="text-sm ml-4 list-disc" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line.slice(2)) }} />
-      );
-    } else if (/^\d+\.\s/.test(line)) {
-      elements.push(
-        <li key={i} className="text-sm ml-4 list-decimal" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line.replace(/^\d+\.\s/, "")) }} />
-      );
+      elements.push(<h1 key={i} className="font-semibold mt-3 mb-1">{line.slice(2)}</h1>);
     } else if (line.trim() === "") {
       elements.push(<div key={i} className="h-2" />);
     } else {
       elements.push(
-        <p key={i} className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line) }} />
+        <p key={i} dangerouslySetInnerHTML={{ __html: formatAnswerInline(line) }} />
       );
     }
   }
+  flushList(lines.length);
   return elements;
-}
-
-function ConfidenceBar({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const color = pct >= 80 ? "bg-green-500" : pct >= 50 ? "bg-yellow-500" : "bg-red-500";
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="flex items-center gap-1.5 px-1">
-          <Gauge className="h-2.5 w-2.5 text-muted-foreground" />
-          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-          </div>
-          <span className="text-[10px] text-muted-foreground">{pct}%</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>Source-audit score: {pct}/100 (not a probability)</TooltipContent>
-    </Tooltip>
-  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -272,7 +263,7 @@ function CopyButton({ text }: { text: string }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <button aria-label={copied ? "Answer copied" : "Copy answer"} onClick={handleCopy} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-accent">
-          {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+          {copied ? <Check className="h-3 w-3 text-verified" /> : <Copy className="h-3 w-3" />}
         </button>
       </TooltipTrigger>
       <TooltipContent>{copied ? "Copied!" : "Copy answer"}</TooltipContent>
@@ -292,9 +283,8 @@ function QueryContent() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showHistoryDesktop, setShowHistoryDesktop] = useState(true);
-  const [streamingContent, setStreamingContent] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
-  const [activitySteps, setActivitySteps] = useState<TraceStep[]>([]);
+  const [elapsed, setElapsed] = useState(0);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState("");
@@ -309,9 +299,8 @@ function QueryContent() {
   const activeConversation = useRef<string | null>(null);
   const busy = useRef(false);
   const clearStream = () => {
-    setStreamingContent("");
     setStatusMessage("");
-    setActivitySteps([]);
+    setElapsed(0);
   };
   const invalidateView = () => {
     viewVersion.current++;
@@ -346,7 +335,15 @@ function QueryContent() {
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+  }, [messages, loading]);
+
+  // Whole seconds since the question or conversation load started, for the status line.
+  useEffect(() => {
+    if (!loading) return;
+    const start = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [loading]);
 
   const handleNewConversation = () => {
     invalidateView();
@@ -359,7 +356,7 @@ function QueryContent() {
     textareaRef.current?.focus();
   };
 
-  const handleSubmit = async (question?: string) => {
+  const handleSubmit = async (question?: string, mode: QueryMode = queryMode) => {
     const q = question || input.trim();
     if (!q || busy.current) return;
     const version = ++viewVersion.current;
@@ -388,12 +385,10 @@ function QueryContent() {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setLoading(true);
-    setActivitySteps([{ step: "start", status: "running", detail: "Starting query workflow..." }]);
 
     const startTime = Date.now();
     let completed = false;
-    let draftAssistantShown = false;
-    // Accumulates the streamed answer and its trust artifacts into the final message.
+    // Accumulates the final answer and its trust artifacts; nothing shows until the complete event.
     const acc: Message = {
       role: "assistant", content: "", sources: [], entities: [], cached: false,
       follow_ups: [], trace: [], timeline_events: [],
@@ -401,70 +396,15 @@ function QueryContent() {
     const snapshot = (): Message => ({ ...acc, timestamp: Date.now(), queryTime: Date.now() - startTime });
 
     try {
-      const showDraftAssistant = () => {
-        draftAssistantShown = true;
-        setMessages([...newMessages, snapshot()]);
-      };
-
-      for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, queryMode)) {
+      for await (const event of postQueryStream(q, convId || undefined, selectedModel || undefined, mode)) {
         if (!isCurrent()) return;
         switch (event.type) {
           case "status":
             setStatusMessage(event.message || "");
-            if (event.message) {
-              setActivitySteps(prev => [
-                ...prev,
-                { step: "status", status: "running", detail: event.message },
-              ].slice(-8));
-            }
-            break;
-          case "trace":
-            if (event.step) {
-              acc.trace = [...(acc.trace || []), event.step];
-              setActivitySteps(prev => [...prev, event.step].slice(-8));
-            }
-            break;
-          case "answer_chunk":
-            acc.content += event.content;
-            setStreamingContent(acc.content);
-            setStatusMessage("");
-            break;
-          case "answer_replace":
-            acc.content = event.content || "";
-            if (draftAssistantShown) showDraftAssistant();
-            else setStreamingContent(acc.content);
-            setStatusMessage("");
-            break;
-          case "answer_done":
-            if (event.answer) acc.content = event.answer;
-            acc.sources = event.sources || acc.sources;
-            acc.entities = event.entities_found || acc.entities;
-            acc.source_summary = event.source_summary || acc.source_summary;
-            acc.query_plan = event.query_plan || acc.query_plan;
-            acc.trace = event.trace || acc.trace;
-            acc.evidence_pack = event.evidence_pack || acc.evidence_pack;
-            acc.timeline_events = event.timeline_events || acc.timeline_events;
-            showDraftAssistant();
-            setStreamingContent("");
-            setStatusMessage("Verifying source support and trust score...");
-            break;
-          case "metadata_update":
-            acc.sources = event.sources || acc.sources;
-            acc.source_summary = event.source_summary || acc.source_summary;
-            acc.query_plan = event.query_plan || acc.query_plan;
-            acc.trace = event.trace || acc.trace;
-            acc.verification = event.verification || acc.verification;
-            acc.claim_ledger = event.claim_ledger || acc.claim_ledger;
-            acc.evidence_pack = event.evidence_pack || acc.evidence_pack;
-            if (event.stage) setStatusMessage(STAGE_LABELS[event.stage] || "Updating trust artifacts...");
-            if (draftAssistantShown) showDraftAssistant();
             break;
           case "complete":
             completed = true;
-            if (event.answer) {
-              acc.content = event.answer;
-              if (!draftAssistantShown) setStreamingContent(acc.content);
-            }
+            if (event.answer) acc.content = event.answer;
             acc.sources = event.sources || [];
             acc.entities = event.entities_found || [];
             acc.cached = event.cached || false;
@@ -478,6 +418,8 @@ function QueryContent() {
             acc.evidence_pack = event.evidence_pack || undefined;
             acc.timeline_events = event.timeline_events || [];
             acc.finalization = event.finalization;
+            acc.evidence = event.evidence;
+            acc.source_dates = event.source_dates;
             break;
           case "error":
             throw new Error(event.message || "Stream error");
@@ -529,11 +471,7 @@ function QueryContent() {
         } catch { /* recovery failed */ }
       }
       if (!isCurrent()) return;
-      setMessages([...newMessages, {
-        role: "assistant",
-        content: "Connection lost. The answer may still be processing \u2014 try refreshing in a moment.",
-        timestamp: Date.now(),
-      }]);
+      setMessages([...newMessages, { role: "assistant", content: "", failed: true, timestamp: Date.now(), queryTime: Date.now() - startTime }]);
       clearStream();
     } finally {
       if (isCurrent()) { busy.current = false; setLoading(false); }
@@ -657,7 +595,7 @@ function QueryContent() {
               </Button>
               <Button
                 variant="ghost" size="icon"
-                className="h-7 w-7 shrink-0 mr-0.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
+                className="h-7 w-7 shrink-0 mr-0.5 text-muted-foreground hover:text-error hover:bg-error-bg"
                 onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
                 title="Delete"
               >
@@ -713,15 +651,12 @@ function QueryContent() {
               <div>
                 <p className="text-sm font-medium">{selectedSource.title || `Document #${selectedSource.document_id}`}</p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {selectedSource.doc_type && <Badge variant="secondary" className="text-[10px]">{selectedSource.doc_type}</Badge>}
-                  {selectedSource.date && <Badge variant="outline" className="text-[10px]">{selectedSource.date}</Badge>}
-                  {selectedSource.similarity != null && (
-                    <Badge variant="outline" className="text-[10px]">{Math.round(selectedSource.similarity * 100)}% match</Badge>
-                  )}
+                  {selectedSource.doc_type && <Badge variant="secondary" className="text-xs">{selectedSource.doc_type}</Badge>}
+                  {selectedSource.date && <Badge variant="outline" className="text-xs">{selectedSource.date}</Badge>}
                 </div>
               </div>
               <div className="rounded-lg border bg-card p-3">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
                   Retrieved excerpt
                 </p>
                 <p className="text-xs leading-relaxed whitespace-pre-wrap">
@@ -729,6 +664,10 @@ function QueryContent() {
                 </p>
               </div>
               {selectedSource.document_id && (
+                <div className="flex flex-wrap gap-4">
+                <a href={`/documents/${selectedSource.document_id}`} className="inline-flex items-center gap-1.5 text-xs underline underline-offset-3">
+                  <FileText className="h-3 w-3" /> Open
+                </a>
                 <a
                   href={selectedSource.paperless_url || getPaperlessDocUrl(selectedSource.document_id, paperlessBaseUrl)}
                   target="_blank"
@@ -737,6 +676,7 @@ function QueryContent() {
                 >
                   <ExternalLink className="h-3 w-3" /> Open in Paperless
                 </a>
+                </div>
               )}
             </div>
           )}
@@ -752,9 +692,6 @@ function QueryContent() {
               <History className="h-4 w-4" />
             </Button>
             <h1 className="page-title">Knowledge Query</h1>
-            <Badge variant="secondary" className="text-[9px] gap-1 py-0 hidden sm:inline-flex">
-              <Zap className="h-2.5 w-2.5" /> Streaming
-            </Badge>
           </div>
           {/* Desktop: toggle history */}
           <Tooltip>
@@ -769,7 +706,7 @@ function QueryContent() {
 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
-            {messages.length === 0 && !streamingContent && (
+            {messages.length === 0 && !loading && (
               <div className="text-center py-12 md:py-16 space-y-3">
                 <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
                   <MessageSquare className="h-6 w-6 text-primary" />
@@ -783,71 +720,54 @@ function QueryContent() {
               </div>
             )}
 
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex gap-2 md:gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                {msg.role === "assistant" && (
-                  <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
-                    <Network className="h-3.5 w-3.5 text-primary" />
-                  </div>
+            {messages.map((msg, i) => {
+              if (msg.role === "user") return <h2 key={i} className="question pt-6 first:pt-0">{msg.content}</h2>;
+              const view = answerView(msg);
+              const question = messages[i - 1]?.role === "user" ? messages[i - 1].content : "";
+              const seconds = msg.queryTime ?? msg.query_time_ms;
+              const verdict = <VerdictLine state={view.state} reason={view.reason} level={view.level}
+                seconds={seconds != null ? seconds / 1000 : undefined} />;
+              const sourceCount = msg.sources?.length ?? 0;
+              return (
+              <article key={i} aria-label="Answer" className="space-y-4">
+                {view.state === "failed" ? (
+                  <Alert variant="error" className="space-y-3 [&_[data-testid=verdict]]:border-0 [&_[data-testid=verdict]]:p-0">
+                    {verdict}
+                    {question && <Button size="sm" onClick={() => handleSubmit(question)} disabled={loading}>Retry</Button>}
+                  </Alert>
+                ) : verdict}
+                {view.prose !== null && (
+                  <div id={`answer-${i}`} tabIndex={-1} className="prose space-y-2 scroll-mt-4">{renderMarkdownContent(view.prose)}</div>
                 )}
-                <div className={`max-w-[90%] md:max-w-[85%] space-y-2 ${msg.role === "user" ? "items-end" : ""}`}>
-                  {msg.role === "assistant" && msg.verification?.status === "partial" && msg.verification.partial && (
-                    <div role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs space-y-1">
-                      <p className="font-medium">Verified partial answer</p>
-                      <p>The displayed claims passed source checks. {msg.verification.partial.omitted_count} {msg.verification.partial.omitted_count === 1 ? "claim was" : "claims were"} omitted because verification failed. The answer is incomplete.</p>
-                    </div>
-                  )}
-                  <div className={`rounded-2xl px-3 md:px-4 py-2.5 md:py-3 ${
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-card border rounded-bl-md"
-                  }`}>
-                    {msg.role === "assistant" ? (
-                      <div id={`answer-${i}`} tabIndex={-1} className="space-y-1 scroll-mt-4">{renderMarkdownContent(msg.content)}</div>
-                    ) : (
-                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                {view.state === "withheld" && (
+                  <div className="flex flex-wrap gap-2">
+                    {question && <Button onClick={() => { setQueryMode("deep"); handleSubmit(question, "deep"); }} disabled={loading}>Ask again in Deep mode</Button>}
+                    {sourceCount > 0 && (
+                      <Button variant="outline" onClick={() => document.getElementById(`sources-${i}`)?.focus()}>
+                        Review the {sourceCount} {sourceCount === 1 ? "document" : "documents"}
+                      </Button>
                     )}
                   </div>
+                )}
+                {view.prose !== null && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {msg.cached && <Badge variant="outline">cached</Badge>}
+                    <CopyButton text={view.prose} />
+                  </div>
+                )}
 
-                  {msg.role === "assistant" && (msg.queryTime != null || msg.confidence != null) && (
-                    <div className="flex flex-wrap items-center gap-2 px-1">
-                      {msg.queryTime != null && (
-                        <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                          <Clock className="h-2.5 w-2.5" />
-                          {(msg.queryTime / 1000).toFixed(1)}s
-                        </span>
-                      )}
-                      {msg.cached && (
-                        <Badge variant="outline" className="text-[8px] px-1 py-0">cached</Badge>
-                      )}
-                      {msg.confidence != null && !msg.finalization?.pipeline_version && <ConfidenceBar value={msg.confidence} />}
-                      <CopyButton text={msg.content} />
-                    </div>
-                  )}
+                  <QuestionCoverage receipt={msg.finalization?.question_coverage} />
 
-                  {msg.role === "assistant" && <QuestionCoverage receipt={msg.finalization?.question_coverage} />}
-
-                  {msg.role === "assistant" && msg.source_summary && (
+                  {msg.source_summary && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium flex items-center gap-1">
                           <ShieldCheck className="h-3 w-3" /> {msg.finalization?.pipeline_version ? "Source checks" : "Trust check"}
                         </span>
                         {msg.source_summary.latest_check_used ? (
-                          <Badge variant="secondary" className="text-[9px]">latest-pass run</Badge>
+                          <Badge variant="secondary" className="text-xs">latest-pass run</Badge>
                         ) : (
-                          <Badge variant="outline" className="text-[9px]">latest-pass not needed</Badge>
-                        )}
-                        {msg.source_summary.trust_level && !msg.finalization?.pipeline_version && (
-                          <Badge variant="outline" className="text-[9px]">
-                            {msg.source_summary.trust_level} trust
-                            {msg.source_summary.trust_score != null ? ` ${Math.round(msg.source_summary.trust_score * 100)}%` : ""}
-                          </Badge>
-                        )}
-                        {msg.source_summary.verification_status && (
-                          <Badge variant={msg.source_summary.verification_status === "verified" ? "secondary" : "outline"} className="text-[9px]">
-                            {msg.source_summary.verification_status}
-                          </Badge>
+                          <Badge variant="outline" className="text-xs">latest-pass not needed</Badge>
                         )}
                         {msg.source_summary.latest_source_date && (
                           <span className="text-muted-foreground">
@@ -861,14 +781,14 @@ function QueryContent() {
                         </p>
                       )}
                       {Boolean((msg.source_summary.unsupported_claim_count || 0) + (msg.source_summary.stale_or_conflicting_claim_count || 0)) && (
-                        <p className="text-amber-600 dark:text-amber-400">
+                        <p className="text-partial">
                           Verifier flagged {msg.source_summary.unsupported_claim_count || 0} unsupported and {msg.source_summary.stale_or_conflicting_claim_count || 0} stale/conflicting claim(s).
                         </p>
                       )}
                       {msg.source_summary.trust_penalties && msg.source_summary.trust_penalties.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {msg.source_summary.trust_penalties.slice(0, 3).map((penalty, idx) => (
-                            <span key={idx} className="rounded-md bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            <span key={idx} className="rounded-md bg-partial-bg px-2 py-1 text-xs text-partial">
                               {penalty}
                             </span>
                           ))}
@@ -877,59 +797,42 @@ function QueryContent() {
                       {msg.source_summary.trust_reasons && msg.source_summary.trust_reasons.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {msg.source_summary.trust_reasons.slice(0, 3).map((reason, idx) => (
-                            <span key={idx} className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                            <span key={idx} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
                               {reason}
                             </span>
                           ))}
                         </div>
                       )}
-                      {msg.source_summary.trust_dimensions && Object.keys(msg.source_summary.trust_dimensions).length > 0 && (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 pt-1">
-                          {Object.entries(msg.source_summary.trust_dimensions).map(([name, value]) => (
-                            <div key={name} className="rounded-md bg-muted/70 px-2 py-1">
-                              <div className="text-[9px] text-muted-foreground capitalize">{name.replaceAll("_", " ")}</div>
-                              <div className="text-[11px] font-medium">{Math.round((value || 0) * 100)}%</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {msg.verification?.status !== "corpus_changed" && msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
+                      {view.prose !== null && msg.source_summary.claim_summary && Object.values(msg.source_summary.claim_summary).some(Boolean) && (
                         <div className="flex flex-wrap gap-1 pt-1">
                           {Object.entries(msg.source_summary.claim_summary).map(([status, count]) => count ? (
-                            <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-[9px]">
+                            <Badge key={status} variant={status === "supported" ? "secondary" : "outline"} className="text-xs">
                               {status}: {count}
                             </Badge>
                           ) : null)}
                         </div>
                       )}
-                      {msg.source_summary.evidence_coverage && (
-                        <p className="text-[10px] text-muted-foreground">
-                          Evidence pack: {String(msg.source_summary.evidence_coverage["evidence_item_count"] || 0)} items,
-                          {" "}{String(msg.source_summary.evidence_coverage["source_document_count"] || 0)} docs,
-                          {" "}quality {Math.round(Number(msg.source_summary.evidence_coverage["average_source_quality"] || 0) * 100)}%
-                        </p>
-                      )}
                     </div>
                   )}
 
-                  {msg.role === "assistant" && msg.verification && (
+                  {view.prose !== null && msg.verification && (
                     Boolean((msg.verification.unsupported_claims || []).length + (msg.verification.stale_or_conflicting_claims || []).length + (msg.verification.missing_evidence || []).length) && (
                       <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
                         <p className="font-medium flex items-center gap-1">
                           <ShieldCheck className="h-3 w-3" /> Evidence review
                         </p>
                         {(msg.verification.unsupported_claims || []).slice(0, 4).map((claim, idx) => (
-                          <div key={`unsupported-${idx}`} className="text-[10px] text-amber-700 dark:text-amber-300">
+                          <div key={`unsupported-${idx}`} className="text-xs text-partial">
                             Unsupported: {claim}
                           </div>
                         ))}
                         {(msg.verification.stale_or_conflicting_claims || []).slice(0, 4).map((claim, idx) => (
-                          <div key={`stale-${idx}`} className="text-[10px] text-red-700 dark:text-red-300">
+                          <div key={`stale-${idx}`} className="text-xs text-error">
                             Stale/conflict: {claim}
                           </div>
                         ))}
                         {(msg.verification.missing_evidence || []).slice(0, 3).map((gap, idx) => (
-                          <div key={`gap-${idx}`} className="text-[10px] text-muted-foreground">
+                          <div key={`gap-${idx}`} className="text-xs text-muted-foreground">
                             Missing evidence: {gap}
                           </div>
                         ))}
@@ -937,15 +840,15 @@ function QueryContent() {
                     )
                   )}
 
-                  {msg.role === "assistant" && msg.verification?.status !== "corpus_changed" && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
+                  {view.prose !== null && msg.claim_ledger?.claims && msg.claim_ledger.claims.length > 0 && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
                       <p className="font-medium flex items-center gap-1">
                         <FileText className="h-3 w-3" /> Claim ledger ({msg.claim_ledger.claims.length})
                       </p>
                       {msg.claim_ledger.claims.map((claim, idx) => (
-                        <div key={idx} className="grid gap-1 text-[10px]">
+                        <div key={idx} className="grid gap-1 text-xs">
                           <div className="flex items-start gap-1.5">
-                            <Badge variant={(claim.status || claim.support_status) === "supported" ? "secondary" : "outline"} className="text-[8px] px-1 py-0 shrink-0">
+                            <Badge variant={(claim.status || claim.support_status) === "supported" ? "secondary" : "outline"} className="text-xs px-1 py-0 shrink-0">
                               {claim.status || claim.support_status || "unknown"}
                             </Badge>
                             <span>{claim.claim}</span>
@@ -960,15 +863,15 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {msg.role === "assistant" && (msg.query_plan || (msg.trace && msg.trace.length > 0)) && (
+                  {(msg.query_plan || (msg.trace && msg.trace.length > 0)) && (
                     <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium flex items-center gap-1">
                           <Route className="h-3 w-3" /> Why this answer
                         </span>
-                        {msg.query_plan?.planner && <Badge variant="outline" className="text-[9px]">{msg.query_plan.planner} planner</Badge>}
-                        {msg.query_plan?.intent && <Badge variant="secondary" className="text-[9px]">{msg.query_plan.intent}</Badge>}
-                        {msg.query_plan?.domain && <Badge variant="outline" className="text-[9px]">{msg.query_plan.domain}</Badge>}
+                        {msg.query_plan?.planner && <Badge variant="outline" className="text-xs">{msg.query_plan.planner} planner</Badge>}
+                        {msg.query_plan?.intent && <Badge variant="secondary" className="text-xs">{msg.query_plan.intent}</Badge>}
+                        {msg.query_plan?.domain && <Badge variant="outline" className="text-xs">{msg.query_plan.domain}</Badge>}
                       </div>
                       {msg.query_plan?.strategy && (
                         <p className="text-muted-foreground">{msg.query_plan.strategy}</p>
@@ -976,7 +879,7 @@ function QueryContent() {
                       {msg.query_plan?.subqueries && msg.query_plan.subqueries.length > 0 && (
                         <div className="space-y-1">
                           {msg.query_plan.subqueries.slice(0, 4).map((q, idx) => (
-                            <div key={idx} className="flex gap-1.5 text-[10px]">
+                            <div key={idx} className="flex gap-1.5 text-xs">
                               <span className="shrink-0 text-muted-foreground">{q.role || "query"}</span>
                               <span className="truncate">{q.query}</span>
                             </div>
@@ -986,7 +889,7 @@ function QueryContent() {
                       {msg.trace && msg.trace.length > 0 && (
                         <div className="grid gap-1">
                           {msg.trace.slice(-5).map((step, idx) => (
-                            <div key={idx} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                            <div key={idx} className="flex items-start gap-1.5 text-xs text-muted-foreground">
                               <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0" />
                               <span><span className="font-medium text-foreground">{step.step}</span>: {step.detail || step.status}</span>
                             </div>
@@ -996,12 +899,12 @@ function QueryContent() {
                     </div>
                   )}
 
-                  {msg.role === "assistant" && <TimelineDates events={msg.timeline_events}
-                    receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={setSelectedSource} />}
+                  <TimelineDates events={msg.timeline_events}
+                    receipt={msg.finalization?.timeline} answerId={`answer-${i}`} onSource={setSelectedSource} />
 
                   {msg.entities && msg.entities.length > 0 && (
                     <div className="space-y-1.5 px-1">
-                      <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
+                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
                         <Users className="h-3 w-3" /> Entities ({msg.entities.length})
                       </p>
                       <div className="flex flex-wrap gap-1.5">
@@ -1013,7 +916,7 @@ function QueryContent() {
                           >
                             <Search className="h-2.5 w-2.5 text-muted-foreground" />
                             <span className="font-medium">{ent.name}</span>
-                            {ent.label && <span className="text-muted-foreground text-[10px]">· {ent.label}</span>}
+                            {ent.label && <span className="text-muted-foreground text-xs">· {ent.label}</span>}
                           </a>
                         ))}
                       </div>
@@ -1021,8 +924,8 @@ function QueryContent() {
                   )}
 
                   {msg.sources && msg.sources.length > 0 && (
-                    <div className="space-y-1.5 px-1">
-                      <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
+                    <section id={`sources-${i}`} tabIndex={-1} aria-label="Sources" className="space-y-1.5 px-1">
+                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
                         <FileText className="h-3 w-3" /> Sources ({msg.sources.length})
                       </p>
                       <div className="flex flex-wrap gap-1.5">
@@ -1035,86 +938,23 @@ function QueryContent() {
                               className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs hover:bg-accent transition-colors min-h-[36px]">
                               <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
                               <span className="truncate max-w-[180px] md:max-w-[200px]">{title}{excerpts}</span>
-                              {s.doc_type && <Badge variant="secondary" className="text-[9px] px-1 py-0 hidden sm:inline-flex">{s.doc_type}</Badge>}
+                              {s.doc_type && <Badge variant="secondary" className="text-xs px-1 py-0 hidden sm:inline-flex">{s.doc_type}</Badge>}
                             </button>
                           );
                         })}
                       </div>
-                    </div>
+                    </section>
                   )}
-                </div>
-                {msg.role === "user" && (
-                  <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center shrink-0 mt-1">
-                    <span className="text-xs font-bold text-primary-foreground">B</span>
-                  </div>
-                )}
-              </div>
-            ))}
+              </article>
+              );
+            })}
 
-            {(streamingContent || statusMessage || (loading && activitySteps.length > 0)) && (
-              <div className="flex gap-2 md:gap-3 justify-start">
-                <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-1">
-                  <Network className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div className="max-w-[90%] md:max-w-[85%] space-y-2">
-                  {loading && activitySteps.length > 0 && (
-                    <div className="rounded-lg border bg-card/70 px-3 py-2 text-xs space-y-1.5">
-                      <div className="flex items-center gap-2 font-medium">
-                        <Bot className="h-3 w-3" />
-                        <span>Agent activity</span>
-                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                      </div>
-                      <div className="space-y-1">
-                        {activitySteps.slice(-6).map((step, idx) => (
-                          <div key={`${step.step}-${idx}`} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
-                            <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${
-                              step.status === "fallback" || step.status === "needs_review" ? "bg-amber-500" : "bg-primary/70"
-                            }`} />
-                            <span>
-                              <span className="font-medium text-foreground">{step.step.replaceAll("_", " ")}</span>
-                              {step.detail ? `: ${step.detail}` : ""}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {statusMessage && !streamingContent && (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
-                      <Loader2 className="h-3 w-3 animate-spin" /> {statusMessage}
-                    </div>
-                  )}
-                  {streamingContent && (
-                    <div className="rounded-2xl rounded-bl-md bg-card border px-3 md:px-4 py-2.5 md:py-3">
-                      <div className="space-y-1">
-                        {renderMarkdownContent(streamingContent)}
-                        <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {loading && !streamingContent && !statusMessage && (
-              <div className="flex gap-3">
-                <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                  <Network className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div className="rounded-2xl rounded-bl-md bg-card border px-4 py-3">
-                  <div className="flex gap-1.5">
-                    <span className="typing-dot h-2 w-2 rounded-full bg-muted-foreground/50" />
-                    <span className="typing-dot h-2 w-2 rounded-full bg-muted-foreground/50" />
-                    <span className="typing-dot h-2 w-2 rounded-full bg-muted-foreground/50" />
-                  </div>
-                </div>
-              </div>
-            )}
+            {loading && <StreamStatus step={statusMessage || "Starting"} seconds={elapsed} />}
 
             {/* Follow-up suggestions */}
             {followUpSuggestions.length > 0 && !loading && (
               <div className="space-y-2 pt-2">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-1">
                   Suggested follow-ups
                 </p>
                 <div className="flex flex-wrap gap-2">

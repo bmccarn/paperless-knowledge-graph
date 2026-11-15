@@ -107,7 +107,7 @@ test("conversation switching isolates delayed completion and subsequent question
     else nextId = request.conversation_id;
     await route.fulfill({ status: 200, contentType: "text/event-stream", body: "data: " + JSON.stringify({
       type: "complete", answer: first ? "ANSWER_FROM_A" : "ANSWER_FROM_B", sources: [], confidence: 0,
-      finalization: { disposition: "unsupported", complete: false },
+      finalization: { disposition: "unaudited", complete: false },
     }) + "\n\n" });
   });
   t.after(() => held.resolve());
@@ -133,7 +133,7 @@ test("conversation switching isolates delayed completion and subsequent question
   await record(page, "conversation-switch");
 });
 
-test("restored zero-score answers retain their score and copy control without a recorded duration", async t => {
+test("restored zero-score answers retain their level and copy control without a recorded duration", async t => {
   const { context, page } = await fixturePage(t);
   const saved = await (await context.request.post(`${base}/api/conversations`, { data: { title: "Saved unverified answer" } })).json();
   await page.route(`**/api/conversations/${saved.id}`, route => route.fulfill({ json: {
@@ -142,7 +142,7 @@ test("restored zero-score answers retain their score and copy control without a 
   await page.goto(`${base}/query`);
   await page.getByRole("button", { name: saved.title, exact: true }).click();
   await page.getByText("Source support could not be verified.", { exact: true }).waitFor();
-  await page.getByText("0%", { exact: true }).waitFor();
+  await page.getByRole("img", { name: "Evidence low", exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Copy answer", exact: true }).isVisible(), true);
   assert.equal(await page.getByText("0", { exact: true }).count(), 0);
   await record(page, "restored-zero-score");
@@ -242,7 +242,8 @@ test("snapshot-rejected SSE answers do not display obsolete supported claims", a
   const input = page.getByPlaceholder("Ask a question...");
   await input.fill("Recorded premium during reindex?");
   await input.press("Enter");
-  await page.getByText(warning, { exact: true }).waitFor();
+  await page.getByText("The document index changed during the check. Ask again after indexing finishes.", { exact: true }).waitFor();
+  assert.equal(await page.getByText(warning, { exact: true }).count(), 0);
   assert.equal(await page.getByText("Obsolete premium is $321.", { exact: true }).count(), 0);
   assert.equal(await page.getByText("supported", { exact: true }).count(), 0);
   assert.equal(await page.getByText("supported: 1", { exact: true }).count(), 0);
@@ -292,9 +293,9 @@ test("verified partial history keeps its notice, ledger, timeline and source acr
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   const input = page.getByPlaceholder("Ask a question...");
   await input.fill("Show partial recorded history"); await input.press("Enter");
-  const notice = page.getByRole("status").filter({ hasText: "Verified partial answer" });
+  const notice = page.getByTestId("verdict").filter({ hasText: "Partial" });
   await notice.waitFor();
-  assert.ok((await notice.innerText()).includes("1 claim was omitted"));
+  assert.ok((await notice.innerText()).includes("1 of 2 claims was left out"));
   await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
   await page.getByText("Dates in verified observations (1)", { exact: true }).waitFor();
   assert.equal(await page.getByText("0%", { exact: true }).count(), 0);

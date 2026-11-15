@@ -17,6 +17,7 @@ import {
 } from "@/lib/graph-data";
 import { nodeKind, nodeLabelText } from "@/lib/categories";
 import {
+  fitView,
   LABEL_ALL,
   labelCandidates,
   linkWidth,
@@ -39,6 +40,8 @@ export type GraphHandle = ForceGraphMethods<
   ExplorerNode,
   Omit<ExplorerLink, "source" | "target">
 >;
+/** The camera controls for the zoom buttons. Moves are instant under reduced motion. */
+export interface Camera { zoomBy: (factor: number) => void; fit: () => void }
 type GraphComponent = ComponentType<
   ForceGraphProps<ExplorerNode, Omit<ExplorerLink, "source" | "target">> &
     RefAttributes<GraphHandle>
@@ -52,7 +55,11 @@ interface Props {
   onSelectNode: (node: ExplorerNode, event?: MouseEvent) => void;
   onSelectLink: (link: ExplorerLink) => void;
   onClear: () => void;
-  onReady: (handle: GraphHandle | null) => void;
+  onReady: (camera: Camera | null) => void;
+  /** The canvas's accessible name, which summarizes it. */
+  name: string;
+  /** Below 768 px: overlapping labels are skipped, whatever the node count, and a pill shows only its "+N". */
+  phone?: boolean;
   /** Fixed positions: no simulation, no node drag, one fit on the first draw. */
   positions?: ReadonlyMap<string, { x: number; y: number }>;
   /** The focus entity: labeled in 500 weight; other labels sit on the side away from it. */
@@ -112,11 +119,15 @@ export function ForceGraphClient({
   focusId = null,
   keyboardNodeId = null,
   markedLinkIds,
+  name,
+  phone = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
   const renderNodes = useRef(new Map<string, RenderNode>());
   const initialFitPending = useRef(true);
+  /** The zoom a running camera move ends at, so a second press builds on it. */
+  const zoomTarget = useRef({ k: 0, until: 0 });
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -215,17 +226,57 @@ export function ForceGraphClient({
     }
   }, [data, positions]);
 
-  // Fixed layouts have no engine-stop event: fit once, when the first layout is drawn.
+  const font = useCallback((weight: number) => `${weight} ${LABEL_FONT}px ${paint?.font}`, [paint]);
+
+  // A 390 px canvas has no room for nine full pills: on phone a pill shows "+N", and selecting it names the family.
+  const pillText = useCallback((node: ExplorerNode) => (phone ? node.name.split(" ")[0] : node.name), [phone]);
+  /** A "+N Family" pill box around (0, 0) in screen pixels. */
+  const pillWidth = useCallback((ctx: CanvasRenderingContext2D, node: ExplorerNode) => {
+    ctx.font = font(400);
+    return ctx.measureText(pillText(node)).width + 24;
+  }, [font, pillText]);
+
+  /** Center and zoom so every node and pill, at its screen size, sits inside the canvas. */
+  const fit = useCallback((duration: number) => {
+    const handle = handleRef.current;
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!handle || !ctx || !dimensions.width || !dimensions.height) return;
+    const items = data.nodes.filter(node => node.x !== undefined && node.y !== undefined).map(node => {
+      const [halfWidth, halfHeight] = node.label === "Aggregate"
+        ? [pillWidth(ctx, node) / 2, PILL_HEIGHT / 2]
+        : Array(2).fill(shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 3);
+      return { x: node.x!, y: node.y!, halfWidth, halfHeight };
+    });
+    if (!items.length) return;
+    // Room for the controls over the canvas: on phone the Legend button (top) and zoom buttons (bottom) in the
+    // height a width-bound ring leaves spare; on desktop the zoom buttons at the right, where a wide canvas has room.
+    const pad = phone ? { top: 64, right: 16, bottom: 152, left: 16 } : { top: 48, right: 64, bottom: 48, left: 48 };
+    const roomy = fitView(items, dimensions.width, dimensions.height, pad);
+    // A short phone canvas (the inspector open) has no spare height: fit to its edges instead of shrinking the zoom.
+    const tight = phone ? fitView(items, dimensions.width, dimensions.height, { top: 16, right: 16, bottom: 16, left: 16 }) : roomy;
+    const view = roomy.k < tight.k ? tight : roomy;
+    handle.centerAt(view.x, view.y, duration);
+    handle.zoom(view.k, duration);
+    zoomTarget.current = { k: view.k, until: performance.now() + duration };
+  }, [data, dimensions, phone, pillWidth]);
+
+  // Fixed layouts have no engine-stop event: fit once, when the first layout is drawn, after the label
+  // font has loaded, so pill widths and the fitted zoom are the same on every load.
   const fixed = Boolean(positions);
   useEffect(() => {
-    if (!fixed || !renderer.Component || !dimensions.width || !dimensions.height) return;
-    const frame = requestAnimationFrame(() => {
-      if (!initialFitPending.current || !handleRef.current) return;
-      initialFitPending.current = false;
-      handleRef.current.zoomToFit(0, 65);
-    });
+    if (!fixed || !renderer.Component || !dimensions.width || !dimensions.height || !paint) return;
+    let frame = 0;
+    const run = () => {
+      frame = requestAnimationFrame(() => {
+        if (!initialFitPending.current || !handleRef.current) return;
+        initialFitPending.current = false;
+        fit(0);
+      });
+    };
+    // A face in the stack that cannot load rejects; the fit then runs with the faces that did.
+    void document.fonts.load(font(400)).then(run, run);
     return () => cancelAnimationFrame(frame);
-  }, [fixed, renderer.Component, dimensions.width, dimensions.height]);
+  }, [fixed, renderer.Component, dimensions.width, dimensions.height, paint, font, fit]);
 
   useEffect(() => {
     if (!renderer.Component || !selectedNodeId ||
@@ -242,24 +293,27 @@ export function ForceGraphClient({
     return () => cancelAnimationFrame(frame);
   }, [selectedNodeId, dimensions.width, dimensions.height, renderer.Component, graph.nodes]);
 
-  const setHandle = useCallback(
-    (handle: GraphHandle | null) => {
-      handleRef.current = handle;
-      onReady(handle);
-    },
-    [onReady],
-  );
+  const setHandle = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
+  useEffect(() => {
+    const duration = () => (matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
+    // A button press takes the camera, as a gesture does.
+    const take = () => { initialFitPending.current = false; };
+    onReady({
+      zoomBy: factor => {
+        take();
+        const handle = handleRef.current;
+        if (!handle) return;
+        const ms = duration(), from = performance.now() < zoomTarget.current.until ? zoomTarget.current.k : handle.zoom();
+        zoomTarget.current = { k: from * factor, until: performance.now() + ms };
+        handle.zoom(from * factor, ms);
+      },
+      fit: () => { take(); fit(duration()); },
+    });
+    return () => onReady(null);
+  }, [onReady, fit]);
 
   // A selected pill does not fade the other nodes and links; a selected entity does.
   const entitySelected = Boolean(selectedNodeId) && !graph.nodes.some(node => node.id === selectedNodeId && node.label === "Aggregate");
-
-  const font = useCallback((weight: number) => `${weight} ${LABEL_FONT}px ${paint?.font}`, [paint]);
-
-  /** A "+N Family" pill box around (0, 0) in screen pixels. */
-  const pillWidth = useCallback((ctx: CanvasRenderingContext2D, text: string) => {
-    ctx.font = font(400);
-    return ctx.measureText(text).width + 24;
-  }, [font]);
 
   // Every shape is drawn in screen pixels around its node's center, so it keeps its size at every zoom.
   const paintNode = useCallback(
@@ -270,7 +324,7 @@ export function ForceGraphClient({
       ctx.translate(node.x, node.y);
       ctx.scale(1 / scale, 1 / scale);
       if (node.label === "Aggregate") {
-        const width = pillWidth(ctx, node.name);
+        const width = pillWidth(ctx, node);
         const pill = new Path2D();
         pill.roundRect(-width / 2 + 0.5, -PILL_HEIGHT / 2 + 0.5, width - 1, PILL_HEIGHT - 1, (PILL_HEIGHT - 1) / 2);
         const selected = node.id === selectedNodeId;
@@ -288,7 +342,7 @@ export function ForceGraphClient({
         ctx.fillStyle = colors.fg;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(node.name, 0, 0.5);
+        ctx.fillText(pillText(node), 0, 0.5);
         ctx.restore();
         return;
       }
@@ -338,7 +392,7 @@ export function ForceGraphClient({
       }
       ctx.restore();
     },
-    [paint, pillWidth, selectedNodeId, entitySelected, hoveredId, keyboardNodeId],
+    [paint, pillWidth, pillText, selectedNodeId, entitySelected, hoveredId, keyboardNodeId],
   );
 
   const selectedLink = (link: RenderLink) => link.id === selectedLinkId || Boolean(markedLinkIds?.has(link.id));
@@ -424,7 +478,7 @@ export function ForceGraphClient({
       for (const node of nodes) {
         const x = node.x! * scale, y = node.y! * scale;
         if (node.label === "Aggregate") {
-          const width = pillWidth(ctx, node.name);
+          const width = pillWidth(ctx, node);
           obstacles.push({ x0: x - width / 2, y0: y - PILL_HEIGHT / 2, x1: x + width / 2, y1: y + PILL_HEIGHT / 2 });
         } else {
           const extent = shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 3;
@@ -448,7 +502,7 @@ export function ForceGraphClient({
       }
       const important = (node: RenderNode) =>
         node.id === focusId || node.id === selectedNodeId || node.id === hoveredId || node.id === keyboardNodeId;
-      const all = nodes.length <= LABEL_ALL && showLabels;
+      const all = nodes.length <= LABEL_ALL && showLabels && !phone;
       const ranked = nodes.filter((node) => node.label !== "Aggregate")
         .sort((a, b) => Number(important(b)) - Number(important(a)) || nodeDocs(b) - nodeDocs(a) || a.id.localeCompare(b.id));
       for (const node of ranked) {
@@ -500,7 +554,7 @@ export function ForceGraphClient({
       ctx.restore();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, nodeLinked, pillWidth, font, dimensions],
+    [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, phone, nodeLinked, pillWidth, font, dimensions],
   );
 
   const hover = useCallback((node: RenderNode | null) => {
@@ -520,7 +574,6 @@ export function ForceGraphClient({
       onWheelCapture={preserveUserView}
       onPointerDownCapture={preserveUserView}
       className="relative h-full w-full min-h-0 overflow-hidden bg-background"
-      aria-label="2D relationship graph"
     >
       {error ? (
         <div
@@ -539,6 +592,8 @@ export function ForceGraphClient({
           Loading graph renderer…
         </div>
       ) : (
+        // Children of an image are hidden from assistive technology, so the image wraps only the renderer.
+        <div role="img" aria-label={name}>
         <Component
           ref={setHandle}
           graphData={data}
@@ -565,7 +620,7 @@ export function ForceGraphClient({
             ctx.fillStyle = color;
             ctx.beginPath();
             if (node.label === "Aggregate") {
-              const width = pillWidth(ctx, node.name) / scale;
+              const width = pillWidth(ctx, node) / scale;
               ctx.roundRect(node.x - width / 2, node.y - PILL_HEIGHT / 2 / scale, width, PILL_HEIGHT / scale, PILL_HEIGHT / 2 / scale);
             } else ctx.arc(node.x, node.y, (shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 2) / scale, 0, Math.PI * 2);
             ctx.fill();
@@ -599,6 +654,7 @@ export function ForceGraphClient({
           enableNodeDrag={!fixed}
           minZoom={0.1}
         />
+        </div>
       )}
     </div>
   );

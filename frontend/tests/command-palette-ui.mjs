@@ -35,6 +35,8 @@ for (const width of [1440, 390]) test(`palette keyboard and navigation at ${widt
   await opener.click();
   await input.fill("January");
   await page.getByRole("option", { name: "January premium statement", exact: true }).waitFor();
+  await input.fill("January ");
+  await page.getByRole("option", { name: "January premium statement", exact: true }).waitFor();
   await input.press("Enter");
   await page.waitForURL("**/documents/101");
   await page.keyboard.press("Control+k");
@@ -67,12 +69,12 @@ test("debounce, stale results, paging and retry", async t => {
     searches++;
     const url = new URL(route.request().url());
     const q = url.searchParams.get("q");
-    if (q === "slow") await new Promise(resolve => setTimeout(resolve, 400));
+    if (q === "slow" || q === "fast") await new Promise(resolve => setTimeout(resolve, 400));
     if (fail) return route.fulfill({ status: 503, json: { detail: "Synthetic failure" } });
     const offset = Number(url.searchParams.get("offset"));
     return route.fulfill({ json: { results: offset === 0
       ? [{ labels: ["Document"], properties: { title: "Exclude document" } }]
-      : Array.from({ length: 6 }, (_, i) => ({ labels: ["Person"], properties: { name: `${q} person ${i}`, uuid: `p-${i}` } })), has_more: offset === 0 } });
+      : Array.from({ length: 6 }, (_, i) => ({ labels: ["Person"], properties: { name: `${q} person ${i < 2 ? 0 : i}`, uuid: `p-${i}` } })), has_more: offset === 0 } });
   });
   await page.route("**/api/conversations?**", route => {
     const offset = Number(new URL(route.request().url()).searchParams.get("offset"));
@@ -80,6 +82,7 @@ test("debounce, stale results, paging and retry", async t => {
   });
   await page.goto(`${base}/documents`);
   await page.clock.install();
+  await page.clock.pauseAt(new Date());
   await page.getByRole("button", { name: "Search pages and archive", exact: true }).click();
   const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
   await input.fill("f");
@@ -93,14 +96,19 @@ test("debounce, stale results, paging and retry", async t => {
   await slowRequest;
   await input.fill("fast");
   await page.clock.runFor(150);
-  await page.getByRole("option", { name: "fast person 0", exact: true }).waitFor();
   await page.getByRole("option", { name: "fast saved conversation", exact: true }).waitFor();
+  await input.press("ArrowUp");
+  await page.getByRole("option", { name: "fast person 0", exact: true }).first().waitFor();
+  assert.equal(await page.getByRole("option", { name: "fast saved conversation", exact: true }).getAttribute("aria-selected"), "true");
   assert.equal(await page.getByRole("group", { name: "Entities", exact: true }).getByRole("option").count(), 5);
   await new Promise(resolve => setTimeout(resolve, 600));
   assert.equal(await page.getByRole("option", { name: /slow person/ }).count(), 0);
-  await input.press("ArrowUp");
   const last = page.getByRole("option", { name: "fast saved conversation", exact: true });
   assert.equal(await last.getAttribute("aria-selected"), "true");
+  await input.press("ArrowDown");
+  const beforeDuplicate = await input.getAttribute("aria-activedescendant");
+  await input.press("ArrowDown");
+  assert.notEqual(await input.getAttribute("aria-activedescendant"), beforeDuplicate, "Duplicate names do not trap arrow selection");
   fail = true;
   await input.fill("failure");
   await page.clock.runFor(150);
@@ -108,5 +116,5 @@ test("debounce, stale results, paging and retry", async t => {
   fail = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.clock.runFor(150);
-  await page.getByRole("option", { name: "failure person 0", exact: true }).waitFor();
+  await page.getByRole("option", { name: "failure person 0", exact: true }).first().waitFor();
 });

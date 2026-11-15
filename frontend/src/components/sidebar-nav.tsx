@@ -91,6 +91,7 @@ export function SidebarNav() {
   };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (location.pathname === "/gallery") return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         if (document.querySelector('[role="dialog"][data-palette]')) return;

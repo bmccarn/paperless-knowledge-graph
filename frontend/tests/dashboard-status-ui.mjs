@@ -206,7 +206,7 @@ test("the three columns show each saved answer's state and question, the duplica
   assert.ok((await page.request.post(`${base}/api/_fixture/reset`)).ok());
   assert.ok((await page.request.post(`${base}/api/_fixture/saved-answers`)).ok());
   // Later suites expect no saved conversations.
-  t.after(() => page.request.post(`${base}/api/_fixture/reset`));
+  t.after(() => fetch(`${base}/api/_fixture/reset`, { method: "POST" }));
   await page.goto(base);
   const answers = page.getByRole("region", { name: "Recent answers" }).getByRole("listitem");
   await answers.first().waitFor();

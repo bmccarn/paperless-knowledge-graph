@@ -131,15 +131,16 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mixed_link_keeps_its_stored_flag(self):
         for doc, inferred in ((FIRST_ID, False), (FIRST_ID + 1, True)):
-            await self.store.create_relationship(PREFIX + 'busy', 'Organization', PREFIX + 'p0', 'Person',
+            # Two Persons, so the busy entity's link count stays at 5 in any test order.
+            await self.store.create_relationship(PREFIX + 'p0', 'Person', PREFIX + 'p1', 'Person',
                                                  'SPONSORS', {'source_doc': doc, 'inferred': inferred})
-        node = await self.store.get_node(PREFIX + 'busy')
+        node = await self.store.get_node(PREFIX + 'p0')
         props = next(r['rel_props'] for r in node['relationships'] if r['rel_type'] == 'SPONSORS')
         self.assertTrue(props['inferred'])
         self.assertEqual(link_support(props),
                          {'support_state': 'mixed', 'stated_count': 1, 'inferred_count': 1})
         # Reading never writes: the stored flag is unchanged.
-        node = await self.store.get_node(PREFIX + 'busy')
+        node = await self.store.get_node(PREFIX + 'p0')
         props = next(r['rel_props'] for r in node['relationships'] if r['rel_type'] == 'SPONSORS')
         self.assertTrue(props['inferred'])
 

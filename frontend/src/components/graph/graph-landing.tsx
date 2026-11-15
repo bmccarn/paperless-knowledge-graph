@@ -49,7 +49,7 @@ function EntityLine({ entity, query = "", alias = null, bar }: { entity: RecentE
       <KindShape label={entity.label} bare />
       <span className="truncate copy-14 text-fg">
         <Marked text={entityName(entity)} query={query} />
-        {alias && <span className="ml-2.5 label-12 text-fg-subtle">Also <Marked text={alias} query={query} /></span>}
+        {alias && <span className="ml-2 label-12 text-fg-subtle">Also <Marked text={alias} query={query} /></span>}
       </span>
       <span className="w-[104px] truncate label-12 text-fg-subtle max-md:sr-only">{nodeLabelText(entity.label)}</span>
       {bar !== undefined && (
@@ -158,7 +158,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
         <p className="mt-1.5 hidden max-w-[62ch] copy-14 text-fg-muted md:block">
           Find a person, organization, place or policy, then follow its links to the documents behind them.
         </p>
-        <div className="relative mb-6 mt-4 md:mb-0 md:mt-7" onFocus={() => setClosed(false)}
+        <div className="relative mb-6 mt-4 md:mb-0 md:mt-8" onFocus={() => setClosed(false)}
           onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setClosed(true); }}>
           <label className="flex h-12 items-center gap-3 rounded-[var(--r-panel)] border border-border-strong bg-surface pl-4 pr-3 text-fg-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring md:h-[52px]">
             <Search aria-hidden className="size-4 shrink-0" strokeWidth={1.75} />
@@ -199,7 +199,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
                 </Alert>
               ) : options.length ? groups.map(group => (
                 <div key={group.title} role="group" aria-labelledby={`graph-group-${slug(group.title)}`}>
-                  <p id={`graph-group-${slug(group.title)}`} aria-hidden className="px-2 pb-1 pt-2.5 label-12 text-fg-subtle">{group.title}</p>
+                  <p id={`graph-group-${slug(group.title)}`} aria-hidden className="px-2 pb-1 pt-3 label-12 text-fg-subtle">{group.title}</p>
                   {group.rows.map(row => {
                     const index = options.indexOf(row);
                     return (
@@ -240,7 +240,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
             </section>
           ) : top ? (
             <EntityList title="Most connected" entities={top} bars empty="No entities yet.">
-              <p className="mt-2.5 label-12 text-fg-subtle">Ranked by evidence documents. Your own entity is left out.</p>
+              <p className="mt-3 label-12 text-fg-subtle">Ranked by evidence documents. Your own entity is left out.</p>
             </EntityList>
           ) : (
             <section aria-label="Most connected" aria-busy="true">

@@ -10,6 +10,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useState, useRef, useEffect, useEffectEvent, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { ConversationList } from "@/components/conversation-list";
+import { QueryModes, QueryModel, type QueryMode } from "@/components/query-controls";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 
@@ -27,16 +29,11 @@ import {
   Loader2,
   ExternalLink,
   History,
-  Trash2,
   FileText,
   Users,
-  Plus,
-  MessageSquare,
   Copy,
   Check,
-  Pencil,
   Search,
-  Bot,
   Route,
   ShieldCheck,
 } from "lucide-react";
@@ -182,15 +179,6 @@ interface Conversation {
   messages?: Message[];
 }
 
-type QueryMode = "quick" | "deep" | "timeline" | "strict";
-
-const MODES: [QueryMode, string][] = [
-  ["quick", "Fast"],
-  ["deep", "Deep"],
-  ["timeline", "Timeline"],
-  ["strict", "Strict"],
-];
-
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
@@ -225,14 +213,11 @@ function QueryContent() {
   const [statusMessage, setStatusMessage] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
-  const [editingTitle, setEditingTitle] = useState<string | null>(null);
-  const [editTitleValue, setEditTitleValue] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [queryMode, setQueryMode] = useState<QueryMode>("strict");
-  const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -286,7 +271,9 @@ function QueryContent() {
   }, [loadConversations]);
 
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Keep the new verdict visible instead of jumping to the end of a long answer.
+    const latest = messagesRef.current?.querySelectorAll("article[aria-label=Answer], h2.question");
+    latest?.[latest.length - 1]?.scrollIntoView({ block: "start", behavior: "instant" });
   }, [messages, loading]);
 
   // Whole seconds since the question or conversation load started, for the status line.
@@ -447,13 +434,13 @@ function QueryContent() {
   }, [initialQuery]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  const loadConversation = async (conv: Conversation) => {
+  const loadConversation = async (conv: Pick<Conversation, "id" | "title">) => {
     invalidateView();
     const version = viewVersion.current;
     activeConversation.current = conv.id;
@@ -485,91 +472,26 @@ function QueryContent() {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    try {
-      await deleteConversation(id);
-      if (activeConversation.current === id) handleNewConversation();
-      loadConversations();
-    } catch (e) {
-      console.error("Failed to delete conversation:", e);
-    }
+    await deleteConversation(id);
+    if (activeConversation.current === id) handleNewConversation();
+    await loadConversations();
   };
 
-  const handleRename = async (id: string) => {
-    if (!editTitleValue.trim()) return;
-    try {
-      await renameConversation(id, editTitleValue.trim());
-      setEditingTitle(null);
-      loadConversations();
-    } catch (e) {
-      console.error("Failed to rename:", e);
-    }
+  const handleRename = async (id: string, title: string) => {
+    await renameConversation(id, title);
+    await loadConversations();
   };
 
-  // Shared conversation list markup for the desktop sidebar and mobile sheet
-  const renderConversationList = () => (
-    <>
-      <div className="p-2">
-        <Button variant="outline" size="sm" className="w-full gap-2 text-xs min-h-[44px] md:min-h-0" onClick={handleNewConversation}>
-          <Plus className="h-3.5 w-3.5" /> New Conversation
-        </Button>
-      </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="px-2 pb-2 space-y-0.5">
-          {conversations.map((conv) => (
-            <div
-              key={conv.id}
-              className={`flex items-center rounded-md text-xs transition-colors ${
-                activeConvId === conv.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {editingTitle === conv.id ? (
-                <input
-                  autoFocus
-                  className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-background border rounded"
-                  value={editTitleValue}
-                  onChange={(e) => setEditTitleValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleRename(conv.id); if (e.key === "Escape") setEditingTitle(null); }}
-                  onBlur={() => handleRename(conv.id)}
-                />
-              ) : (
-                <button className="flex-1 min-w-0 text-left px-2.5 py-3 md:py-2 truncate min-h-[44px] md:min-h-0" onClick={() => loadConversation(conv)}>
-                  <MessageSquare className="h-3 w-3 inline mr-1.5 opacity-50" />
-                  {conv.title}
-                </button>
-              )}
-              <Button
-                variant="ghost" size="icon"
-                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent"
-                onClick={(e) => { e.stopPropagation(); setEditingTitle(conv.id); setEditTitleValue(conv.title); }}
-                title="Rename"
-              >
-                <Pencil className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="ghost" size="icon"
-                className="h-7 w-7 shrink-0 mr-0.5 text-muted-foreground hover:text-error hover:bg-error-bg"
-                onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
-                title="Delete"
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
-          {conversations.length === 0 && (
-            <p className="text-xs text-muted-foreground/60 text-center py-6">No conversations yet</p>
-          )}
-        </div>
-      </div>
-    </>
-  );
+  const renderConversationList = () => <ConversationList conversations={conversations} activeId={activeConvId}
+    onNew={handleNewConversation} onOpen={loadConversation} onRename={handleRename} onDelete={handleDeleteConversation} />;
 
   return (
     <div className="flex h-full overflow-hidden">
       {/* Desktop history sidebar */}
       {showHistoryDesktop && (
-        <div className="hidden md:flex w-64 min-w-[180px] max-w-[400px] resize-x overflow-hidden border-r flex-col bg-card/30 shrink-0">
+        <div className="hidden md:flex w-64 min-w-[180px] max-w-[400px] resize-x overflow-hidden border-r flex-col bg-surface shrink-0">
           <div className="flex items-center justify-between border-b px-3 py-2.5 flex-none">
-            <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground uppercase tracking-wider">
+            <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
               <History className="h-3.5 w-3.5" /> Conversations
             </span>
           </div>
@@ -579,7 +501,9 @@ function QueryContent() {
 
       {/* Mobile history sheet */}
       <Sheet open={showHistory} onOpenChange={setShowHistory}>
-        <SheetContent side="left" className="w-[300px] p-0 flex flex-col">
+        <SheetContent side="left" className="w-[300px] p-0 flex flex-col" onEscapeKeyDown={event => {
+          if ((event.target as HTMLElement)?.getAttribute("aria-label") === "Conversation title") event.preventDefault();
+        }}>
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="text-sm flex items-center gap-1.5">
               <History className="h-4 w-4" /> Conversations
@@ -640,7 +564,7 @@ function QueryContent() {
         <div className="flex-none border-b px-3 md:px-4 py-2.5 flex items-center justify-between bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             {/* Mobile: show history button */}
-            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
+            <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4" />
             </Button>
             <h1 className="page-title">Ask</h1>
@@ -658,22 +582,19 @@ function QueryContent() {
 
         <div ref={messagesRef} className="flex-1 overflow-y-auto app-scroll">
           <div className="@container max-w-3xl min-[1180px]:max-w-[1028px] mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
+            <QueryModes value={queryMode} onChange={setQueryMode} />
             {messages.length === 0 && !loading && (
-              <div className="text-center py-12 md:py-16 space-y-3">
-                <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
-                  <MessageSquare className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-base md:text-lg font-medium">Ask anything about your documents</p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Conversations are saved automatically.
-                  </p>
+              <div className="py-8 md:py-12 space-y-6">
+                <p className="page-title">Ask a question about your documents.</p>
+                <div className="flex flex-col items-start gap-2">
+                  {["What are my current insurance policies?", "What tax documents do I have for this year?", "Show home-related documents by date."].map(question =>
+                    <Button key={question} variant="outline" className="h-auto min-h-11 whitespace-normal text-left justify-start" onClick={() => { setInput(question); textareaRef.current?.focus(); }}>{question}</Button>)}
                 </div>
               </div>
             )}
 
             {messages.map((msg, i) => {
-              if (msg.role === "user") return <h2 key={i} className="question pt-6 first:pt-0">{msg.content}</h2>;
+              if (msg.role === "user") return <h2 key={i} className={`question ${i === 0 ? "pt-0" : "pt-6"}`}>{msg.content}</h2>;
               const view = answerView(msg);
               const question = messages[i - 1]?.role === "user" ? messages[i - 1].content : "";
               const seconds = msg.queryTime ?? msg.query_time_ms;
@@ -926,56 +847,26 @@ function QueryContent() {
               </div>
             )}
 
-            <div ref={scrollRef} />
           </div>
         </div>
 
         {/* Input */}
         <div ref={composerRef} className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
           <div className="max-w-3xl mx-auto space-y-2">
-            {/* Mode and model selectors */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex rounded-lg border bg-background p-0.5">
-                {MODES.map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setQueryMode(id)}
-                    className={
-                      "rounded-md px-2.5 py-1.5 text-xs transition-colors " +
-                      (queryMode === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Bot className="h-3 w-3" />
-                <select
-                  aria-label="Model"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="max-w-[240px] truncate rounded-md border bg-background px-1.5 py-1 text-xs text-foreground min-h-[36px] md:min-h-0"
-                >
-                  {models.length === 0 && <option value="">Select model</option>}
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}{m.id === defaultModel ? " (default)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor="question" className="label-14">Ask a question</label>
+              <div className="w-full md:w-auto"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex gap-2 items-end">
               <Textarea
                 ref={textareaRef}
+                id="question"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask a question..."
                 disabled={loading}
-                className="flex-1 min-h-[44px] max-h-[160px] text-sm resize-none"
+                className="flex-1 min-h-[44px] max-h-[160px] text-base md:text-sm resize-none"
                 rows={1}
               />
               <Button type="submit" aria-label="Send question" disabled={loading || !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">

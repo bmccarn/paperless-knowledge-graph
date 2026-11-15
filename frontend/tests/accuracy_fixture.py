@@ -410,6 +410,9 @@ class Handler(BaseHTTPRequestHandler):
                                       'duplicate_uuid': body['duplicate_uuid'], 'primary_name': pair['left']['name'],
                                       'duplicate_name': pair['right']['name'], 'status': 'applied', 'created_at': NOW,
                                       'risk_flags': ['shared_source_document']})
+                    # The real route returns the merged entity with its journal id.
+                    return self.reply({'status': 'merged', 'entity': {'labels': ['Organization'],
+                                       'properties': pair['left'], 'merge_id': MERGES[0]['merge_id']}})
                 return self.reply({'status': 'completed'})
             if route == '/entity-review/unmerge':
                 merge = next(row for row in MERGES if row['merge_id'] == body['merge_id'])

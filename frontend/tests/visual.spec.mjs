@@ -21,6 +21,23 @@ const mainStates = [
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  { ...mainStates[0], name: "ask-model", state: "model-select", prepare: async page => {
+    await page.getByRole("combobox", { name: "Model", exact: true }).click();
+    await page.getByRole("listbox").waitFor();
+  } },
+  { ...mainStates[0], name: "ask-delete", state: "delete-confirmation",
+    seed: page => page.request.post("/api/_fixture/saved-answers"), prepare: async page => {
+      const history = page.getByRole("button", { name: "Open conversations", exact: true });
+      if (await history.isVisible()) await history.click();
+      await page.getByRole("button", { name: "Delete Older verified answer", exact: true }).click();
+      await page.getByRole("alertdialog").waitFor();
+  } },
+  { ...mainStates[0], name: "ask-conversations", state: "conversations",
+    seed: page => page.request.post("/api/_fixture/saved-answers"), prepare: async page => {
+      const history = page.getByRole("button", { name: "Open conversations", exact: true });
+      if (await history.isVisible()) await history.click();
+      await page.getByRole("button", { name: "Older verified answer", exact: true }).waitFor();
+  } },
   { ...mainStates[3], name: "document-ocr", state: "ocr-open", prepare: async page => {
     await page.getByRole("button", { name: "Original OCR text" }).click();
     await page.getByRole("region", { name: "Original OCR text" }).focus();
@@ -51,9 +68,19 @@ const extraStates = [
     await page.getByRole("button", { name: "Open conversations", exact: true }).click();
     await page.getByRole("dialog").waitFor();
   } },
+  { ...gallery, name: "gallery-alert-dialog", state: "alert-dialog", prepare: async page => {
+    await page.getByRole("button", { name: "Open alert dialog", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
   { ...mainStates[4], name: "entities-dialog", state: "merge-dialog", prepare: async page => {
-    await page.getByRole("button", { name: "Merge right into left", exact: true }).first().click();
-    await page.getByRole("dialog").waitFor();
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
+  { ...mainStates[4], name: "entities-merged", state: "merged-toast", prepare: async page => {
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Merge", exact: true }).click();
+    // The toast focuses its Undo, which holds it open through the clock jump below.
+    await page.getByRole("status", { name: "Notifications" }).getByRole("button", { name: "Undo", exact: true }).waitFor();
   } },
   { ...mainStates[2], name: "documents-expanded", state: "expanded", prepare: async page => {
     await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).click();

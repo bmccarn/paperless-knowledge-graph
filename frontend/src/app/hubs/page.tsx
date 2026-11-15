@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { TypeDot } from "@/components/kind-shape";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/pager";
 import { errMsg } from "@/lib/utils";
@@ -129,70 +131,56 @@ export default function HubsPage() {
   const pageCount = total === null ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 lg:p-8 space-y-4">
+    <div className="h-full overflow-y-auto p-4 md:px-12 md:py-10 space-y-6">
       <div>
         <h1 className="page-title">Hubs</h1>
         <p className="text-sm text-muted-foreground mt-1">Saved views for recurring document workflows.</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {DOMAINS.map((domain) => {
-          const Icon = domain.icon;
-          return (
-            <button
-              key={domain.id}
-              onClick={() => selectDomain(domain.id)}
-              aria-pressed={activeId === domain.id}
-              className={
-                "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors " +
-                (activeId === domain.id ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent")
-              }
-            >
-              <Icon className="h-4 w-4" /> {domain.title}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+      <Tabs value={activeId} onValueChange={selectDomain} activationMode="manual">
+        <TabsList aria-label="Document domains">
+          {DOMAINS.map(domain => {
+            const Icon = domain.icon;
+            return <TabsTrigger key={domain.id} value={domain.id}><Icon aria-hidden="true" />{domain.title}</TabsTrigger>;
+          })}
+        </TabsList>
+        {DOMAINS.map(domain => <TabsContent key={domain.id} value={domain.id}>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><ActiveIcon className="h-4 w-4" /> {active.title} Documents</CardTitle>
+            <CardTitle className="heading-16 flex items-center gap-2"><ActiveIcon className="h-4 w-4" aria-hidden="true" /> {active.title} documents</CardTitle>
             {total !== null && !loading && !error && <p className="text-sm text-muted-foreground">{total} matching indexed documents</p>}
           </CardHeader>
           <CardContent className="space-y-2">
             {loading ? (
               <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading documents...</div>
             ) : error ? (
-              <div role="alert" className="space-y-2">
-                <p className="text-sm text-destructive">{error}</p>
-                <Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button>
-              </div>
+              <Alert variant="destructive"><AlertTitle>Could not load documents</AlertTitle><AlertDescription><p>{error}</p><Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button></AlertDescription></Alert>
             ) : docs.length ? docs.map((doc) => {
               const p = doc.properties || {};
               const docId = p.paperless_id as number;
-              return (
-                <div key={String(docId || p.uuid)} className="flex items-center gap-3 rounded-lg border p-3">
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{(p.title as string) || `Document #${docId}`}</p>
-                    <div className="flex gap-1.5 mt-1">
-                      {typeof p.doc_type === "string" && p.doc_type && <Badge variant="secondary" className="text-[10px]">{p.doc_type}</Badge>}
-                      {typeof p.date === "string" && p.date && <Badge variant="outline" className="text-[10px]">{p.date}</Badge>}
+              const content = <>
+                    <FileText className="mt-1 size-4 shrink-0 text-fg-muted" aria-hidden="true" />
+                    <div className="min-w-0 space-y-1">
+                      <p className="doc-title break-words">{(p.title as string) || `Document #${docId}`}</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 label-12 text-fg-muted tabular-nums">
+                        {typeof p.doc_type === "string" && p.doc_type && <TypeDot type={p.doc_type} />}
+                        {typeof p.date === "string" && p.date && <span>{p.date}</span>}
+                      </div>
                     </div>
-                  </div>
-                  {docId && (
-                    <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-                      <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer"
-                        aria-label={`Open ${(p.title as string) || `Document #${docId}`} in Paperless`}>
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    </Button>
-                  )}
+              </>;
+              return (
+                <div key={String(docId || p.uuid)} className="flex items-center gap-2 border-b last:border-0">
+                  {docId ? <Link href={`/documents/${docId}`} className="flex min-w-0 flex-1 items-start gap-3 rounded-md px-1 py-3 hover:bg-raised">{content}</Link> : <div className="flex min-w-0 flex-1 items-start gap-3 px-1 py-3">{content}</div>}
+                  {docId && <Button asChild variant="ghost" size="sm">
+                    <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer" aria-label={`Open ${(p.title as string) || `Document #${docId}`} in Paperless`}>
+                      <ExternalLink aria-hidden="true" /><span>Paperless</span>
+                    </a>
+                  </Button>}
                 </div>
               );
             }) : (
-              <p className="text-sm text-muted-foreground">No documents found for this hub search.</p>
+              <div className="space-y-2"><p className="text-sm text-fg-muted">No documents found for this hub search.</p><Button variant="outline" onClick={() => void loadDomain()}>Retry hub search</Button></div>
             )}
             {total !== null && !loading && !error && (
               <Pager page={page} pageCount={pageCount} pageSize={PAGE_SIZE} total={total} onPage={selectPage} noun="hub page" />
@@ -202,17 +190,19 @@ export default function HubsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><Search className="h-4 w-4" /> Common Questions</CardTitle>
+            <CardTitle className="heading-16 flex items-center gap-2"><Search className="h-4 w-4" aria-hidden="true" /> Common questions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {active.questions.map((question) => (
               <Button asChild key={question} variant="outline" className="w-full justify-start text-left h-auto py-2.5 whitespace-normal">
-                <Link href={`/query?q=${encodeURIComponent(question)}`}>{question}</Link>
+                <Link href={`/query?draft=${encodeURIComponent(question)}`}>{question}</Link>
               </Button>
             ))}
           </CardContent>
         </Card>
       </div>
+        </TabsContent>)}
+      </Tabs>
     </div>
   );
 }

@@ -124,6 +124,23 @@ def _three_way_fields(before: dict, after: dict, current: dict) -> dict:
     return result
 
 
+# Stored document dates come in several forms. Sort "May 4, 2026", "4 May 2026" and "04 MAY 26"
+# as YYYY-MM-DD (a two-digit year is 20YY); any other value sorts by its stored text, as before.
+_DATE_SORT_KEY = """coalesce(head([w IN [[t IN split(replace(replace(toLower(trim(coalesce(toStringOrNull(n.date), ''))),
+        ',', ' '), '.', ' '), ' ') WHERE t <> '']]
+    WHERE size(w) = 3 AND ((w[0] =~ '[a-z]+' AND w[1] =~ '[0-9]{1,2}' AND w[2] =~ '[0-9]{4}')
+                           OR (w[0] =~ '[0-9]{1,2}' AND w[1] =~ '[a-z]+' AND w[2] =~ '[0-9]{2}|[0-9]{4}'))
+    | head([m IN range(1, 12)
+        WHERE CASE WHEN w[0] =~ '[a-z]+' THEN w[0] ELSE w[1] END IN
+              [['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
+                'october', 'november', 'december'][m - 1],
+               left(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
+                     'october', 'november', 'december'][m - 1], 3)] + CASE WHEN m = 9 THEN ['sept'] ELSE [] END
+        | CASE WHEN size(w[2]) = 2 THEN '20' + w[2] ELSE w[2] END + '-' + right('0' + toString(m), 2) + '-'
+          + right('0' + CASE WHEN w[0] =~ '[a-z]+' THEN w[1] ELSE w[0] END, 2)])]),
+    coalesce(toStringOrNull(n.date), ''))"""
+
+
 class GraphStore:
     def __init__(self):
         self.driver = None
@@ -842,7 +859,7 @@ class GraphStore:
         orders = {
             "relevance": "score",
             "title": "toLower(coalesce(toStringOrNull(n.title), toStringOrNull(n.name), ''))",
-            "date": "coalesce(toStringOrNull(n.date), '')",
+            "date": _DATE_SORT_KEY,
             "doc_type": "coalesce(toStringOrNull(n.doc_type), 'unknown')",
             "paperless_id": "n.paperless_id",
         }

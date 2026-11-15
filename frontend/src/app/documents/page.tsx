@@ -33,6 +33,8 @@ import { getDocuments, getGraphNode, postReindexDoc, getPaperlessDocUrl, usePape
 import { Pager } from "@/components/pager";
 import { Search, RefreshCw, Loader2, ExternalLink, ChevronRight, ArrowUp, ArrowDown, X } from "lucide-react";
 import type { GraphNode } from "@/lib/types";
+import { displayName } from "@/lib/graph-encoding";
+import { parseDocumentDate } from "@/lib/answer-state";
 
 interface DocumentRow extends GraphNode {
   entity_count?: number;
@@ -63,10 +65,10 @@ interface NodeDetail {
 const PAGE_SIZE = 25;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "2026-01-31" becomes "31 Jan 2026"; the stored date has no time zone to shift. */
+/** "2026-01-31" and "January 31, 2026" become "31 Jan 2026"; the stored date has no time zone to shift. */
 function formatDate(value: unknown): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
-  return match ? `${match[3]} ${MONTHS[Number(match[2]) - 1]} ${match[1]}` : String(value || "—");
+  const date = parseDocumentDate(String(value || ""));
+  return date ? `${String(date[2]).padStart(2, "0")} ${MONTHS[date[1] - 1]} ${date[0]}` : String(value || "—");
 }
 
 /** The document's entities, once each, in name order. */
@@ -76,7 +78,7 @@ function linkedEntities(node: NodeDetail): LinkedEntity[] {
     const labels = rel.neighbor_labels || [];
     const uuid = rel.neighbor_props?.uuid as string | undefined;
     if (!uuid || labels.includes("Document") || seen.has(uuid)) continue;
-    seen.set(uuid, { uuid, name: String(rel.neighbor_props?.name || uuid), label: labels[0] || "" });
+    seen.set(uuid, { uuid, name: displayName(String(rel.neighbor_props?.name ?? ""), uuid, labels[0] || ""), label: labels[0] || "" });
   }
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

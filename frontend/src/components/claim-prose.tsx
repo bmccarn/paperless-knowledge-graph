@@ -5,7 +5,7 @@ import { StatusLabel, STATUSES } from "@/components/status-label";
 import { Button } from "@/components/ui/button";
 import { formatAnswerInline } from "@/lib/answer-format";
 import { formatSourceDate, type AnswerState, type ClaimResult } from "@/lib/answer-state";
-import { claimRanges, emphasize, proseBlocks, quoteWindow, type Block, type LedgerClaim } from "@/lib/claim-prose";
+import { claimRanges, emphasize, plainQuote, proseBlocks, quoteWindow, type Block, type LedgerClaim } from "@/lib/claim-prose";
 
 const UNDERLINED = new Set<AnswerState>(["verified", "documented", "partial"]);
 const RESULTS = new Set(["supported", "unsupported", "conflicting"]);
@@ -17,7 +17,8 @@ export const claimResult = (status?: string) => (RESULTS.has(status ?? "") ? sta
  * A reference's quote, three lines from just before the values the claim states, with those values emphasized.
  * Expanded, it shows the whole passage.
  */
-export function Quote({ claim = "", text = "", expanded, className = "" }: { claim?: string; text?: string; expanded: boolean; className?: string }) {
+export function Quote({ claim = "", text: raw = "", expanded, className = "" }: { claim?: string; text?: string; expanded: boolean; className?: string }) {
+  const text = plainQuote(raw);
   const { start, values } = quoteWindow(claim, text);
   const cut = !expanded && start > 0;
   return (
@@ -43,7 +44,7 @@ export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
   const result = claimResult(claim.status);
   const [showAll, setShowAll] = useState(false);
   // References that hold the claim's amount come first, then other values; the sort is stable.
-  const rank = (quote = "") => quoteWindow(claim.claim ?? "", quote).rank;
+  const rank = (quote = "") => quoteWindow(claim.claim ?? "", plainQuote(quote)).rank;
   const references = [...(claim.references ?? [])].sort((a, b) => rank(a.quote) - rank(b.quote));
   const hidden = references.length - NOTE_REFERENCES;
   return (
@@ -97,15 +98,17 @@ export function ClaimProse({ id, text, state, claims = [], sourceDates, active, 
     const current = active === n || undefined;
     return (
       <span key={`${key}-${i}`}>
-        <span data-claim={n} aria-current={current} onClick={() => setActive(n)}
-          className="cursor-pointer underline decoration-(--st-line) decoration-2 underline-offset-[5px] [text-decoration-skip-ink:none] aria-[current=true]:rounded-[1px] aria-[current=true]:bg-mark aria-[current=true]:text-on-mark aria-[current=true]:shadow-[0_0_0_2px_var(--mark)]"
-          dangerouslySetInnerHTML={html} />
-        {piece.last && <>
-          <button type="button" aria-label={`Claim ${n}`} aria-controls={noteId(n)} aria-current={current}
+        {/* A word joiner inside a no-wrap parent keeps the number on the line of the claim's last word; neither alone does in Chromium. */}
+        <span className="whitespace-nowrap">
+          <span data-claim={n} aria-current={current} onClick={() => setActive(n)}
+            className="whitespace-normal cursor-pointer underline decoration-(--st-line) decoration-2 underline-offset-[5px] [text-decoration-skip-ink:none] aria-[current=true]:rounded-[1px] aria-[current=true]:bg-mark aria-[current=true]:text-on-mark aria-[current=true]:shadow-[0_0_0_2px_var(--mark)]"
+            dangerouslySetInnerHTML={html} />
+          {piece.last && "\u2060"}
+          {piece.last && <button type="button" aria-label={`Claim ${n}`} aria-controls={noteId(n)} aria-current={current}
             onClick={() => openNote(n)}
-            className="cite relative ml-0.5 leading-none font-sans text-fg-muted hover:text-fg aria-[current=true]:text-fg after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']">{n}</button>
-          <MarginNote id={noteId(n)} n={n} claim={claims[n - 1]} sourceDates={sourceDates} active={active === n} onSelect={() => setActive(n)} />
-        </>}
+            className="cite relative ml-0.5 leading-none font-sans text-fg-muted hover:text-fg aria-[current=true]:text-fg after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']">{n}</button>}
+        </span>
+        {piece.last && <MarginNote id={noteId(n)} n={n} claim={claims[n - 1]} sourceDates={sourceDates} active={active === n} onSelect={() => setActive(n)} />}
       </span>
     );
   });

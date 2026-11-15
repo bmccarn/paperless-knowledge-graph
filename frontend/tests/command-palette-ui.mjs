@@ -121,3 +121,23 @@ test("debounce, stale results, paging and retry", async t => {
   await page.clock.runFor(150);
   await page.getByRole("option", { name: "failure person 0", exact: true }).first().waitFor();
 });
+
+test("a search with no results shows one empty state, and an unnamed entity shows its type, not its UUID", async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  page.setDefaultTimeout(5000);
+  await page.request.post(`${base}/api/_fixture/reset`);
+  await page.goto(`${base}/documents`);
+  await page.getByRole("button", { name: "Search Ctrl K, pages and archive", exact: true }).click();
+  const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
+  await input.fill("qqzx no such thing");
+  await page.getByRole("status").filter({ hasText: "0 results" }).waitFor();
+  assert.equal(await page.getByText("No matches.", { exact: true }).count(), 1);
+  assert.equal(await page.locator("#palette-results").getByText(/^(Pages|Documents|Entities|Conversations)$/).count(), 0,
+    "empty groups print no headings");
+  await page.route("**/api/graph/search?**", route => route.fulfill({ json: { results: [
+    { labels: ["Person"], properties: { uuid: "9b1c77d2-0000-4000-8000-000000000002" } }], has_more: false } }));
+  await input.fill("unnamed");
+  await page.getByRole("option", { name: "Person 9b1c77", exact: true }).waitFor();
+  assert.equal(await page.getByText("No matches.", { exact: true }).count(), 0);
+});

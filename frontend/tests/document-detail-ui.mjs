@@ -103,3 +103,21 @@ test("a nonnumeric document ID shows not found without a render loop", async t =
   await page.getByRole("heading", { name: "Document not found", exact: true }).waitFor();
   assert.deepEqual(errors, []);
 });
+
+test("an extracted entity without a name is listed by its type and a short identifier, not its UUID", async t => {
+  const context = await browser.newContext();
+  t.after(() => context.close());
+  assert.ok((await context.request.post(`${base}/api/_fixture/reset`)).ok());
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  await page.route("**/api/document/101/detail", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.graph.entities.push({ labels: ["Organization"], props: { uuid: "5d0e8a44-0000-4000-8000-000000000003" } });
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(`${base}/documents/101`);
+  const extracted = page.getByRole("region", { name: "Extracted from this document" });
+  await extracted.getByRole("link", { name: "Organization 5d0e8a", exact: true }).waitFor();
+  assert.equal(await page.getByText("5d0e8a44-0000-4000-8000-000000000003").count(), 0);
+});

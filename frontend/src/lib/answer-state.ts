@@ -60,6 +60,29 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const LEVELS = new Set<string>(["high", "medium", "low"]);
 const PROSE_STATES = new Set<AnswerState>(["verified", "documented", "partial", "not_checked"]);
 
+/**
+ * A stored document date as [year, month, day], or null when it is not a whole calendar date.
+ * Reads "2026-05-04", "May 4, 2026", "4 May 2026" and "04 MAY 26" (a two-digit year is 20YY).
+ * Numeric dates such as "05/04/2026" stay unread: their day and month order is not known here.
+ */
+export function parseDocumentDate(value: string): [number, number, number] | null {
+  const text = value.trim();
+  let parts: (string | undefined)[] | undefined = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(text)?.slice(1);
+  if (!parts) {
+    const named = /^([A-Za-z]{3,9})\.? (\d{1,2}),? (\d{4})$/.exec(text) ?? /^(\d{1,2}) ([A-Za-z]{3,9})\.?,? (\d{2}|\d{4})$/.exec(text);
+    const [day, name, year] = !named ? [] : /^\d/.test(named[1]) ? [named[1], named[2], named[3]] : [named[2], named[1], named[3]];
+    const word = name?.toLowerCase().replace(/^sept$/, "sep");
+    const month = MONTH_NAMES.findIndex(m => word === m || word === m.slice(0, 3)) + 1;
+    if (month) parts = [year!.length === 2 ? `20${year}` : year, String(month), day];
+  }
+  if (!parts) return null;
+  const [year, month, day] = parts.map(Number);
+  // Rejects 31 Feb and month 13: the round trip through Date.UTC changes them.
+  const check = new Date(Date.UTC(year, month - 1, day));
+  return check.getUTCMonth() === month - 1 && check.getUTCDate() === day ? [year, month, day] : null;
+}
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
 /** "2026-02-28" becomes "28 Feb 2026"; read as a calendar date, never through a time zone. */
 export function formatSourceDate(date: string): string {
   const [year, month, day] = date.split("-").map(Number);

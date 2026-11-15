@@ -14,6 +14,7 @@ test("the existing runner owns both servers and always reaches the final visual 
 test("CI uploads the comparison on failure and isolates the manual baseline update", () => {
   const workflow = readFileSync(new URL("../../.github/workflows/container-images.yml", import.meta.url), "utf8");
   assert.match(workflow, /name: Upload screenshot comparison and accessibility results\n        if: always\(\)/);
+  assert.match(workflow, /path: frontend\/\.browser-artifacts\/\n          include-hidden-files: true/);
   assert.match(workflow, /if: always\(\) && github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines/);
   assert.match(workflow, /!\(github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines\)/);
   const images = workflow.match(/mcr\.microsoft\.com\/playwright:[^\s]+/g);

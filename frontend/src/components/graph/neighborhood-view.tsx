@@ -196,6 +196,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     <>Links between neighbors did not load.{" "}
       <Button variant="link" size="xs" className="h-auto p-0 text-sm" onClick={() => { setCross(null); setCrossAttempt(value => value + 1); }}>Retry</Button>
     </>);
+  else if (crossCount === 0 && !leaf) crossCaption = "No links between these neighbors.";
   else if (shownCross) crossCaption = shownCross.total === 0 ? "No links between these neighbors."
     : shownCross.total > shownCross.links.length ? `Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`
     : `${plural(shownCross.total, "link")} between neighbors.`;
@@ -316,7 +317,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             {legend && !leaf && (
               <div className="absolute right-3 top-3 flex gap-2 md:right-4">
                 {/* A switch: on phone only its track shows, at the 44 px touch size. */}
-                <button type="button" aria-pressed={urlState.cross} onClick={() => navigate({ cross: !urlState.cross })}
+                <button type="button" aria-pressed={urlState.cross} onClick={() => { if (urlState.cross) setCross(null); navigate({ cross: !urlState.cross }); }}
                   className="inline-flex h-8 items-center gap-2 rounded-md border border-border-strong bg-surface pl-2.5 pr-3 label-12 font-medium text-fg hover:bg-raised max-md:size-11 max-md:justify-center max-md:p-0">
                   <span aria-hidden className={cn("relative h-[18px] w-8 shrink-0 rounded-full border", urlState.cross ? "border-fg bg-fg" : "border-border-strong")}>
                     <span className={cn("absolute top-[2px] size-3 rounded-full", urlState.cross ? "left-4 bg-bg" : "left-[2px] bg-fg-muted")} />

@@ -173,6 +173,14 @@ try {
   await toggle.click();
   await page.getByText('13 links between neighbors.', { exact: true }).waitFor();
   assert.equal(new URL(page.url()).searchParams.has('cross'), false);
+  // Off and on again asks once more and says so after 1 s.
+  await page.route('**/api/graph/subgraph?**', async route => { await new Promise(resolve => setTimeout(resolve, 1600)); await route.continue(); });
+  await toggle.click();
+  await page.waitForURL(url => url.searchParams.get('cross') === '0');
+  await toggle.click();
+  await page.getByText('Loading links between neighbors', { exact: true }).waitFor();
+  await page.getByText('13 links between neighbors.', { exact: true }).waitFor();
+  await page.unroute('**/api/graph/subgraph?**');
 
   // Over the cap: 60 drawn, strongest first, and the caption names the total. On phone, 30.
   const many = async (route, count) => {
@@ -216,6 +224,7 @@ try {
   requested.length = 0;
   await page.goto(`${base}/graph?focus=nb-renewal`);
   await page.getByText('Renewal notice 2026: 1 links in 1 families.', { exact: true }).waitFor();
+  await page.getByText('No links between these neighbors.', { exact: true }).waitFor();
   await page.waitForTimeout(500);
   assert.equal(requested.length, 0);
   assert.match(await canvasName(page), /; 0 links between neighbors\.$/);

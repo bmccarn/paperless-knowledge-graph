@@ -130,7 +130,7 @@ export default function DocumentDetailPage() {
           <Link href="/documents" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-2">
             <ArrowLeft className="h-3 w-3" /> Back to documents
           </Link>
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight">{title}</h1>
+          <h1 className="page-title">{title}</h1>
           <div className="flex flex-wrap gap-2 mt-2">
             <Badge variant="secondary">{docType}</Badge>
             <Badge variant={detail?.processing?.processed ? "default" : "destructive"}>

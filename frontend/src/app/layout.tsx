@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
+import { GeistSerifRegular } from "geist/font/serif/regular";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { SidebarNav } from "@/components/sidebar-nav";
@@ -7,6 +8,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+const sourceSerif = Source_Serif_4({
+  variable: "--font-source-serif",
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  axes: ["opsz"],
+});
 
 export const metadata: Metadata = {
   title: "Knowledge Graph",
@@ -24,13 +31,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${GeistSerifRegular.variable} ${sourceSerif.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <TooltipProvider delayDuration={200}>
             <div className="flex h-screen overflow-hidden">
               <SidebarNav />
               <main className="flex-1 overflow-hidden flex flex-col pb-[60px] md:pb-0">
-                <div className="page-transition flex-1 overflow-hidden relative">{children}</div>
+                <div className="flex-1 overflow-hidden relative">{children}</div>
               </main>
             </div>
           </TooltipProvider>

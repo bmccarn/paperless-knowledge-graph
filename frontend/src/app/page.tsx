@@ -376,7 +376,7 @@ export default function DashboardPage() {
       {/* Header with search */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="page-title">Dashboard</h1>
           <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1">
             <Clock className="h-3.5 w-3.5" />
             Last sync: {status.last_sync ? new Date(status.last_sync).toLocaleString() : "Never"}
@@ -468,7 +468,7 @@ export default function DashboardPage() {
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {cards.map((card, idx) => (
+        {cards.map((card) => (
           <Card
             key={card.title}
             className="group hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 border-border/50"
@@ -478,8 +478,7 @@ export default function DashboardPage() {
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">{card.title}</p>
                   <p
-                    className="text-3xl font-bold tracking-tight animate-count-up"
-                    style={{ animationDelay: `${idx * 100}ms` }}
+                    className="text-3xl font-bold tracking-tight tabular-nums"
                   >
                     {card.value.toLocaleString()}
                   </p>

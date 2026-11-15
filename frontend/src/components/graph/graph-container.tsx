@@ -223,7 +223,7 @@ function GraphContent() {
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-4 w-4 text-blue-400" />
-            <h1 className="font-semibold">Evidence graph</h1>
+            <h1 className="page-title">Evidence graph</h1>
             <Badge variant="outline" className="text-[10px]">
               Loaded sample
             </Badge>

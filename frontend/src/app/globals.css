@@ -5,10 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* shadcn components use `accent` as the hover tint; the --accent token stays ink. */
+  --color-accent: var(--raised);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -27,7 +29,6 @@
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -38,117 +39,301 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-sunken: var(--sunken);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-accent-solid: var(--accent-solid);
+  --color-on-accent: var(--on-accent);
+  --color-accent-bg: var(--accent-bg);
+  --color-mark: var(--mark);
+  --color-on-mark: var(--on-mark);
+  --color-mark-line: var(--mark-line);
+  --color-verified: var(--verified);
+  --color-verified-bg: var(--verified-bg);
+  --color-verified-line: var(--verified-line);
+  --color-qualified: var(--qualified);
+  --color-qualified-bg: var(--qualified-bg);
+  --color-qualified-line: var(--qualified-line);
+  --color-partial: var(--partial);
+  --color-partial-bg: var(--partial-bg);
+  --color-partial-line: var(--partial-line);
+  --color-withheld: var(--withheld);
+  --color-withheld-bg: var(--withheld-bg);
+  --color-withheld-line: var(--withheld-line);
+  --color-error: var(--error);
+  --color-error-bg: var(--error-bg);
+  --color-error-line: var(--error-line);
+  --color-graph-edge: var(--graph-edge);
+  --color-graph-faded: var(--graph-faded);
+  --color-cat-people: var(--cat-people);
+  --color-cat-org: var(--cat-org);
+  --color-cat-place: var(--cat-place);
+  --color-cat-money: var(--cat-money);
+  --color-cat-agree: var(--cat-agree);
+  --color-cat-thing: var(--cat-thing);
+  --color-cat-health: var(--cat-health);
+  --color-cat-time: var(--cat-time);
+  --color-cat-docs: var(--cat-docs);
+  --color-doc-financial-invoice: var(--doc-financial-invoice);
+  --color-doc-government-tax: var(--doc-government-tax);
+  --color-doc-property-home: var(--doc-property-home);
+  --color-doc-insurance: var(--doc-insurance);
+  --color-doc-military: var(--doc-military);
+  --color-doc-legal-contract: var(--doc-legal-contract);
+  --color-doc-personal: var(--doc-personal);
+  --color-doc-work: var(--doc-work);
+  --color-doc-medical-lab: var(--doc-medical-lab);
+}
+
+/* Direction C tokens. globals.css is the token source; docs/design/tokens.css is the frozen mockup input. */
+:root {
+  --bg: oklch(0.99 0.002 90);
+  --surface: oklch(1 0 0);
+  --raised: oklch(1 0 0);
+  --overlay: oklch(1 0 0);
+  --sunken: oklch(0.965 0.004 230);
+  --border: oklch(0.90 0.006 230);
+  --border-strong: oklch(0.60 0.010 230);
+  --fg: oklch(0.19 0.010 230);
+  --fg-muted: oklch(0.42 0.012 230);
+  --fg-subtle: oklch(0.50 0.012 230);
+  --accent: oklch(0.19 0.010 230);
+  --accent-solid: oklch(0.22 0.012 230);
+  --on-accent: oklch(0.99 0.002 90);
+  --accent-bg: oklch(0.95 0.006 230);
+  --ring: oklch(0.45 0.12 250);
+  --mark: oklch(0.94 0.10 105);
+  --on-mark: oklch(0.20 0.02 105);
+  --mark-line: oklch(0.60 0.14 100);
+  --verified: oklch(0.50 0.10 170);
+  --verified-bg: oklch(0.96 0.03 165);
+  --verified-line: oklch(0.55 0.11 170);
+  --qualified: oklch(0.42 0.08 265);
+  --qualified-bg: oklch(0.96 0.02 255);
+  --qualified-line: oklch(0.62 0.15 255);
+  --partial: oklch(0.40 0.075 55);
+  --partial-bg: oklch(0.96 0.04 80);
+  --partial-line: oklch(0.63 0.15 68);
+  --withheld: oklch(0.33 0.03 270);
+  --withheld-bg: oklch(0.95 0.008 270);
+  --withheld-line: oklch(0.40 0.03 270);
+  --error: oklch(0.54 0.19 30);
+  --error-bg: oklch(0.96 0.02 25);
+  --error-line: oklch(0.52 0.20 28);
+
+  --graph-edge: oklch(0.58 0.035 250);
+  --graph-faded: oklch(0.82 0.006 230);
+  --shadow-overlay: 0 8px 24px -4px oklch(0.2 0.01 230 / 0.16), 0 2px 6px oklch(0.2 0.01 230 / 0.08);
+
+  --cat-people: oklch(0.55 0.172 294);
+  --cat-org: oklch(0.31 0.162 272);
+  --cat-place: oklch(0.61 0.085 177);
+  --cat-money: oklch(0.38 0.067 92);
+  --cat-agree: oklch(0.52 0.090 67);
+  --cat-thing: oklch(0.43 0.075 214);
+  --cat-health: oklch(0.30 0.122 346);
+  --cat-time: oklch(0.63 0.120 97);
+  --cat-docs: oklch(0.36 0.010 255);
+
+  --doc-financial-invoice: oklch(0.30 0.050 82);
+  --doc-government-tax: oklch(0.31 0.174 275);
+  --doc-property-home: oklch(0.62 0.056 124);
+  --doc-insurance: oklch(0.58 0.099 217);
+  --doc-military: oklch(0.52 0.050 140);
+  --doc-legal-contract: oklch(0.54 0.190 33);
+  --doc-personal: oklch(0.65 0.190 314);
+  --doc-work: oklch(0.43 0.093 269);
+  --doc-medical-lab: oklch(0.42 0.050 9);
+
+  --r-chip: 4px;
+  --r-ctl: 6px;
+  --r-panel: 10px;
+  --r-dialog: 12px;
+  --row: 36px;
+  --ctl: 36px;
+  --ctl-touch: 44px;
+  --tabbar: 56px;
+  --measure: 62ch;
+
+  --dur-1: 70ms;
+  --dur-2: 110ms;
+  --dur-3: 150ms;
+  --dur-4: 240ms;
+  --dur-5: 400ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.38, 0.9);
+  --ease-enter: cubic-bezier(0, 0, 0.38, 0.9);
+  --ease-exit: cubic-bezier(0.2, 0, 1, 0.9);
+}
+
+.dark {
+  --bg: oklch(0.16 0.006 230);
+  --surface: oklch(0.185 0.007 230);
+  --raised: oklch(0.215 0.008 230);
+  --overlay: oklch(0.245 0.009 230);
+  --sunken: oklch(0.14 0.006 230);
+  --border: oklch(0.29 0.008 230);
+  --border-strong: oklch(0.57 0.010 230);
+  --fg: oklch(0.94 0.006 90);
+  --fg-muted: oklch(0.77 0.008 230);
+  --fg-subtle: oklch(0.67 0.010 230);
+  --accent: oklch(0.94 0.006 90);
+  --accent-solid: oklch(0.92 0.006 90);
+  --on-accent: oklch(0.18 0.008 230);
+  --accent-bg: oklch(0.26 0.008 230);
+  --ring: oklch(0.88 0.14 105);
+  --mark: oklch(0.36 0.07 105);
+  --on-mark: oklch(0.96 0.03 105);
+  --mark-line: oklch(0.86 0.15 105);
+  --verified: oklch(0.84 0.15 158);
+  --verified-bg: oklch(0.27 0.05 158);
+  --verified-line: oklch(0.80 0.14 160);
+  --qualified: oklch(0.90 0.06 225);
+  --qualified-bg: oklch(0.27 0.04 245);
+  --qualified-line: oklch(0.60 0.12 262);
+  --partial: oklch(0.82 0.15 80);
+  --partial-bg: oklch(0.28 0.05 75);
+  --partial-line: oklch(0.80 0.15 80);
+  --withheld: oklch(0.74 0.025 270);
+  --withheld-bg: oklch(0.26 0.015 270);
+  --withheld-line: oklch(0.60 0.03 270);
+  --error: oklch(0.72 0.16 20);
+  --error-bg: oklch(0.28 0.07 25);
+  --error-line: oklch(0.60 0.19 25);
+
+  --graph-edge: oklch(0.60 0.038 250);
+  --graph-faded: oklch(0.36 0.008 230);
+  --shadow-overlay: 0 16px 40px -8px oklch(0 0 0 / 0.5);
+
+  --cat-people: oklch(0.56 0.181 285);
+  --cat-org: oklch(0.80 0.120 229);
+  --cat-place: oklch(0.92 0.057 177);
+  --cat-money: oklch(0.89 0.164 96);
+  --cat-agree: oklch(0.55 0.116 75);
+  --cat-thing: oklch(0.66 0.115 240);
+  --cat-health: oklch(0.66 0.180 5);
+  --cat-time: oklch(0.73 0.151 98);
+  --cat-docs: oklch(0.82 0.010 255);
+
+  --doc-financial-invoice: oklch(0.84 0.168 94);
+  --doc-government-tax: oklch(0.70 0.124 280);
+  --doc-property-home: oklch(0.91 0.161 150);
+  --doc-insurance: oklch(0.76 0.123 190);
+  --doc-military: oklch(0.55 0.050 121);
+  --doc-legal-contract: oklch(0.65 0.131 86);
+  --doc-personal: oklch(0.92 0.050 306);
+  --doc-work: oklch(0.58 0.186 261);
+  --doc-medical-lab: oklch(0.76 0.133 31);
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card: var(--surface);
+  --card-foreground: var(--fg);
+  --popover: var(--overlay);
+  --popover-foreground: var(--fg);
+  --primary: var(--accent-solid);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--raised);
+  --secondary-foreground: var(--fg);
+  --muted: var(--raised);
+  --muted-foreground: var(--fg-muted);
+  --accent-foreground: var(--fg);
+  --destructive: var(--error);
+  --input: var(--border-strong);
+  --chart-1: var(--doc-financial-invoice);
+  --chart-2: var(--doc-government-tax);
+  --chart-3: var(--doc-property-home);
+  --chart-4: var(--doc-insurance);
+  --chart-5: var(--doc-military);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--accent-solid);
+  --sidebar-primary-foreground: var(--on-accent);
+  --sidebar-accent: var(--raised);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
 
-.dark {
-  --background: oklch(0.12 0.005 260);
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.16 0.005 260);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.18 0.005 260);
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.65 0.2 250);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.22 0.005 260);
-  --secondary-foreground: oklch(0.9 0 0);
-  --muted: oklch(0.22 0.005 260);
-  --muted-foreground: oklch(0.65 0 0);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.95 0 0);
-  --destructive: oklch(0.65 0.2 25);
-  --border: oklch(0.26 0.005 260);
-  --input: oklch(0.22 0.005 260);
-  --ring: oklch(0.55 0.15 250);
-  --chart-1: oklch(0.65 0.2 250);
-  --chart-2: oklch(0.7 0.15 165);
-  --chart-3: oklch(0.75 0.15 75);
-  --chart-4: oklch(0.65 0.2 300);
-  --chart-5: oklch(0.65 0.2 15);
-  --sidebar: oklch(0.14 0.005 260);
-  --sidebar-foreground: oklch(0.9 0 0);
-  --sidebar-primary: oklch(0.65 0.2 250);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.95 0 0);
-  --sidebar-border: oklch(0.26 0.005 260);
-  --sidebar-ring: oklch(0.55 0.15 250);
+/* Type roles from the redesign issue. Safelisted so roles without a user yet still exist. */
+@source inline("{label-12,label-13,label-14,copy-14,heading-16,page-title,question,prose,quote,doc-title,ocr,cite}");
+@utility label-12 { font-size: 12px; line-height: 16px; }
+@utility label-13 { font-size: 13px; line-height: 20px; }
+@utility label-14 { font-size: 14px; line-height: 20px; font-weight: 500; }
+@utility copy-14 { font-size: 14px; line-height: 22px; font-weight: 400; }
+@utility heading-16 { font-size: 16px; line-height: 24px; font-weight: 600; text-wrap: balance; }
+@utility page-title {
+  font-family: var(--font-geist-serif-regular);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 400;
+  text-wrap: balance;
 }
+@utility question {
+  font-family: var(--font-geist-serif-regular);
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 400;
+  max-width: 24ch;
+  text-wrap: balance;
+  @media (width >= 48rem) { font-size: 32px; line-height: 40px; }
+}
+@utility prose {
+  font-family: var(--font-source-serif);
+  font-size: 17px;
+  line-height: 28px;
+  font-weight: 400;
+  font-optical-sizing: auto;
+  max-width: var(--measure);
+  @media (width >= 48rem) { font-size: 18px; line-height: 30px; }
+}
+@utility quote { font-family: var(--font-source-serif); font-size: 14px; line-height: 21px; font-style: italic; font-weight: 400; }
+@utility doc-title { font-family: var(--font-source-serif); font-size: 16px; line-height: 22px; font-weight: 400; }
+@utility ocr { font-family: var(--font-source-serif); font-size: 14px; line-height: 22px; font-weight: 400; }
+@utility cite { font-size: 12px; line-height: 0; font-weight: 600; vertical-align: super; font-variant-numeric: tabular-nums; }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+  }
+  table {
+    font-variant-numeric: tabular-nums;
   }
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Unlayered so it wins over component outline utilities. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: oklch(0.3 0 0);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.4 0 0);
+tr:focus-visible {
+  outline-offset: -2px;
 }
 
-/* Smooth transitions */
-.page-transition {
-  animation: fadeIn 0.2s ease-in-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @keyframes slideInRight {
@@ -158,15 +343,6 @@
 
 .slide-in-right {
   animation: slideInRight 0.25s ease-out;
-}
-
-@keyframes countUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-count-up {
-  animation: countUp 0.4s ease-out backwards;
 }
 
 /* Typing indicator */

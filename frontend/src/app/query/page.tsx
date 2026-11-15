@@ -751,7 +751,7 @@ function QueryContent() {
             <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4" />
             </Button>
-            <h1 className="text-sm md:text-base font-semibold">Knowledge Query</h1>
+            <h1 className="page-title">Knowledge Query</h1>
             <Badge variant="secondary" className="text-[9px] gap-1 py-0 hidden sm:inline-flex">
               <Zap className="h-2.5 w-2.5" /> Streaming
             </Badge>

@@ -44,7 +44,7 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
 
   for (const [status, [word, icon]] of Object.entries(statuses)) {
     // The verdict lines section repeats states inside a full header.
-    const labels = page.locator(`section:not([aria-labelledby="verdict-lines"]) [data-status="${status}"]`);
+    const labels = page.locator(`section:not([aria-labelledby="verdict-lines"]):not([aria-labelledby="claims-notes"]) [data-status="${status}"]`);
     assert.equal(await labels.count(), 2, `${status} renders in both sizes`);
     for (const label of await labels.all()) {
       assert.equal((await label.innerText()).trim(), word);

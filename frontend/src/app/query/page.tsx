@@ -2,7 +2,7 @@
 
 import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/timeline-dates";
 import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question-coverage";
-import { formatAnswerInline } from "@/lib/answer-format";
+import { ClaimProse } from "@/components/claim-prose";
 import { answerView } from "@/lib/answer-state";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -177,67 +177,6 @@ interface Conversation {
   message_count: number;
   last_message_at?: string;
   messages?: Message[];
-}
-
-function renderMarkdownContent(text: string) {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeContent: string[] = [];
-  let items: React.ReactNode[] = [];
-  let ordered = false;
-  const flushList = (key: number) => {
-    if (items.length === 0) return;
-    elements.push(ordered
-      ? <ol key={`list-${key}`} className="ml-6 list-decimal">{items}</ol>
-      : <ul key={`list-${key}`} className="ml-6 list-disc">{items}</ul>);
-    items = [];
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const bullet = line.startsWith("- ") || line.startsWith("* ");
-    const numbered = /^\d+\.\s/.test(line);
-    if (!inCodeBlock && (bullet || numbered)) {
-      if (items.length > 0 && ordered !== numbered) flushList(i);
-      ordered = numbered;
-      items.push(<li key={i} dangerouslySetInnerHTML={{ __html: formatAnswerInline(bullet ? line.slice(2) : line.replace(/^\d+\.\s/, "")) }} />);
-      continue;
-    }
-    // A blank line between list items keeps the list open.
-    if (!inCodeBlock && line.trim() === "" && items.length > 0) continue;
-    if (!inCodeBlock) flushList(i);
-    if (line.startsWith("```")) {
-      if (inCodeBlock) {
-        elements.push(
-          <pre key={`code-${i}`} className="bg-muted rounded-md p-3 text-xs overflow-x-auto my-2 font-mono">
-            {codeContent.join("\n")}
-          </pre>
-        );
-        codeContent = [];
-        inCodeBlock = false;
-      } else {
-        inCodeBlock = true;
-      }
-      continue;
-    }
-    if (inCodeBlock) { codeContent.push(line); continue; }
-    if (line.startsWith("### ")) {
-      elements.push(<h3 key={i} className="font-semibold mt-3 mb-1">{line.slice(4)}</h3>);
-    } else if (line.startsWith("## ")) {
-      elements.push(<h2 key={i} className="font-semibold mt-3 mb-1">{line.slice(3)}</h2>);
-    } else if (line.startsWith("# ")) {
-      elements.push(<h2 key={i} className="font-semibold mt-3 mb-1">{line.slice(2)}</h2>);
-    } else if (line.trim() === "") {
-      elements.push(<div key={i} className="h-2" />);
-    } else {
-      elements.push(
-        <p key={i} dangerouslySetInnerHTML={{ __html: formatAnswerInline(line) }} />
-      );
-    }
-  }
-  flushList(lines.length);
-  return elements;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -651,7 +590,7 @@ function QueryContent() {
         </div>
 
         <div ref={messagesRef} className="flex-1 overflow-y-auto app-scroll">
-          <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
+          <div className="@container max-w-3xl min-[1180px]:max-w-[1028px] mx-auto px-3 md:px-4 py-4 md:py-6 space-y-4">
             <QueryModes value={queryMode} onChange={setQueryMode} />
             {messages.length === 0 && !loading && (
               <div className="py-8 md:py-12 space-y-6">
@@ -672,7 +611,7 @@ function QueryContent() {
                 seconds={seconds != null ? seconds / 1000 : undefined} />;
               const sourceCount = msg.sources?.length ?? 0;
               return (
-              <article key={i} aria-label="Answer" className="space-y-4">
+              <article key={i} aria-label="Answer" className="space-y-4 @min-[58rem]:pr-[356px]">
                 {view.state === "failed" ? (
                   <Alert variant="destructive" className="[&_[data-testid=verdict]]:border-0 [&_[data-testid=verdict]]:p-0">
                     <AlertDescription className="gap-3">
@@ -682,7 +621,8 @@ function QueryContent() {
                   </Alert>
                 ) : verdict}
                 {view.prose !== null && (
-                  <div id={`answer-${i}`} tabIndex={-1} className="prose space-y-2 scroll-mt-4">{renderMarkdownContent(view.prose)}</div>
+                  <ClaimProse id={`answer-${i}`} text={view.prose} state={view.state}
+                    claims={msg.claim_ledger?.candidate_text ? msg.claim_ledger.claims : undefined} sourceDates={msg.source_dates} />
                 )}
                 {view.state === "withheld" && (
                   <div className="flex flex-wrap gap-2">
@@ -921,7 +861,7 @@ function QueryContent() {
 
         {/* Input */}
         <div ref={composerRef} className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
-          <div className="max-w-3xl mx-auto space-y-2">
+          <div className="max-w-3xl min-[1180px]:max-w-[996px] mx-auto space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label htmlFor="question" className="label-14">Ask a question</label>
               <div className="w-full md:w-auto"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>

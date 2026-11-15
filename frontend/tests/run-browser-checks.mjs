@@ -65,8 +65,8 @@ try {
     { BACKEND_URL: backend, NEXT_TELEMETRY_DISABLED: "1", HOSTNAME: "127.0.0.1", PORT: String(uiPort) });
   await ready(`${base}/api/_fixture`, ui);
   let failed = false;
-  for (const suite of ["document-detail-ui", "shell-ui", "design-reference-ui", "query-page-ui", "answer-states-ui", "dashboard-status-ui", "completion-ui", "documents-ui", "accuracy-ui", "graph-support-ui", "graph-zoom-ui", "hubs-ui", "logs-ui", "entity-review-ui", "tokens-type-ui", "gallery-ui", "states-categories-ui"]) {
-    const args = ["logs-ui", "document-detail-ui", "shell-ui", "query-page-ui", "answer-states-ui", "completion-ui", "documents-ui", "dashboard-status-ui", "tokens-type-ui", "gallery-ui", "states-categories-ui"].includes(suite) ? ["--test", `tests/${suite}.mjs`] : [`tests/${suite}.mjs`];
+  for (const suite of ["document-detail-ui", "shell-ui", "design-reference-ui", "query-page-ui", "answer-states-ui", "dashboard-status-ui", "completion-ui", "documents-ui", "accuracy-ui", "graph-support-ui", "graph-zoom-ui", "hubs-ui", "logs-ui", "entity-review-ui", "tokens-type-ui", "gallery-ui", "states-categories-ui", "claim-prose-ui"]) {
+    const args = ["logs-ui", "document-detail-ui", "shell-ui", "query-page-ui", "answer-states-ui", "completion-ui", "documents-ui", "dashboard-status-ui", "tokens-type-ui", "gallery-ui", "states-categories-ui", "claim-prose-ui"].includes(suite) ? ["--test", `tests/${suite}.mjs`] : [`tests/${suite}.mjs`];
     const check = start(process.execPath, args, {
       UI_TEST_BASE_URL: base, UI_TEST_ARTIFACTS: path.join(artifacts, suite),
     });

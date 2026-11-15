@@ -106,6 +106,11 @@ const extraStates = [
     await page.getByPlaceholder("Ask a question...").press("Enter");
     await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
   } },
+  { ...mainStates[0], name: "ask-claims", state: "claims", prepare: async page => {
+    await page.getByPlaceholder("Ask a question...").fill("What does the policy say? margin-claims");
+    await page.getByPlaceholder("Ask a question...").press("Enter");
+    await page.getByRole("button", { name: "Claim 2", exact: true }).click();
+  } },
   // One capture per other answer state; the question's token selects the fixture outcome.
   ...[
     ["documented", "Is the premium still current? state-documented"],

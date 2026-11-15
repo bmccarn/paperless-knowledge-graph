@@ -7,7 +7,8 @@ import { LayoutDashboard, MessageSquare, Network, FileText, Moon, Sun, CircleChe
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger, SheetContent, SheetTitle, SheetHeader, SheetClose } from "@/components/ui/sheet";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CommandPalette, PaletteSearchButton } from "@/components/command-palette";
 import { getStatus } from "@/lib/api";
 
 const primaryItems = [
@@ -82,6 +83,25 @@ export function TabBar({ pathname, healthy, className }: { pathname: string; hea
 
 export function SidebarNav() {
   const pathname = usePathname();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const openPalette = () => {
+    previousFocus.current = document.activeElement as HTMLElement;
+    setPaletteOpen(true);
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (location.pathname === "/gallery") return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (document.querySelector('[role="dialog"][data-palette]')) return;
+        previousFocus.current = document.activeElement as HTMLElement;
+        setPaletteOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
   const [healthy, setHealthy] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -99,6 +119,7 @@ export function SidebarNav() {
   return <>
     <aside aria-label="App navigation" className="hidden md:flex w-[200px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-6">
       <p className="mb-6 px-2 font-[family-name:var(--font-geist-serif-regular)] text-xl leading-6">Knowledge Graph</p>
+      <PaletteSearchButton onClick={openPalette} className="mb-4 w-full justify-start gap-2 px-2" />
       <nav aria-label="Main" className="space-y-0.5">
         {[...primaryItems, ...secondaryItems].map((item, index) => <div key={item.href}>
           {index === 4 && <p className="label-12 mt-4 mb-1 border-t px-2 pt-3 text-fg-subtle">More</p>}
@@ -113,6 +134,11 @@ export function SidebarNav() {
         <BackendHealth healthy={healthy} />
       </div>
     </aside>
+    <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b bg-surface px-4 md:hidden">
+      <span className="font-[family-name:var(--font-geist-serif-regular)] text-lg">Knowledge Graph</span>
+      <PaletteSearchButton onClick={openPalette} className="gap-2" />
+    </header>
     <TabBar pathname={pathname} healthy={healthy} />
+    {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} returnFocus={() => previousFocus.current?.focus()} />}
   </>;
 }

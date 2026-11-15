@@ -222,7 +222,7 @@ function renderMarkdownContent(text: string) {
     } else if (line.startsWith("## ")) {
       elements.push(<h2 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h2>);
     } else if (line.startsWith("# ")) {
-      elements.push(<h1 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h1>);
+      elements.push(<h2 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h2>);
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
       elements.push(
         <li key={i} className="text-sm ml-4 list-disc" dangerouslySetInnerHTML={{ __html: formatAnswerInline(line.slice(2)) }} />
@@ -751,7 +751,7 @@ function QueryContent() {
             <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4" />
             </Button>
-            <h1 className="page-title">Knowledge Query</h1>
+            <h1 className="page-title">Ask</h1>
             <Badge variant="secondary" className="text-[9px] gap-1 py-0 hidden sm:inline-flex">
               <Zap className="h-2.5 w-2.5" /> Streaming
             </Badge>
@@ -1197,7 +1197,8 @@ function QueryContent() {
 export default function QueryPage() {
   return (
     <Suspense fallback={
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        <h1 className="page-title">Ask</h1>
         <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
       </div>
     }>

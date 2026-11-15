@@ -34,9 +34,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geistSans.variable} ${geistMono.variable} ${GeistSerifRegular.variable} ${sourceSerif.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <TooltipProvider delayDuration={200}>
-            <div className="flex h-screen overflow-hidden">
+            <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-background focus:px-4 focus:py-2">Skip to content</a>
+            <div className="flex h-dvh min-h-dvh overflow-hidden">
               <SidebarNav />
-              <main className="flex-1 overflow-hidden flex flex-col pb-[60px] md:pb-0">
+              <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 flex-1 overflow-hidden flex flex-col pb-[calc(60px+env(safe-area-inset-bottom))] md:pb-0 has-[[data-gallery-scroll]]:pb-0">
                 <div className="flex-1 overflow-hidden relative">{children}</div>
               </main>
             </div>

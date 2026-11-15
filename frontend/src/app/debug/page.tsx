@@ -99,6 +99,7 @@ export default function DebugPage() {
 
   return (
     <div className="flex flex-col h-full">
+      <h1 className="page-title shrink-0 px-4 py-4">Logs</h1>
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2 md:gap-3 px-3 md:px-4 py-2 border-b bg-card/50 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-2">

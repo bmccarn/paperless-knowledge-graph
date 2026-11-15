@@ -114,10 +114,10 @@ export default function DocumentDetailPage() {
   };
 
   if (loading && !detail) {
-    return <div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary/50" /></div>;
+    return <div className="flex h-full flex-col items-center justify-center gap-4"><h1 className="page-title">Documents</h1><Loader2 className="h-8 w-8 animate-spin text-primary/50" /></div>;
   }
   if (!detail) {
-    return <div className="space-y-3 p-6"><p role="alert">{error || "Document details are unavailable."}</p><Button onClick={load}>Retry loading document</Button></div>;
+    return <div className="space-y-3 p-6"><h1 className="page-title">Document unavailable</h1><p role="alert">{error || "Document details are unavailable."}</p><Button onClick={load}>Retry loading document</Button></div>;
   }
 
   const title = (detail?.paperless?.title as string) || `Document #${docId}`;
@@ -130,7 +130,7 @@ export default function DocumentDetailPage() {
           <Link href="/documents" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-2">
             <ArrowLeft className="h-3 w-3" /> Back to documents
           </Link>
-          <h1 className="page-title">{title}</h1>
+          <h1 className="page-title font-[family-name:var(--font-source-serif)]">{title}</h1>
           <div className="flex flex-wrap gap-2 mt-2">
             <Badge variant="secondary">{docType}</Badge>
             <Badge variant={detail?.processing?.processed ? "default" : "destructive"}>

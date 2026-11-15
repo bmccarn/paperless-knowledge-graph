@@ -223,7 +223,7 @@ function GraphContent() {
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-4 w-4 text-blue-400" />
-            <h1 className="page-title">Evidence graph</h1>
+            <h1 className="page-title">Graph</h1>
             <Badge variant="outline" className="text-[10px]">
               Loaded sample
             </Badge>
@@ -236,7 +236,7 @@ function GraphContent() {
           <Button
             variant="outline"
             size="sm"
-            className="md:hidden"
+            className="lg:hidden"
             onClick={() => {
               clearSelection();
               setMobileList((value) => !value);
@@ -287,7 +287,7 @@ function GraphContent() {
       <div className="relative flex min-h-0 flex-1">
         <aside
           aria-label="Graph browser"
-          className={`${mobileList ? "absolute inset-y-0 left-0 z-30 flex w-[min(320px,90vw)] shadow-xl" : "hidden"} flex-col border-r bg-card md:static md:flex md:w-64 md:shrink-0`}
+          className={`${mobileList ? "absolute inset-y-0 left-0 z-30 flex w-[min(320px,90vw)] shadow-xl" : "hidden"} flex-col border-r bg-card lg:static lg:flex lg:w-64 lg:shrink-0`}
         >
           <form
             onSubmit={(event) => {
@@ -610,7 +610,8 @@ export function GraphContainer() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-full items-center justify-center">
+        <div className="flex h-full flex-col items-center justify-center gap-4">
+          <h1 className="page-title">Graph</h1>
           Loading graph…
         </div>
       }

@@ -39,6 +39,7 @@ import {
 } from "@/lib/graph-data";
 import { getNodeColor } from "./graph-legend";
 import type { GraphHandle } from "./force-graph-client";
+import { NeighborhoodView } from "./neighborhood-view";
 
 const ForceGraphClient = dynamic(
   () =>
@@ -621,6 +622,11 @@ function GraphContent() {
   );
 }
 
+function GraphRoute() {
+  const focus = useSearchParams().get("focus");
+  return focus ? <NeighborhoodView key={focus} focusId={focus} /> : <GraphContent />;
+}
+
 export function GraphContainer() {
   return (
     <Suspense
@@ -631,7 +637,7 @@ export function GraphContainer() {
         </div>
       }
     >
-      <GraphContent />
+      <GraphRoute />
     </Suspense>
   );
 }

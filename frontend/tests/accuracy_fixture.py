@@ -20,6 +20,7 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.answer_delivery import render_verified_answer
 from app.timeline import project_timeline
+from app.relationship_families import classify_relationship
 
 NODES = [
     {'labels':['Person'], 'props':{'uuid':'person-1','name':'Alex Example','description':'Synthetic fixture. <b>This is literal source text.</b>'}},
@@ -40,6 +41,101 @@ RELS[0]['props'].update(source_doc_ids=[101], inferred=True, support_records=[js
     'evidence_json': json.dumps([{'start': 0, 'end': len(RELATIONSHIP_QUOTE), 'quote': RELATIONSHIP_QUOTE}]),
     'rationale': ['The source names Alex as the customer of Example Utility.'],
 })])
+
+# The neighborhood graph serves only the summary node route, so the sample graph and search stay unchanged.
+# Rowan Vale is the owner and a hub (more than 100 links outside evidence) across nine families.
+HUB = 'nb-rowan'
+NB_ENTITIES = {HUB: ('Person', 'Rowan Vale')}
+NB_LINKS = []  # (start, type, end, [(doc_id, inferred, confidence)])
+_nb_doc = iter(range(9030, 9300))
+
+
+def nb_link(start, rel_type, end, documents=1, inferred=(), confidence=0.9):
+    NB_LINKS.append((start, rel_type, end, [(doc, index in inferred, confidence)
+                                            for index, doc in enumerate(next(_nb_doc) for _ in range(documents))]))
+
+
+for family, rel_type, label, named, fillers in [
+    ('parties', 'EMPLOYED_BY', 'Organization', [('Marlow Freight Co.', 9), ('Juniper Okafor', 7, 'Person', 'SIGNED_BY')], 22),
+    ('money', 'PAID_TO', 'FinancialItem', [('Harbor Mutual Insurance', 8, 'Organization', 'PREMIUM_PAID_TO'),
+                                           ('Checking account 4417', 6)], 20),
+    ('coverage', 'COVERS', 'InsurancePolicy', [('Policy HM-2208 (auto)', 6), ('Policy HO-5130 (home)', 4)], 8),
+    ('health', 'DIAGNOSED_WITH', 'Condition', [('Hypertension', 5), ('Lipid panel, March 2026', 3, 'MedicalResult', 'ORDERED_BY')], 8),
+    ('service', 'FILED_WITH', 'Organization', [('County Tax Office', 5), ('Port Ellery Library', 2, 'Organization', 'PARTICIPATED_IN')], 6),
+    ('places', 'LIVES_IN', 'Address', [('14 Larkspur Ct', 6), ('Port Ellery', 4, 'Location', 'LOCATED_IN')], 6),
+    ('time', 'EFFECTIVE_FROM', 'DateEvent', [('1 Apr 2026', 3), ('1 Oct 2026', 2, 'DateEvent', 'EXPIRES_ON')], 4),
+    ('loose', 'RELATED_TO', 'Person', [('Avery Brooks', 3), ('Riverside 10K', 2, 'Event', 'ASSOCIATED_WITH')], 6),
+    ('other', 'OWNS_VEHICLE', 'Product', [('2019 Subaru Outback', 4), ('Telematics plug TX-2', 2, 'System', 'USES_DEVICE')], 6),
+]:
+    for index, (name, documents, *custom) in enumerate(named):
+        uid = f'nb-{family}-{index}'
+        NB_ENTITIES[uid] = (custom[0] if custom else label, name)
+        rel = custom[1] if custom else rel_type
+        assert classify_relationship(rel)[0] == family, rel
+        if name == 'Policy HM-2208 (auto)':
+            nb_link(HUB, rel, uid, documents, inferred={0})  # mixed: stated in 5, inferred in 1
+        elif name == 'Avery Brooks':
+            nb_link(HUB, rel, uid, documents, inferred=range(documents))  # inferred in every record
+        elif name == 'Riverside 10K':
+            nb_link(HUB, rel, uid, documents, confidence=None)  # no score
+        else:
+            nb_link(HUB, rel, uid, documents)
+    for index in range(fillers):
+        uid = f'nb-{family}-filler-{index:02d}'
+        NB_ENTITIES[uid] = (label, f'{family.capitalize()} fixture {index + 1:02d}')
+        nb_link(HUB, rel_type, uid)
+# The two-family neighbor: 2 documents as a party, 8 in money, so it sits in money.
+nb_link('nb-money-0', 'ISSUED_BY', HUB, 2)
+# Documents are evidence or a document hop, never drawn.
+NB_LINKS.extend((f'doc-{doc}', 'MENTIONS', HUB, [(doc, False, None)]) for doc in range(9000, 9012))
+NB_LINKS.append(('doc-9012', 'PREPARED_BY', HUB, [(9012, False, 0.8)]))
+# A leaf with only mentions, and an entity with many mentions and few links (not a hub).
+NB_ENTITIES.update({'nb-leaf': ('Product', 'Spare key tag'), 'nb-pharmacy': ('Organization', 'Lakeshore Pharmacy')})
+NB_LINKS.extend((f'doc-{doc}', 'MENTIONS', 'nb-leaf', [(doc, False, None)]) for doc in (9020, 9021))
+NB_LINKS.extend((f'doc-{doc}', 'MENTIONS', 'nb-pharmacy', [(doc, False, None)]) for doc in range(9100, 9220))
+for rel_type, target in [('PRESCRIBED_BY', 'nb-health-0'), ('LOCATED_IN', 'nb-places-1'), ('PAID_TO', 'nb-money-1'),
+                         ('FILED_WITH', 'nb-service-0'), ('RELATED_TO', 'nb-loose-0')]:
+    nb_link('nb-pharmacy', rel_type, target)
+
+
+def nb_node(uid):
+    if uid.startswith('doc-'):
+        doc = document(int(uid[4:]))
+        return 'Document', doc['title']
+    return NB_ENTITIES[uid]
+
+
+def nb_fields(uid):
+    rows = [row for row in NB_LINKS if uid in (row[0], row[2])]
+    links = sum(classify_relationship(row[1])[0] != 'evidence' for row in rows)
+    return {'evidence_doc_count': len({doc for row in rows for doc, _, _ in row[3]}), 'link_count': links,
+            'is_hub': links > 100, 'is_owner': uid == HUB}
+
+
+def nb_summary(uid):
+    """The shape of GET /graph/node/{id}?summary=1 for the synthetic neighborhood graph."""
+    label, name = NB_ENTITIES[uid]
+    links, documents = [], set()
+    for start, rel_type, end, records in NB_LINKS:
+        if uid not in (start, end):
+            continue
+        other = end if start == uid else start
+        inferred = sum(flag for _, flag, _ in records)
+        documents.update(doc for doc, _, _ in records)
+        neighbor_label, neighbor_name = nb_node(other)
+        links.append({
+            'key': f'{start}~{rel_type}~{end}', 'type': rel_type, 'family': classify_relationship(rel_type)[0],
+            'direction': 'out' if start == uid else 'in',
+            'support_state': 'supported' if not inferred else 'inferred' if inferred == len(records) else 'mixed',
+            'stated_count': len(records) - inferred, 'inferred_count': inferred,
+            'records': [{'doc_id': doc, 'inferred': flag, 'confidence': score} for doc, flag, score in records],
+            'neighbor': {'id': other, 'label': neighbor_label, 'name': neighbor_name,
+                         **{k: v for k, v in nb_fields(other).items() if k != 'is_hub'}}})
+    return {'focus': {'id': uid, 'label': label, 'name': name, 'aliases': [], **nb_fields(uid)},
+            'links': sorted(links, key=lambda link: link['key']),
+            'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in sorted(documents)},
+            'owner_status': 'found'}
+
 
 LOCK = threading.RLock()
 NOW = '2026-09-04T12:00:00+00:00'
@@ -413,6 +509,11 @@ class Handler(BaseHTTPRequestHandler):
                                    'has_more': offset + limit < len(rows), 'results': rows[offset:offset + limit]})
             if route.startswith('/graph/node/'):
                 uid = route.rsplit('/', 1)[1]
+                if uid in NB_ENTITIES:
+                    if get('summary') in ('1', 'true'):
+                        return self.reply(nb_summary(uid))
+                    label, name = NB_ENTITIES[uid]
+                    return self.reply({'labels': [label], 'properties': {'uuid': uid, 'name': name}, 'relationships': []})
                 node = next((node for node in SEARCH_NODES if identity(node) == uid), None)
                 if node is None and uid.startswith('doc-'):
                     doc = document(int(uid[4:]))

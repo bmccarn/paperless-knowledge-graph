@@ -40,6 +40,31 @@ interface Props {
   onSelectLink: (link: ExplorerLink) => void;
   onClear: () => void;
   onReady: (handle: GraphHandle | null) => void;
+  /** Fixed positions: no simulation, no node drag, one fit on the first draw. */
+  positions?: ReadonlyMap<string, { x: number; y: number }>;
+}
+
+/** A "+N Family" pill at constant screen size; the hit area uses the same box. */
+function paintPill(node: RenderNode, ctx: CanvasRenderingContext2D, scale: number, fill: string, text: string) {
+  const fontSize = 11 / scale;
+  ctx.save();
+  ctx.font = `${fontSize}px system-ui`;
+  const width = ctx.measureText(node.name).width + 16 / scale;
+  const height = 22 / scale;
+  ctx.beginPath();
+  ctx.roundRect(node.x! - width / 2, node.y! - height / 2, width, height, height / 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (fill !== text) {
+    ctx.strokeStyle = "#7295adb0";
+    ctx.lineWidth = 1 / scale;
+    ctx.stroke();
+    ctx.fillStyle = text;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(node.name, node.x!, node.y!);
+  }
+  ctx.restore();
 }
 
 function endpointId(value: RenderLink["source"]): string {
@@ -57,6 +82,7 @@ export function ForceGraphClient({
   onSelectLink,
   onClear,
   onReady,
+  positions,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
@@ -109,23 +135,36 @@ export function ForceGraphClient({
 
   // Mutable force coordinates belong only to the renderer, never graph metadata.
   const data = useMemo(() => {
-    const nodes: RenderNode[] = graph.nodes.map((node) => ({
-      ...node,
-      props: { ...node.props },
-    }));
+    const nodes: RenderNode[] = graph.nodes.map((node) => {
+      const at = positions?.get(node.id);
+      return { ...node, props: { ...node.props }, ...(at && { x: at.x, y: at.y, fx: at.x, fy: at.y }) };
+    });
     return {
       nodes,
       links: graph.links.map((link) => ({ ...link, props: { ...link.props } })),
     };
-  }, [graph]);
+  }, [graph, positions]);
 
   useLayoutEffect(() => {
     for (const node of data.nodes) {
       const previous = renderNodes.current.get(node.id);
-      Object.assign(node, { x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy });
+      // Fixed layouts keep their own positions; the cache still serves selection centering.
+      if (!positions) Object.assign(node, { x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy });
       renderNodes.current.set(node.id, node);
     }
-  }, [data]);
+  }, [data, positions]);
+
+  // Fixed layouts have no engine-stop event: fit once, when the first layout is drawn.
+  const fixed = Boolean(positions);
+  useEffect(() => {
+    if (!fixed || !renderer.Component || !dimensions.width || !dimensions.height) return;
+    const frame = requestAnimationFrame(() => {
+      if (!initialFitPending.current || !handleRef.current) return;
+      initialFitPending.current = false;
+      handleRef.current.zoomToFit(0, 65);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fixed, renderer.Component, dimensions.width, dimensions.height]);
 
   useEffect(() => {
     if (!renderer.Component || !selectedNodeId ||
@@ -166,6 +205,10 @@ export function ForceGraphClient({
   const paintNode = useCallback(
     (node: RenderNode, ctx: CanvasRenderingContext2D, scale: number) => {
       if (node.x === undefined || node.y === undefined) return;
+      if (node.label === "Aggregate") {
+        paintPill(node, ctx, scale, "#101820e8", "#e2e8f0");
+        return;
+      }
       const selected = node.id === selectedNodeId;
       const radius = (node.label === "Document" ? 5 : 6) / scale;
       ctx.save();
@@ -247,7 +290,9 @@ export function ForceGraphClient({
           nodeRelSize={4}
           nodeColor={(node) => getNodeColor(node.label)}
           nodeLabel={(node) =>
-            `${escapeGraphLabel(node.name)} · ${escapeGraphLabel(node.label)}`
+            node.label === "Aggregate"
+              ? escapeGraphLabel(node.name)
+              : `${escapeGraphLabel(node.name)} · ${escapeGraphLabel(node.label)}`
           }
           linkLabel={(link) =>
             `${escapeGraphLabel(link.type)}${link.props.implied ? " · inferred" : ""}`
@@ -263,10 +308,11 @@ export function ForceGraphClient({
           linkDirectionalArrowLength={4}
           linkDirectionalArrowRelPos={0.95}
           linkCurvature={0.08}
-          linkLineDash={(link) => (link.props.implied ? [3, 2] : null)}
+          linkLineDash={(link) => (link.props.aggregate ? [3, 3] : link.props.implied ? [3, 2] : null)}
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={(node, color, ctx, scale) => {
             if (node.x === undefined || node.y === undefined) return;
+            if (node.label === "Aggregate") return paintPill(node, ctx, scale, color, color);
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.arc(node.x, node.y, 9 / scale, 0, Math.PI * 2);
@@ -282,21 +328,22 @@ export function ForceGraphClient({
             })
           }
           onNodeDragEnd={(node) => {
+            if (fixed) return;
             node.fx = node.x;
             node.fy = node.y;
           }}
           onEngineStop={() => {
-            if (initialFitPending.current && handleRef.current) {
+            if (!fixed && initialFitPending.current && handleRef.current) {
               initialFitPending.current = false;
               // An initial tween must not keep overriding later user gestures.
               handleRef.current.zoomToFit(0, 65);
             }
           }}
-          warmupTicks={50}
-          cooldownTicks={80}
+          warmupTicks={fixed ? 0 : 50}
+          cooldownTicks={fixed ? 0 : 80}
           d3AlphaDecay={0.06}
           d3VelocityDecay={0.5}
-          enableNodeDrag
+          enableNodeDrag={!fixed}
           minZoom={0.1}
         />
       )}

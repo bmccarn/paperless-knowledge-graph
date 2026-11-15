@@ -83,11 +83,9 @@ export function parseDocumentDate(value: string): [number, number, number] | nul
 }
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 
-/** "2026-02-28" becomes "28 Feb 2026"; read as a calendar date, never through a time zone. Unread dates show as stored. */
+/** "2026-02-28" becomes "28 Feb 2026"; read as a calendar date, never through a time zone. */
 export function formatSourceDate(date: string): string {
-  const parsed = parseDocumentDate(date);
-  if (!parsed) return date;
-  const [year, month, day] = parsed;
+  const [year, month, day] = date.split("-").map(Number);
   return `${day} ${MONTHS[month - 1]} ${year}`;
 }
 

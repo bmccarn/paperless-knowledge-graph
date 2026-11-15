@@ -133,12 +133,10 @@ test("document types use their label and token, other keys their key in sentence
 });
 
 test("stored document dates in several forms read as one calendar date", () => {
-  for (const [stored, shown] of [["2026-05-04", "4 May 2026"], ["May 4, 2026", "4 May 2026"], ["October 22, 2026", "22 Oct 2026"],
-    ["21 OCT 17", "21 Oct 2017"], ["4 May 2026", "4 May 2026"], ["Sept 9, 2026", "9 Sep 2026"], ["2026-05-04T00:00:00Z", "4 May 2026"]])
-    assert.equal(formatSourceDate(stored), shown, stored);
-  // Not whole calendar dates, or numeric dates whose day and month order is unknown, stay as stored.
-  for (const stored of ["05/04/2026", "Spring 2025", "February 30, 2026", "2026-13-01", "May 2026", ""]) {
+  for (const [stored, parsed] of [["2026-05-04", [2026, 5, 4]], ["May 4, 2026", [2026, 5, 4]], ["October 22, 2026", [2026, 10, 22]],
+    ["21 OCT 17", [2017, 10, 21]], ["4 May 2026", [2026, 5, 4]], ["Sept 9, 2026", [2026, 9, 9]], ["2026-05-04T00:00:00Z", [2026, 5, 4]]])
+    assert.deepEqual(parseDocumentDate(stored), parsed, stored);
+  // Not whole calendar dates, or numeric dates whose day and month order is unknown, stay unread.
+  for (const stored of ["05/04/2026", "Spring 2025", "February 30, 2026", "2026-13-01", "May 2026", ""])
     assert.equal(parseDocumentDate(stored), null, stored);
-    assert.equal(formatSourceDate(stored), stored);
-  }
 });

@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { EvidenceLevel, StatusLabel } from "@/components/status-label";
+import { KindShape, TypeDot } from "@/components/kind-shape";
+import type { AnswerState, ClaimResult } from "@/lib/answer-state";
+import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
 import { ArrowDown, ArrowUp, Check, FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +25,28 @@ const variants = ["default", "secondary", "outline", "ghost", "destructive", "li
 const sizes = ["xs", "sm", "default", "lg"] as const;
 const documents = ["Annual statement", "Home inventory", "Service agreement"];
 
+const answerStates: AnswerState[] = ["verified", "documented", "partial", "withheld", "not_checked", "retry", "failed"];
+const claimResults: ClaimResult[] = ["supported", "unsupported", "conflicting", "left_out"];
+const otherLabel = "Vehicle";
+
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="space-y-3 border-t border-border pt-4">
+      <h2 id={id} className="heading-16">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Row({ name, children }: { name: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-2 md:grid-cols-[160px_1fr] md:items-center">
+      <p className="label-12 text-fg-muted">{name}</p>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">{children}</div>
+    </div>
+  );
+}
+
 export default function GalleryPage() {
   const [loading, setLoading] = useState(false);
   const [descending, setDescending] = useState(false);
@@ -33,6 +59,30 @@ export default function GalleryPage() {
           <h1 className="page-title">Component gallery</h1>
           <p className="text-sm text-fg-muted">The shared controls for reading, reviewing and exploring your archive.</p>
         </header>
+
+        <Section id="answer-states" title="Answer states">
+          <Row name="Medium">{answerStates.map(state => <StatusLabel key={state} status={state} />)}</Row>
+          <Row name="Small">{answerStates.map(state => <StatusLabel key={state} status={state} size="sm" />)}</Row>
+        </Section>
+
+        <Section id="claim-results" title="Claim results">
+          <Row name="Medium">{claimResults.map(result => <StatusLabel key={result} status={result} />)}</Row>
+          <Row name="Small">{claimResults.map(result => <StatusLabel key={result} status={result} size="sm" />)}</Row>
+        </Section>
+
+        <Section id="evidence-levels" title="Evidence levels">
+          <Row name="Level">{(["high", "medium", "low"] as const).map(level => <EvidenceLevel key={level} level={level} />)}</Row>
+        </Section>
+
+        <Section id="node-kinds" title="Entity kinds">
+          <Row name="Shape">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} />)}</Row>
+          <Row name="Icon">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} icon />)}</Row>
+          <Row name="Faded">{[...NODE_LABELS, otherLabel].map(label => <KindShape key={label} label={label} faded />)}</Row>
+        </Section>
+
+        <Section id="document-types" title="Document types">
+          <Row name="Type">{[...DOCUMENT_TYPE_KEYS, "vehicle_registration"].map(type => <TypeDot key={type} type={type} />)}</Row>
+        </Section>
 
         <section aria-labelledby="buttons-title" className="space-y-4">
           <h2 id="buttons-title" className="text-base font-semibold">Buttons</h2>

@@ -203,7 +203,7 @@ test("with reduced motion no route transition or count-up plays", async t => {
 test("no route transition plays on the page content without reduced motion", async t => {
   const { page } = await open(t);
   await page.goto(base);
-  const heading = page.getByRole("heading", { name: "Dashboard", exact: true });
+  const heading = page.getByRole("heading", { name: "Status", exact: true });
   await heading.waitFor();
   const animated = await heading.evaluate(element => document.getAnimations()
     .filter(animation => animation.effect?.target?.contains(element)).map(animation => animation.animationName));

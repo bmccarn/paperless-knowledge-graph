@@ -34,11 +34,11 @@ for (const error of ["paperless down", ""]) test(`degraded first load shows ${er
   await page.route("**/api/status", route => route.fulfill({ json: response }));
   await page.goto(base);
   await page.getByText(error || "Backend degraded", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("heading", { name: "Dashboard", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "Status", exact: true }).count(), 1);
   response = healthy;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
-  assert.equal(await page.getByText("Connection Error", { exact: true }).count(), 0);
+  await page.getByRole("heading", { name: "Status", exact: true }).waitFor();
+  await page.getByText("Connection Error", { exact: true }).waitFor({ state: "hidden" });
   assert.equal(await page.getByText(error || "Backend degraded", { exact: true }).count(), 0);
 });
 
@@ -52,7 +52,7 @@ for (const failure of ["degraded", "http", "network"]) test(`${failure} poll war
     return route.fulfill({ json: { status: "degraded", error: "paperless down" } });
   });
   await page.goto(base);
-  await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
+  await page.getByText("Indexed documents", { exact: true }).waitFor();
   fail = true;
   await page.clock.fastForward(10000);
   const warning = page.getByRole("alert").filter({ hasText: "Showing the last successful status" });

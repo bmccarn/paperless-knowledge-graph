@@ -169,7 +169,7 @@ export default function EntityReviewPage() {
     <div className="h-full overflow-y-auto p-4 md:p-6 lg:p-8 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="page-title">Entity Review</h1>
+          <h1 className="page-title">Entities</h1>
           <p className="text-sm text-muted-foreground mt-1">Likely duplicate entities and bad merge candidates.</p>
         </div>
         <div className="flex gap-2">

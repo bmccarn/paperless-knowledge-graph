@@ -239,7 +239,7 @@ function renderMarkdownContent(text: string) {
     } else if (line.startsWith("## ")) {
       elements.push(<h2 key={i} className="font-semibold mt-3 mb-1">{line.slice(3)}</h2>);
     } else if (line.startsWith("# ")) {
-      elements.push(<h1 key={i} className="font-semibold mt-3 mb-1">{line.slice(2)}</h1>);
+      elements.push(<h2 key={i} className="font-semibold mt-3 mb-1">{line.slice(2)}</h2>);
     } else if (line.trim() === "") {
       elements.push(<div key={i} className="h-2" />);
     } else {
@@ -691,7 +691,7 @@ function QueryContent() {
             <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" aria-label="Open conversations" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4" />
             </Button>
-            <h1 className="page-title">Knowledge Query</h1>
+            <h1 className="page-title">Ask</h1>
           </div>
           {/* Desktop: toggle history */}
           <Tooltip>
@@ -1037,7 +1037,8 @@ function QueryContent() {
 export default function QueryPage() {
   return (
     <Suspense fallback={
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        <h1 className="page-title">Ask</h1>
         <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
       </div>
     }>

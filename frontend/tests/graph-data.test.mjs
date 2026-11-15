@@ -1,8 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  emptyGraph,
-  mergeGraph,
   nodeFromPayload,
   relationshipDirection,
   relationshipSupport,
@@ -29,53 +27,7 @@ test("ingestion and legacy relationship evidence stays visible without duplicate
   }
 });
 
-const payload = {
-  nodes: [
-    { labels: ["Person"], props: { uuid: "p", name: "Person" } },
-    { labels: ["Organization"], props: { uuid: "o", name: "Organization" } },
-  ],
-  relationships: [
-    { start: "p", end: "o", type: "CUSTOMER_OF", props: { source_doc: 1 } },
-  ],
-};
-
-test("repeated neighborhood expansion preserves relationship count and evidence", () => {
-  const once = mergeGraph(emptyGraph(), payload);
-  const twice = mergeGraph(once, payload);
-  assert.equal(twice.nodes.length, 2);
-  assert.equal(twice.links.length, 1);
-  assert.deepEqual(twice.links[0].props, { source_doc: 1 });
-});
-
-test("different source support and relationship types remain distinct", () => {
-  const more = {
-    ...payload,
-    relationships: [
-      ...payload.relationships,
-      { ...payload.relationships[0], props: { source_doc: 2 } },
-      { ...payload.relationships[0], type: "EMPLOYED_BY" },
-    ],
-  };
-  assert.equal(mergeGraph(emptyGraph(), more).links.length, 3);
-});
-
-test("stable backend relationship IDs update properties without duplication", () => {
-  const first = {
-    ...payload,
-    relationships: [{ ...payload.relationships[0], id: "edge-1" }],
-  };
-  const second = {
-    ...payload,
-    relationships: [
-      { ...first.relationships[0], props: { source_doc: 1, weight: 3 } },
-    ],
-  };
-  const graph = mergeGraph(mergeGraph(emptyGraph(), first), second);
-  assert.equal(graph.links.length, 1);
-  assert.equal(graph.links[0].props.weight, 3);
-});
-
-test("missing identities and dangling relationships are reported, never fabricated", () => {
+test("missing identities are reported, never fabricated", () => {
   assert.equal(
     nodeFromPayload({
       labels: ["Person"],
@@ -87,20 +39,6 @@ test("missing identities and dangling relationships are reported, never fabricat
     nodeFromPayload({ labels: ["Document"], props: { paperless_id: 7 } }).id,
     "doc-7",
   );
-  const graph = mergeGraph(emptyGraph(), {
-    nodes: [{}],
-    relationships: payload.relationships,
-  });
-  assert.equal(graph.discarded, 2);
-  assert.deepEqual(graph.links, []);
-});
-
-test("backend fallback endpoint names normalize consistently", () => {
-  const graph = mergeGraph(emptyGraph(), {
-    nodes: payload.nodes,
-    relationships: [{ start_uuid: "p", end_uuid: "o", type: "RELATED_TO" }],
-  });
-  assert.equal(graph.links[0].target, "o");
 });
 
 test("source records do not determine relationship direction", () => {
@@ -123,8 +61,3 @@ test("source strings cannot inject HTML into canvas library tooltips", () => {
   );
 });
 
-test("graph metadata is detached from response objects", () => {
-  const graph = mergeGraph(emptyGraph(), payload);
-  graph.links[0].props.source_doc = 90;
-  assert.equal(payload.relationships[0].props.source_doc, 1);
-});

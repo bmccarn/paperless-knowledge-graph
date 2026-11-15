@@ -191,38 +191,106 @@ for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex r
   await record(page, `document-${batch ? "batch" : "single"}-refresh`);
 });
 
-for (const trigger of ["initial", "reset", "seed"]) test(`${trigger} graph arrival preserves a selected search node and expansion`, async t => {
+test("the graph opens on entity search with Recent and Most connected, never the sample graph", async t => {
   const { context, page } = await fixturePage(t);
-  const initial = await (await context.request.get(`${base}/api/graph/initial?limit=100`)).json();
-  if (trigger !== "initial") {
-    await page.goto(`${base}/graph`);
-    await page.getByText("4 nodes", { exact: false }).waitFor();
-  }
+  const requests = [];
+  page.on("request", request => requests.push(new URL(request.url()).pathname));
+  await page.goto(`${base}/graph`);
+  const search = page.getByRole("combobox", { name: "Search entities", exact: true });
+  const most = page.getByRole("region", { name: "Most connected", exact: true });
+  await most.getByRole("link").first().waitFor();
+  assert.ok(await search.evaluate(element => element === document.activeElement), "Focus starts in the search box");
+  await page.getByRole("region", { name: "Recent", exact: true }).getByText("Entities you open appear here.", { exact: true }).waitFor();
+  // The server lists the owner first and flags it; the landing leaves it out and still shows 10.
+  const ranked = await (await context.request.get(`${base}/api/graph/search?q=&sort=documents&exclude_documents=1&limit=11`)).json();
+  assert.equal(ranked.results[0].properties.name, "Rowan Vale");
+  assert.equal(ranked.results[0].is_owner, true);
+  const rows = await most.getByRole("link").allTextContents();
+  assert.equal(rows.length, 10);
+  assert.ok(!rows.some(row => row.includes("Rowan Vale")), `The owner is not listed: ${rows}`);
+  assert.match(rows[0], /^Lakeshore Pharmacy.*120 documents$/);
+  // "/" returns focus to the search box without typing a slash.
+  await most.getByRole("link").first().focus();
+  await page.keyboard.press("/");
+  assert.ok(await search.evaluate(element => element === document.activeElement), "/ focuses the search box");
+  assert.equal(await search.inputValue(), "");
+  await page.waitForLoadState("networkidle");
+  assert.ok(!requests.some(path => path.startsWith("/api/graph/initial")), "No request goes to /graph/initial");
+  for (const removed of ["Reset sample", "Sample seed size", "Show labels"]) assert.equal(await page.getByText(removed).count(), 0);
+  await record(page, "graph-landing");
+});
+
+test("two characters show at most 8 entities grouped by kind, without documents, and Enter opens the first", async t => {
+  const { context, page } = await fixturePage(t);
+  // The same text matches indexed documents in the default search.
+  const all = await (await context.request.get(`${base}/api/graph/search?q=ar&limit=50`)).json();
+  assert.ok(all.results.some(row => row.labels.includes("Document")));
+  await page.goto(`${base}/graph`);
+  const search = page.getByRole("combobox", { name: "Search entities", exact: true });
+  await search.fill("ar");
+  const list = page.getByRole("listbox", { name: "8 results", exact: true });
+  await list.waitFor();
+  assert.equal(await search.getAttribute("aria-expanded"), "true");
+  const groups = await list.getByRole("group").evaluateAll(groups => groups.map(group => [
+    group.getAttribute("aria-labelledby") && document.getElementById(group.getAttribute("aria-labelledby")).textContent,
+    [...group.querySelectorAll('[role="option"]')].length]));
+  assert.deepEqual(groups, [["Organizations", 5], ["Health", 1], ["Things", 2]]);
+  const options = await list.getByRole("option").allTextContents();
+  assert.ok(!options.some(text => /Synthetic archive|statement/i.test(text)), `No documents: ${options}`);
+  assert.match(options[0], /^Harbor Mutual InsuranceOrganization10 documents$/);
+  assert.equal(await list.locator("mark").first().textContent(), "ar");
+  await page.keyboard.press("ArrowDown");
+  assert.equal(await list.getByRole("option", { selected: true }).textContent(), options[1]);
+  await page.keyboard.press("ArrowUp");
+  await record(page, "graph-typeahead");
+  await search.press("Enter");
+  await page.waitForURL(/\/graph\?focus=nb-money-0$/);
+  await page.getByText("Harbor Mutual Insurance: ", { exact: false }).first().waitFor();
+  // The focused entity is now first in Recent.
+  await page.goBack();
+  const recent = page.getByRole("region", { name: "Recent", exact: true });
+  await recent.getByRole("link").first().waitFor();
+  assert.deepEqual(await recent.getByRole("link").allTextContents(), ["Harbor Mutual InsuranceOrganization10 documents"]);
+});
+
+test("a late search answer never replaces the results of newer text", async t => {
+  const { page } = await fixturePage(t);
   const held = deferred();
-  await page.route("**/api/graph/initial?**", async route => {
-    await held.promise; await route.fulfill({ json: initial });
+  await page.route("**/api/graph/search?**", async route => {
+    if (new URL(route.request().url()).searchParams.get("q") === "har") await held.promise;
+    await route.continue();
   });
   t.after(() => held.resolve());
-  if (trigger === "initial") await page.goto(`${base}/graph?q=Search%20Fixture`);
-  else {
-    if (trigger === "reset") await page.getByRole("button", { name: "Reset sample", exact: true }).click();
-    else await page.getByLabel("Sample seed size", { exact: true }).selectOption("200");
-    await page.getByLabel("Find an entity or document", { exact: true }).fill("Search Fixture");
-    await page.getByRole("button", { name: "Search graph", exact: true }).click();
-  }
-  await page.getByRole("button", { name: /Search Fixture Entity 000/ }).click();
-  const inspector = page.getByLabel("Evidence inspector", { exact: true });
-  await inspector.waitFor();
-  await inspector.getByRole("button", { name: "Load neighbors into graph", exact: true }).click();
-  await page.getByText("5 nodes", { exact: false }).waitFor();
-  const response = page.waitForResponse("**/api/graph/initial?**");
-  held.resolve(); await (await response).finished(); await rendered(page);
-  assert.equal(await inspector.count(), 1);
-  await page.getByText("Synthetic pageable graph search fixture.", { exact: true }).waitFor();
-  await page.getByText("5 nodes", { exact: false }).waitFor();
-  await inspector.getByRole("button", { name: "Load neighbors into graph", exact: true }).click();
-  await page.getByText("5 nodes", { exact: false }).waitFor();
-  await record(page, `graph-${trigger}-selection`);
+  await page.goto(`${base}/graph`);
+  const search = page.getByRole("combobox", { name: "Search entities", exact: true });
+  await search.fill("har");
+  await page.waitForRequest(request => new URL(request.url()).searchParams.get("q") === "har");
+  await search.fill("lake");
+  await page.getByRole("option", { name: /Lakeshore Pharmacy/ }).waitFor();
+  held.resolve(); await page.waitForLoadState("networkidle"); await rendered(page);
+  assert.deepEqual(await page.getByRole("option").allTextContents(), ["Lakeshore PharmacyOrganization120 documents"]);
+});
+
+test("a graph URL with one exact name opens that entity, and an unmatched one offers documents", async t => {
+  const { page } = await fixturePage(t);
+  await page.goto(`${base}/graph?q=lakeshore%20PHARMACY`);
+  await page.waitForURL(/\/graph\?focus=nb-pharmacy$/);
+  await page.getByText("Lakeshore Pharmacy: 5 links", { exact: false }).waitFor();
+  await page.goto(`${base}/graph?q=Port%20Ellery`);
+  // Two results contain the text, but only one name equals it.
+  await page.waitForURL(/\/graph\?focus=nb-places-1$/);
+  await page.goto(`${base}/graph?q=Parties%20fixture`);
+  const search = page.getByRole("combobox", { name: "Search entities", exact: true });
+  await page.getByRole("listbox", { name: "8 results", exact: true }).waitFor();
+  assert.equal(await search.inputValue(), "Parties fixture");
+  assert.match(page.url(), /\/graph\?q=Parties%20fixture$/);
+  await search.fill("unmatched-entity");
+  await page.getByText("No match for ‘unmatched-entity’.", { exact: true }).waitFor();
+  // The link stays reachable from the keyboard.
+  await search.press("Tab");
+  assert.equal(await page.locator(":focus").textContent(), "Search documents instead");
+  assert.equal(await page.getByRole("link", { name: "Search documents instead", exact: true }).getAttribute("href"),
+    "/documents?q=unmatched-entity");
 });
 
 test("snapshot-rejected SSE answers do not display obsolete supported claims", async t => {
@@ -439,7 +507,8 @@ test("a whitespace-only graph URL does not search the archive", async t => {
     if (new URL(request.url()).pathname === "/api/graph/search") searches.push(request.url());
   });
   await page.goto(`${base}/graph?q=%20%20`);
-  await page.getByText("4 nodes", { exact: false }).last().waitFor();
+  await page.getByRole("region", { name: "Most connected", exact: true }).getByRole("link").first().waitFor();
   await page.waitForLoadState("networkidle");
-  assert.deepEqual(searches, []);
+  // Only the empty-query Most connected list is requested.
+  assert.deepEqual(searches.map(url => new URL(url).searchParams.get("q")), [""]);
 });

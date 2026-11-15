@@ -147,7 +147,9 @@ class ProtocolErrorPartialTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(prompts), 4)
         self.assertEqual(result['claim_ledger']['candidate_text'], '\n'.join(lines[:4]))
         [omitted] = result['verification']['partial']['omitted_units']
-        self.assertEqual((omitted['claim'], omitted['omission_reason']), (lines[4], 'audit_reply_invalid'))
+        # After its one correction, the unknown handle rejects only its own unit (#215).
+        self.assertEqual((omitted['claim'], omitted['status'], omitted['omission_reason']),
+                         (lines[4], 'unsupported', 'source_rejection'))
         self.assertNotIn('not-offered', json.dumps(result))
 
 

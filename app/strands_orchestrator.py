@@ -13,6 +13,7 @@ import asyncio
 import time
 from openai import Timeout
 import copy
+from collections import Counter
 from typing import Any
 
 from app.config import settings
@@ -186,15 +187,22 @@ class StrandsQueryOrchestrator:
                 if 'claude' in (settings.strands_model or settings.gemini_model).lower() else None)
         if not text or not text.strip():
             return None
+        misses = []
         try:
+            # After the one correction, an unknown handle rejects only its unit, not the whole batch.
             parsed = source_audit.parse_decisions(text, payload['expected_unit_ids'],
                                                  allowed_span_ids={span['span_id'] for span in spans},
-                                                 source_scope=scope_view)
+                                                 source_scope=scope_view, unknown_handle_misses=misses,
+                                                 reject_unknown_handle_units=payload['protocol_correction'] is not None)
             source_audit.validate_scope_consistency(parsed)
             return parsed
         except source_audit.SourceAuditProtocolError as exc:
             logger.warning('Strands stage=source_auditor outcome=invalid_decisions reason=%s', exc.reason)
             return {'audit_protocol_error': exc.reason}
+        finally:
+            if misses:
+                logger.warning('Strands stage=source_auditor unknown_source_handles=%s offered=%d',
+                               json.dumps(dict(sorted(Counter(misses).items()))), len(spans))
 
 
     async def read_question_sources(self, payload, *, source_scope=None):
@@ -406,7 +414,7 @@ The application renders the list. Each entire observation is audited as one atom
 
 Rules:
 - Rebuild the smallest complete answer to the user's direct question. Retain only the identifying facts needed to answer it. Omit ancillary fields even when the prior audit supported them; source support alone is not a reason to keep an unrequested detail.
-- Resolve each unsupported claim using its rejection_reasons and reference_diagnostics: missing_evidence means no supporting passage was selected; invalid_reference identifies an unusable source reference, with the precise failure in reference_diagnostics. Use a supplied passage supporting the complete observation or omit the assertion. value_mismatch includes structured value_mismatches listing missing dates, values and units: use their full supporting passages or remove the unsupported assertion; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
+- Resolve each unsupported claim using its rejection_reasons and reference_diagnostics: missing_evidence means no supporting passage was selected; invalid_reference identifies an unusable source reference, with the precise failure in reference_diagnostics. Use a supplied passage supporting the complete observation or omit the assertion. audit_reply_invalid means the audit could not check the claim: treat it as not established, like a rejected claim. unknown_source_handle means the audit cited a passage that was not supplied. value_mismatch includes structured value_mismatches listing missing dates, values and units: use their full supporting passages or remove the unsupported assertion; invalid_attribution requires removing the inline citation. If a claim cannot be repaired from the evidence, omit it. Do not repeat a rejected claim unchanged.
 - Write facts without inline citations, source titles or document links. The source audit attaches authoritative citations after validation.
 - Do not write headings, field inventories or numeric section labels. Preserve factual numbers only when supported.
 - Keep the direct answer focused. Remove unrelated historical records and detailed subfields when the user only asked which items are documented.

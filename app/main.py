@@ -1154,11 +1154,16 @@ async def query_stream(req: QueryRequest):
 # --- Graph Browsing ---
 
 @app.get("/graph/search")
-async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0):
+async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0,
+                       sort: str = "relevance", exclude_documents: bool = False):
     try:
-        page = await graph_store.search_nodes(q, node_type=type, limit=limit, offset=offset, include_page=True)
+        page = await graph_store.search_nodes(q, node_type=type, limit=limit, offset=offset, include_page=True,
+                                              sort=sort, exclude_documents=exclude_documents, graph_fields=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _, owner = await graph_store.get_owner()
+    for row in page["results"]:
+        row["is_owner"] = owner is not None and row["properties"].get("uuid") == owner
     return {"query": q, "type": type, **page}
 
 

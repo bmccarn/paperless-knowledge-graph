@@ -4,7 +4,7 @@ import { TimelineDates, TimelineEvent, TimelineReceipt } from "@/components/time
 import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question-coverage";
 import { formatAnswerInline } from "@/lib/answer-format";
 
-import { useState, useRef, useEffect, useCallback, Suspense } from "react";
+import { useState, useRef, useEffect, useEffectEvent, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -348,13 +348,6 @@ function QueryContent() {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
-  useEffect(() => {
-    if (initialQuery) {
-      handleSubmit(initialQuery);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleNewConversation = () => {
     invalidateView();
     activeConversation.current = null;
@@ -547,6 +540,22 @@ function QueryContent() {
     }
   };
 
+  const submitInitialQuery = useEffectEvent((question: string) => handleSubmit(question));
+
+  useEffect(() => {
+    // Let Strict Mode cancel its rehearsal before consuming the question.
+    const timer = setTimeout(() => {
+      const url = new URL(window.location.href);
+      const question = url.searchParams.get("q");
+      if (!question) return;
+      url.searchParams.delete("q");
+      // Consume the question before any request so a reload cannot submit it again.
+      window.history.replaceState(null, "", url);
+      submitInitialQuery(question);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [initialQuery]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -606,8 +615,8 @@ function QueryContent() {
     }
   };
 
-  // Conversation list component (shared between desktop sidebar and mobile sheet)
-  const ConversationList = () => (
+  // Shared conversation list markup for the desktop sidebar and mobile sheet
+  const renderConversationList = () => (
     <>
       <div className="p-2">
         <Button variant="outline" size="sm" className="w-full gap-2 text-xs min-h-[44px] md:min-h-0" onClick={handleNewConversation}>
@@ -674,7 +683,7 @@ function QueryContent() {
               <History className="h-3.5 w-3.5" /> Conversations
             </span>
           </div>
-          <ConversationList />
+          {renderConversationList()}
         </div>
       )}
 
@@ -687,7 +696,7 @@ function QueryContent() {
             </SheetTitle>
             <SheetDescription className="sr-only">Open, rename, or delete a saved conversation.</SheetDescription>
           </SheetHeader>
-          <ConversationList />
+          {renderConversationList()}
         </SheetContent>
       </Sheet>
 

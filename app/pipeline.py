@@ -1,3 +1,4 @@
+import math
 import re
 import asyncio
 import logging
@@ -52,16 +53,16 @@ async def purge_document_index(doc_id: int) -> None:
         await asyncio.to_thread(invalidate_on_sync)
 
 
-async def purge_stale_document(doc_id: int, *, held: bool = False) -> dict:
+async def purge_stale_document(doc_id: int, *, held: bool = False, skip_tag_ids: set[int] | None = None) -> dict:
     """Keep snapshot omissions unless Paperless confirms they are ineligible."""
-    if not held and not await paperless_client.should_purge_document(doc_id):
+    if not held and not await paperless_client.should_purge_document(doc_id, skip_tag_ids=skip_tag_ids):
         logger.warning("Keeping document %s omitted from snapshot: still eligible in Paperless", doc_id)
         return {"doc_id": doc_id, "status": "skipped", "reason": "still eligible in Paperless"}
     await purge_document_index(doc_id)
     return {"doc_id": doc_id, "status": "processed", "reason": "removed stale document"}
 
 
-async def process_document(doc: dict, *, force: bool = False) -> dict:
+async def process_document(doc: dict, *, force: bool = False, skip_tag_ids: set[int] | None = None) -> dict:
     """Process a single Paperless document through the full pipeline."""
     doc_id = doc["id"]
     title = doc.get("title", "")
@@ -69,7 +70,8 @@ async def process_document(doc: dict, *, force: bool = False) -> dict:
     content_hash = PaperlessClient.content_hash(content)
     fingerprint = PaperlessClient.ingestion_fingerprint(doc)
 
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
+    if skip_tag_ids is None:
+        skip_tag_ids = await paperless_client.get_skip_tag_ids()
     if paperless_client.has_any_tag(doc, skip_tag_ids):
         logger.info(f"Doc {doc_id} has a configured skip tag, removing any KG index")
         await purge_document_index(doc_id)
@@ -612,9 +614,16 @@ async def _process_medical(doc_id, doc_node_id, data, source_props):
     await _link(doc_id, doc_node_id, data.get("ordering_physician"), "Person", "AUTHORED_BY", source_props, {"Person"})
 
     for test in (data.get("tests") or []):
-        if not test.get("name"):
+        if not isinstance(test, dict) or not test.get("name"):
             continue
-        test_confidence = float(test.get("confidence", 1.0))
+        # A null (unquoted), bool or non-numeric model confidence counts as missing.
+        raw_confidence = test.get("confidence")
+        try:
+            test_confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            test_confidence = 1.0
+        if isinstance(raw_confidence, bool) or not math.isfinite(test_confidence):
+            test_confidence = 1.0
         if test_confidence < CONFIDENCE_THRESHOLD:
             logger.debug(f"Skipping low-confidence test result: {test.get('name')} (conf={test_confidence})")
             continue
@@ -650,6 +659,8 @@ async def _process_financial(doc_id, doc_node_id, data, source_props):
 async def _process_contract(doc_id, doc_node_id, data, source_props):
     """Process contract with specific relationship types (PARTY_TO, CONTRACTED_WITH)."""
     for party in (data.get("parties") or []):
+        if not isinstance(party, dict):
+            continue
         name = coerce_text(party.get("name"))
         is_org = any(w in name.lower() for w in ["inc", "llc", "corp", "company", "ltd", "agency", "dept", "department"])
         role = coerce_text(party.get("role", "")).lower()
@@ -698,6 +709,8 @@ async def _process_property(doc_id, doc_node_id, data, source_props):
     if address and _is_valid_entity_name(address):
         await _attach(doc_node_id, "Address", {"full_address": address}, source_props, "LOCATED_AT")
     for party in (data.get("parties") or []):
+        if not isinstance(party, dict):
+            continue
         await _link(doc_id, doc_node_id, party.get("name"), "Person", "MENTIONS", source_props)
 
 
@@ -709,6 +722,8 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
     await _link(doc_id, doc_node_id, data.get("base"), "Location", "STATIONED_AT", source_props, _PLACE)
 
     for rating in (data.get("disability_ratings") or []):
+        if not isinstance(rating, dict):
+            continue
         condition = rating.get("condition", "")
         percentage = rating.get("percentage", "")
         if not condition:
@@ -754,6 +769,8 @@ async def _process_military(doc_id, doc_node_id, data, source_props):
                                        {**source_props, "status": status})
 
     for benefit in (data.get("benefits") or []):
+        if not isinstance(benefit, dict):
+            continue
         benefit_type = benefit.get("benefit_type", "")
         if not benefit_type:
             continue
@@ -819,7 +836,7 @@ def _count_entities(extracted: dict) -> int:
     return count
 
 
-async def _process_document_batch(docs, force_ids, progress_callback, cancel_event):
+async def _process_document_batch(docs, force_ids, progress_callback, cancel_event, skip_tag_ids):
     semaphore = asyncio.Semaphore(max(1, settings.max_concurrent_docs))
 
     async def process(doc):
@@ -830,7 +847,7 @@ async def _process_document_batch(docs, force_ids, progress_callback, cancel_eve
                 if progress_callback:
                     progress_callback("current", {"title": doc.get("title", f"Document {doc['id']}")})
                 try:
-                    result = await process_document(doc, force=doc["id"] in force_ids)
+                    result = await process_document(doc, force=doc["id"] in force_ids, skip_tag_ids=skip_tag_ids)
                 except Exception as exc:
                     logger.exception("Unexpected error processing document %s", doc["id"])
                     result = {"doc_id": doc["id"], "status": "error", "error": str(exc)}
@@ -854,12 +871,12 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
     cancel_event = cancel_event or asyncio.Event()
     start_time = time.time()
     scan_started_at = datetime.now(timezone.utc)
+    skip_tag_ids = await paperless_client.get_skip_tag_ids(refresh=True)
     last_sync = await embeddings_store.get_last_sync()
     changed = [] if force else await paperless_client.get_all_documents(modified_after=last_sync)
     # This reconciliation was already required for deletion detection. Use the
     # same complete snapshot to discover interrupted replacements across stores.
     all_docs = await paperless_client.get_all_documents()
-    skip_tag_ids = await paperless_client.get_skip_tag_ids()
     indexable, held = paperless_client.partition_indexable_documents(all_docs, skip_tag_ids)
     current = {int(doc["id"]): doc for doc in indexable}
     graph_ids = await graph_store.get_all_document_ids()
@@ -879,7 +896,7 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
 
     if progress_callback:
         progress_callback("init", {"total_docs": len(docs) + len(deleted_ids)})
-    results = await _process_document_batch(docs, force_ids, progress_callback, cancel_event)
+    results = await _process_document_batch(docs, force_ids, progress_callback, cancel_event, skip_tag_ids)
     deleted_count = 0
     for doc_id in sorted(deleted_ids):
         if cancel_event.is_set():
@@ -888,7 +905,7 @@ async def _ingest_documents(*, force=False, progress_callback=None, cancel_event
             if progress_callback:
                 progress_callback("current", {"title": f"Removing stale document #{doc_id}"})
             try:
-                result = await purge_stale_document(doc_id, held=doc_id in held_ids)
+                result = await purge_stale_document(doc_id, held=doc_id in held_ids, skip_tag_ids=skip_tag_ids)
                 deleted_count += result["status"] == "processed"
             except Exception as exc:
                 logger.exception("Failed to purge stale document %s", doc_id)

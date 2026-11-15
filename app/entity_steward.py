@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 import math
 import logging
-import re
 from typing import Any
 
 from app.config import settings
 from app.embeddings import embeddings_store
+from app.entity_policy import extract_identifiers, name_key
 from app.graph import graph_store
 from app.strands_orchestrator import strands_orchestrator
 
@@ -137,14 +137,17 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     label = str(candidate.get("label") or "")
     left_name = str(left.get("name") or "")
     right_name = str(right.get("name") or "")
-    left_norm = normalize_name(left_name)
-    right_norm = normalize_name(right_name)
+    left_norm = name_key(left_name, label)
+    right_norm = name_key(right_name, label)
     fuzzy = float(candidate.get("score") or 0) / 100.0
     exact_name = left_norm == right_norm and bool(left_norm)
     compatible_type = bool(label)
     left_ids = extract_identifiers(left.get("properties") or {})
     right_ids = extract_identifiers(right.get("properties") or {})
-    shared_identifiers = sorted(set(left_ids) & set(right_ids))
+    shared_identifiers = sorted(
+        f"{key}:{value}" for key in left_ids.keys() & right_ids.keys()
+        for value in set(left_ids[key]) & set(right_ids[key])
+    )
     risk = "high" if label in HIGH_RISK_LABELS else "low" if label in LOW_RISK_LABELS else "medium"
 
     score = 0.25 + 0.35 * fuzzy
@@ -191,8 +194,8 @@ def should_ask_agent(deterministic: dict[str, Any]) -> bool:
 
 def choose_recommendation(deterministic: dict[str, Any], agent_review: dict[str, Any] | None) -> str:
     det_rec = deterministic.get("recommendation") or "review"
-    if not agent_review:
-        return det_rec
+    if not isinstance(agent_review, dict) or not agent_review:
+        return "review" if should_ask_agent(deterministic) else det_rec
     agent_rec = str(agent_review.get("recommendation") or "review").lower()
     if isinstance(agent_review.get("confidence"), bool):
         return "review"
@@ -216,33 +219,6 @@ def recommendation_to_decision(recommendation: str) -> str:
         "split": "suggest_split",
         "review": "suggest_review",
     }.get(recommendation, "suggest_review")
-
-
-def normalize_name(value: str) -> str:
-    text = value.lower()
-    text = re.sub(r"\b(inc|llc|l\.l\.c|co|company|corp|corporation|the)\b", " ", text)
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    return " ".join(text.split())
-
-
-def extract_identifiers(properties: dict[str, Any]) -> list[str]:
-    identifiers = []
-    for key, value in properties.items():
-        key_l = str(key).lower()
-        if key_l in {"uuid", "name", "title", "description"}:
-            continue
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            text = str(item)
-            if not text or len(text) < 4:
-                continue
-            if any(signal in key_l for signal in ("policy", "account", "vin", "email", "phone", "ssn", "number", "id")):
-                identifiers.append(f"{key_l}:{normalize_identifier(text)}")
-    return [i for i in dict.fromkeys(identifiers) if len(i.split(":", 1)[-1]) >= 4]
-
-
-def normalize_identifier(value: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9@.-]+", "", value).lower()
 
 
 entity_steward = EntitySteward()

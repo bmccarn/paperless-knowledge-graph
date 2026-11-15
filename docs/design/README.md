@@ -39,7 +39,7 @@ This folder holds the reference material for the interface redesign in direction
 
 ## Reference limits
 
-The answer mockup opens directly from disk without network access. Its fonts and styles are embedded. It is a static visual reference: controls, claim selection, and source links do not implement the application behavior. On phones, claim 2 is the fixed active example. The graph wireframes use the local `graph/wf.css` file and system fonts.
+The answer mockup opens directly from disk without network access. Its fonts and styles are embedded. It is a static visual reference: controls, claim selection, and source links do not implement the application behavior. On phones, claim 2 is the fixed active example. The graph wireframes use the local `graph/wf.css` file and system fonts. The PNG files in `graph/screenshots/` are a snapshot from the pull request where the owner approved the graph mockup. Nothing regenerates them, so after a later change to `graph/mockup.html`, open the HTML file instead.
 
 The mockup establishes the visual direction, not completion of the quality bar. Later tickets implement all seven answer states, interaction, accessibility, and the final layouts. The specification controls differences such as sidebar width, phone targets, and source metadata. Page counts in the mockup are invented decoration; the answer API does not supply page numbers.
 

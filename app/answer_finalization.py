@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from collections import Counter
-from itertools import zip_longest
+from itertools import islice, zip_longest
 import re
 import unicodedata
 from datetime import date, datetime, timezone
@@ -20,7 +20,7 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from app.answer_structure import audit_context, is_colon_label, strong_label_offsets, supported_revision
-from app.source_audit import PROTOCOL_ERRORS, VALID_TEMPORAL_PAIRS
+from app.source_audit import AUDIT_BATCH_SIZE, PROTOCOL_ERRORS, VALID_TEMPORAL_PAIRS
 from app.answer_observations import ObservationCandidate, ObservationValidationError
 from app.query_metrics import CURRENT_QUERY_METRICS
 from app.timeline import project_timeline
@@ -949,11 +949,16 @@ class AnswerFinalizer:
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or type(concurrency) is not int or concurrency < 1:
             raise ValueError("Audit timeout and concurrency must be positive")
         self.concurrency = concurrency
+        # Set once an audit has sent the sources, so the provider cache holds them for later calls.
+        self._sources_sent = False
 
     def _audit_timeout(self, candidate, observations=None):
         units = observations.units() if observations else answer_units(candidate)
-        batches = math.ceil(len(units) / 4)
-        return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
+        batches = math.ceil(len(units) / AUDIT_BATCH_SIZE)
+        if self._sources_sent:
+            return self.timeout_seconds * max(1, math.ceil(batches / self.concurrency))
+        # The first batch runs alone, one extra wave before the rest.
+        return self.timeout_seconds * (1 + math.ceil(max(0, batches - 1) / self.concurrency))
 
     async def _audit(self, question, answer, pack, plan, declarations=(), *, diagnostics=None, observations=None, source_reservations=None, progress=None):
         diagnostics = diagnostics if diagnostics is not None else []
@@ -990,7 +995,7 @@ class AnswerFinalizer:
             # is bounded answer prose, not an additional source of evidence.
             audit_plan = {**plan, "source_date_order": self.date_order, "answer_context": context,
                           "unitization": observations.strategy if observations else 'prose_v1'}
-            batches = [units[offset:offset + 4] for offset in range(0, len(units), 4)]
+            batches = [units[offset:offset + AUDIT_BATCH_SIZE] for offset in range(0, len(units), AUDIT_BATCH_SIZE)]
             metrics = CURRENT_QUERY_METRICS.get()
             if metrics is not None:
                 metrics.audit_batches += len(batches)
@@ -1011,8 +1016,8 @@ class AnswerFinalizer:
                             for index in range(len(batches)))
             pending = iter(enumerate(batches))
             results = [None] * len(batches)
-            async def worker():
-                for index, batch in pending:
+            async def worker(queue=pending):
+                for index, batch in queue:
                     protocol = diagnostics[index]
                     async def invoke(audit_request_plan):
                         protocol.update(attempts=protocol["attempts"] + 1, status="running")
@@ -1045,6 +1050,12 @@ class AnswerFinalizer:
                     protocol.update(status="invalid" if errors else "corrected" if protocol["attempts"] == 2 else "valid",
                                     final_errors=errors)
                     results[index] = (raw, protocol)
+            if not self._sources_sent:
+                # Calls started together cannot read each other's cache writes. The first batch
+                # writes the shared sources; the rest of this audit and later audits then read them.
+                self._sources_sent = True
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(worker(islice(pending, 1)))
             async with asyncio.TaskGroup() as group:
                 for _ in range(min(self.concurrency, len(batches))):
                     group.create_task(worker())

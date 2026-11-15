@@ -286,7 +286,7 @@ async def execute(dataset_path, manifest, output):
     native_text, native_audit, native_model = auditor._text_agent, auditor.audit_answer_units, auditor._model
     case_audits = []
 
-    async def captured_text(name, system_prompt, prompt, *, response_format=None):
+    async def captured_text(name, system_prompt, prompt, *, response_format=None, cache_prefix_chars=None):
         if len(attempts) >= manifest['max_provider_attempts']:
             raise RuntimeError('Evaluation attempt budget exhausted')
         attempt = dict(index=len(attempts), name=name, system_prompt=system_prompt,
@@ -296,7 +296,8 @@ async def execute(dataset_path, manifest, output):
         token = CURRENT_ATTEMPT.set(attempt)
         started = time.monotonic()
         try:
-            attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format)
+            attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format,
+                                                  cache_prefix_chars=cache_prefix_chars)
             return attempt['response']
         except BaseException as exc:
             attempt['exception_type'] = type(exc).__name__

@@ -32,14 +32,20 @@ def load_steward(rows):
     async def get_candidates(ignored, limit):
         return [copy.deepcopy(c) for c in candidates if tuple(sorted((c['left']['uuid'], c['right']['uuid']))) not in ignored][:limit]
 
-    graph = SimpleNamespace(get_entity_review_candidates=get_candidates)
+    async def get_entities_by_type(label):
+        return [dict(node['properties'], uuid=node['uuid'], name=node['name']) for c in candidates
+                if c['label'] == label for node in (c['left'], c['right'])]
+
+    graph = SimpleNamespace(get_entity_review_candidates=get_candidates, get_entities_by_type=get_entities_by_type)
     agent = SimpleNamespace(review_entity_candidate=AsyncMock(return_value=dict(recommendation='merge', confidence=.99, risk='low')))
     path = Path(__file__).resolve().parents[1] / 'app/entity_steward.py'
     tree = ast.parse(path.read_text(), str(path))
     tree.body = [n for n in tree.body if not (isinstance(n, ast.ImportFrom) and (n.module or '').startswith('app.') and n.module != 'app.entity_policy')]
     module = ModuleType('isolated_steward_history')
-    module.__dict__.update(settings=SimpleNamespace(entity_steward_candidate_limit=40), embeddings_store=ledger,
-                           graph_store=graph, strands_orchestrator=agent)
+    module.__dict__.update(settings=SimpleNamespace(entity_steward_candidate_limit=40, entity_steward_auto_merge='shadow',
+                                                    entity_steward_auto_merge_max_per_run=10),
+                           embeddings_store=ledger, graph_store=graph, strands_orchestrator=agent,
+                           entity_resolver=SimpleNamespace(), EntityMergeProhibited=ValueError, AutoMergeBlocked=ValueError)
     exec(compile(tree, str(path), 'exec'), module.__dict__)
     return module, ledger, agent
 

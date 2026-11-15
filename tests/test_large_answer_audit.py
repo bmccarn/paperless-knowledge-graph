@@ -133,7 +133,8 @@ class LargeAnswerAuditTests(unittest.IsolatedAsyncioTestCase):
     def test_deadline_scales_past_former_ceiling(self):
         finalizer = AnswerFinalizer(None, timeout_seconds=10, concurrency=4)
         candidate = ObservationCandidate((TEXT,) * 155)
-        self.assertEqual(finalizer._audit_timeout(candidate.text, candidate), 100)
+        # 39 batches: the first alone, then 38 in ten waves of four.
+        self.assertEqual(finalizer._audit_timeout(candidate.text, candidate), 110)
 
 
 class LargeInventoryPipelineTests(unittest.IsolatedAsyncioTestCase):

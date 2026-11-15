@@ -1,5 +1,7 @@
 import asyncio
+import copy
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from contextlib import ExitStack
 import httpx
@@ -104,6 +106,50 @@ class MutationAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(drained.wait(), timeout=1)
                 await asyncio.sleep(0)
             self.assertTrue(all(t["status"] == "completed" for t in main._tasks.values()))
+
+    async def test_merging_steward_run_holds_admission_and_invalidates_caches_after(self):
+        import app.entity_steward as steward_module
+        started, release = asyncio.Event(), asyncio.Event()
+        invalidations = []
+        async def merge(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return {}
+        nodes = [{"uuid": "a", "name": "Example, Inc.", "source_doc_ids": [1]},
+                 {"uuid": "b", "name": "Example Inc", "source_doc_ids": [2]}]
+        graph = SimpleNamespace(
+            get_entities_by_type=AsyncMock(side_effect=lambda label: copy.deepcopy(nodes) if label == "Organization" else []),
+            get_entity_review_candidates=AsyncMock(return_value=[]))
+        resolver = SimpleNamespace(merge_entities=AsyncMock(side_effect=merge), auto_merge_check=AsyncMock(
+            return_value={"blocker": "", "primary_uuid": "a", "duplicate_uuid": "b"}))
+        agent = SimpleNamespace(review_entity_candidate=AsyncMock(
+            return_value={"recommendation": "merge", "confidence": .9, "risk": "low"}))
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(main, "_tasks", {}))
+            stack.enter_context(patch.object(main, "_schedule_task_cleanup"))
+            stack.enter_context(patch.object(main, "invalidate_on_sync", lambda: invalidations.append("cleared")))
+            for name, value in (("graph_store", graph), ("entity_resolver", resolver), ("strands_orchestrator", agent),
+                                ("embeddings_store", SimpleNamespace(get_entity_review_decisions=AsyncMock(return_value=[])))):
+                stack.enter_context(patch.object(steward_module, name, value))
+            stack.enter_context(patch.object(steward_module.settings, "entity_steward_auto_merge", "on"))
+            task_id = await main._run_entity_steward_task(reason="periodic")
+            await asyncio.wait_for(started.wait(), timeout=1)
+            cleared_before_merge = len(invalidations)
+            try:
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                    result = await client.post("/entity-review/merge", json={"primary_uuid": "a", "duplicate_uuid": "c"})
+                    self.assertEqual(result.status_code, 409)
+                with self.assertRaises(main.HTTPException):
+                    await main._run_sync_task()
+            finally:
+                release.set()
+            for _ in range(100):
+                if main._tasks[task_id]["status"] != "running":
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(main._tasks[task_id]["status"], "completed")
+            self.assertEqual(main._tasks[task_id]["result"]["auto_merged"], 1)
+            self.assertGreater(len(invalidations), cleared_before_merge)
 
     async def test_steward_cannot_start_while_ingestion_or_repair_is_running(self):
         for task_type in ("sync", "reindex", "repair"):

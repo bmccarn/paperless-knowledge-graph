@@ -106,7 +106,7 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             return AsyncOpenAI(http_client=client, **kwargs)
 
         self.patches = [patch.object(module, "Agent", Agent),
-            patch.object(module, "OpenAIModel", OpenAIModel),
+            patch.object(module, "OpenAIModel", module.with_cache_control(OpenAIModel)),
             patch.object(module, "STRANDS_AVAILABLE", True),
             patch.object(module.settings, "strands_enabled", True),
             patch("strands.models.openai.openai.AsyncOpenAI", side_effect=client_factory)]
@@ -122,10 +122,11 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_audit_batches_share_the_complete_source_prefix_on_the_wire(self):
         spans = evidence_spans(PACK)
         plan = {'evaluated_at': '2026-01-01', 'answer_context': QUOTE}
-        for unit_id in ('u1', 'u2'):
-            result = await self.orchestrator.audit_answer_units('What is recorded?',
-                [{'id': unit_id, 'text': QUOTE}], spans, plan)
-            self.assertEqual(result['assessments'][0]['unit_id'], unit_id)
+        with patch.object(module.settings, 'strands_model', 'claude-sonnet-5-5'):
+            for unit_id in ('u1', 'u2'):
+                result = await self.orchestrator.audit_answer_units('What is recorded?',
+                    [{'id': unit_id, 'text': QUOTE}], spans, plan)
+                self.assertEqual(result['assessments'][0]['unit_id'], unit_id)
         prompts = []
         for request in self.requests:
             content = request['messages'][-1]['content']
@@ -137,8 +138,18 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertLess(prompt.index('"source_spans"'), prompt.index('"expected_unit_ids"'))
             self.assertLess(prompt.index('"source_spans"'), prompt.index('"units"'))
             prompts.append(prompt.encode('utf-8'))
+            # One cache breakpoint, at the end of the shared sources and nowhere else.
+            self.assertEqual([block.get('cache_control') for block in content], [{'type': 'ephemeral'}, None])
+            self.assertEqual(content[0]['text'].encode('utf-8'), prefix)
         self.assertNotEqual(prompts[0], prompts[1])
         self.assertEqual(self.requests[0]['messages'][0], self.requests[1]['messages'][0])
+        self.assertEqual(self.requests[0]['response_format'], self.requests[1]['response_format'])
+
+    async def test_non_anthropic_audit_route_sends_no_cache_marker(self):
+        with patch.object(module.settings, 'strands_model', ''), patch.object(module.settings, 'gemini_model', 'gemini-3.8-flash'):
+            await self.orchestrator.audit_answer_units('What is recorded?', [{'id': 'u1', 'text': QUOTE}],
+                                                       evidence_spans(PACK), {'evaluated_at': '2026-01-01'})
+        self.assertEqual([block.get('cache_control') for block in self.requests[0]['messages'][-1]['content']], [None])
 
     @contextmanager
     def public_queries(self):
@@ -469,9 +480,10 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_editor_wire_schema_is_request_owned_and_other_helpers_stay_unchanged(self):
         self.reject_first_audit = True
-        repaired, planned = await asyncio.gather(
-            AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK),
-            self.orchestrator.plan_query('Unrelated plan?', 'strict'))
+        with patch.object(module.settings, 'strands_model', 'claude-sonnet-5-5'):
+            repaired, planned = await asyncio.gather(
+                AnswerFinalizer(self.orchestrator, self.orchestrator).finalize('What is recorded?', 'An unsupported draft.', PACK),
+                self.orchestrator.plan_query('Unrelated plan?', 'strict'))
         self.assertTrue(repaired['finalization']['answer_verified'])
         self.assertEqual(planned, {'ok': True})
         structured = [r for r in self.requests if 'response_format' in r]
@@ -488,6 +500,11 @@ class StrandsOutputLimitTests(unittest.IsolatedAsyncioTestCase):
                 fields = audit_schema['properties']['assessments']['items']['properties']
                 self.assertEqual(list(fields['checks']['properties']), ['subject', 'predicate', 'record_role', 'conditions', 'temporal', 'comparison'])
                 self.assertNotIn('not_applicable', fields['checks']['properties']['predicate']['enum'])
+        # The repair audit sends the same marked source part and schema as the first audit.
+        audits = [r for r in structured if r not in editor_requests]
+        self.assertEqual(len({json.dumps(r['messages'][-1]['content'][0]) for r in audits}), 1)
+        self.assertTrue(all(r['messages'][-1]['content'][0]['cache_control'] for r in audits))
+        self.assertEqual(len({json.dumps(r['response_format']) for r in audits}), 1)
         self.assertEqual(format['type'], 'json_schema')
         self.assertTrue(format['json_schema']['strict'])
         schema = format['json_schema']['schema']

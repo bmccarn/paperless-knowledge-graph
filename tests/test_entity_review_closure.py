@@ -71,6 +71,13 @@ class Graph:
 class Ledger:
     def __init__(self):
         self.rows = []
+        self.embeddings = {}
+
+    async def store_entity_embedding(self, uuid, name, kind="", content="", *, only_missing=False):
+        if only_missing and uuid in self.embeddings:
+            return False
+        self.embeddings[uuid] = (name, kind, content)
+        return True
 
     async def get_entity_review_decisions(self):
         return copy.deepcopy(self.rows)

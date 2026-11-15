@@ -9,7 +9,37 @@ Source-window extraction and source-aware verification precede identity resoluti
 - `entity_resolver.py`: a unique compatible canonical orthographic match, human-reviewed canonical pair/alias, or actual explicit source co-reference can select an identity. Multiple matches abstain into a source-local ambiguous identity rather than choose the first result. Human vetoes are checked before every match and explicit UUID merge. Short acronyms/partial person names need source scope or reviewed proof. Similarity remains available to steward review suggestions, not mutations.
 - `entity_bindings.py` / `pipeline.py`: one document-lifetime registry binds each accepted identity to UUID and final graph label. Legacy metadata can reference but cannot recreate/retype rejected or ambiguous identities. Relationship endpoints and entity vectors consume this registry; no search-based fallback or repeated name resolution. Context-local metadata bindings reset even on error. Errors prevent the document completion marker.
 - `graph.py`: candidate reads include all canonical matches and provenance. Source membership is updated on use and removed on document replacement. Raw aliases remain searchable for compatibility but do not authorize identity.
-- `POST /resolve-entities` (existing bulk endpoint): now non-mutating identity-review reporting, `total_merged=0`. Co-occurrence or even identical names cannot safely merge existing UUIDs. Explicit human review merge is still supported and guarded by no-merge decisions.
+- `POST /resolve-entities` (existing bulk endpoint): now non-mutating identity-review reporting, `total_merged=0`. Co-occurrence or even identical names cannot safely merge existing UUIDs, with one owner-approved exception: the steward's automatic merge of exact-duplicate low-risk pairs (below). Explicit human review merge is still supported and guarded by no-merge decisions.
+
+## Automatic merge of exact-duplicate low-risk entities
+
+Ingestion already binds a new mention to an existing node when their names are equal under `name_key`. The steward may therefore merge two existing nodes that ingestion would treat as one identity. The setting `ENTITY_STEWARD_AUTO_MERGE` is `off`, `shadow` (the default) or `on`.
+
+A pair merges only if every rule holds. `auto_merge_blocker` in `entity_policy.py` checks the node facts (rules 1-2 and 4-10). The resolver checks every rule again on fresh reads under its mutation lock before it merges.
+
+1. Both nodes have exactly one label, the same one, in `LOW_RISK_LABELS` (Organization, Product, System, DocumentRef, Location).
+2. Their names are equal under `name_key` for that label.
+3. Exactly two nodes of the whole label have that `name_key`. Groups of three or more stay in the human queue.
+4. Neither node is `ambiguous`, `isolated` or `quarantined`.
+5. Neither node has `review_anchor = true`.
+6. Neither name is context-bound.
+7. `identity_hints` are both empty or equal.
+8. `source_doc_ids` do not overlap.
+9. No direct edge connects the pair.
+10. The identifier properties in `IDENTIFIER_PROPERTIES` (other than `identity_hints`) have equal normalized values on both nodes; a value on one side only also blocks.
+11. The pair has no terminal decision row and no `legacy_unknown` row.
+12. `merge_is_prohibited` and `alias_replay_prohibited` both pass.
+13. The steward's agent review returns a merge verdict with numeric confidence of at least 0.82 and low risk. Any other answer, an empty answer, an error or a timeout blocks. The agent can block a merge and can never authorize one.
+14. The run is under `ENTITY_STEWARD_AUTO_MERGE_MAX_PER_RUN` (default 10, at most 100). The cap counts agent reviews, so it also bounds model calls; pairs reviewed longest ago go first.
+
+The survivor is the node with more `source_doc_ids`, then the node on the current `resolution_policy`, then the smaller UUID.
+
+- `shadow` writes `suggest_auto_merge` (`automated_suggestion`, `entity_steward`) with the proposed survivor and merges nothing. The review page shows it through the existing suggestion handling.
+- `on` merges with `review_method=entity_steward_auto` and no `review_id`, so the graph writes no `human_review` alias record. The decision row is `auto_merged` with `provenance=automated_merge` and both identity snapshots. The merge journal row allows undo; undo marks the `auto_merged` row `reverted` and records a split.
+- Human-review replay and alias lineage read only human `merged` rows, so an `auto_merged` row authorizes no later match. Later ingestion binds either name to the survivor through the orthographic route.
+- A pair the agent blocks, or a merge a veto prohibits, is written as `suggest_review` for a person.
+
+Residual risk: two different real organizations or products with the same name, from different documents and with no hints, will merge. No name-only rule can prove identity. Ingestion already takes this risk for new mentions; the merge journal is the remedy.
 
 ## Additive storage/migration interface
 
@@ -33,7 +63,7 @@ PostgreSQL `entity_review_decisions` adds:
 - `provenance TEXT NOT NULL DEFAULT 'legacy_unknown'` — new human review calls use `human_review`; prior rows are not guessed.
 - `identity_status TEXT NOT NULL DEFAULT 'unassessed'` — hydration uses `active` or `unresolved_legacy`.
 - `review_id TEXT` — correlation ID linking a new human merge to its graph alias records; null for unknown legacy rows.
-- `review_method TEXT NOT NULL DEFAULT 'legacy_unknown'` — explicit future method provenance. Legacy `merged` records may have come from automation and **never** establish human review by label alone. Steward suggestions use `provenance=automated_suggestion`, `review_method=entity_steward`; they cannot enter the reviewed alias trust path.
+- `review_method TEXT NOT NULL DEFAULT 'legacy_unknown'` — explicit future method provenance. Legacy `merged` records may have come from automation and **never** establish human review by label alone. Steward suggestions use `provenance=automated_suggestion`, `review_method=entity_steward`; they cannot enter the reviewed alias trust path. Automatic merges use `provenance=automated_merge`, `review_method=entity_steward_auto` and cannot enter it either.
 - New snapshots include `canonical_name` and provenance-verified `reviewed_names`; this, not the combined legacy alias set, can authorize a newly human-reviewed pair after UUID replacement. Existing snapshot names remain conservative **veto constraints**, not matching proof.
 
 The existing `hydrate_review_identities()` preserves legacy no-merge rows. A synthetic mixed 19-row fixture (17 one-live-node pairs, 2 neither-live-node pairs) verifies that none becomes a fully reconstructed pair. It hydrates only from extant exact UUIDs and explicitly marks missing-identity rows `unresolved_legacy`; it never fabricates identities. Hydration/quarantine updates do not change original timestamps/notes/UUID order, including historically reversed pairs. Partial vetoes protect their identifiable side until repair. `EmbeddingsStore.get_entity_review_decisions()` returns these fields for an authorized storage audit. The existing `GET /entity-review/candidates` response is a candidate queue, **not** a complete decision/quarantine audit: it only exposes candidates and an ignored-pair count. Parent repair must read and compare the underlying exact decision rows; this PR does not introduce an unrestricted decision-data API. Missing both identities is irrecoverable from names alone: the row survives but cannot identify arbitrary future UUIDs. This limitation must remain an explicit repair/release gate, not a claim of complete veto recovery.

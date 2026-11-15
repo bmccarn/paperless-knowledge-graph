@@ -85,3 +85,73 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     assert.deepEqual(errors, []);
   });
 }
+
+test("graph view switcher: one Tab stop, arrow keys, aria-pressed, announcements and the phone sheet", async t => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  t.after(() => context.close());
+  const page = await context.newPage();
+  await page.goto(`${base}/gallery`);
+  const section = page.getByRole("region", { name: "Graph view switcher", exact: true });
+  const [toolbar, noFocus] = [section.getByRole("toolbar", { name: "View" }).first(), section.getByRole("toolbar", { name: "View" }).nth(1)];
+  await toolbar.waitFor();
+  const pressed = async bar => bar.locator("[aria-pressed=true]").textContent();
+  const focused = () => page.evaluate(() => document.activeElement?.textContent);
+  assert.deepEqual(await toolbar.getByRole("button").allTextContents(), ["Focus", "Explore", "Timeline", "Table", "Paths"]);
+  assert.equal(await toolbar.getByRole("button", { name: "Focus" }).getAttribute("title"), "Focus, key 1");
+  for (const button of await toolbar.getByRole("button").all()) assert.ok(["true", "false"].includes(await button.getAttribute("aria-pressed")));
+  // One Tab stop: Tab enters on the pressed button and the next Tab leaves the toolbar.
+  await toolbar.getByRole("button", { name: "Focus" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await toolbar.evaluate(bar => bar.contains(document.activeElement)), false);
+  await page.keyboard.press("Tab");
+  assert.equal(await focused(), "Focus");
+  await page.keyboard.press("Tab");
+  assert.equal(await toolbar.evaluate(bar => bar.contains(document.activeElement)), false);
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await focused(), "Focus");
+  // Left and Right move without switching; Home and End jump; Enter switches and announces.
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await focused(), "Explore");
+  assert.equal(await pressed(toolbar), "Focus");
+  await page.keyboard.press("End");
+  assert.equal(await focused(), "Paths");
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await focused(), "Focus");
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await focused(), "Paths");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  assert.equal(await pressed(toolbar), "Explore");
+  assert.equal(await focused(), "Explore", "keyboard focus stays on the switcher");
+  await section.getByRole("status").filter({ hasText: "Explore of Policy HM-4471 (auto)" }).first().waitFor();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await focused(), "Explore", "the Tab stop follows the pressed button");
+  // Without a focus entity, the views that need one are unavailable and say why.
+  assert.deepEqual(await noFocus.locator("[aria-disabled=true]").allTextContents(), ["Focus", "Explore", "Timeline", "Table"]);
+  assert.equal(await noFocus.locator("[aria-disabled=true]").count(), 4);
+  await noFocus.getByRole("button", { name: "Timeline" }).focus();
+  await page.keyboard.press("Enter");
+  await section.getByRole("status").filter({ hasText: "Pick an entity on the map or search first." }).waitFor();
+  assert.equal(await pressed(noFocus), "Overview");
+
+  // At 390 px the View button opens a sheet with 56 px rows.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const trigger = section.getByRole("button", { name: "View: Explore" });
+  assert.equal(Math.round((await trigger.boundingBox()).height), 44);
+  await trigger.click();
+  const sheet = page.getByRole("dialog", { name: "View", exact: true });
+  await sheet.waitFor();
+  const rows = sheet.locator("li > button");
+  assert.equal(await rows.count(), 5);
+  const heights = await rows.evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().height));
+  assert.ok(heights.every(height => height >= 56), `rows: ${heights}`);
+  assert.equal(heights[3], 56, "a one-line question gives a 56 px row");
+  assert.equal(await rows.nth(1).getAttribute("aria-pressed"), "true");
+  await rows.nth(2).click();
+  await sheet.waitFor({ state: "detached" });
+  await section.getByRole("button", { name: "View: Timeline" }).waitFor();
+  assert.equal(await pressed(toolbar), "Timeline");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});

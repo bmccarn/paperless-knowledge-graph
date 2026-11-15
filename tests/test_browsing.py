@@ -53,6 +53,15 @@ class Neo4jBrowsingTests(unittest.IsolatedAsyncioTestCase):
                         })
                     ''', prefix=PREFIX, first=FIRST_ID)
                     await result.consume()
+                    # One document named by source_doc_ids, one by MENTIONS, and one only by another link.
+                    result = await session.run('''
+                        CREATE (e:Organization:PaginationAudit {uuid: $prefix + 'entity', name: 'Fixture Entity',
+                                                                source_doc_ids: [$first + 1]})
+                        WITH e
+                        MATCH (mentioning:Document {paperless_id: $first + 2}), (other:Document {paperless_id: $first + 3})
+                        CREATE (mentioning)-[:MENTIONS]->(e), (other)-[:INVOICED_BY]->(e)
+                    ''', prefix=PREFIX, first=FIRST_ID)
+                    await result.consume()
         asyncio.run(seed())
 
     @classmethod
@@ -108,6 +117,15 @@ class Neo4jBrowsingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing['total'], 0)
         self.assertFalse(missing['has_more'])
 
+    async def test_entity_filter_keeps_source_and_mentioning_documents(self):
+        page = await self.store.search_nodes('', node_type='Document', limit=25, sort='paperless_id',
+                                            direction='asc', include_page=True, entity=PREFIX + 'entity')
+        self.assertEqual([row['properties']['paperless_id'] for row in page['results']], [FIRST_ID + 1, FIRST_ID + 2])
+        self.assertEqual(page['total'], 2)
+        self.assertEqual(page['doc_types'], {'invoice': 1, 'medical': 1})
+        missing = await self.store.search_nodes('', node_type='Document', include_page=True, entity=PREFIX + 'missing')
+        self.assertEqual((missing['total'], missing['results']), (0, []))
+
     async def test_document_and_graph_routes_serialize_complete_pages(self):
         from app import main
         from httpx import ASGITransport, AsyncClient
@@ -119,6 +137,13 @@ class Neo4jBrowsingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(body['scope'], 'indexed_documents')
                 self.assertEqual(body['total'], 5105)
                 self.assertEqual(body['results'][0]['properties']['paperless_id'], FIRST_ID + 250)
+                self.assertNotIn('entity', body)
+                response = await client.get('/documents', params={'q': 'paginationfixture', 'sort': 'paperless_id', 'limit': 4})
+                self.assertEqual([row['entity_count'] for row in response.json()['results']], [0, 0, 1, 1])
+                response = await client.get('/documents', params={'entity': PREFIX + 'entity'})
+                body = response.json()
+                self.assertEqual(body['total'], 2)
+                self.assertEqual((body['entity']['name'], sorted(body['entity']['labels'])), ('Fixture Entity', ['Organization', 'PaginationAudit']))
                 response = await client.get('/graph/search', params={'q': 'NeedleUnique923', 'offset': 0})
                 self.assertEqual(response.json()['total'], 1)
                 invalid = await client.get('/documents', params={'limit': 201})

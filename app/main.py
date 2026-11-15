@@ -1164,15 +1164,22 @@ async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: i
 
 @app.get("/documents")
 async def documents(q: str = "", doc_type: str = "", limit: int = 25,
-                    offset: int = 0, sort: str = "title", direction: str = "asc"):
+                    offset: int = 0, sort: str = "title", direction: str = "asc", entity: str = ""):
     """Browse the complete indexed Document set, with datastore pagination."""
     try:
         page = await graph_store.search_nodes(q, node_type="Document", limit=limit, offset=offset,
                                              doc_type=doc_type, sort=sort, direction=direction,
-                                             include_page=True)
+                                             include_page=True, entity=entity)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"query": q, "scope": "indexed_documents", **page}
+    counts = await graph_store.get_document_entity_counts(
+        [row["properties"]["paperless_id"] for row in page["results"] if row["properties"].get("paperless_id") is not None])
+    for row in page["results"]:
+        row["entity_count"] = counts.get(row["properties"].get("paperless_id"), 0)
+    response = {"query": q, "scope": "indexed_documents", **page}
+    if entity:
+        response["entity"] = await graph_store.get_entity_name(entity)
+    return response
 
 
 @app.get("/graph/node/{node_uuid}")

@@ -167,8 +167,9 @@ export async function graphSearch(q: string, type?: string, limit = 20, offset =
   return apiFetch(`/graph/search?${params}`);
 }
 
-export async function getDocuments(q = "", docType = "", offset = 0, limit = 25, sort = "title", direction = "asc") {
+export async function getDocuments(q = "", docType = "", offset = 0, limit = 25, sort = "title", direction = "asc", entity = "") {
   const params = new URLSearchParams({ q, doc_type: docType, offset: String(offset), limit: String(limit), sort, direction });
+  if (entity) params.set("entity", entity);
   return apiFetch(`/documents?${params}`);
 }
 

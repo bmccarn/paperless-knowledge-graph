@@ -149,7 +149,8 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_excluded_unless_included(self):
         with patch('app.graph.settings.owner_name', OWNER):
-            self.assertEqual(await self.store.get_owner(), ('chosen', P + 'owner', 3))
+            status, owner, matches = await self.store.get_owner_matches()
+            self.assertEqual((status, owner, len(matches)), ('chosen', P + 'owner', 3))
         default = (await get(self.store, a=P + 'a', b=P + 'b')).json()
         # The other Persons that match the owner setting are left out with it.
         self.assertTrue(all(not node.startswith('owner') for path in self.node_paths(default) for node in path))

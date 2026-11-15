@@ -1251,11 +1251,6 @@ class GraphStore:
             return {"status": "unhealthy", "error": str(e)}
         return {"status": "unhealthy", "error": "unexpected"}
 
-    async def get_owner(self) -> tuple[str, Optional[str], int]:
-        """Return (status, owner uuid, match count) for OWNER_NAME; see app.graph_fields.owner_rule."""
-        status, owner, matches = await self.get_owner_matches()
-        return status, owner, len(matches)
-
     async def get_owner_matches(self) -> tuple[str, Optional[str], list[dict]]:
         """Return (status, owner uuid, every matching Person) for OWNER_NAME; see app.graph_fields.owner_matches."""
         if not settings.owner_name.strip():

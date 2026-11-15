@@ -43,9 +43,3 @@ def owner_matches(setting, persons) -> tuple[str, str | None, list[dict]]:
     ranked = sorted(matches.values(), key=lambda p: (-p.get("evidence_doc_count", 0),
                                                      -p.get("link_count", 0), p["uuid"]))
     return ("found" if len(ranked) == 1 else "chosen"), ranked[0]["uuid"], ranked
-
-
-def owner_rule(setting, persons) -> tuple[str, str | None, int]:
-    """Return (status, owner uuid, match count); see owner_matches."""
-    status, owner, matches = owner_matches(setting, persons)
-    return status, owner, len(matches)

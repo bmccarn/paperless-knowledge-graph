@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from tests.runtime import configure_test_environment
 configure_test_environment()
 from app.graph import GraphStore
-from app.graph_fields import link_support, owner_matches, owner_rule
+from app.graph_fields import link_support, owner_matches
 from neo4j import AsyncGraphDatabase
 
 TEST_URI = os.environ.get('NEO4J_TEST_URI', '')
@@ -40,6 +40,17 @@ class SupportStateTests(unittest.TestCase):
                 # The stored link flag never overrides the records.
                 self.assertEqual(link_support({'support_records': records, 'inferred': True}),
                                  {'support_state': state, 'stated_count': stated, 'inferred_count': inferred})
+
+
+def owner_rule(setting, persons):
+    """(status, owner uuid, match count), the shape these tests assert."""
+    status, owner, matches = owner_matches(setting, persons)
+    return status, owner, len(matches)
+
+
+async def get_owner(store):
+    status, owner, matches = await store.get_owner_matches()
+    return status, owner, len(matches)
 
 
 class OwnerRuleTests(unittest.TestCase):
@@ -160,7 +171,7 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_flag_follows_the_setting(self):
         with patch('app.graph.settings.owner_name', ' FIELDS  nickname '):
-            status, owner, count = await self.store.get_owner()
+            status, owner, count = await get_owner(self.store)
             fields = await self.store.get_node_fields([PREFIX + 'listed-a'], owner)
         self.assertEqual((status, owner, count), ('found', PREFIX + 'listed-a', 1))
         self.assertTrue(fields[PREFIX + 'listed-a']['is_owner'])
@@ -171,7 +182,7 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
         ids = [PREFIX + 'owner-' + suffix for suffix in 'abc']
         before = [await self.store.get_node(uuid) for uuid in ids]
         with patch.object(main, 'graph_store', self.store), patch('app.graph.settings.owner_name', 'Fields Owner Example'):
-            self.assertEqual(await self.store.get_owner(), ('chosen', ids[2], 3))
+            self.assertEqual(await get_owner(self.store), ('chosen', ids[2], 3))
             async with AsyncClient(transport=ASGITransport(app=main.app), base_url='http://test') as client:
                 response = await client.get('/graph/search', params={
                     'q': 'Fields Owner Example', 'type': 'OwnerRuleAudit', 'exclude_documents': 1})

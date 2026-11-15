@@ -133,6 +133,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const selectedLink = summary?.links.find(link => link.key === selectedLinkId);
   const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
   const pill = selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
+  const adds = useMemo(() => {
+    if (!summary || !pill) return 0;
+    const next = showMore(summary, cap, extra, pill.family);
+    return next === extra ? 0 : neighborhoodLayout(summary, cap, next).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
+  }, [summary, cap, extra, pill]);
   const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
 
@@ -141,8 +146,6 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     if (selectedLink) inspector = <LinkInspector summary={summary} link={selectedLink} onClose={clearSelection} />;
     else if (pill) {
       const drawn = new Set(layout.links.map(link => link.key));
-      const next = showMore(summary, cap, extra, pill.family);
-      const adds = next === extra ? 0 : neighborhoodLayout(summary, cap, next).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
       inspector = (
         <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} {...rowEvents}
           links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);

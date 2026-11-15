@@ -29,7 +29,7 @@ export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
         const date = sourceDates?.[String(ref.document_id)];
         return (
           <span key={i} className="block">
-            <q className="quote my-1 line-clamp-3 block text-fg [quotes:none] group-focus-within/note:line-clamp-none group-aria-[current=true]/note:line-clamp-none">{ref.quote}</q>
+            <q className="quote my-1 line-clamp-3 text-fg [quotes:none] group-focus-within/note:line-clamp-none group-aria-[current=true]/note:line-clamp-none">{ref.quote}</q>
             <span className="block">{ref.source_title || `Document ${ref.document_id}`}{date && <> · <span className="tabular-nums">{formatSourceDate(date)}</span></>}</span>
           </span>
         );

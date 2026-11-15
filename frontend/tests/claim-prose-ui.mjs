@@ -70,12 +70,16 @@ test("selecting claim 2 marks the claim and its note; a claim number scrolls to 
   for (const piece of await answer.locator('[data-claim="2"]').all()) assert.equal(await piece.getAttribute("aria-current"), "true");
   assert.equal(await answer.getByRole("note", { name: "Claim 2 source" }).getAttribute("aria-current"), "true");
   assert.equal(await answer.locator('[aria-current="true"][data-claim], [role="note"][aria-current="true"]').count(), 3);
+  // A long quote shows three lines (14/21 type) until its note is selected.
+  const quoteHeight = () => answer.getByRole("note", { name: "Claim 3 source" }).locator("q").evaluate(q => q.getBoundingClientRect().height);
+  assert.equal(await quoteHeight(), 63);
   const url = page.url();
   await answer.getByRole("button", { name: "Claim 3", exact: true }).click();
   assert.equal(page.url(), url);
   const note = answer.getByRole("note", { name: "Claim 3 source" });
   assert.equal(await note.getAttribute("aria-current"), "true");
   assert.equal(await answer.getByRole("note", { name: "Claim 2 source" }).getAttribute("aria-current"), null);
+  assert.ok(await quoteHeight() > 63, "the selected note shows the whole quote");
   assert.ok(await note.evaluate(element => { const r = element.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }));
 });
 

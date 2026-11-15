@@ -207,7 +207,9 @@ def claims_answer(result):
     candidate = '\n\n'.join(sentences)
     sources = [(101, 'January premium statement', 'January statement: the premium is $25.'),
                (101, 'January premium statement', 'January statement: the premium is $25.'),
-               (102, SECOND_SOURCE['title'], 'February statement: the balance is $0.')]
+               (102, SECOND_SOURCE['title'], 'February statement: the balance is $0. No payment is due this month. '
+                'The next statement will list any new charges, credits and adjustments made to the account '
+                'after the closing date shown above.')]
     claims = []
     for index, (sentence, (doc_id, title, quote)) in enumerate(zip(sentences, sources)):
         start = candidate.index(sentence)  # Python counts code points, like the backend ledger.

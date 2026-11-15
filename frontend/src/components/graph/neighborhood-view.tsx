@@ -19,6 +19,7 @@ import {
   type NodeSummary,
 } from "@/lib/graph-layout";
 import type { GraphHandle } from "./force-graph-client";
+import { rememberRecent } from "./graph-landing";
 
 const ForceGraphClient = dynamic(
   () => import("./force-graph-client").then((module) => module.ForceGraphClient),
@@ -53,7 +54,12 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   useEffect(() => {
     let active = true;
     getGraphNodeSummary(focusId)
-      .then((data) => { if (active) setSummary(data); })
+      .then((data) => {
+        if (!active) return;
+        setSummary(data);
+        const { id, name, label, evidence_doc_count } = data.focus;
+        rememberRecent({ id, name, label, documents: evidence_doc_count });
+      })
       .catch((error) => {
         if (!active) return;
         if (error instanceof ApiError && error.status === 404) setMissing(true);

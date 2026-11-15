@@ -1,4 +1,4 @@
-/** Own graph identity and merging; renderer mutations never belong in this data. */
+/** Own graph identity; renderer mutations never belong in this data. */
 export interface ExplorerNode {
   id: string;
   name: string;
@@ -19,12 +19,6 @@ export interface ExplorerGraph {
   links: ExplorerLink[];
   discarded: number;
 }
-
-export const emptyGraph = (): ExplorerGraph => ({
-  nodes: [],
-  links: [],
-  discarded: 0,
-});
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -109,45 +103,6 @@ export function relationshipSupport(props: Record<string, unknown>): Array<{
       .filter((value): value is string => typeof value === "string");
     return [{ documentId: id, inferred: support.inferred === true || support.implied === true, quotes, rationale }];
   });
-}
-
-export function mergeGraph(
-  current: ExplorerGraph,
-  payload: unknown,
-): ExplorerGraph {
-  const raw = record(payload);
-  const nodes = new Map(current.nodes.map((node) => [node.id, node]));
-  let discarded = current.discarded;
-  for (const item of Array.isArray(raw.nodes) ? raw.nodes : []) {
-    const node = nodeFromPayload(item);
-    if (node) nodes.set(node.id, node);
-    else discarded++;
-  }
-  const links = new Map(current.links.map((link) => [link.id, link]));
-  for (const item of Array.isArray(raw.relationships)
-    ? raw.relationships
-    : []) {
-    const rel = record(item);
-    const source = rel.start ?? rel.start_uuid;
-    const target = rel.end ?? rel.end_uuid;
-    if (
-      typeof source !== "string" ||
-      typeof target !== "string" ||
-      !nodes.has(source) ||
-      !nodes.has(target) ||
-      typeof rel.type !== "string"
-    ) {
-      discarded++;
-      continue;
-    }
-    const props = structuredClone(record(rel.props));
-    const id =
-      typeof rel.id === "string"
-        ? rel.id
-        : JSON.stringify([source, target, rel.type, sourceDocumentIds(props)]);
-    links.set(id, { id, source, target, type: rel.type, props });
-  }
-  return { nodes: [...nodes.values()], links: [...links.values()], discarded };
 }
 
 export function escapeGraphLabel(value: unknown): string {

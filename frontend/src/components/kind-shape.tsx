@@ -25,8 +25,8 @@ export const KIND_ICONS: Record<string, LucideIcon> = {
   MedicalResult: FlaskConical, Event: Calendar, DateEvent: CalendarClock, Document: FileText, DocumentRef: FileQuestion,
 };
 
-/** A node kind as its shape (or icon) plus its text label. Faded swaps the color, never the opacity. */
-export function KindShape({ label, icon = false, faded = false, className }: { label: string; icon?: boolean; faded?: boolean; className?: string }) {
+/** A node kind as its shape (or icon) plus its text label, or the shape alone when `bare`. Faded swaps the color, never the opacity. */
+export function KindShape({ label, icon = false, faded = false, bare = false, className }: { label: string; icon?: boolean; faded?: boolean; bare?: boolean; className?: string }) {
   const { kind, outlined } = nodeKind(label);
   const color = faded ? "var(--graph-faded)" : kindColor(kind);
   const Icon = kind === "unknown" ? CircleHelp : KIND_ICONS[label];
@@ -40,7 +40,7 @@ export function KindShape({ label, icon = false, faded = false, className }: { l
           {kind === "docs" && <path d="M11.5 2.5v4h4" fill="none" stroke={outlined ? color : "var(--bg)"} strokeWidth={outlined ? 2 : 1.25} strokeLinejoin="round" />}
         </svg>
       )}
-      {nodeLabelText(label)}
+      {!bare && nodeLabelText(label)}
     </span>
   );
 }

@@ -51,36 +51,31 @@ try {
   await capture('documents-error-detail');
   record('documents_failure', 'Search failure is visible with retry action.');
 
-  // Graph search pages and explicit expansion preserve counts.
+  // Graph search offers at most 8 entities; the inspector keeps source text literal.
   await page.goto(`${base}/graph`);
-  await visible('4 nodes');
-  await page.getByRole('textbox', { name: 'Find an entity or document' }).fill('Search Fixture');
-  await page.getByRole('button', { name: 'Search graph', exact: true }).click();
-  await visible('120 matches');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await visible('Page 2');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await visible('Page 3');
-  await page.getByRole('button', { name: /Search Fixture Entity 119/ }).click();
-  await visible('Synthetic pageable graph search fixture.');
-  await capture('graph-search-last-page');
-  record('graph_search_pagination', 'Third search page exposes entity 119 among 120 matches and opens its inspector.');
+  await page.getByRole('combobox', { name: 'Search entities', exact: true }).fill('Search Fixture');
+  const results = page.getByRole('listbox', { name: '8 results', exact: true });
+  await results.waitFor();
+  assert.deepEqual((await results.getByRole('option').allTextContents()).map(text => text.slice(0, 25)),
+    Array.from({ length: 8 }, (_, index) => `Search Fixture Entity ${String(index).padStart(3, '0')}`));
+  await capture('graph-search-results');
+  record('graph_search_results', 'Searching 120 matching entities lists the first 8, grouped as Organizations.');
 
-  await page.goto(`${base}/graph`);
-  await page.getByRole('button', { name: /Alex Example/ }).click();
+  await page.goto(`${base}/graph?focus=person-1`);
+  await visible('Alex Example: 1 links in 1 families.');
+  const canvas = page.locator('canvas').first();
+  await canvas.waitFor({ state: 'visible' });
+  // The focus sits at the world origin; wait for the initial fit and the hit canvas refresh, then click it.
+  await page.waitForFunction(() => document.querySelector('canvas')?.__zoom?.k !== 1);
+  await page.waitForTimeout(1000);
+  const box = await canvas.boundingBox();
+  const zoom = await canvas.evaluate(element => element.__zoom);
+  await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
   await visible('This is literal source text.');
   await visible('Outgoing');
   await visible('Inferred');
-  const expand = page.getByRole('button', { name: 'Load neighbors into graph', exact: true });
-  await expand.click();
-  await expand.waitFor({ state: 'visible' });
-  await page.waitForTimeout(200);
-  await expand.click();
-  await page.waitForTimeout(200);
-  await visible('4 nodes');
-  await visible('3 relationships');
   assert.equal(await page.locator('b').filter({ hasText: 'This is literal source text.' }).count(), 0);
-  record('graph_expansion_and_safe_text', 'Repeated expansion preserves 4 nodes/3 edges; markup in description renders as text.');
+  record('graph_inspector_safe_text', 'The focus inspector shows the link as inferred; markup in description renders as text.');
 
   // Feedback remains open after reindex until a human records review.
   await page.goto(`${base}/documents/101`);

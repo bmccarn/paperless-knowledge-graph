@@ -1,34 +1,11 @@
 [
   {
     "rule": "aria-prohibited-attr",
-    "route": "/graph",
-    "state": "main",
-    "issue": 133,
-    "targets": [
-      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
-    ]
-  },
-  {
-    "rule": "aria-prohibited-attr",
     "route": "/graph?focus=nb-rowan",
     "state": "main",
     "issue": 133,
     "targets": [
       "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/graph",
-    "state": "main",
-    "issue": 133,
-    "targets": [
-      "[\"div.px-3.py-2.text-[11px].font-medium.uppercase.tracking-wider.text-muted-foreground\"]",
-      "[\"p.border-t.p-3.text-[11px].leading-relaxed.text-muted-foreground\"]",
-      "[\"span.hidden.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2.sm:block\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
-      "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
-      "[\"span.text-[10px].text-muted-foreground\"]"
     ]
   },
   {

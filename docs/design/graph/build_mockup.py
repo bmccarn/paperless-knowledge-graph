@@ -699,15 +699,21 @@ def screen_hub():
                         caption="Alex Rivera: <span class=num>390</span> links in <span class=num>10</span> families. Large hub: the top <span class=num>2</span> of each family are shown.")
 
 
+# inferred links, the Honda link (lowest confidence 0.62), a bill dated before January 2026,
+# and a link whose only document is a Legal one
+FILTER_HIDDEN = ("14 Larkspur Ct", "Bayline Auto Body", "Telematics plug TX-2", "2014 Honda Fit",
+                 "Premium, Oct 2025, $588", "Northgate Credit Union")
+
+
 def filter_groups(touch=False):
     """The seven filter groups with live counts for the current focus."""
     ck = "ck ck-t" if touch else "ck"
-    fam_counts = [("parties", 3), ("money", 2), ("coverage", 3), ("places", 2), ("time", 2), ("doclinks", 1),
-                  ("loose", 1), ("other", 2)]
+    fam_counts = [(f, sum(1 for n in POLICY_N if n[2] == f and n[0] not in FILTER_HIDDEN))
+                  for f in ("parties", "money", "coverage", "places", "time", "doclinks", "loose", "other")]
     fams = "".join(f'<label class="{ck}"><input type="checkbox" checked><span>{FAM_NAME[f]}</span><span class="num ck-n">{n}</span></label>'
                    for f, n in fam_counts)
     fams += f'<label class="{ck}"><input type="checkbox"><span>Evidence</span><span class="num ck-n">31</span></label>'
-    sup = "".join(f'<label class="{ck}"><input type="radio" name="sup"{" checked" if w == "Supported only" else ""}><span>{w}</span><span class="num ck-n">{n}</span></label>'
+    sup = "".join(f'<label class="{ck}"><input type="radio" name="sup{"-t" if touch else ""}"{" checked" if w == "Supported only" else ""}><span>{w}</span><span class="num ck-n">{n}</span></label>'
                   for w, n in (("All", 16), ("Supported only", 13), ("Inferred only", 3)))
     types = "".join(f'<button class="tchip" aria-pressed="{str(k in ("insurance", "financial_invoice")).lower()}"><span class="dot" style="--dot:var(--doc-{k.replace("_", "-")})"></span>{w}</button>'
                     for k, w in DOC_TYPES)
@@ -727,11 +733,7 @@ def screen_filters():
     focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto), filtered: 10 of 16 links")
     H = CV_H - SHELF_H - 52
     W = 1256
-    # inferred links, the Honda link (lowest confidence 0.62), a bill dated before January 2026,
-    # and a link whose only document is a Legal one
-    hidden = ("14 Larkspur Ct", "Bayline Auto Body", "Telematics plug TX-2", "2014 Honda Fit",
-              "Premium, Oct 2025, $588", "Northgate Credit Union")
-    svg, ov = neighborhood_svg(W, H, 808, 352, 210, focus, POLICY_N, hidden=hidden,
+    svg, ov = neighborhood_svg(W, H, 808, 352, 210, focus, POLICY_N, hidden=FILTER_HIDDEN,
                                blocks=[(0, 0, 372, H), (W - 52, H - 118, W - 14, H - 14)])
     chips = ('<div class="chips" aria-label="Active filters">'
              + "".join(f'<button class="fchip">{t}{icon("x", 14)}</button>' for t in
@@ -896,8 +898,8 @@ FILLER = [  # rows 21 to 50 of the first page: name, label, family, type, docs
            ("Lease 2024", "Contract", "doclinks", "REFERENCED_IN"), ("Tax return 2025", "Contract", "doclinks", "AMENDED_BY"),
            ("Fitness club", "Organization", "loose", "RELATED_TO"), ("Bike, trail model", "Product", "loose", "ASSOCIATED_WITH"),
            ("Home router", "System", "other", "USER_OF"), ("Parking permit", "Other", "other", "HOLDS"),
-           ("Sam Okafor", "Person", "loose", "RELATED_TO"), ("Library card", "Other", "other", "HOLDS"),
-           ("Laptop, work issued", "Product", "other", "ASSIGNED"), ("Riverside 10K", "Event", "loose", "RELATED_TO")],
+           ("Sam Okafor", "Person", "loose", "RELATED_TO"), ("Storage unit 14", "Other", "other", "RENTS"),
+           ("Laptop, work issued", "Product", "other", "ASSIGNED"), ("Charity 5K, 2025", "Event", "loose", "RELATED_TO")],
         [5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1])
 ]
 
@@ -914,6 +916,7 @@ def screen_table():
             TABLE_ROWS + [(False, fam, typ, "out", n, lab, "supported", d, "No score" if k % 7 == 3 else f"0.{88 - k}", f"{1 + k % 27} Sep 2026")
                           for k, (n, lab, fam, typ, d) in enumerate(FILLER)]))
     assert len(TABLE_ROWS) + len(FILLER) == 50
+    assert not {r[0] for r in FILLER} & {n[0] for n in HUB_N}, "a filler row would contradict the hub canvas"
     head = ("<tr><th>On canvas</th><th><button>Family</button></th><th><button>Relationship</button></th>"
             "<th>Direction</th><th><button>Other entity</button></th><th>Type</th><th><button>Support</button></th>"
             f'<th aria-sort="descending" class="c-r"><button>Documents{icon("arrow-down", 14)}</button></th>'

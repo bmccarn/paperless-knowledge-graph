@@ -10,14 +10,14 @@ const mode = visualMode();
 const fixedTime = new Date("2026-09-04T12:00:00Z");
 const mainStates = [
   { name: "ask", route: "/query", ready: page => page.getByPlaceholder("Ask a question...") },
-  { name: "status", route: "/", ready: page => page.getByRole("heading", { name: "Dashboard", exact: true }) },
+  { name: "status", route: "/", ready: page => page.getByRole("heading", { name: "Status", exact: true }) },
   { name: "documents", route: "/documents", ready: page => page.getByText("303 indexed documents", { exact: true }) },
   { name: "document", route: "/documents/101", ready: page => page.getByRole("heading", { name: "January premium statement", exact: true }) },
   { name: "entities", route: "/entities/review", ready: page => page.getByText("Cedar Lab 1", { exact: true }) },
   { name: "graph", route: "/graph", ready: page => page.getByText("4 nodes", { exact: false }).last() },
   { name: "hubs", route: "/hubs", ready: page => page.getByText("303 matching indexed documents", { exact: true }) },
   { name: "logs", route: "/debug", ready: page => page.getByText("Connected", { exact: true }) },
-  { name: "not-found", route: "/visual-missing-page", ready: page => page.getByText("This page could not be found.", { exact: true }) },
+  { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
@@ -91,6 +91,15 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
       element = element.parentElement;
     }
   });
+  if (!state.state) {
+    await page.locator("main").evaluate(main => {
+      for (const element of [main, ...main.querySelectorAll("*")]) {
+        if (element.scrollTop) element.scrollTop = 0;
+      }
+    });
+    const heading = await page.getByRole("heading", { level: 1 }).boundingBox();
+    expect(heading?.y, "Main captures start at the page heading").toBeGreaterThanOrEqual(0);
+  }
   let capture;
   await expect(async () => {
     const previous = capture;

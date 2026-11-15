@@ -278,7 +278,8 @@ export default function DashboardPage() {
         <Card role="alert" className="max-w-md">
           <CardContent className="pt-6 text-center">
             <XCircle className="h-12 w-12 text-destructive mx-auto mb-3" />
-            <p className="font-medium">Connection Error</p>
+            <h1 className="page-title">Status</h1>
+            <p className="font-medium mt-2">Connection Error</p>
             <p className="text-sm text-muted-foreground mt-1">{error}</p>
             <Button onClick={fetchStatus} className="mt-4" variant="outline">
               Retry
@@ -291,7 +292,7 @@ export default function DashboardPage() {
   if (!status)
     return (
       <div className="space-y-6 p-8">
-        <Skeleton className="h-10 w-64" />
+        <h1 className="page-title">Status</h1>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
@@ -376,7 +377,7 @@ export default function DashboardPage() {
       {/* Header with search */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="page-title">Dashboard</h1>
+          <h1 className="page-title">Status</h1>
           <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1">
             <Clock className="h-3.5 w-3.5" />
             Last sync: {status.last_sync ? new Date(status.last_sync).toLocaleString() : "Never"}

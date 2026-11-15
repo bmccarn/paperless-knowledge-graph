@@ -36,7 +36,7 @@ This project derives a searchable knowledge graph and vector index from Paperles
 
 **Audit source prefix**: Shared source context serialized before candidate and batch fields to permit prompt-prefix caching. Reuse changes no audit rule or delivered answer state; every delivered claim still requires support from the last complete audit.
 
-**Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. A complete subset audit that rejects more units allows one more subset round; at most two rounds run, and the last audit must support every delivered unit. Units whose original audit batch kept an invalid reply after its correction are omitted as unchecked, never delivered. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
+**Verified partial answer**: Whole supported units from the final eligible audit, independently re-audited as a new candidate. A complete subset audit that rejects more units allows one more subset round; at most two rounds run, and the last audit must support every delivered unit. Units whose original audit batch kept an invalid reply after its correction are omitted as unchecked, never delivered; such a gap does not skip the one answer repair, whose candidate gets its own full audit. After the correction, an unknown source handle rejects only the unit that cites it. Its delivered ledger is complete, while answer completeness remains false and omitted counts are preserved separately.
 
 **Documented state**: An audited observation or comparison scoped to retrieved dated records. It does not establish active real-world status or archive completeness.
 

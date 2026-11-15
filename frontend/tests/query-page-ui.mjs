@@ -208,3 +208,27 @@ for (const width of [1440, 390]) test(`rename retains focus and deleting the act
   await page.getByRole("alertdialog").waitFor({ state: "hidden" });
   assert.ok(await page.locator(":focus").evaluate(el => el !== document.body && el.isConnected && el.getBoundingClientRect().height > 0));
 });
+
+test("on a phone the model selector shares the composer row, so the composer is no taller than at desktop width plus one line", async t => {
+  const heights = {};
+  for (const width of [1440, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 844 } });
+    t.after(() => context.close());
+    await context.request.post(`${base}/api/_fixture/reset`);
+    const page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(`${base}/query`);
+    const model = page.getByRole("combobox", { name: "Model", exact: true });
+    await model.waitFor();
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Model"]')?.hasAttribute("disabled"));
+    const label = page.locator('label[for="question"]');
+    const [labelBox, modelBox] = [await label.boundingBox(), await model.boundingBox()];
+    assert.ok(modelBox.y < labelBox.y + labelBox.height && labelBox.y < modelBox.y + modelBox.height, `selector beside the label at ${width} px`);
+    const composer = await label.evaluate(element => {
+      const box = element.closest(".border-t");
+      return { height: box.getBoundingClientRect().height, line: parseFloat(getComputedStyle(element).lineHeight) };
+    });
+    heights[width] = composer;
+  }
+  assert.ok(heights[390].height <= heights[1440].height + heights[1440].line, JSON.stringify(heights));
+});

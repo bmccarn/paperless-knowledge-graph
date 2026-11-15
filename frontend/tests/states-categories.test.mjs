@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { answerState, answerView, formatSourceDate, plainAnswer, scoreLevel } from "../.test-build/answer-state.js";
+import { answerState, answerView, formatSourceDate, parseDocumentDate, plainAnswer, scoreLevel } from "../.test-build/answer-state.js";
 import { documentType, nodeKind } from "../.test-build/categories.js";
 
 const complete = disposition => ({ finalization: { disposition } });
@@ -130,4 +130,15 @@ test("document types use their label and token, other keys their key in sentence
   assert.deepEqual(documentType("medical_lab"), { label: "Medical", color: "var(--doc-medical-lab)" });
   assert.deepEqual(documentType("vehicle_registration"), { label: "Vehicle registration", color: "var(--fg-subtle)" });
   assert.deepEqual(documentType("constructor"), { label: "Constructor", color: "var(--fg-subtle)" });
+});
+
+test("stored document dates in several forms read as one calendar date", () => {
+  for (const [stored, shown] of [["2026-05-04", "4 May 2026"], ["May 4, 2026", "4 May 2026"], ["October 22, 2026", "22 Oct 2026"],
+    ["21 OCT 17", "21 Oct 2017"], ["4 May 2026", "4 May 2026"], ["Sept 9, 2026", "9 Sep 2026"], ["2026-05-04T00:00:00Z", "4 May 2026"]])
+    assert.equal(formatSourceDate(stored), shown, stored);
+  // Not whole calendar dates, or numeric dates whose day and month order is unknown, stay as stored.
+  for (const stored of ["05/04/2026", "Spring 2025", "February 30, 2026", "2026-13-01", "May 2026", ""]) {
+    assert.equal(parseDocumentDate(stored), null, stored);
+    assert.equal(formatSourceDate(stored), stored);
+  }
 });

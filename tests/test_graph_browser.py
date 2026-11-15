@@ -123,6 +123,21 @@ class GraphBrowserTests(unittest.IsolatedAsyncioTestCase):
         finally:
             self.driver.execute("MATCH (n:RelationshipTypeAudit) DETACH DELETE n")
 
+    async def test_document_date_sort_reads_stored_date_forms(self):
+        dates = ["2026-03-15", "May 4, 2026", "21 OCT 17", "October 22, 2026", "1 Jan 2026", "", "Spring 2025",
+                 "Sept 9, 2026"]
+        self.driver.execute("""UNWIND range(0, size($dates) - 1) AS i
+            CREATE (:Document:DateSortAudit {paperless_id: 200000 + i, title: 'Datesortaudit ' + i, date: $dates[i]})""",
+                            {"dates": dates})
+        try:
+            page = await self.store().search_nodes("datesortaudit", node_type="Document", sort="date",
+                                                   direction="asc", include_page=True)
+            self.assertEqual([row["properties"]["date"] for row in page["results"]], [
+                "", "21 OCT 17", "1 Jan 2026", "2026-03-15", "May 4, 2026", "Sept 9, 2026", "October 22, 2026",
+                "Spring 2025"])
+        finally:
+            self.driver.execute("MATCH (n:DateSortAudit) DETACH DELETE n")
+
     async def test_document_neighbors_preserve_identity_and_sources(self):
         graph = await self.store().get_neighbors("doc-100001", 1)
         self.assertEqual(node_ids(graph), {"doc-100001", "audit-org"})

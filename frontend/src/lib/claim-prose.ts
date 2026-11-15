@@ -125,6 +125,25 @@ export function quoteWindow(claim: string, quote: string): { start: number; valu
   return { start: space >= 0 && space < anchor ? space + 1 : anchor, values: found, rank };
 }
 
+/**
+ * A passage as readable text: indexed passages can hold Markdown and HTML from text extraction.
+ * Drops tags, bold markers, rules, heading marks and table rules; table cells become " · "-separated.
+ */
+export function plainQuote(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[a-z][^>]*>/gi, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*$/gm, "")
+    .replace(/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^[ \t]*\|[ \t]*|[ \t]*\|[ \t]*$/gm, "")
+    .replace(/\s*\|\s*/g, " · ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Split text into plain and matched pieces for emphasis. */
 export function emphasize(text: string, values: string[]): Array<{ text: string; match?: boolean }> {
   if (!values.length) return [{ text }];

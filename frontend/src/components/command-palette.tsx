@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
+import { displayName } from "@/lib/graph-encoding";
 
 const pages = [
   { title: "Ask", href: "/query" },
@@ -20,14 +21,14 @@ const pages = [
 ];
 type Row = { title: string; href: string };
 type Group = { title: string; rows: Row[]; failed?: boolean };
-type SearchNode = { labels: string[]; properties: { uuid: string; name: string } };
+type SearchNode = { labels: string[]; properties: { uuid: string; name?: string } };
 
 async function findEntities(query: string, current: () => boolean): Promise<Row[]> {
   const rows: Row[] = [];
   for (let offset = 0; rows.length < 5 && current(); offset += 50) {
     const data = await graphSearch(query, undefined, 50, offset);
     rows.push(...data.results.filter((node: SearchNode) => !node.labels.includes("Document") && !node.labels.includes("DocumentRef"))
-      .map((node: SearchNode) => ({ title: node.properties.name, href: `/graph?focus=${encodeURIComponent(node.properties.uuid)}` })));
+      .map((node: SearchNode) => ({ title: displayName(node.properties.name ?? "", node.properties.uuid, node.labels[0] ?? ""), href: `/graph?focus=${encodeURIComponent(node.properties.uuid)}` })));
     if (!data.has_more) break;
   }
   return rows.slice(0, 5);
@@ -124,7 +125,9 @@ export function CommandPalette({ open, onOpenChange, returnFocus }: {
       </p>
       <div ref={list} id="palette-results" role={rows.length ? "listbox" : undefined} aria-label={rows.length ? "Search results" : undefined} aria-busy={loading}
         className="max-h-[45dvh] overflow-y-auto px-2 pb-2">
-        {groups.map(group => <div key={group.title} role={group.rows.length ? "group" : undefined} aria-label={group.rows.length ? group.title : undefined} className="mb-2">
+        {!loading && search.length >= 2 && groups.length > 0 && !rows.length && !groups.some(group => group.failed)
+          && <p className="label-13 px-2 py-2 text-fg-muted">No matches.</p>}
+        {groups.filter(group => group.rows.length || group.failed).map(group => <div key={group.title} role={group.rows.length ? "group" : undefined} aria-label={group.rows.length ? group.title : undefined} className="mb-2">
           <p aria-hidden="true" className="label-12 px-2 py-2 text-fg-muted">{group.title}</p>
           {group.rows.map(row => {
             const index = rows.indexOf(row);
@@ -134,7 +137,7 @@ export function CommandPalette({ open, onOpenChange, returnFocus }: {
               <span className={group.title === "Documents" ? "doc-title" : undefined}>{row.title}</span>
             </div>;
           })}
-          {!group.rows.length && <p className="label-13 px-2 py-1 text-fg-muted">{group.failed ? "Search unavailable." : "No matches."}</p>}
+          {group.failed && <p className="label-13 px-2 py-1 text-fg-muted">Search unavailable.</p>}
         </div>)}
       </div>
       {groups.some(group => group.failed) && <div role="alert" className="flex items-center justify-between gap-2 border-t p-4">

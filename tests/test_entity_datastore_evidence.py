@@ -44,7 +44,8 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.graph.new_uuid = lambda: self.prefix + str(uuid.uuid4())
         self.graph.driver = AsyncGraphDatabase.driver(local_url("NEO4J_TEST_BOLT"), auth=None)
         self.resolver = module.EntityResolver()
-        self.patches = [patch.object(module, "graph_store", self.graph),
+        self.patches = [patch.object(self.store, "generate_embedding", AsyncMock(return_value=[.01] + [0.] * 3071)),
+                        patch.object(module, "graph_store", self.graph),
                         patch.object(module, "embeddings_store", self.store)]
         for item in self.patches:
             item.start()
@@ -469,3 +470,91 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["entity_uuid"] for row in found if row["entity_uuid"].startswith(self.prefix)], [stale])
                 self.assertEqual(bool(await self.entity_rows(stale, "Aspen Supplies")), not apply)
         self.assertTrue(await self.entity_rows(live, "Aspen Supply"))
+
+    async def row(self, entity_uuid):
+        async with self.store.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM entity_embeddings WHERE entity_uuid=$1", entity_uuid)
+            return dict(row) if row else None
+
+    async def test_resolve_writes_vector_and_repairs_reused_entity(self):
+        created = await self.resolver.resolve_organization("Synthetic Supply", 991711)
+        self.assertIsNotNone(await self.row(created))
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("DELETE FROM entity_embeddings WHERE entity_uuid=$1", created)
+        self.assertEqual(await self.resolver.resolve_organization("Synthetic Supply", 991711), created)
+        self.assertIsNotNone(await self.row(created))
+
+    async def test_merge_fills_missing_survivor(self):
+        keep = await self.seed("missing-keep", "Synthetic Supply", "Organization", [991711])
+        remove = await self.seed("missing-remove", "Synthetic Supplies", "Organization", [991712])
+        await self.resolver.merge_entities(keep, remove, review_method="entity_review_api")
+        self.assertIsNotNone(await self.row(keep))
+        self.assertIsNone(await self.row(remove))
+
+    async def test_undo_fills_legacy_missing_snapshot(self):
+        keep = await self.seed("legacy-keep", "Synthetic Supply", "Organization", [991711])
+        remove = await self.seed("legacy-remove", "Synthetic Supplies", "Organization", [991712])
+        for entity_uuid in (keep, remove):
+            await self.seed_embedding(entity_uuid, "Synthetic Supply")
+        merge_id = (await self.resolver.merge_entities(keep, remove, review_method="entity_review_api"))["merge_id"]
+        # Older merge journals can have no saved vector.
+        async with self.store.pool.acquire() as conn:
+            await conn.execute("UPDATE entity_merge_journal SET before_image=before_image-'embedding' WHERE merge_id=$1", merge_id)
+        await self.resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+        self.assertIsNotNone(await self.row(keep))
+        self.assertIsNotNone(await self.row(remove))
+
+    async def test_backfill_reports_by_label_batches_and_preserves_existing_rows(self):
+        from scripts.backfill_entity_embeddings import backfill_entity_embeddings
+        keep = await self.seed("backfill-existing", "Synthetic Existing", "Organization", [991711])
+        missing = [await self.seed(f"backfill-{i}", f"Synthetic Missing {i}", kind, [991711])
+                   for i, kind in enumerate(("Person", "Organization", "DocumentRef"))]
+        await self.seed_embedding(keep, "Synthetic Existing")
+        before = await self.row(keep)
+        async with self.graph.driver.session() as session:
+            await session.run("CREATE (:MedicalResult {uuid:$uuid, test_name:'Synthetic test'})", uuid=self.prefix+"unnamed")
+            await session.run("CREATE (:Document {uuid:$uuid, name:'Synthetic source'})", uuid=self.prefix+"document")
+            await session.run("MATCH (n {uuid:$uuid}) SET n:Searchable", uuid=missing[0])
+            await session.run("CREATE (:Organization {uuid:$uuid, name:[1,2]})", uuid=self.prefix+"malformed-list")
+            await session.run("CREATE (:Organization {uuid:$uuid, name:123})", uuid=self.prefix+"malformed-number")
+        model = self.store.generate_embedding
+        model.reset_mock()
+        report = await backfill_entity_embeddings(self.store, self.graph.driver, batch_size=2)
+        self.assertEqual(report["missing"], 3)
+        self.assertEqual(report["by_label"], {"DocumentRef": 1, "Organization": 1, "Person": 1, "Searchable": 1})
+        model.assert_not_awaited()
+        self.assertTrue(all([await self.row(u) is None for u in missing]))
+        report = await backfill_entity_embeddings(self.store, self.graph.driver, apply=True, batch_size=2)
+        self.assertEqual(report["inserted"], 3)
+        self.assertEqual(model.await_count, 3)
+        self.assertEqual(await self.row(keep), before)
+        model.reset_mock()
+        self.assertEqual((await backfill_entity_embeddings(self.store, self.graph.driver, apply=True, batch_size=2))["missing"], 0)
+        model.assert_not_awaited()
+        self.assertTrue(all([await self.row(u) is not None for u in missing]))
+
+    async def test_missing_only_insert_preserves_a_concurrent_writer(self):
+        entity_uuid = await self.seed("racing-vector", "Synthetic Race", "Organization", [991711])
+        before = None
+        async def insert_concurrent(*args, **kwargs):
+            nonlocal before
+            async with self.store.pool.acquire() as conn:
+                await conn.execute("""INSERT INTO entity_embeddings(entity_uuid, entity_name, content, embedding)
+                    VALUES($1, 'Synthetic Concurrent Writer', 'original', $2::vector)""",
+                    entity_uuid, str([.01] + [0.] * 3071))
+            before = await self.row(entity_uuid)
+            return [.02] + [0.] * 3071
+        with patch.object(self.store, "generate_rich_embedding", AsyncMock(side_effect=insert_concurrent)):
+            self.assertFalse(await self.store.store_entity_embedding(entity_uuid, "Synthetic Race", "Organization", only_missing=True))
+        self.assertEqual(await self.row(entity_uuid), before)
+
+    async def test_embedding_failure_is_visible_and_retry_repairs_created_entity(self):
+        with patch.object(self.store, "generate_embedding", AsyncMock(return_value=[])):
+            with self.assertRaisesRegex(RuntimeError, "no vector"):
+                await self.resolver.resolve_organization("Synthetic Retry", 991711)
+        nodes = await self.doc_entities(991711)
+        self.assertEqual(len(nodes), 1)
+        entity_uuid = next(iter(nodes))
+        self.assertIsNone(await self.row(entity_uuid))
+        self.assertEqual(await self.resolver.resolve_organization("Synthetic Retry", 991711), entity_uuid)
+        self.assertIsNotNone(await self.row(entity_uuid))

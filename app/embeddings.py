@@ -352,8 +352,12 @@ class EmbeddingsStore:
 
     async def store_entity_embedding(self, entity_uuid: str, entity_name: str,
                                       entity_type: str = "", content: str = "",
-                                      connected_names: list[str] = None):
+                                      connected_names: list[str] = None, *, only_missing: bool = False):
         """Store entity embedding in the entity_embeddings table."""
+        if only_missing:
+            async with self.pool.acquire() as conn:
+                if await conn.fetchval("SELECT EXISTS(SELECT 1 FROM entity_embeddings WHERE entity_uuid=$1)", entity_uuid):
+                    return False
         if not content:
             content = entity_name
         embedding = await self.generate_rich_embedding(
@@ -361,20 +365,22 @@ class EmbeddingsStore:
             description=content, connected_names=connected_names
         )
         if not embedding:
-            raise ValueError("Entity embedding generation returned no vector")
+            raise RuntimeError("Entity embedding generation returned no vector")
+        conflict = "DO NOTHING" if only_missing else """DO UPDATE
+            SET entity_name = $2, entity_type = $3, content = $4,
+                embedding = $5::vector, created_at = NOW()"""
         async def _op():
             async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
+                return await conn.fetchval(
+                    f"""
                     INSERT INTO entity_embeddings (entity_uuid, entity_name, entity_type, content, embedding)
                     VALUES ($1, $2, $3, $4, $5::vector)
-                    ON CONFLICT (entity_uuid) DO UPDATE
-                    SET entity_name = $2, entity_type = $3, content = $4,
-                        embedding = $5::vector, created_at = NOW()
+                    ON CONFLICT (entity_uuid) {conflict}
+                    RETURNING entity_uuid
                     """,
                     entity_uuid, entity_name, entity_type, content[:50000], str(embedding),
                 )
-        await retry_db(_op, operation='store_entity_embedding')
+        return bool(await retry_db(_op, operation='store_entity_embedding'))
 
     async def store_document_embedding(self, doc_id: int, content: str, chunk_index: int = 0,
                                         title: str = None, doc_type: str = None,

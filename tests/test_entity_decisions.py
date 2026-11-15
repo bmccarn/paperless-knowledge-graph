@@ -28,6 +28,7 @@ class MemoryDecisions:
         self.rows = copy.deepcopy(list(rows))
         self.unavailable = False
         self.journal = {}
+        self.embeddings = {}
 
     async def get_entity_review_decisions(self):
         if self.unavailable:
@@ -62,6 +63,14 @@ class MemoryDecisions:
                 row["identity_status"] = status
                 return
         raise ValueError("Legacy decision disappeared")
+
+    async def store_entity_embedding(self, entity_uuid, name, kind="", content="", *, only_missing=False):
+        if self.unavailable:
+            raise ConnectionError("embedding store unavailable")
+        if only_missing and entity_uuid in self.embeddings:
+            return False
+        self.embeddings[entity_uuid] = (name, kind, content)
+        return True
 
     async def generate_embedding(self, text):
         return []

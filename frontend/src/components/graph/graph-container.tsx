@@ -66,7 +66,6 @@ function GraphContent() {
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
   const [focused, setFocused] = useState(false);
-  const [is3D, setIs3D] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [mobileList, setMobileList] = useState(false);
   const [seedLimit, setSeedLimit] = useState(100);
@@ -247,27 +246,6 @@ function GraphContent() {
             <List className="h-4 w-4" />
             Browse
           </Button>
-          <div
-            className="flex rounded-md border p-0.5"
-            aria-label="Graph dimensions"
-          >
-            <Button
-              size="sm"
-              variant={!is3D ? "secondary" : "ghost"}
-              aria-pressed={!is3D}
-              onClick={() => setIs3D(false)}
-            >
-              2D
-            </Button>
-            <Button
-              size="sm"
-              variant={is3D ? "secondary" : "ghost"}
-              aria-pressed={is3D}
-              onClick={() => setIs3D(true)}
-            >
-              3D
-            </Button>
-          </div>
           <Button
             variant="outline"
             size="sm"
@@ -399,10 +377,9 @@ function GraphContent() {
               <input
                 type="checkbox"
                 checked={showLabels}
-                disabled={is3D}
                 onChange={(event) => setShowLabels(event.target.checked)}
               />
-              Show 2D labels
+              Show labels
             </label>
           </div>
           <div className="px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -473,7 +450,6 @@ function GraphContent() {
           ) : visibleGraph.nodes.length ? (
             <ForceGraphClient
               graph={visibleGraph}
-              is3D={is3D}
               showLabels={showLabels}
               selectedNodeId={selectedNodeId}
               selectedLinkId={selectedLinkId}
@@ -481,7 +457,6 @@ function GraphContent() {
               onSelectLink={selectLink}
               onClear={clearSelection}
               onReady={onReady}
-              onUse2D={() => setIs3D(false)}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
@@ -516,7 +491,7 @@ function GraphContent() {
             </span>
             <span className="hidden rounded-md border border-slate-600/40 bg-[#101820ed] px-3 py-2 sm:block">
               Click to inspect · Drag to pin · Scroll to zoom ·{" "}
-              {is3D ? "Amber" : "Dashed amber"} = inferred
+              Dashed amber = inferred
             </span>
           </div>
           {graph.discarded > 0 && (

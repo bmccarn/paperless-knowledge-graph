@@ -73,14 +73,14 @@ BACKEND_URL=http://127.0.0.1:8485 \
 
 Open `http://127.0.0.1:3100/graph`. The fixture contains only invented names and document records. It implements graph endpoints only; dashboard health and document detail requests are intentionally outside its scope. Source links are checked for their correct destination, not full document-page functionality. Stop both processes when done.
 
-Manual acceptance checks performed:
+Current manual acceptance checks:
 
 - Start in 2D; labels are readable, documents appear as squares, entities as circles.
 - Search for Example Utility; inspect its incoming links and recorded source references.
 - Inspect Alex Example; its relationship is outgoing. Expand repeatedly; count stays at four nodes / three relationships.
-- Switch to 3D and back; filter to documents, showing two nodes / zero edges.
+- Filter to documents, showing two nodes / zero edges.
 - Browse and inspect a document at 390 × 844; the inspector fits and its close/source controls remain accessible.
 - Inferred connections are labeled and source descriptions render literal markup as text.
 - A nonexistent search shows an empty result; `fixture-error` returns a synthetic search failure and the UI can recover with another search.
 
-The browser checks use a small synthetic graph. No production document, model call, corpus-scale timing, dense-graph frame-rate claim, or actual mobile touch-device test is implied. The optional 3D renderer was checked on the available Chrome/WebGL setup, not across devices.
+The browser checks use a small synthetic graph. No production document, model call, corpus-scale timing, dense-graph frame-rate claim, or actual mobile touch-device test is implied.

@@ -4,6 +4,7 @@ import json
 import os
 import unittest
 from itertools import permutations
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlparse
 
@@ -42,9 +43,9 @@ class SupportStateTests(unittest.TestCase):
                                  {'support_state': state, 'stated_count': stated, 'inferred_count': inferred})
 
 
-def owner_rule(setting, persons):
+def owner_rule(setting, persons, aliases=''):
     """(status, owner uuid, match count), the shape these tests assert."""
-    status, owner, matches = owner_matches(setting, persons)
+    status, owner, matches = owner_matches(setting, persons, aliases)
     return status, owner, len(matches)
 
 
@@ -98,6 +99,39 @@ class OwnerRuleTests(unittest.TestCase):
         self.assertEqual((status, owner, [p['uuid'] for p in matches]), ('chosen', 'b', ['b', 'c', 'a']))
         self.assertEqual(owner_matches('Nobody Known', self.PERSONS), ('not_found', None, []))
         self.assertEqual(owner_matches('', self.PERSONS), ('unset', None, []))
+
+
+class OwnerAliasTests(unittest.TestCase):
+    ALIASES = 'Rowan T Vale; Vale, Rowan T'
+    PERSONS = [
+        {'uuid': 'a', 'name': 'Rowan Vale', 'evidence_doc_count': 2},
+        {'uuid': 'b', 'name': 'Rowan T Vale', 'evidence_doc_count': 9},
+        {'uuid': 'c', 'name': 'Someone Else', 'aliases': ['VALE,  rowan t'], 'evidence_doc_count': 5},
+        {'uuid': 'd', 'name': 'Vale', 'aliases': ['Rowan T'], 'evidence_doc_count': 50},
+    ]
+
+    def test_every_owner_name_matches_and_the_existing_order_chooses(self):
+        status, owner, matches = owner_matches('Rowan Vale', self.PERSONS, self.ALIASES)
+        self.assertEqual((status, owner, [p['uuid'] for p in matches]), ('chosen', 'b', ['b', 'c', 'a']))
+
+    def test_empty_aliases_change_nothing(self):
+        for aliases in ('', ' ; ;  ', None):
+            with self.subTest(aliases=aliases):
+                self.assertEqual(owner_matches('Rowan Vale', self.PERSONS, aliases),
+                                 owner_matches('Rowan Vale', self.PERSONS))
+                self.assertEqual(owner_rule('Rowan Vale', self.PERSONS, aliases), ('found', 'a', 1))
+
+    def test_empty_entries_and_surrounding_spaces_are_ignored(self):
+        self.assertEqual(owner_rule('Rowan Vale', self.PERSONS, ' ;  Rowan T Vale  ;;\t; '), ('chosen', 'b', 2))
+
+    def test_aliases_need_an_owner_name(self):
+        self.assertEqual(owner_rule('', self.PERSONS, self.ALIASES), ('unset', None, 0))
+
+    def test_sample_environments_list_the_setting(self):
+        root = Path(__file__).resolve().parents[1]
+        for path in (root / '.env.example', root / 'examples/kg-local.env.example'):
+            with self.subTest(path=path.name):
+                self.assertIn('OWNER_ALIASES=', path.read_text().splitlines())
 
 
 @unittest.skipUnless(TEST_URI, 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI')
@@ -175,6 +209,11 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
             fields = await self.store.get_node_fields([PREFIX + 'listed-a'], owner)
         self.assertEqual((status, owner, count), ('found', PREFIX + 'listed-a', 1))
         self.assertTrue(fields[PREFIX + 'listed-a']['is_owner'])
+
+    async def test_owner_aliases_follow_the_setting(self):
+        with patch('app.graph.settings.owner_name', 'Nobody Known'), \
+                patch('app.graph.settings.owner_aliases', 'Someone Else; fields nickname'):
+            self.assertEqual(await get_owner(self.store), ('found', PREFIX + 'listed-a', 1))
 
     async def test_duplicate_owner_agrees_in_search_and_summary_without_writes(self):
         from app import main

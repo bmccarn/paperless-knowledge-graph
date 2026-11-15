@@ -6,13 +6,14 @@ from collections import defaultdict
 from datetime import date
 from typing import Any, Optional
 
-from neo4j import AsyncGraphDatabase
+from neo4j import AsyncGraphDatabase, Query
 from rapidfuzz import fuzz
 
 from app.config import settings
 from app.retry import retry_db
+from app.relationship_families import classify_relationship
 from app.relationship_support import merge_support_properties, support_records
-from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, owner_rule
+from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, link_support, owner_rule
 
 logger = logging.getLogger(__name__)
 
@@ -1226,10 +1227,75 @@ class GraphStore:
                                   "is_owner": row["uuid"] == owner}
                     async for row in result}
 
+    async def find_paths(self, a: str, b: str, *, max_len: int, k: int, exclude: Optional[str],
+                         allow_inferred: bool, owner: Optional[str], timeout: float) -> dict:
+        """Up to k simple paths over semantic links between two entities, at most max_len links each.
+
+        Shorter lengths are searched first, and at most PATH_CANDIDATES paths are checked in all;
+        `exhausted` is false when that cap stopped the search. `exclude` is never an inner node.
+        """
+        found, checked = [], 0
+        async with self.driver.session() as session:
+            for length in range(1, max_len + 1):
+                # The node and link predicates are per element, so Neo4j prunes the expansion with them.
+                result = await session.run(Query(f"""
+                    MATCH (a {{uuid: $a}}) WHERE NOT a:Document
+                    MATCH (b {{uuid: $b}}) WHERE NOT b:Document
+                    MATCH p = (a)-[rs*{length}]-(b)
+                    WHERE all(r IN rs WHERE NOT type(r) IN $evidence AND ($allow_inferred OR NOT {_INFERRED}))
+                      AND all(x IN nodes(p) WHERE NOT x:Document AND coalesce(x.uuid, '') <> $exclude)
+                      AND all(x IN nodes(p) WHERE single(y IN nodes(p) WHERE y = x))
+                    WITH p LIMIT $remaining
+                    WITH p, [r IN relationships(p) | coalesce(r.weight, 0)] AS weights,
+                         size([r IN relationships(p) WHERE {_INFERRED}]) AS inferred,
+                         [r IN relationships(p) | startNode(r).uuid + '~' + type(r) + '~' + endNode(r).uuid] AS keys
+                    WITH p, weights, inferred, keys,
+                         reduce(low = weights[0], w IN weights | CASE WHEN w < low THEN w ELSE low END) AS weakest
+                    ORDER BY weakest DESC, inferred ASC, keys ASC
+                    WITH collect({{p: p, weights: weights, inferred: inferred, keys: keys, weakest: weakest}}) AS rows
+                    RETURN size(rows) AS checked, [row IN rows[..$k] | {{
+                        nodes: [x IN nodes(row.p) | {{id: x.uuid, label: head(labels(x)),
+                                                      name: coalesce(x.name, x.title)}}],
+                        links: [i IN range(0, size(row.keys) - 1) | {{
+                            key: row.keys[i], source: startNode(relationships(row.p)[i]).uuid,
+                            type: type(relationships(row.p)[i]), target: endNode(relationships(row.p)[i]).uuid,
+                            weight: row.weights[i], props: properties(relationships(row.p)[i])}}],
+                        weakest: row.weakest, inferred: row.inferred}}] AS paths
+                    """, timeout=timeout), a=a, b=b, evidence=EVIDENCE_TYPES, allow_inferred=allow_inferred,
+                    exclude=exclude or "", remaining=PATH_CANDIDATES - checked, k=k)
+                row = await result.single()
+                checked += row["checked"] if row else 0
+                found += [{**path, "length": length} for path in (row["paths"] if row else [])]
+                if checked >= PATH_CANDIDATES:
+                    break
+        found.sort(key=lambda p: (-p["weakest"], p["length"], p["inferred"], [l["key"] for l in p["links"]]))
+        found = found[:k]
+        nodes = {n["id"]: n for path in found for n in path["nodes"]}
+        fields = await self.get_node_fields(list(nodes), owner)
+        links = {l["key"]: l for path in found for l in path["links"]}
+        return {
+            "paths": [{"nodes": [n["id"] for n in p["nodes"]], "links": [l["key"] for l in p["links"]],
+                       "length": p["length"], "weakest_weight": p["weakest"], "has_inferred": p["inferred"] > 0}
+                      for p in found],
+            "exhausted": checked < PATH_CANDIDATES,
+            "nodes": {i: {**n, **fields.get(i, {})} for i, n in nodes.items()},
+            "links_detail": {key: {"source": l["source"], "type": l["type"], "target": l["target"],
+                                   "family": classify_relationship(l["type"])[0], "weight": l["weight"],
+                                   **link_support(l["props"])}
+                             for key, l in links.items()},
+        }
+
 
 # The entity's stored source documents, or else the distinct Document nodes linked to it.
 _EVIDENCE_DOC_COUNT = """CASE WHEN size(coalesce(n.source_doc_ids, [])) > 0 THEN size(n.source_doc_ids)
     ELSE COUNT { MATCH (n)--(d:Document) RETURN DISTINCT d } END"""
+
+PATH_CANDIDATES = 1000
+# Link r is inferred when link_support says so: no stated record, or no records and an inferred flag.
+# Records are stored as json.dumps(..., sort_keys=True), and a quote inside a value has escaped quotes.
+_INFERRED = """(CASE WHEN size(coalesce(r.support_records, [])) > 0
+    THEN none(s IN r.support_records WHERE s CONTAINS '"inferred": false')
+    ELSE coalesce(r.inferred, false) OR coalesce(r.implied, false) END)"""
 
 
 def _sanitize_rel_type(rel_type: str) -> str:

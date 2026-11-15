@@ -22,64 +22,111 @@ page.on('request', request => {
 });
 const record = name => { outcomes.push({ name, status: 'passed' }); console.log(`PASS ${name}`); };
 const capture = name => page.screenshot({ path: path.join(artifacts, `${name}.png`), fullPage: true });
-const mergeButtons = page.getByRole('button', { name: 'Merge right into left', exact: true });
-const dialog = page.getByRole('dialog');
+const queue = page.getByRole('region', { name: 'Duplicate candidates', exact: true });
+const recent = page.getByRole('region', { name: 'Recent merges', exact: true });
+const candidate = name => queue.getByRole('article').filter({ has: page.getByRole('link', { name, exact: true }) });
+const mergeButtons = queue.getByRole('button', { name: 'Merge', exact: true });
+const dialog = page.getByRole('alertdialog');
+const toasts = page.getByRole('status', { name: 'Notifications', exact: true });
+// Every visible word and every accessible name; a candidate is never "left" or "right".
+const sideWords = () => page.evaluate(() => {
+  const names = [...document.querySelectorAll('button, a, [role], [aria-label]')]
+    .map(element => `${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''}`);
+  return `${document.body.innerText} ${names.join(' ')}`.match(/\b(left|right)\b/gi) || [];
+});
 
 try {
   const marker = await context.request.get(`${base}/api/_fixture`);
   assert.equal((await marker.json()).fixture, 'paperless-accuracy-ui-v1');
   assert.equal((await context.request.post(`${base}/api/_fixture/reset`)).status(), 200);
   await page.goto(`${base}/entities/review`);
-  await page.getByText('Cedar Lab 1', { exact: true }).waitFor();
+  await candidate('Cedar Lab 1').waitFor();
 
-  await page.getByText('No merges recorded.', { exact: true }).waitFor();
+  await recent.getByText('No merges yet.', { exact: true }).waitFor();
+  for (const name of ['Cedar Lab 1', 'Cedar Laboratory 1']) {
+    const href = await candidate('Cedar Lab 1').getByRole('link', { name, exact: true }).getAttribute('href');
+    assert.match(href, /^\/graph\?focus=synthetic-review-1-(left|right)$/);
+  }
+  assert.deepEqual(await sideWords(), []);
+  record('entity_candidates_named_and_linked_to_the_graph');
 
   // Merge deletes an entity, so the first click only asks.
-  await mergeButtons.first().click();
+  await toasts.waitFor({ state: 'attached' });
+  await candidate('Cedar Lab 1').getByRole('button', { name: 'Merge', exact: true }).click();
   await dialog.waitFor();
   const text = await dialog.innerText();
-  for (const expected of ['Cedar Lab 1', 'Cedar Laboratory 1', 'undo it from Recent merges']) assert.ok(text.includes(expected), expected);
+  for (const expected of ['Cedar Lab 1', 'Cedar Laboratory 1', 'You can undo']) assert.ok(text.includes(expected), expected);
+  assert.deepEqual(await sideWords(), []);
   assert.equal(merges.length, 0);
   await capture('entity-review-merge-confirm');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await dialog.waitFor({ state: 'hidden' });
   await page.waitForTimeout(150);
   assert.equal(merges.length, 0);
-  await page.getByText('Cedar Lab 1', { exact: true }).waitFor();
+  await candidate('Cedar Lab 1').waitFor();
   record('entity_merge_cancel_sends_nothing');
 
-  // Hold the confirmed merge: every card stays locked until it settles.
+  // Hold the confirmed merge: every candidate stays locked until it settles.
   let release;
   const held = new Promise(resolve => { release = resolve; });
   await page.route('**/api/entity-review/merge', route => release(route));
-  await mergeButtons.first().click();
+  await candidate('Cedar Lab 1').getByRole('button', { name: 'Merge', exact: true }).click();
   await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
   const route = await held;
   await dialog.waitFor({ state: 'hidden' });
-  for (const name of ['Merge right into left', 'Merging...', 'Keep split', 'Ignore']) {
-    const buttons = await page.getByRole('button', { name, exact: true }).all();
+  for (const name of ['Merge', 'Merging...', 'Keep split', 'Ignore']) {
+    const buttons = await queue.getByRole('button', { name, exact: true }).all();
     for (const button of buttons) assert.ok(await button.isDisabled(), `${name} enabled during a pending merge`);
   }
-  assert.equal(await page.getByRole('button', { name: 'Keep split', exact: true }).count(), 3);
+  assert.equal(await queue.getByRole('button', { name: 'Keep split', exact: true }).count(), 3);
   await capture('entity-review-merge-pending');
   await route.continue();
-  await page.getByText('Merged "Cedar Laboratory 1" into "Cedar Lab 1".', { exact: true }).waitFor();
-  await page.getByText('Cedar Lab 1', { exact: true }).waitFor({ state: 'detached' });
+  await toasts.getByText('Merged Cedar Laboratory 1 into Cedar Lab 1.', { exact: true }).waitFor();
+  await candidate('Cedar Lab 1').waitFor({ state: 'detached' });
   assert.equal(merges.length, 1);
   assert.ok(await mergeButtons.first().isEnabled());
-  record('entity_merge_confirm_sends_once_and_locks_cards');
+  record('entity_merge_confirm_sends_once_and_locks_candidates');
 
-  // The merge appears under Recent merges; Undo records a split, so the pair stays out of the candidates.
-  const undo = page.getByRole('button', { name: 'Undo', exact: true });
-  await undo.waitFor();
-  await capture('entity-review-recent-merges');
-  await undo.click();
-  await page.getByText('Undid the merge of "Cedar Laboratory 1" into "Cedar Lab 1".', { exact: true }).waitFor();
-  await page.getByText('reverted', { exact: true }).waitFor();
+  // The toast's Undo calls the unmerge route with the id the merge returned.
+  await recent.getByRole('button', { name: 'Undo', exact: true }).waitFor();
+  await capture('entity-review-merged-toast');
+  await toasts.getByRole('button', { name: 'Undo', exact: true }).click();
+  await toasts.getByText('Undid the merge of Cedar Laboratory 1 into Cedar Lab 1.', { exact: true }).waitFor();
+  await recent.getByText('Undone', { exact: true }).waitFor();
   assert.equal(unmerges.length, 1);
   assert.equal(JSON.parse(unmerges[0].postData()).merge_id, 'synthetic-merge-1');
-  assert.equal(await undo.count(), 0);
-  record('entity_unmerge_sends_once_and_marks_the_merge_reverted');
+  assert.equal(await page.getByRole('button', { name: 'Undo', exact: true }).count(), 0);
+  // Both entities exist again: the restored duplicate links back to the graph.
+  for (const name of ['Cedar Lab 1', 'Cedar Laboratory 1']) await recent.getByRole('link', { name, exact: true }).waitFor();
+  record('entity_toast_undo_restores_both_entities');
+
+  // Recent merges has its own Undo for a merge made earlier.
+  await candidate('Cedar Lab 2').getByRole('button', { name: 'Merge', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
+  await toasts.getByText('Merged Cedar Laboratory 2 into Cedar Lab 2.', { exact: true }).waitFor();
+  await toasts.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await toasts.getByText('Merged Cedar Laboratory 2 into Cedar Lab 2.', { exact: true }).waitFor({ state: 'detached' });
+  await capture('entity-review-recent-merges');
+  await recent.getByRole('button', { name: 'Undo', exact: true }).click();
+  await toasts.getByText('Undid the merge of Cedar Laboratory 2 into Cedar Lab 2.', { exact: true }).waitFor();
+  assert.equal(unmerges.length, 2);
+  assert.equal(JSON.parse(unmerges[1].postData()).merge_id, 'synthetic-merge-2');
+  assert.equal(await recent.getByText('Undone', { exact: true }).count(), 2);
+  record('entity_recent_merge_undo_sends_once_and_marks_the_merge_undone');
+
+  // A merge whose undo hit a conflict shows that status instead of Undo.
+  await page.route('**/api/entity-review/merges', route => route.fulfill({ json: { merges: [
+    { merge_id: 'synthetic-conflict', primary_uuid: 'synthetic-review-9-left', duplicate_uuid: 'synthetic-review-9-right',
+      primary_name: 'Birch Clinic', duplicate_name: 'Birch Medical Clinic', status: 'conflict',
+      created_at: '2026-09-03T08:30:00+00:00', risk_flags: ['shared_source_document', 'scalar_clash:phone'] },
+  ] } }));
+  await page.reload();
+  const conflict = recent.getByRole('listitem').filter({ hasText: 'Birch Medical Clinic' });
+  await conflict.getByText('Conflict', { exact: true }).waitFor();
+  for (const flag of ['Shared source document', 'Different phone']) await conflict.getByText(flag, { exact: true }).waitFor();
+  assert.equal(await conflict.getByRole('button', { name: 'Undo', exact: true }).count(), 0);
+  record('entity_conflict_merge_shows_its_status_instead_of_undo');
+
   assert.deepEqual(errors, []);
   await writeFile(path.join(artifacts, 'entity-review-results.json'), JSON.stringify({ outcomes, page_errors: errors }, null, 2) + '\n');
 } finally {

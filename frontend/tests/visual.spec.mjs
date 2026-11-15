@@ -34,9 +34,20 @@ const extraStates = [
     await page.getByRole("button", { name: "Open conversations", exact: true }).click();
     await page.getByRole("dialog").waitFor();
   } },
+  { ...gallery, name: "gallery-alert-dialog", state: "alert-dialog", prepare: async page => {
+    await page.getByRole("button", { name: "Open alert dialog", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
   { ...mainStates[4], name: "entities-dialog", state: "merge-dialog", prepare: async page => {
-    await page.getByRole("button", { name: "Merge right into left", exact: true }).first().click();
-    await page.getByRole("dialog").waitFor();
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").waitFor();
+  } },
+  { ...mainStates[4], name: "entities-merged", state: "merged-toast", prepare: async page => {
+    await page.getByRole("button", { name: "Merge", exact: true }).first().click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Merge", exact: true }).click();
+    // Focus holds the toast open through the clock jump below.
+    const undo = page.getByRole("status", { name: "Notifications" }).getByRole("button", { name: "Undo", exact: true });
+    await undo.focus();
   } },
   { ...mainStates[2], name: "documents-expanded", state: "expanded", prepare: async page => {
     const titleCell = page.getByRole("row").filter({ has: page.getByRole("link", { name: "January premium statement", exact: true }) }).locator("td").nth(2);

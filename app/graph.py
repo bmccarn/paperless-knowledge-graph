@@ -12,6 +12,7 @@ from rapidfuzz import fuzz
 from app.config import settings
 from app.retry import retry_db
 from app.relationship_support import merge_support_properties, support_records
+from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, owner_rule
 
 logger = logging.getLogger(__name__)
 
@@ -827,6 +828,7 @@ class GraphStore:
         self, query: str, node_type: str = None, limit: int = 20, *,
         offset: int = 0, doc_type: str | None = None, sort: str = "relevance",
         direction: str = "desc", include_page: bool = False, entity: str = "",
+        exclude_documents: bool = False, graph_fields: bool = False,
     ) -> list[dict] | dict:
         """Filter the whole graph before bounded, deterministic pagination."""
         if node_type and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", node_type):
@@ -842,10 +844,13 @@ class GraphStore:
             "doc_type": "coalesce(toStringOrNull(n.doc_type), 'unknown')",
             "paperless_id": "n.paperless_id",
         }
-        if sort not in orders or direction not in {"asc", "desc"}:
+        documents = sort == "documents"
+        graph_fields = graph_fields or documents
+        if (sort not in orders and not documents) or direction not in {"asc", "desc"}:
             raise ValueError("Invalid search ordering")
         terms = self._search_terms(query)
-        if not terms and not node_type:
+        # Only the documents sort lists entities for an empty query.
+        if not terms and not node_type and not documents:
             empty = {"results": [], "total": 0, "offset": offset, "limit": limit,
                      "has_more": False, "doc_types": {}}
             return empty if include_page else []
@@ -857,6 +862,8 @@ class GraphStore:
         """ if entity else ""
         where = """WHERE e IS NOT NULL AND (n.paperless_id IN entity_docs
                                          OR EXISTS { (n)-[:MENTIONS]-(e) })""" if entity else ""
+        if exclude_documents:
+            where = f"{where} AND NOT n:Document" if where else "WHERE NOT n:Document"
         match = f"""{scope}
             MATCH (n{label}) {where}
             WITH n, toLower(
@@ -886,16 +893,26 @@ class GraphStore:
                 record = await counts.single()
                 total = int(record["total"]) if record else 0
                 facets = {item["type"]: item["count"] for item in (record["doc_types"] if record else [])}
+            fields = f""", {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
+                CASE WHEN size($terms) = 0 OR any(term IN $terms WHERE toLower(coalesce(
+                         toStringOrNull(n.name), toStringOrNull(n.title), '')) CONTAINS term) THEN null
+                     ELSE head([alias IN coalesce(n.aliases, []) WHERE any(term IN $terms WHERE
+                         toLower(coalesce(toStringOrNull(alias), '')) CONTAINS term) | toStringOrNull(alias)])
+                END AS matched_alias""" if graph_fields else ""
+            order = ("evidence_doc_count DESC, toLower(coalesce(toStringOrNull(n.name), toStringOrNull(n.title), '')) ASC"
+                     if documents else f"{orders[sort]} {direction.upper()}")
             result = await session.run(match + f"""
                 WITH n, score
                 WHERE $doc_type = '' OR coalesce(toStringOrNull(n.doc_type), 'unknown') = $doc_type
-                RETURN labels(n) AS labels, properties(n) AS props
-                ORDER BY {orders[sort]} {direction.upper()},
+                RETURN labels(n) AS labels, properties(n) AS props{fields}
+                ORDER BY {order},
                          coalesce(toStringOrNull(n.date), '') DESC,
                          coalesce(toStringOrNull(n.uuid), toStringOrNull(n.paperless_id), elementId(n)) ASC
                 SKIP $offset LIMIT $limit
             """, **parameters)
-            rows = [{"labels": row["labels"], "properties": row["props"]} async for row in result]
+            rows = [{"labels": row["labels"], "properties": row["props"],
+                     **({"evidence_doc_count": row["evidence_doc_count"], "matched_alias": row["matched_alias"]}
+                        if graph_fields else {})} async for row in result]
         if not include_page:
             return rows
         return {"results": rows, "total": total, "offset": offset, "limit": limit,
@@ -1184,6 +1201,35 @@ class GraphStore:
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
         return {"status": "unhealthy", "error": "unexpected"}
+
+    async def get_owner(self) -> tuple[str, Optional[str]]:
+        """Return (owner_status, owner uuid) for OWNER_NAME; see app.graph_fields.owner_rule."""
+        if not settings.owner_name.strip():
+            return "unset", None
+        async with self.driver.session() as session:
+            result = await session.run(
+                "MATCH (p:Person) RETURN p.uuid AS uuid, p.name AS name, p.aliases AS aliases")
+            persons = [dict(row) async for row in result]
+        return owner_rule(settings.owner_name, persons)
+
+    async def get_node_fields(self, uuids: list[str], owner: Optional[str] = None) -> dict[str, dict]:
+        """Derived node fields by uuid. Evidence links (document mentions) are not counted as links."""
+        async with self.driver.session() as session:
+            result = await session.run(f"""
+                MATCH (n) WHERE n.uuid IN $uuids
+                RETURN n.uuid AS uuid, {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
+                       COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count
+                """, uuids=uuids, evidence=EVIDENCE_TYPES)
+            return {row["uuid"]: {"evidence_doc_count": row["evidence_doc_count"],
+                                  "link_count": row["link_count"],
+                                  "is_hub": row["link_count"] > HUB_LINKS,
+                                  "is_owner": row["uuid"] == owner}
+                    async for row in result}
+
+
+# The entity's stored source documents, or else the distinct Document nodes linked to it.
+_EVIDENCE_DOC_COUNT = """CASE WHEN size(coalesce(n.source_doc_ids, [])) > 0 THEN size(n.source_doc_ids)
+    ELSE COUNT { MATCH (n)--(d:Document) RETURN DISTINCT d } END"""
 
 
 def _sanitize_rel_type(rel_type: str) -> str:

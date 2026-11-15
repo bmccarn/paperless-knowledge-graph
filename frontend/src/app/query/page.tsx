@@ -852,7 +852,7 @@ function QueryContent() {
 
         {/* Input */}
         <div ref={composerRef} className="flex-none border-t p-3 md:p-4 bg-card/50 backdrop-blur-sm">
-          <div className="max-w-3xl mx-auto space-y-2">
+          <div className="max-w-3xl min-[1180px]:max-w-[996px] mx-auto space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label htmlFor="question" className="label-14">Ask a question</label>
               <div className="w-full md:w-auto"><QueryModel models={models} value={selectedModel} defaultModel={defaultModel} onChange={setSelectedModel} /></div>

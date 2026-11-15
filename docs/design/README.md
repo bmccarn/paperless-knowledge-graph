@@ -36,10 +36,29 @@ This folder holds the reference material for the interface redesign in direction
 | `graph/screenshots/phone-entity-dark.png` | Mockup screen `phone-entity` in the dark theme. |
 | `graph/screenshots/phone-graph-light.png` | Mockup screen `phone-graph` in the light theme. |
 | `graph/screenshots/table-light.png` | Mockup screen `table` in the light theme. |
+| `graph/views.md` | The graph views addendum for owner approval: the view switcher, shared state, the Focus, Explore, Timeline and Overview views, two new read-only routes, performance budgets and a ticket breakdown. Once approved, it amends the graph sections of issue #109 where it says so. |
+| `graph/views-mockup.html` | The mockup of the views addendum. It holds ten screens: five desktop screens at 1440 × 900 (`switcher`, `focus`, `explore`, `timeline`, `overview`) and five phone screens at 390 × 844. The address fragment picks the screen and `?theme=light` sets the theme, for example `views-mockup.html?theme=light#explore`. |
+| `graph/views-mockup.css` | Styles for the views mockup. They extend `graph/mockup.css`; `build_views_mockup.py` inlines both. |
+| `graph/build_views_mockup.py` | Writes `graph/views-mockup.html`. Run `python3 docs/design/graph/build_views_mockup.py docs/design` from the repository root. It imports the shapes, encoding, label placer and shell from `build_mockup.py`, so both mockups draw the same marks, and it asserts that no label overlaps a node, a line or another label. |
+| `graph/screenshots/views-switcher-dark.png` | Views mockup screen `switcher` in the dark theme. |
+| `graph/screenshots/views-switcher-light.png` | Views mockup screen `switcher` in the light theme. |
+| `graph/screenshots/views-focus-dark.png` | Views mockup screen `focus` in the dark theme. |
+| `graph/screenshots/views-focus-light.png` | Views mockup screen `focus` in the light theme. |
+| `graph/screenshots/views-explore-dark.png` | Views mockup screen `explore` in the dark theme. |
+| `graph/screenshots/views-explore-light.png` | Views mockup screen `explore` in the light theme. |
+| `graph/screenshots/views-timeline-dark.png` | Views mockup screen `timeline` in the dark theme. |
+| `graph/screenshots/views-timeline-light.png` | Views mockup screen `timeline` in the light theme. |
+| `graph/screenshots/views-overview-dark.png` | Views mockup screen `overview` in the dark theme. |
+| `graph/screenshots/views-overview-light.png` | Views mockup screen `overview` in the light theme. |
+| `graph/screenshots/views-phone-focus-light.png` | Views mockup screen `phone-focus` in the light theme. |
+| `graph/screenshots/views-phone-views-dark.png` | Views mockup screen `phone-views` in the dark theme. |
+| `graph/screenshots/views-phone-explore-light.png` | Views mockup screen `phone-explore` in the light theme. |
+| `graph/screenshots/views-phone-timeline-dark.png` | Views mockup screen `phone-timeline` in the dark theme. |
+| `graph/screenshots/views-phone-overview-light.png` | Views mockup screen `phone-overview` in the light theme. |
 
 ## Reference limits
 
-The answer mockup opens directly from disk without network access. Its fonts and styles are embedded. It is a static visual reference: controls, claim selection, and source links do not implement the application behavior. On phones, claim 2 is the fixed active example. The graph wireframes use the local `graph/wf.css` file and system fonts. The PNG files in `graph/screenshots/` are a snapshot from the pull request where the owner approved the graph mockup. Nothing regenerates them, so after a later change to `graph/mockup.html`, open the HTML file instead.
+The answer mockup opens directly from disk without network access. Its fonts and styles are embedded. It is a static visual reference: controls, claim selection, and source links do not implement the application behavior. On phones, claim 2 is the fixed active example. The graph wireframes use the local `graph/wf.css` file and system fonts. The PNG files in `graph/screenshots/` are snapshots: the unprefixed ones from the pull request where the owner approved the graph mockup, and the `views-` ones from the pull request of the views addendum. Nothing regenerates them, so after a later change to `graph/mockup.html`, open the HTML file instead.
 
 The mockup establishes the visual direction, not completion of the quality bar. Later tickets implement all seven answer states, interaction, accessibility, and the final layouts. The specification controls differences such as sidebar width, phone targets, and source metadata. Page counts in the mockup are invented decoration; the answer API does not supply page numbers.
 
@@ -65,4 +84,4 @@ These wireframe parts are not part of this redesign:
 | 07 phone entity | "Pin" (the star). |
 | 09 table | "Export CSV" and "Space selects for compare". |
 
-All screens also show a "Map" view and a breadcrumb with a "Map" root. Neither is built: the views are Neighborhood, Path and Table, and Back and Forward replace the breadcrumb.
+All screens also show a "Map" view and a breadcrumb with a "Map" root. The breadcrumb is not built: Back and Forward replace it. The views are those in `graph/views.md`: Focus (the neighborhood), Explore, Timeline, Table, Paths and, as a prototype, Overview, which takes the place of the map.

@@ -74,6 +74,31 @@ const extraStates = [
     await page.getByPlaceholder("Ask a question...").press("Enter");
     await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
   } },
+  // One capture per other answer state; the question's token selects the fixture outcome.
+  ...[
+    ["documented", "Is the premium still current? state-documented"],
+    ["partial", "Show partial recorded history", "Timeline"],
+    ["withheld", "What premium is due? state-withheld-unsupported"],
+    ["not-checked", "What premium does the January statement list?", "Fast"],
+    ["retry", "What premium is due? state-retry"],
+    ["failed", "Run stream-error synthetic scenario"],
+  ].map(([state, question, mode]) => ({ ...mainStates[0], name: `ask-${state}`, state, prepare: async page => {
+    if (mode) await page.getByRole("button", { name: mode, exact: true }).click();
+    await page.getByPlaceholder("Ask a question...").fill(question);
+    await page.getByPlaceholder("Ask a question...").press("Enter");
+    await page.getByRole("article", { name: "Answer" }).waitFor();
+  } })),
+  ...[
+    ["saved-unverifiable", "Saved answer that fails re-verification"],
+    ["legacy", "Legacy answer without finalization"],
+    ["older-verified", "Older verified answer"],
+  ].map(([state, title]) => ({ ...mainStates[0], name: `ask-${state}`, state,
+    seed: page => page.request.post("/api/_fixture/saved-answers"), prepare: async page => {
+    const sheet = page.getByRole("button", { name: "Open conversations", exact: true });
+    if (await sheet.isVisible()) await sheet.click();
+    await page.getByRole("button", { name: title, exact: true }).click();
+    await page.getByRole("article", { name: "Answer" }).waitFor();
+  } })),
 ];
 
 test.beforeEach(async ({ page, baseURL, request }, info) => {
@@ -97,6 +122,7 @@ test.beforeEach(async ({ page, baseURL, request }, info) => {
 
 for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name} ${state.state || "main"}`, async ({ page }, info) => {
   test.skip(state.phoneOnly && !info.project.name.startsWith("phone"), "The conversation sheet is phone-only");
+  await state.seed?.(page);
   await page.goto(state.route);
   await state.ready(page).waitFor();
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });

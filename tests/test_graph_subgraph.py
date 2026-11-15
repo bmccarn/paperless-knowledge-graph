@@ -27,9 +27,12 @@ async def get(store, ids):
 
 
 class SubgraphRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retrieval_subgraph_keeps_its_depth_and_response_contract(self):
+        self.assertEqual(await GraphStore().get_subgraph([], depth=3), {'nodes': [], 'relationships': []})
+
     async def test_route_passes_entity_ids_to_store(self):
         fixture = {'links': [], 'documents': {}, 'total': 0, 'truncated': False}
-        with patch.object(main.graph_store, 'get_subgraph', AsyncMock(return_value=fixture), create=True) as store:
+        with patch.object(main.graph_store, 'get_links_among', AsyncMock(return_value=fixture), create=True) as store:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://test') as client:
                 response = await client.get('/graph/subgraph', params={'ids': 'a,b'})
         self.assertEqual(response.status_code, 200)
@@ -45,9 +48,9 @@ class SubgraphRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ids_are_trimmed_and_deduplicated_after_the_request_cap(self):
         store = AsyncMock()
-        store.get_subgraph.return_value = {}
+        store.get_links_among.return_value = {}
         await get(store, ' a, b,a ')
-        store.get_subgraph.assert_awaited_once_with(['a', 'b'])
+        store.get_links_among.assert_awaited_once_with(['a', 'b'])
         self.assertEqual((await get(None, ','.join(['a'] * 151))).status_code, 400)
 
 

@@ -989,7 +989,7 @@ class GraphStore:
                                       "evidence_doc_count": person["evidence_doc_count"]}
                                      for person in matches[1:]] if focus_id == owner else []}
 
-    async def get_subgraph(self, entity_ids: list[str]) -> dict:
+    async def get_links_among(self, entity_ids: list[str]) -> dict:
         async with self.driver.session() as session:
             result = await session.run("""
                 MATCH (a)-[r]->(b)

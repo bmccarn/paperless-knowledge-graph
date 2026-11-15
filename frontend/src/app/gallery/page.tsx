@@ -13,6 +13,8 @@ import { ClaimProse, MarginNote } from "@/components/claim-prose";
 import { ClaimTable } from "@/components/claim-table";
 import { SourceList } from "@/components/source-list";
 import { KindShape, TypeDot } from "@/components/kind-shape";
+import { LinkTable } from "@/components/graph/link-table";
+import { neighborhoodLayout, type NodeSummary } from "@/lib/graph-layout";
 import { GraphLegend } from "@/components/graph/graph-legend";
 import { ViewSheet, ViewSwitcher } from "@/components/graph/view-switcher";
 import { GRAPH_VIEWS, type GraphView } from "@/lib/graph-url-state";
@@ -45,6 +47,15 @@ const documents = ["Annual statement", "Home inventory", "Service agreement"];
 // Every view that follows the focus entity, as the switcher will list them once their tickets ship.
 const switcherViews = GRAPH_VIEWS.map(view => ({ ...view, listed: view.id !== "overview" })).filter(view => view.listed);
 const focusName = "Policy HM-4471 (auto)";
+
+const tableSummary: NodeSummary = {
+  focus: { id: "example-person", label: "Person", name: "Alex Example", aliases: [], evidence_doc_count: 2, link_count: 1, is_hub: false, is_owner: false },
+  links: [{ key: "example-person~EMPLOYED_BY~example-org", type: "EMPLOYED_BY", family: "parties", direction: "out", support_state: "mixed", stated_count: 1, inferred_count: 1,
+    records: [{ doc_id: 1, inferred: false, confidence: 0.95 }, { doc_id: 2, inferred: true, confidence: null }],
+    neighbor: { id: "example-org", label: "Organization", name: "Example Utility", evidence_doc_count: 2, link_count: 1, is_owner: false } }],
+  documents: { "1": { title: "Employment statement", date: "2026-01-10", doc_type: "work" }, "2": { title: "Annual statement", date: null, doc_type: "work" } },
+  owner_status: "not_configured", owner_duplicates: [],
+};
 
 const answerStates: AnswerState[] = ["verified", "documented", "partial", "withheld", "not_checked", "retry", "failed"];
 const claimResults: ClaimResult[] = ["supported", "unsupported", "conflicting", "left_out"];
@@ -80,6 +91,7 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
 }
 
 export default function GalleryPage() {
+  const [tableSelection, setTableSelection] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mode, setMode] = useState<QueryMode>("strict");
   const [model, setModel] = useState("example");
@@ -182,6 +194,12 @@ export default function GalleryPage() {
               <ViewSheet views={switcherViews} current={view} focusName={focusName} onSwitch={setView} />
             </div>
           </Row>
+        </Section>
+
+        <Section id="graph-table" title="Graph link table">
+          <div className="flex h-72 min-w-0 flex-col border border-border">
+            <LinkTable summary={tableSummary} layout={neighborhoodLayout(tableSummary, 6)} selection={tableSelection} onSelectLink={setTableSelection} />
+          </div>
         </Section>
 
         <Section id="document-types" title="Document types">

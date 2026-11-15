@@ -65,7 +65,7 @@ export function ViewSwitcher(props: SwitcherProps) {
           <span key={view.id} className="contents">
             {view.id === "overview" && index > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px bg-border-strong" />}
             <button ref={element => { buttons.current[index] = element; }} type="button"
-              aria-pressed={view.id === current} aria-disabled={unavailable(view) || undefined}
+              data-graph-view={view.id} aria-pressed={view.id === current} aria-disabled={unavailable(view) || undefined}
               tabIndex={view.id === tabStop ? 0 : -1} title={`${view.label}, key ${keyOf(view.id)}`}
               onFocus={() => setActive(view.id)} onClick={() => choose(view)}
               className="h-[30px] rounded-[4px] px-3 text-[13px] font-medium text-fg-muted outline-none transition-colors hover:bg-raised hover:text-fg focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-pressed:bg-accent-solid aria-pressed:text-on-accent aria-disabled:cursor-not-allowed aria-disabled:text-fg-subtle aria-disabled:hover:bg-transparent aria-disabled:hover:text-fg-subtle">
@@ -89,7 +89,7 @@ export function ViewSheet(props: SwitcherProps) {
     <>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger asChild>
-          <Button variant="outline" className={cn("h-11 gap-2 text-sm", className)}>
+          <Button variant="outline" data-graph-view="sheet" className={cn("h-11 gap-2 text-sm", className)}>
             View: <b className="font-semibold">{label}</b><ChevronDown className="size-4" aria-hidden="true" />
           </Button>
         </SheetTrigger>
@@ -98,7 +98,7 @@ export function ViewSheet(props: SwitcherProps) {
           <ul className="border-t border-border">
             {views.map(view => (
               <li key={view.id} className="border-b border-border">
-                <button type="button" aria-pressed={view.id === current} aria-disabled={unavailable(view) || undefined}
+                <button type="button" data-graph-view={view.id} aria-pressed={view.id === current} aria-disabled={unavailable(view) || undefined}
                   onClick={() => { choose(view); if (!unavailable(view)) setOpen(false); }}
                   className="grid min-h-14 w-full grid-cols-[minmax(0,1fr)_20px] items-center gap-3 px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:text-fg-subtle">
                   <span>
@@ -130,6 +130,9 @@ export function useViewKeys() {
       const view = keyedView(event, isTextField(event.target), parseGraphState(current));
       if (!view) return;
       event.preventDefault();
+      const controls = Array.from(document.querySelectorAll<HTMLElement>("[data-graph-view]"))
+        .filter(control => control.getClientRects().length);
+      (controls.find(control => control.dataset.graphView === view) ?? controls.find(control => control.dataset.graphView === "sheet"))?.focus();
       router.push(graphNavigation(current, { view }).href, { scroll: false });
     };
     document.addEventListener("keydown", onKey);

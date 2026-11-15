@@ -21,6 +21,7 @@ const mainStates = [
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
   { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("Rowan Vale: 105 links in 9 families.", { exact: false }) },
 ];
+mainStates.push({ name: "graph-table", route: "/graph?focus=nb-rowan&view=table", ready: page => page.getByRole("table", { name: "Links of Rowan Vale" }) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -281,6 +282,15 @@ const extraStates = [
       }
       await page.getByRole("complementary", { name: "Evidence inspector" }).getByRole("button", { name: /^2014 Honda Fit/ }).click();
       await page.getByRole("region", { name: "Inspector: link" }).getByText("Stated in 1, inferred in 1", { exact: true }).waitFor();
+    } },
+  { name: "graph-table-evidence", route: "/graph?focus=nb-rowan&view=table&sel=nb-rowan~EMPLOYED_BY~nb-parties-0", state: "selected-link",
+    ready: page => page.getByRole("region", { name: "Inspector: link" }) },
+  { name: "graph-table-empty", route: "/graph?focus=nb-leaf&view=table", state: "empty",
+    ready: page => page.getByText("No direct links extracted. Open Focus to see this entity's documents.", { exact: true }) },
+  { name: "graph-view-sheet", route: "/graph?focus=nb-rowan", state: "view-sheet", phoneOnly: true,
+    ready: page => page.getByRole("button", { name: "View: Focus" }), prepare: async page => {
+      await page.getByRole("button", { name: "View: Focus" }).click();
+      await page.getByRole("dialog", { name: "View", exact: true }).waitFor();
     } },
   { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
     ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },

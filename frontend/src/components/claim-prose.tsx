@@ -17,7 +17,7 @@ export const claimResult = (status?: string) => (RESULTS.has(status ?? "") ? sta
  * A reference's quote, three lines from just before the values the claim states, with those values emphasized.
  * Expanded, it shows the whole passage.
  */
-export function Quote({ claim = "", text = "", expanded, className = "" }: { claim?: string; text: string; expanded: boolean; className?: string }) {
+export function Quote({ claim = "", text = "", expanded, className = "" }: { claim?: string; text?: string; expanded: boolean; className?: string }) {
   const { start, values } = quoteWindow(claim, text);
   const cut = !expanded && start > 0;
   return (

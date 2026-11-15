@@ -163,13 +163,14 @@ for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex r
   if (batch) {
     await row.getByRole("checkbox").click();
     await page.getByRole("button", { name: "Reindex 1", exact: true }).click();
-  } else await row.getByRole("button").click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Reindex", exact: true }).click();
+  } else await row.getByRole("button", { name: "Reindex document 101", exact: true }).click();
   await started.promise;
   const input = page.getByRole("textbox", { name: "Search indexed documents" });
   await input.fill("Synthetic archive");
   await page.getByRole("button", { name: "Search documents", exact: true }).click();
   await page.getByText("301 matching indexed documents", { exact: true }).waitFor();
-  await page.getByRole("button", { name: /invoice/ }).click();
+  await page.getByRole("button", { name: "Invoice 151", exact: true }).click();
   await page.getByText("151 matching indexed documents", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Next page", exact: true }).first().click();
   await page.getByText("2 / 7", { exact: true }).waitFor();
@@ -259,8 +260,8 @@ test("failed catalog searches do not claim an empty result or reuse old totals",
   await page.getByRole("button", { name: "Search documents", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Synthetic document search failure" }).waitFor();
   assert.equal(await page.getByText(/303 matching indexed documents/).count(), 0);
-  assert.equal(await page.getByRole("button", { name: "invoice 151", exact: true }).count(), 0);
-  assert.equal(await page.getByText("No documents found", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Invoice 151", exact: true }).count(), 0);
+  assert.equal(await page.getByText("No documents match these filters.", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Next page", exact: true }).count(), 0);
   await page.getByRole("textbox", { name: "Search indexed documents" }).fill("January");
   await page.getByRole("button", { name: "Search documents", exact: true }).click();

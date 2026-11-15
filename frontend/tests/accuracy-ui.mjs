@@ -33,7 +33,7 @@ try {
   await capture('documents-last-page');
   record('documents_pagination', 'Last page reaches document 9300 among 303 indexed documents.');
 
-  await page.getByRole('button', { name: /medical/ }).click();
+  await page.getByRole('button', { name: 'Medical 150', exact: true }).click();
   await visible('150 matching indexed documents');
   await page.getByRole('button', { name: 'Last page', exact: true }).click();
   await visible('126–150 of 150');

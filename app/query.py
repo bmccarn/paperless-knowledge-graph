@@ -22,7 +22,7 @@ def _owner_context():
     return settings.owner_context or ""
 from app.embeddings import chunk_text, embeddings_store, table_header_chunks
 from app.paperless import paperless_client
-from app.graph import graph_store
+from app.graph import graph_store, source_dates
 from app.cache import (query_cache, vector_cache, graph_cache,
     cache_get, cache_set, get_corpus_generation_async)
 from app.answer_finalization import AnswerFinalizer, POLICY_VERSION, parse_date, evidence_spans, empty_ledger
@@ -533,6 +533,9 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         try:
             result = await self._query(question, conversation_history, mode)
             await self._check_delivery_snapshot(result)
+            # Read at delivery, after the snapshot check, so cached and rejected results agree.
+            result["source_dates"] = await source_dates(graph_store,
+                [s["document_id"] for s in result.get("sources", []) if type(s.get("document_id")) is int])
             return result
         finally:
             CURRENT_QUERY_METRICS.reset(metrics_token)

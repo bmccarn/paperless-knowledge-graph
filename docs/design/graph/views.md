@@ -56,7 +56,7 @@ Names, documents and counts in the mockup are invented. The numbers in this text
 - A focus change clears `x` and `sel`. A view change keeps `sel` when the new view contains that entity or link, and clears it otherwise.
 
 **Shared parts.**
-- The filters sheet applies to every view. The Owner group's default depends on the view: shown in Focus, Timeline and Table; hidden in Explore, Paths and Overview, because the owner links to almost everything and would pull every expansion and group toward one node. Overview has no per-document records, so its sheet disables the Document date, Document type and Confidence groups and says "The map does not use document dates, types or confidence." Their values stay in the URL for the other views.
+- The filters sheet applies to every view. The Owner group's default depends on the view: shown in Focus, Timeline and Table; hidden in Explore and Paths, because the owner links to almost everything and would pull every expansion toward one node. Overview has no per-document records and always leaves out the owner, so its sheet disables the Owner, Document date, Document type and Confidence groups and says "The map does not use document dates, types or confidence, and leaves out the owner." Their values stay in the URL for the other views.
 - The inspector shows the selected entity, link or (in Overview) group in every view. A link between two neighbors opens the same link evidence as any other link (#139).
 - The legend lists only what the current view draws, as #109 says. Timeline and Overview add their own rows, named in their sections.
 - The evidence shelf stays under Focus, Explore (for the root entity) and Timeline. Table, Paths and Overview do not show it.
@@ -84,7 +84,7 @@ The capped one-hop neighborhood from #109, unchanged in layout, caps, pills, sec
 - None: the caption adds "No links between these neighbors."
 - Error: the ring stays; the caption says "Links between neighbors did not load." with a Retry button.
 
-**Phone.** The same canvas in the Graph tab, with at most 30 cross-links.
+**Phone.** The same canvas in the Graph tab, with at most 30 cross-links (`views-mockup.html#phone-focus`).
 
 ## Explore
 
@@ -134,14 +134,14 @@ One entity's links and evidence documents on a time axis, grouped by family (`vi
 - An axis across the top runs from the month of the earliest dated document to the month of the latest, with one month of space at each end. A span of more than 18 months shows years with month ticks; a shorter span labels months.
 - A document band under the axis has one 8 px dot per evidence document, in its document type color, stacked upward per month. A stack taller than six dots shows six and "+N".
 - Below, one lane per family in the fixed family order, then one row per neighbor, ranked and capped as in Focus: 6 rows per family, 2 for a hub, then a "+N more" row that adds 25. A neighbor appears once, in the family that Focus gives it.
-- The family name sits in a 176 px column beside its first row. A row has a 220 px name column (swatch and name), then the link drawn at its documents' dates. A line runs from the first to the last document, with the link's width and dash from the encoding. One mark sits at each document, in the color of the neighbor's kind: filled for a stated record, a hollow ring for an inferred one. Two documents in one month sit side by side.
+- The family name sits in a 176 px column beside its first row. A row has a 220 px name column (swatch and name), then a track for each link that Focus draws to that neighbor, at its documents' dates. Two or more links give one track each, 12 px apart, in key order. A track runs from the link's first to its last document, with the link's width and dash from the encoding. One mark sits at each document, in the color of the neighbor's kind: filled for a stated record, a hollow ring for an inferred one. Two documents in one month sit side by side.
 - Documents without a date go to a "No date" column at the right end of the axis, after a gap.
 - A link with more than 60 records draws one mark per month with the count beside it. This protects the 660-link entity.
 
 **Interaction.**
-- Hovering a mark shows the document title, type, date, support word and the link it supports. A mark selects its link and highlights its document in the evidence shelf. A name selects the neighbor.
+- Hovering a mark shows the document title, type, date, support word and the link type of its track. A mark selects the link of its track and highlights its document in the evidence shelf. A name selects the neighbor.
 - Dragging across the axis selects a date range. The range is the shared document date filter (`from`, `to`), so it also applies to Focus, Explore and Table. The From and To month controls in the toolbar set the same range by keyboard. Marks outside the range use `--graph-faded`.
-- Each row is a button that names its content for screen readers: "Harbor Mutual Insurance, issued by, 9 documents from March 2024 to September 2026, all stated."
+- Each row is a button that names its content for screen readers: "Harbor Mutual Insurance, issued by, 9 documents from March 2024 to September 2026, all stated." A row with two or more tracks names each link in turn.
 
 **Legend rows.** A strip under the rows: "Stated document" (filled mark), "Inferred document" (ring), the two line styles, "Marks take the color of the linked entity's kind.", and the document type dots in view.
 
@@ -186,7 +186,7 @@ A zoomable map of the whole archive, in groups of entities that link to each oth
 d3-force-3d 3.0.6 becomes a direct dependency at the version the lockfile already holds, so no new code ships.
 
 **Two zoom levels.**
-- Map zoom (scale below 1): nodes are dots 3 to 7 px across (by evidence documents) in kind color, links are 1 px hairlines in `--border`, links between groups are dotted, and each group's name sits above it in Geist Serif 15 px with its size. Node shapes and labels are not drawn: at 6,000 nodes a 6 px minimum radius would cover most of the screen. This is the one exception to the shared encoding, and the legend says so ("Dots show kind by color. Zoom in for shapes, sizes and names."). The legend names each color's kind family, so color is not the only signal.
+- Map zoom (scale below 1): nodes are dots 3 to 7 px across (by evidence documents) in kind color, links are 1 px hairlines in `--border`, links between groups are dotted, and each group's name sits above it in Geist Serif 15 px with its size. Node shapes and labels are not drawn: at 6,000 nodes a 6 px minimum radius would cover most of the screen. This is the one exception to the shared encoding; it needs the owner's approval (see "Changes to the specification"), and the legend says so ("Dots show kind by color. Zoom in for shapes, sizes and names."). The legend names each color's kind family, so color is not the only signal.
 - Detail zoom (scale 1 or more): the shared encoding, unchanged, with labels in evidence order and overlapping labels skipped.
 
 **Interaction.**
@@ -234,7 +234,7 @@ Both are read-only `GET` routes behind the existing frontend proxy, with a stabl
 Links among a set of entities, for Focus and Explore.
 
 - Parameter: `ids`, comma-separated entity ids, 2 to 150. Document ids and unknown ids are ignored. More than 150 ids returns 400.
-- Returns each link whose two ends are in the set, outside the `evidence` family, with no Document end. Links are sorted by distinct supporting documents (descending), then key. At most 600 links; `truncated` says whether more existed.
+- Returns each link whose two ends are in the set, outside the `evidence` family, with no Document end. Links are sorted by distinct supporting documents (descending), then key. At most 600 links; `total` is the count before the cap, and `truncated` says whether more existed. The browser applies its filters to the links it received. When `truncated` is true and a filter is on, the caption adds "Filters apply to the 600 strongest links between neighbors."
 - Each link has the same fields as a summary link, with `source` and `target` instead of `direction` and `neighbor`. `documents` holds the documents that its records name, so date and type filters work.
 
 ```json
@@ -243,7 +243,7 @@ Links among a set of entities, for Focus and Explore.
              "stated_count": 6, "inferred_count": 0,
              "records": [{"doc_id": 4120, "inferred": false, "confidence": 0.9}]}],
   "documents": {"4120": {"title": "…", "date": "2026-04-01", "doc_type": "work"}},
-  "truncated": false }
+  "total": 1, "truncated": false }
 ```
 
 - Size limit: under 250 KB for a synthetic set of 150 entities with 600 links, asserted by a test.
@@ -254,13 +254,13 @@ Links among a set of entities, for Focus and Explore.
 The whole-archive data for Overview, in a compact form.
 
 - Nodes: every entity with at least one link outside the `evidence` family to another entity, Documents excluded, sorted by id. Fields are given once in `columns`; names are cut at 60 characters.
-- Links: one row per pair of entities, all their relationships merged. `weight` is the count of distinct supporting documents. `support` is 0 (supported), 1 (mixed) or 2 (inferred), by the #109 rule over all records. `family` is the family index of the pair's strongest link, for the family filter.
+- Links: one row per pair of entities, all their relationships merged. `weight` is the count of distinct supporting documents. `support` is 0 (supported), 1 (mixed) or 2 (inferred), by the #109 rule over all records. `families` is a bit mask of the family indices of all the pair's links. The family filter hides a pair only when none of its families is shown.
 - `unlinked` counts entities that have only document links. `owner` is the owner's node index or null. `version` is a hash of the node ids and link keys, for the browser's layout cache.
 
 ```json
 { "version": "9c1e…", "columns": ["id", "label", "name", "evidence_doc_count", "link_count"],
   "nodes": [["…", "Organization", "Brightline Logistics", 58, 41]],
-  "links": [[0, 17, 6, 0, 0]], "link_columns": ["source", "target", "weight", "support", "family"],
+  "links": [[0, 17, 6, 0, 5]], "link_columns": ["source", "target", "weight", "support", "families"],
   "owner": 112, "unlinked": 1840, "truncated": false }
 ```
 
@@ -306,6 +306,7 @@ When the owner approves this addendum, these parts of #109 change.
 - **URL state.** The view values, `x`, `cross` and `sel=grp:<id>` above; history rules as above.
 - **Keyboard model.** Keys 1 to 6; `n`, `t` and `p` stay as aliases.
 - **Filters.** The Owner default per view, and the groups that Overview disables.
+- **Encoding.** Overview's map zoom draws dots instead of shapes (see "Two zoom levels"). This is the one change to the shared encoding, and the owner's approval of this addendum covers it. Without that approval, Overview opens at detail zoom only.
 - `README.md` in this folder says the views are Neighborhood, Path and Table. It now points here.
 
 ## Ticket breakdown

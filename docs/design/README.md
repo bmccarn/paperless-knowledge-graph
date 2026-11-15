@@ -50,6 +50,7 @@ This folder holds the reference material for the interface redesign in direction
 | `graph/screenshots/views-timeline-light.png` | Views mockup screen `timeline` in the light theme. |
 | `graph/screenshots/views-overview-dark.png` | Views mockup screen `overview` in the dark theme. |
 | `graph/screenshots/views-overview-light.png` | Views mockup screen `overview` in the light theme. |
+| `graph/screenshots/views-phone-focus-light.png` | Views mockup screen `phone-focus` in the light theme. |
 | `graph/screenshots/views-phone-views-dark.png` | Views mockup screen `phone-views` in the dark theme. |
 | `graph/screenshots/views-phone-explore-light.png` | Views mockup screen `phone-explore` in the light theme. |
 | `graph/screenshots/views-phone-timeline-dark.png` | Views mockup screen `phone-timeline` in the dark theme. |

@@ -440,7 +440,7 @@ def screen_timeline():
     W = 1256
     svg, h, tip = timeline_svg(W)
     bar = (f'<div class="tl-bar"><p class="cap" role="status">Timeline of Policy HM-4471 (auto): {num(16)} links, '
-           f'{num(12)} documents. {num(9)} documents fall in the date range.</p>'
+           f'{num(12)} documents. {num(sum(1 for _, _, d in TL_DOCS if d and (2025, 10) <= ym(d) <= (2026, 9)))} documents fall in the date range.</p>'
            f'<div class="tl-rng"><span>From</span><button class="sel num">Oct 2025{icon("chevron-down", 14)}</button>'
            f'<span>to</span><button class="sel num">Sep 2026{icon("chevron-down", 14)}</button></div></div>')
     (tx, ty, (title, ty_, date), inf) = tip
@@ -630,7 +630,6 @@ def insp_group():
 <ul class="mixl">{legend_rows}</ul>
 <h3>Most documented</h3>
 <ul class="lrows" style="padding-left:0">{rows}</ul>
-<button class="lnk">Show all {size} in the table</button>
 </aside>'''
 
 
@@ -685,11 +684,23 @@ def phone_view_bar(word):
             f'<button class="ib ib-t" aria-label="Filters">{icon("sliders-horizontal", 20)}</button></div>')
 
 
+def phone_focus_svg(W, H, where):
+    focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto): 16 links in 8 families, 3 inferred; 11 links between neighbors")
+    svg, ov = bm.neighborhood_svg(W, H, 184, 170, 140, focus, POLICY_N, focus_r=14, show_sectors=False, where=where)
+    i = svg.index("<line ")
+    return svg[:i] + cross_svg(POLICY_N, 184, 170, 140, CROSS) + svg[i:], ov
+
+
+def phone_focus():
+    W, H = 390, 844 - 56 - 48 - 56 - 56
+    svg, ov = phone_focus_svg(W, H, "phone-focus")
+    return (f'<div class="pwrap">{bm.phone_head("Policy HM-4471 (auto)")}{bm.phone_tabs("Graph")}{phone_view_bar("Focus")}'
+            f'<div class="pstage" style="height:{H}px">{svg}{ov}</div>{tabbar()}</div>')
+
+
 def phone_views():
     W, H = 390, 844 - 56 - 48 - 56 - 56
-    focus = dict(POLICY, aria="Neighborhood of Policy HM-4471 (auto): 16 links in 8 families, 3 inferred")
-    svg, ov = bm.neighborhood_svg(W, H, 184, 170, 140, focus, POLICY_N, focus_r=14, show_sectors=False,
-                                  where="phone-views")  # the sheet and its scrim cover the lower canvas
+    svg, ov = phone_focus_svg(W, H, "phone-views")  # the sheet and its scrim cover the lower canvas
     rows = "".join(
         f'<li><button class="vrow" aria-pressed="{str(k == "focus").lower()}"><span><b>{w}</b><span>{esc(q)}</span></span>'
         f'{icon("check", 20) if k == "focus" else ""}</button></li>' for k, w, q, _, _ in VIEWS)
@@ -705,8 +716,7 @@ def phone_explore():
     start = START[:6]
     exps = [(EXPANSIONS[1][0], EXPANSIONS[1][1], [])]
     blocks = [(0, H - 56 - 64, W, H)]
-    svg, ov, n_nodes, n_links, hops = explore_svg(W, H, 196, 214, 0.66, blocks, sel="Bayline Auto Body",
-                                                  start=start, expansions=exps, cross=EXPLORE_CROSS, where="phone-explore")
+    svg, ov, n_nodes, n_links, hops = explore_svg(W, H, 196, 214, 0.66, blocks, start=start, expansions=exps, cross=EXPLORE_CROSS, where="phone-explore")
     peek = (f'<div class="peek"><p>Explored from Policy HM-4471 <span>· 1 expansion</span></p>'
             f'<button class="ib ib-t" aria-label="Open the trail" aria-expanded="false">{icon("chevron-up", 20)}</button></div>')
     return (f'<div class="pwrap">{bm.phone_head("Policy HM-4471 (auto)")}{bm.phone_tabs("Graph")}{phone_view_bar("Explore")}'
@@ -757,6 +767,7 @@ SCREENS = [
     ("explore", "desk", "Explore after four expansions, the pointer on a node", screen_explore),
     ("timeline", "desk", "Timeline with a date range and a selected link", screen_timeline),
     ("overview", "desk", "Overview at map zoom, a group selected", screen_overview),
+    ("phone-focus", "phone", "Phone Focus with links between neighbors", phone_focus),
     ("phone-views", "phone", "Phone view sheet", phone_views),
     ("phone-explore", "phone", "Phone Explore with the trail peek", phone_explore),
     ("phone-timeline", "phone", "Phone Timeline list", phone_timeline),

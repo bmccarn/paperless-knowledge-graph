@@ -1,10 +1,11 @@
 """Read-time graph fields: link support state and the owner rule. Stored properties never change."""
 import unicodedata
 
+from app.relationship_families import EXPLICIT_FAMILIES
 from app.relationship_support import support_records
 
-# The `evidence` family is explicit-only (docs/design/categories.md), so these are all its types.
-EVIDENCE_TYPES = ["MENTIONS", "CONTAINS_RESULT"]
+# The `evidence` family has no keyword prefixes, so its explicit types are all of its types.
+EVIDENCE_TYPES = sorted(t for t, family in EXPLICIT_FAMILIES.items() if family == "evidence")
 HUB_LINKS = 100
 
 

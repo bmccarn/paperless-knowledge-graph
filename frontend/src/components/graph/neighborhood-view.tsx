@@ -136,7 +136,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     navigate({ selection: null });
     setKeyboardNodeId(null);
     setExpandedSheet(null);
-  }, [navigate]);
+  }, [navigate, setExpandedSheet]);
   const onReady = useCallback((camera: Camera | null) => { cameraRef.current = camera; }, []);
 
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;

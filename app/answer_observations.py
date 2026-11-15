@@ -130,6 +130,7 @@ class ObservationCandidate:
                 'id': claim['id'], 'claim': claim['claim'], 'status': claim['status'],
                 'rejection_reasons': claim.get('rejection_reasons', []),
                 'value_mismatches': claim.get('value_mismatches', {}),
-                'omission_reason': 'source_rejection', 'dependency_ids': [],
+                'omission_reason': 'audit_reply_invalid' if claim['status'] == 'unchecked' else 'source_rejection',
+                'dependency_ids': [],
             } for claim in claims if claim['status'] != 'supported'],
         }

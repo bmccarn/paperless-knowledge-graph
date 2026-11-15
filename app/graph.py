@@ -11,9 +11,9 @@ from rapidfuzz import fuzz
 
 from app.config import settings
 from app.retry import retry_db
-from app.relationship_families import classify_relationship
 from app.relationship_support import merge_support_properties, support_records
 from app.graph_fields import EVIDENCE_TYPES, HUB_LINKS, link_support, owner_rule
+from app.relationship_families import classify_relationship
 
 logger = logging.getLogger(__name__)
 
@@ -941,6 +941,51 @@ class GraphStore:
                 "relationships": record["relationships"],
             }
 
+    async def get_node_summary(self, node_uuid: str) -> Optional[dict]:
+        # shortcut: return all links; revisit server paging above about 2,000 links per entity.
+        node = await self.get_node(node_uuid)
+        if not node:
+            return None
+        focus_id = _graph_node_id(node["properties"])
+        relationships = [r for r in node["relationships"] if r["rel_type"] is not None]
+        neighbor_ids = [_graph_node_id(r["neighbor_props"]) for r in relationships]
+        owner_status, owner = await self.get_owner()
+        fields = await self.get_node_fields(list(dict.fromkeys([focus_id, *neighbor_ids])), owner)
+        focus = {"id": focus_id, "label": node["labels"][0],
+                 "name": node["properties"].get("name") or node["properties"].get("title", ""),
+                 "aliases": node["properties"].get("aliases") or [], **fields[focus_id]}
+        document_ids = set(node["properties"].get("source_doc_ids") or [])
+        if "Document" in node["labels"]:
+            document_ids.add(node["properties"]["paperless_id"])
+        links = []
+        for rel, neighbor_id in zip(relationships, neighbor_ids):
+            neighbor = rel["neighbor_props"]
+            if "Document" in rel["neighbor_labels"]:
+                document_ids.add(neighbor["paperless_id"])
+            records = support_records(rel["rel_props"])
+            document_ids.update(records)
+            source, target = (focus_id, neighbor_id) if rel["direction"] == "out" else (neighbor_id, focus_id)
+            links.append({
+                "key": f"{source}~{rel['rel_type']}~{target}", "type": rel["rel_type"],
+                "family": classify_relationship(rel["rel_type"])[0], "direction": rel["direction"],
+                **link_support(rel["rel_props"]),
+                "records": [{"doc_id": doc_id, "inferred": records[doc_id]["inferred"],
+                             "confidence": records[doc_id].get("confidence")} for doc_id in sorted(records)],
+                "neighbor": {"id": neighbor_id, "label": rel["neighbor_labels"][0],
+                             "name": neighbor.get("name") or neighbor.get("title", ""),
+                             **{key: value for key, value in fields[neighbor_id].items() if key != "is_hub"}},
+            })
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (d:Document) WHERE d.paperless_id IN $ids
+                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type
+                ORDER BY id
+            """, ids=sorted(document_ids))
+            documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
+                         async for row in result}
+        return {"focus": focus, "links": sorted(links, key=lambda link: link["key"]),
+                "documents": documents, "owner_status": owner_status}
+
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
         depth = max(1, min(int(depth), 4))
         try:
@@ -1214,11 +1259,12 @@ class GraphStore:
         return owner_rule(settings.owner_name, persons)
 
     async def get_node_fields(self, uuids: list[str], owner: Optional[str] = None) -> dict[str, dict]:
-        """Derived node fields by uuid. Evidence links (document mentions) are not counted as links."""
+        """Derived fields by graph id (uuid or doc-N). Evidence links do not count as links."""
         async with self.driver.session() as session:
             result = await session.run(f"""
-                MATCH (n) WHERE n.uuid IN $uuids
-                RETURN n.uuid AS uuid, {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
+                MATCH (n) WHERE n.uuid IN $uuids OR 'doc-' + toString(n.paperless_id) IN $uuids
+                RETURN coalesce(n.uuid, 'doc-' + toString(n.paperless_id)) AS uuid,
+                       {_EVIDENCE_DOC_COUNT} AS evidence_doc_count,
                        COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count
                 """, uuids=uuids, evidence=EVIDENCE_TYPES)
             return {row["uuid"]: {"evidence_doc_count": row["evidence_doc_count"],

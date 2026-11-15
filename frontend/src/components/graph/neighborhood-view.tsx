@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import { Focus, Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Focus, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { NodeDetailPanel } from "@/components/node-detail-panel";
 import { errMsg } from "@/lib/utils";
-import { getGraphNodeSummary } from "@/lib/api";
+import { ApiError, getGraphNodeSummary } from "@/lib/api";
+import { graphNavigation, parseGraphState, parseLinkKey } from "@/lib/graph-url-state";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
   familyCap,
@@ -33,13 +35,17 @@ const subscribePhone = (change: () => void) => {
 /** `/graph?focus=<id>`: the focus entity and its capped neighbors in fixed radial sectors. */
 export function NeighborhoodView({ focusId }: { focusId: string }) {
   const router = useRouter();
+  const params = useSearchParams();
+  const urlState = parseGraphState(new URLSearchParams(params));
   const [summary, setSummary] = useState<NodeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [extra, setExtra] = useState<Record<string, number>>({});
   const [atLimit, setAtLimit] = useState(false);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
+  const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
+  const selectedNodeId = selectedLinkId ? null : urlState.selection;
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
   const handleRef = useRef<GraphHandle | null>(null);
@@ -48,7 +54,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     let active = true;
     getGraphNodeSummary(focusId)
       .then((data) => { if (active) setSummary(data); })
-      .catch((error) => { if (active) setError(errMsg(error, "Request failed.")); });
+      .catch((error) => {
+        if (!active) return;
+        if (error instanceof ApiError && error.status === 404) setMissing(true);
+        else setError(errMsg(error, "Request failed."));
+      });
     return () => { active = false; };
   }, [focusId, attempt]);
 
@@ -76,7 +86,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     return { graph, positions: new Map(layout?.nodes.map(({ id, x, y }) => [id, { x, y }])) };
   }, [layout, summary]);
 
-  const openFocus = useCallback((id: string) => router.push(`/graph?focus=${encodeURIComponent(id)}`), [router]);
+  const navigate = useCallback((change: Parameters<typeof graphNavigation>[1]) => {
+    const { href, method } = graphNavigation(new URLSearchParams(params), change);
+    router[method](href, { scroll: false });
+  }, [params, router]);
+  const openFocus = useCallback((id: string) => navigate({ focus: id }), [navigate]);
   const selectNode = useCallback((node: ExplorerNode) => {
     if (!summary) return;
     if (node.label === "Aggregate") {
@@ -86,23 +100,44 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       else if (layout && layout.entities >= VIEW_LIMIT) setAtLimit(true);
       return;
     }
-    setSelectedNodeId(node.id);
-    setSelectedLinkId(null);
+    navigate({ selection: node.id });
     setKeyboardNodeId(null);
-  }, [summary, cap, extra, layout]);
+  }, [summary, cap, extra, layout, navigate, setExtra, setAtLimit]);
   const selectLink = useCallback((link: ExplorerLink) => {
-    setSelectedLinkId(link.id);
-    setSelectedNodeId(null);
-  }, []);
+    if (parseLinkKey(link.id)) navigate({ selection: link.id });
+  }, [navigate]);
   const clearSelection = useCallback(() => {
-    setSelectedNodeId(null);
-    setSelectedLinkId(null);
+    navigate({ selection: null });
     setKeyboardNodeId(null);
-  }, []);
+  }, [navigate]);
   const onReady = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
 
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId && node.label !== "Aggregate");
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;
+
+  if (missing) return (
+    <div className="flex h-full flex-col bg-background px-4 py-6 md:px-12 md:py-10">
+      <h1 className="page-title">Graph</h1>
+      <div className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center gap-6 pb-16">
+        <p role="status" className="text-base text-foreground">
+          This entity no longer exists. It may have been merged.
+        </p>
+        <form className="space-y-2" onSubmit={(event) => {
+          event.preventDefault();
+          if (query.trim()) router.push(`/graph?${new URLSearchParams({ q: query.trim() })}`);
+        }}>
+          <label htmlFor="missing-entity-search" className="text-sm font-medium">Find an entity</label>
+          <div className="flex gap-2">
+            <Input id="missing-entity-search" placeholder="Search by name or alias…" value={query}
+              onChange={(event) => setQuery(event.target.value)} className="h-11 text-base md:h-9 md:text-sm" />
+            <Button type="submit" className="h-11 md:h-9" disabled={!query.trim()}>
+              <Search className="size-4" />Search
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">

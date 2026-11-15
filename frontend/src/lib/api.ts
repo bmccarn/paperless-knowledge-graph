@@ -4,6 +4,12 @@ import type { NodeSummary } from "@/lib/graph-layout";
 
 export const API_URL = "/api";
 
+export class ApiError extends Error {
+  constructor(public status: number, detail: string) {
+    super(`API error: ${status} ${detail}`);
+  }
+}
+
 export async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -20,7 +26,7 @@ export async function apiFetch(path: string, options?: RequestInit) {
     } catch {
       // Non-JSON upstream failures still retain their HTTP status.
     }
-    throw new Error(`API error: ${res.status} ${detail}`);
+    throw new ApiError(res.status, detail);
   }
   return res.json();
 }

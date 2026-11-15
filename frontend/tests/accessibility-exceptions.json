@@ -54,20 +54,7 @@
     "state": "expanded",
     "issue": 134,
     "targets": [
-      "[\".bg-emerald-500\\\\/15\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(10) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(11) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(3) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(4) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(5) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(6) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(7) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(8) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".group.hover\\\\:bg-raised:nth-child(9) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]"
+      "[\".bg-emerald-500\\\\/15\"]"
     ]
   },
   {
@@ -77,8 +64,8 @@
     "issue": 134,
     "targets": [
       "[\"p.text-[10px].uppercase.text-muted-foreground.tracking-wider\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
@@ -89,22 +76,7 @@
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\".bg-emerald-500\\\\/15\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-amber-500\\\\/15.text-amber-400\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400 > .font-mono\"]",
-      "[\".gap-1\\\\.5.bg-red-500\\\\/15.text-red-400\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(10) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(11) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(12) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(2) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(3) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(4) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(5) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(6) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(7) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(8) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-amber-500\\\\/15.text-amber-400.border-amber-500\\\\/20\"]",
-      "[\".hover\\\\:bg-raised.group:nth-child(9) > .md\\\\:table-cell.hidden:nth-child(4) > .bg-red-500\\\\/15.text-red-400.border-red-500\\\\/20\"]"
+      "[\".bg-emerald-500\\\\/15\"]"
     ]
   },
   {
@@ -113,8 +85,8 @@
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.text-amber-400.border-amber-500/20\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.text-red-400.border-red-500/20\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
+      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]

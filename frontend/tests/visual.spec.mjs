@@ -69,9 +69,9 @@ for (const state of [...mainStates, ...extraStates]) test(`${state.name} ${state
   if (state.name === "graph") await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.
-  await page.clock.runFor(2500);
   if (state.name === "graph") await page.waitForFunction(() => window.__visualGraphPainted === true);
-  await page.clock.pauseAt(new Date(fixedTime.getTime() + 10000));
+  await page.clock.runFor(2500);
+  await page.clock.pauseAt(new Date(fixedTime.getTime() + 120000));
   let capture;
   await expect(async () => {
     const previous = capture;

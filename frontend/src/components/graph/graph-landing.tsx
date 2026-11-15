@@ -57,12 +57,12 @@ function EntityLine({ entity, query = "", alias = null, bar }: { entity: RecentE
           <span className="block h-full rounded-r-[2px] bg-fg-subtle" style={{ width: `${bar}%` }} />
         </span>
       )}
-      <span className="w-[84px] text-right label-12 tabular-nums text-fg-muted">{documentsText(entity.documents)}</span>
+      <span className="min-w-[84px] whitespace-nowrap text-right label-12 tabular-nums text-fg-muted">{documentsText(entity.documents)}</span>
     </>
   );
 }
 
-const lineGrid = "grid items-center gap-3 grid-cols-[16px_minmax(0,1fr)_auto] md:grid-cols-[16px_minmax(0,1fr)_auto_auto]";
+const lineGrid = (bars = false) => `grid items-center gap-3 grid-cols-[16px_minmax(0,1fr)_auto] ${bars ? "md:grid-cols-[16px_minmax(0,1fr)_auto_64px_auto]" : "md:grid-cols-[16px_minmax(0,1fr)_auto_auto]"}`;
 
 function EntityList({ title, entities, bars = false, empty, children }: {
   title: string; entities: RecentEntity[]; bars?: boolean; empty: string; children?: React.ReactNode;
@@ -76,7 +76,7 @@ function EntityList({ title, entities, bars = false, empty, children }: {
           {entities.map(entity => (
             <li key={entity.id}>
               <Link href={focusHref(entity.id)}
-                className={`${lineGrid} ${bars ? "md:grid-cols-[16px_minmax(0,1fr)_auto_64px_auto]" : ""} h-12 border-b border-border px-1 hover:bg-raised md:h-10`}>
+                className={`${lineGrid(bars)} h-12 border-b border-border px-1 hover:bg-raised md:h-10`}>
                 <EntityLine entity={entity} bar={bars ? Math.round((entity.documents / most) * 100) : undefined} />
               </Link>
             </li>
@@ -166,7 +166,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
               placeholder="Search entities by name or alias"
               role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={open ? "graph-results" : undefined}
               aria-activedescendant={open && options[active] ? `graph-option-${active}` : undefined}
-              className="min-w-0 flex-1 bg-transparent text-base text-fg outline-none placeholder:text-fg-subtle md:text-[17px] [&::-webkit-search-cancel-button]:hidden"
+              className="min-w-0 flex-1 bg-transparent text-base text-fg outline-none focus-visible:outline-none! placeholder:text-fg-subtle md:text-[17px] [&::-webkit-search-cancel-button]:hidden"
               onFocus={() => setClosed(false)} onBlur={() => setClosed(true)}
               onChange={event => { autoOpen.current = false; setQuery(event.target.value); setActive(0); setClosed(false); }}
               onKeyDown={event => {
@@ -204,7 +204,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
                     const index = options.indexOf(row);
                     return (
                       <div key={row.id} id={`graph-option-${index}`} role="option" aria-selected={index === active}
-                        className={`${lineGrid} h-12 cursor-pointer rounded-[var(--r-ctl)] px-2 md:h-10 ${index === active ? "bg-raised shadow-[inset_0_0_0_1px_var(--border-strong)] [:root:not(.dark)_&]:bg-accent-bg" : ""}`}
+                        className={`${lineGrid()} h-12 cursor-pointer rounded-[var(--r-ctl)] px-2 md:h-10 ${index === active ? "bg-raised shadow-[inset_0_0_0_1px_var(--border-strong)] [:root:not(.dark)_&]:bg-accent-bg" : ""}`}
                         onMouseDown={event => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => choose(row)}>
                         <EntityLine entity={row} query={search} alias={row.alias} />
                       </div>

@@ -19,6 +19,12 @@ class EntityResolver:
     def __init__(self):
         self._mutation_lock = asyncio.Lock()
 
+    async def _ensure_embedding(self, props: dict) -> str:
+        await embeddings_store.store_entity_embedding(
+            props["uuid"], props["name"], props["entity_type"], props.get("description") or "",
+            only_missing=True)
+        return props["uuid"]
+
     async def record_decision(self, left_uuid: str, right_uuid: str, decision: str, note: str = "",
                               *, review_method: str | None = None) -> dict:
         """Record an explicitly admitted review; no caller origin is inferred."""
@@ -136,6 +142,8 @@ class EntityResolver:
                 )
             review_id = str(uuid.uuid4())
             merge_id = str(uuid.uuid4())
+            props = primary["properties"]
+            await self._ensure_embedding({**props, "entity_type": keep["type"]})
             merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid, merge_id=merge_id,
                                                        review_id=review_id, review_method=review_method)
             await embeddings_store.add_entity_review_decision(
@@ -192,6 +200,9 @@ class EntityResolver:
                 return {"status": "conflict", "merge_id": merge_id,
                         "reindex_doc_ids": sorted(d for d in docs if type(d) is int)}
             await embeddings_store.restore_merge_embedding(merge_id)
+            for node in nodes.values():
+                props = node["properties"]
+                await self._ensure_embedding({**props, "entity_type": props.get("entity_type") or node["labels"][0]})
             await embeddings_store.set_merge_journal_status(merge_id, "reverted")
             return {"status": "reverted", "merge_id": merge_id, "reindex_doc_ids": []}
 
@@ -245,7 +256,7 @@ class EntityResolver:
                         and candidate.get("resolution_status") == "isolated"
                         and candidate.get("source_doc_ids") == [source_doc_id]]
             if len(isolated) == 1:
-                return isolated[0]["uuid"]
+                return await self._ensure_embedding(isolated[0])
             eligible = []
             # A quarantined candidate elsewhere in this type must not isolate
             # unrelated incoming identities. Preserve the incoming veto even
@@ -290,7 +301,7 @@ class EntityResolver:
                         source_alias_record(candidate["name"], name, label, source_doc_id, source, span))
                 await graph_store.record_entity_source(candidate["uuid"], source_doc_id,
                                                        identity_hint=identity_hint)
-                return candidate["uuid"]
+                return await self._ensure_embedding(candidate)
             # Ambiguous exact names/aliases are not first-row-wins. A source-local
             # node is reused next time, limiting duplicate growth without guessing.
             props = {"name": name, "entity_type": label, "aliases": [], "alias_records": [],
@@ -305,7 +316,8 @@ class EntityResolver:
                 props["role"] = role
             if label == "Organization" and org_type:
                 props["type"] = org_type
-            return await graph_store.create_node(label, props)
+            node_uuid = await graph_store.create_node(label, props)
+            return await self._ensure_embedding({**props, "uuid": node_uuid})
 
     @staticmethod
     def _match(name, kind, doc_id, source, candidate, decisions, expansions, local_definition, source_folded,

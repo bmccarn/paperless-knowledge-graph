@@ -1153,6 +1153,18 @@ async def query_stream(req: QueryRequest):
 
 # --- Graph Browsing ---
 
+@app.get("/graph/relationship-types")
+async def graph_relationship_types():
+    from app.relationship_families import classify_relationship
+
+    rows = await graph_store.get_relationship_types()
+    result = []
+    for row in rows:
+        family, assigned_by = classify_relationship(row["type"])
+        result.append({**row, "family": family, "assigned_by": assigned_by})
+    return result
+
+
 @app.get("/graph/search")
 async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: int = 0,
                        sort: str = "relevance", exclude_documents: bool = False):

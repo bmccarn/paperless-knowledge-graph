@@ -105,6 +105,24 @@ class GraphBrowserTests(unittest.IsolatedAsyncioTestCase):
     def tearDownClass(cls):
         cls.driver.execute("MATCH (n) WHERE n.uuid IN ['audit-person', 'audit-org'] OR n.paperless_id IN [100001, 100002, 100003] DETACH DELETE n")
 
+    async def test_relationship_type_counts_include_every_stored_type(self):
+        self.assertEqual(await self.store().get_relationship_types(), [
+            {"type": "INVOICED_BY", "count": 2},
+            {"type": "CUSTOMER_OF", "count": 1},
+        ])
+
+    async def test_relationship_type_count_ties_sort_by_type(self):
+        self.driver.execute("CREATE (n:RelationshipTypeAudit)-[:AAAA_TEST]->(n)")
+        try:
+            rows = await self.store().get_relationship_types()
+            self.assertEqual(rows, [
+                {"type": "INVOICED_BY", "count": 2},
+                {"type": "AAAA_TEST", "count": 1},
+                {"type": "CUSTOMER_OF", "count": 1},
+            ])
+        finally:
+            self.driver.execute("MATCH (n:RelationshipTypeAudit) DETACH DELETE n")
+
     async def test_document_neighbors_preserve_identity_and_sources(self):
         graph = await self.store().get_neighbors("doc-100001", 1)
         self.assertEqual(node_ids(graph), {"doc-100001", "audit-org"})

@@ -1252,7 +1252,7 @@ class GraphStore:
         return {"status": "unhealthy", "error": "unexpected"}
 
     async def get_owner_matches(self) -> tuple[str, Optional[str], list[dict]]:
-        """Return (status, owner uuid, every matching Person) for OWNER_NAME; see app.graph_fields.owner_matches."""
+        """Return (status, owner uuid, every matching Person) for OWNER_NAME and OWNER_ALIASES; see app.graph_fields.owner_matches."""
         if not settings.owner_name.strip():
             return "unset", None, []
         async with self.driver.session() as session:
@@ -1263,7 +1263,7 @@ class GraphStore:
                        COUNT {{ (n)-[r]-() WHERE NOT type(r) IN $evidence }} AS link_count
                 """, evidence=EVIDENCE_TYPES)
             persons = [dict(row) async for row in result]
-        return owner_matches(settings.owner_name, persons)
+        return owner_matches(settings.owner_name, persons, settings.owner_aliases)
 
     async def get_node_fields(self, uuids: list[str], owner: Optional[str] = None) -> dict[str, dict]:
         """Derived fields by graph id (uuid or doc-N). Evidence links do not count as links."""

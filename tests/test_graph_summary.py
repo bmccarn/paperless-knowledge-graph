@@ -123,6 +123,7 @@ class Neo4jSummaryTests(unittest.IsolatedAsyncioTestCase):
                          'aliases': ['Example alias'], 'evidence_doc_count': 2, 'link_count': 660,
                          'is_hub': True, 'is_owner': False})
         self.assertEqual(summary['owner_status'], 'found')
+        self.assertEqual(summary['owner_match_count'], 1)
         employs = next(link for link in links if link['neighbor']['id'] == PREFIX + '000000000000')
         self.assertEqual(employs, {
             'key': PREFIX + '000000000660~EMPLOYS~' + PREFIX + '000000000000', 'type': 'EMPLOYS', 'family': 'parties',
@@ -169,6 +170,17 @@ class Neo4jSummaryTests(unittest.IsolatedAsyncioTestCase):
                 await (await session.run('''
                     MATCH (n {uuid: $uuid})-[r:RELATED_TO]->(n) DELETE r
                 ''', uuid=PREFIX + '000000000661')).consume()
+
+    async def test_owner_status_and_count_for_unset_and_missing_settings(self):
+        for setting, status in [('', 'unset'), ('No matching person', 'not_found')]:
+            with self.subTest(status=status), patch('app.graph.settings.owner_name', setting):
+                response = await self.client.get('/graph/node/' + PREFIX + '000000000660?summary=1')
+                self.assertEqual(response.status_code, 200)
+                summary = response.json()
+                self.assertEqual(summary['owner_status'], status)
+                self.assertEqual(summary['owner_match_count'], 0)
+                self.assertFalse(summary['focus']['is_owner'])
+                self.assertFalse(any(link['neighbor']['is_owner'] for link in summary['links']))
 
     async def test_leaf_and_unknown_id(self):
         response = await self.client.get('/graph/node/' + PREFIX + '000000000661?summary=1')

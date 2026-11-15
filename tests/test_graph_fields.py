@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import unittest
+from itertools import permutations
 from unittest.mock import patch
 from urllib.parse import urlparse
 
@@ -52,19 +53,33 @@ class OwnerRuleTests(unittest.TestCase):
     def test_empty_setting_is_unset(self):
         for setting in ('', '   ', None):
             with self.subTest(setting=setting):
-                self.assertEqual(owner_rule(setting, self.PERSONS), ('unset', None))
+                self.assertEqual(owner_rule(setting, self.PERSONS), ('unset', None, 0))
 
     def test_one_match_by_alias_after_normalizing(self):
-        self.assertEqual(owner_rule('  alex   e. ', self.PERSONS), ('found', 'a'))
+        self.assertEqual(owner_rule('  alex   e. ', self.PERSONS), ('found', 'a', 1))
 
     def test_name_and_alias_of_one_person_count_once(self):
-        self.assertEqual(owner_rule('BLAIR SAMPLE', self.PERSONS), ('found', 'b'))
+        self.assertEqual(owner_rule('BLAIR SAMPLE', self.PERSONS), ('found', 'b', 1))
 
     def test_zero_matches(self):
-        self.assertEqual(owner_rule('Nobody Known', self.PERSONS), ('not_found', None))
+        self.assertEqual(owner_rule('Nobody Known', self.PERSONS), ('not_found', None, 0))
+
+    def test_ranking_uses_documents_then_links_then_uuid_in_any_order(self):
+        cases = [
+            ([3, 5, 4], [9, 1, 8], 'b'),
+            ([5, 5, 4], [1, 2, 9], 'b'),
+            ([5, 5, 5], [2, 2, 2], 'a'),
+        ]
+        for documents, links, expected in cases:
+            persons = [dict(uuid=uuid, name='Owner Example', aliases=['Owner Example'],
+                            evidence_doc_count=docs, link_count=count)
+                       for uuid, docs, count in zip('abc', documents, links)]
+            for order in permutations(persons):
+                with self.subTest(documents=documents, links=links, order=[p['uuid'] for p in order]):
+                    self.assertEqual(owner_rule('Owner Example', order), ('chosen', expected, 3))
 
     def test_two_matches(self):
-        self.assertEqual(owner_rule('Casey Twin', self.PERSONS), ('ambiguous', None))
+        self.assertEqual(owner_rule('Casey Twin', self.PERSONS), ('chosen', 'c', 2))
 
 
 @unittest.skipUnless(TEST_URI, 'Set NEO4J_TEST_URI to a disposable localhost Bolt URI')
@@ -77,7 +92,7 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
         async def seed():
             async with AsyncGraphDatabase.driver(TEST_URI, auth=None) as driver:
                 async with driver.session() as session:
-                    await (await session.run('MATCH (n:GraphFieldsAudit) DETACH DELETE n')).consume()
+                    await (await session.run('MATCH (n) WHERE n:GraphFieldsAudit OR n:OwnerRuleAudit DETACH DELETE n')).consume()
                     # A busy entity: 120 mentioning documents and 5 other links.
                     await (await session.run('''
                         CREATE (busy:Organization:GraphFieldsAudit {uuid: $prefix + 'busy', name: 'Busy Fields Org'})
@@ -99,6 +114,20 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
                                (:Person:GraphFieldsAudit {uuid: $prefix + 'listed-a', name: 'alpha Fields',
                                                           aliases: ['Fields Nickname'], source_doc_ids: [4, 5, 6]})
                     ''', prefix=PREFIX)).consume()
+                    await (await session.run('''
+                        CREATE (a:Person:OwnerRuleAudit {uuid: $prefix + 'owner-a', name: 'Fields Owner Example',
+                                                          source_doc_ids: [1]}),
+                               (b:Person:OwnerRuleAudit {uuid: $prefix + 'owner-b', name: 'Fields Owner Example',
+                                                          source_doc_ids: [1, 2, 3]}),
+                               (c:Person:OwnerRuleAudit {uuid: $prefix + 'owner-c', name: 'Fields Owner Example',
+                                                          source_doc_ids: []}),
+                               (a)-[:RELATED_TO]->(b), (a)-[:WORKS_AT]->(b), (a)-[:SIBLING_OF]->(c)
+                        WITH c
+                        UNWIND range(0, 3) AS i
+                        CREATE (d:Document:OwnerRuleAudit {uuid: $prefix + 'owner-doc-' + toString(i),
+                                                            paperless_id: $first + 200 + i})
+                        CREATE (d)-[:MENTIONS]->(c), (d)-[:SIGNED_BY]->(c)
+                    ''', prefix=PREFIX, first=FIRST_ID)).consume()
         asyncio.run(seed())
 
     @classmethod
@@ -106,7 +135,7 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
         async def clean():
             async with AsyncGraphDatabase.driver(TEST_URI, auth=None) as driver:
                 async with driver.session() as session:
-                    await (await session.run('MATCH (n:GraphFieldsAudit) DETACH DELETE n')).consume()
+                    await (await session.run('MATCH (n) WHERE n:GraphFieldsAudit OR n:OwnerRuleAudit DETACH DELETE n')).consume()
         asyncio.run(clean())
 
     async def asyncSetUp(self):
@@ -124,10 +153,35 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_flag_follows_the_setting(self):
         with patch('app.graph.settings.owner_name', ' FIELDS  nickname '):
-            status, owner = await self.store.get_owner()
+            status, owner, count = await self.store.get_owner()
             fields = await self.store.get_node_fields([PREFIX + 'listed-a'], owner)
-        self.assertEqual((status, owner), ('found', PREFIX + 'listed-a'))
+        self.assertEqual((status, owner, count), ('found', PREFIX + 'listed-a', 1))
         self.assertTrue(fields[PREFIX + 'listed-a']['is_owner'])
+
+    async def test_duplicate_owner_agrees_in_search_and_summary_without_writes(self):
+        from app import main
+        from httpx import ASGITransport, AsyncClient
+        ids = [PREFIX + 'owner-' + suffix for suffix in 'abc']
+        before = [await self.store.get_node(uuid) for uuid in ids]
+        with patch.object(main, 'graph_store', self.store), patch('app.graph.settings.owner_name', 'Fields Owner Example'):
+            self.assertEqual(await self.store.get_owner(), ('chosen', ids[2], 3))
+            async with AsyncClient(transport=ASGITransport(app=main.app), base_url='http://test') as client:
+                response = await client.get('/graph/search', params={
+                    'q': 'Fields Owner Example', 'type': 'OwnerRuleAudit', 'exclude_documents': 1})
+                self.assertEqual(response.status_code, 200)
+                rows = response.json()['results']
+                self.assertEqual({row['properties']['uuid']: row['is_owner'] for row in rows},
+                                 dict(zip(ids, [False, False, True])))
+                for uuid in ids:
+                    response = await client.get('/graph/node/' + uuid + '?summary=1')
+                    self.assertEqual(response.status_code, 200)
+                    summary = response.json()
+                    self.assertEqual(summary['owner_status'], 'chosen')
+                    self.assertEqual(summary['owner_match_count'], 3)
+                    self.assertEqual(summary['focus']['is_owner'], uuid == ids[2])
+                    for link in summary['links']:
+                        self.assertEqual(link['neighbor']['is_owner'], link['neighbor']['id'] == ids[2])
+        self.assertEqual([await self.store.get_node(uuid) for uuid in ids], before)
 
     async def test_mixed_link_keeps_its_stored_flag(self):
         for doc, inferred in ((FIRST_ID, False), (FIRST_ID + 1, True)):

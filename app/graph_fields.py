@@ -24,17 +24,19 @@ def normalize_name(value) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split()) if isinstance(value, str) else ""
 
 
-def owner_rule(setting, persons) -> tuple[str, str | None]:
-    """Return (owner_status, owner uuid): the single Person whose name or alias equals the setting."""
+def owner_rule(setting, persons) -> tuple[str, str | None, int]:
+    """Return (status, owner uuid, match count), ranked by documents, links, then UUID."""
     target = normalize_name(setting)
     if not target:
-        return "unset", None
-    matches = set()
+        return "unset", None, 0
+    matches = {}
     for person in persons:
         aliases = person.get("aliases")
         names = [person.get("name"), *(aliases if isinstance(aliases, list) else [aliases])]
         if any(normalize_name(name) == target for name in names):
-            matches.add(person.get("uuid"))
-    if len(matches) == 1:
-        return "found", matches.pop()
-    return ("ambiguous" if matches else "not_found"), None
+            matches[person["uuid"]] = person
+    if not matches:
+        return "not_found", None, 0
+    owner = min(matches.values(), key=lambda p: (-p.get("evidence_doc_count", 0),
+                                                -p.get("link_count", 0), p["uuid"]))
+    return ("found" if len(matches) == 1 else "chosen"), owner["uuid"], len(matches)

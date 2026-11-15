@@ -82,7 +82,7 @@ test("failed recovery from an old conversation cannot overwrite a new pending qu
   const input = page.getByPlaceholder("Ask a question...");
   await input.fill("OLD_QUESTION"); await input.press("Enter");
   await recoveryStarted.promise;
-  await page.getByRole("button", { name: "New Conversation", exact: true }).click();
+  await page.getByRole("button", { name: "New conversation", exact: true }).click();
   await input.fill("NEW_QUESTION"); await input.press("Enter");
   await nextStarted.promise;
   const response = page.waitForResponse(`**/api/conversations/${oldId}`);

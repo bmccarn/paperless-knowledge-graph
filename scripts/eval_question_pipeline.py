@@ -244,7 +244,7 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
 
     native_text, native_model, native_agent = orchestrator._text_agent, orchestrator._model, native_module.Agent
 
-    async def captured_text(name, system_prompt, prompt, *, response_format=None):
+    async def captured_text(name, system_prompt, prompt, *, response_format=None, cache_prefix_chars=None):
         if len(attempts) >= remaining_calls:
             raise RuntimeError('Native call budget exhausted')
         attempt = {'index': len(attempts), 'name': name, 'system_prompt': system_prompt,
@@ -256,7 +256,8 @@ async def execute(dataset, manifest, output, case_index, *, initial_output=None,
         try:
             if manifest.get('fact_filtering') == 'disabled' and name in {'fact_selector', 'fact_exclusion'}:
                 raise ValueError('Reader-inventory evaluation forbids semantic filtering stages')
-            attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format)
+            attempt['response'] = await native_text(name, system_prompt, prompt, response_format=response_format,
+                                                  cache_prefix_chars=cache_prefix_chars)
             return attempt['response']
         except BaseException as exc:
             attempt['exception_type'] = type(exc).__name__

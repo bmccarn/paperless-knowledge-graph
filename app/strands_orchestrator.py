@@ -23,12 +23,27 @@ from app.query_metrics import record_native_stage
 
 logger = logging.getLogger(__name__)
 
+
+def with_cache_control(model_class):
+    """Keep a text block's cache_control on the wire. Strands drops cachePoint blocks on
+    OpenAI-compatible requests; the gateway forwards a part's cache_control to Anthropic."""
+    class CacheControlOpenAIModel(model_class):
+        @classmethod
+        def format_request_message_content(cls, content, **kwargs):
+            formatted = super().format_request_message_content(content, **kwargs)
+            if 'cache_control' in content:
+                formatted['cache_control'] = content['cache_control']
+            return formatted
+    return CacheControlOpenAIModel
+
+
 try:
     if not settings.strands_enabled:
         raise ImportError("Strands disabled by configuration")
     from strands import Agent
-    from strands.models.openai import OpenAIModel
+    from strands.models import openai as _strands_openai
 
+    OpenAIModel = with_cache_control(_strands_openai.OpenAIModel)
     STRANDS_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - depends on optional runtime package
     Agent = None
@@ -76,8 +91,8 @@ class StrandsQueryOrchestrator:
         if payload is None:
             return None
         # Keep shared source context ahead of candidate- and batch-specific fields.
-        payload = {**{key: payload[key] for key in ('source_spans', 'source_documents', 'source_reading')
-                      if key in payload}, **payload}
+        shared = {key: payload[key] for key in ('source_spans', 'source_documents', 'source_reading') if key in payload}
+        payload = {**shared, **payload}
         scope_view = prepared_evidence.scope_view if prepared_evidence is not None else None
         text = await self._text_agent(
             name="source_auditor",
@@ -164,7 +179,11 @@ class StrandsQueryOrchestrator:
                 (source_reading.verifier_note(scoped=scope_view is not None) if 'source_reading' in payload else '')),
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids'],
-                reference_schema=scope_view.reference_schema if scope_view is not None else None))
+                reference_schema=scope_view.reference_schema if scope_view is not None else None),
+            # The cache breakpoint ends the shared sources, before the closing brace of their JSON. Only
+            # Anthropic models get it: the gateway turns a marked Gemini message into context caching.
+            cache_prefix_chars=len(json.dumps(shared, ensure_ascii=False)) - 1
+                if 'claude' in (settings.strands_model or settings.gemini_model).lower() else None)
         if not text or not text.strip():
             return None
         try:
@@ -465,7 +484,8 @@ Rules:
         text = await self._text_agent(name, system_prompt, prompt)
         return _extract_json(text or "")
 
-    async def _text_agent(self, name: str, system_prompt: str, prompt: str, *, response_format=None) -> str | None:
+    async def _text_agent(self, name: str, system_prompt: str, prompt: str, *, response_format=None,
+                          cache_prefix_chars: int | None = None) -> str | None:
         queued = time.monotonic()
         async with self._calls:
             record_native_stage(name)
@@ -486,7 +506,11 @@ Rules:
                 )
                 timeout = max(1.0, float(settings.strands_call_timeout_seconds or 45))
                 from app.async_ownership import owned_call
-                result = await owned_call(agent.invoke_async(prompt),
+                # Two text blocks, the first marked, so later calls can read the shared prefix from the cache.
+                content = prompt if cache_prefix_chars is None else [
+                    {'text': prompt[:cache_prefix_chars], 'cache_control': {'type': 'ephemeral'}},
+                    {'text': prompt[cache_prefix_chars:]}]
+                result = await owned_call(agent.invoke_async(content),
                     deadline=asyncio.get_running_loop().time() + timeout)
                 reported_usage = getattr(getattr(result, 'metrics', None), 'accumulated_usage', {})
                 if isinstance(reported_usage, dict):

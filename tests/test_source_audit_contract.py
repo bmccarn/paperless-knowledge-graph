@@ -141,6 +141,20 @@ class SourceAuditContractTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(source_audit.SourceAuditProtocolError):
                 source_audit.parse_decisions(text, ['u1'])
 
+    async def test_static_schema_leaves_each_batchs_ids_and_count_to_the_parser(self):
+        # The same schema for every batch keeps the provider cache; the parser still binds each reply to its batch.
+        self.assertEqual(source_audit.response_format(['u1']), source_audit.response_format(['u5', 'u6', 'u7', 'u8']))
+        for rows in ([self.row(unit_id='u9')], [self.row(), self.row()], [], [self.row(), self.row(unit_id='u2')]):
+            with self.subTest(ids=[row['unit_id'] for row in rows]), \
+                    self.assertRaises(source_audit.SourceAuditProtocolError) as error:
+                source_audit.parse_decisions(json.dumps({'assessments': rows}), ['u1'])
+            self.assertEqual(error.exception.reason, 'invalid_unit_ids')
+        with patch.object(self.auditor, '_text_agent', AsyncMock(return_value=json.dumps(
+                {'assessments': [self.row(unit_id='u9')]}))):
+            result = await self.auditor.audit_answer_units('What does the record establish?',
+                [{'id': 'u1', 'text': CLAIM}], [self.span], {'evaluated_at': '2026-01-01'})
+        self.assertEqual(result, {'audit_protocol_error': 'invalid_unit_ids'})
+
     async def test_persistent_protocol_failure_cannot_use_editor_to_gain_success(self):
         bad = self.row(); del bad['checks']['predicate']
         repairer = type('Repairer', (), {'repair_answer': AsyncMock(return_value={'observations': [CLAIM]})})()

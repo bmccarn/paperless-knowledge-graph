@@ -212,7 +212,9 @@ class FactInventoryTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0)
                     cleaned.append(asyncio.current_task().cancelling())
                     active -= 1
-        task = asyncio.create_task(AnswerFinalizer(Pending(), concurrency=2).finalize(
+        finalizer = AnswerFinalizer(Pending(), concurrency=2)
+        finalizer._sources_sent = True  # A later audit of the run, whose batches start together.
+        task = asyncio.create_task(finalizer.finalize(
             QUESTION, inventory.candidate, source_pack, evaluated_at='2026-09-09'))
         await asyncio.wait_for(started.wait(), 1)
         task.cancel()

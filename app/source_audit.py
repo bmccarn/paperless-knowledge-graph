@@ -34,6 +34,7 @@ def metadata_rejections(row):
     return reasons
 
 
+AUDIT_BATCH_SIZE = 4
 MAX_BASIS_CHARS = 1200
 MAX_ASSUMPTIONS = 6
 MAX_ASSUMPTION_CHARS = 240
@@ -52,9 +53,10 @@ class SourceAuditProtocolError(ValueError):
 
 
 def response_format(unit_ids, *, reference_schema=None):
-    """A fresh schema belongs to one native audit request, including corrections."""
+    """One schema for every audit request of an answer: a changed format invalidates the provider's
+    prompt cache. parse_decisions enforces each request's exact unit ids and count."""
     properties = {
-        'unit_id': {'type': 'string', 'enum': list(unit_ids)},
+        'unit_id': {'type': 'string'},
         'source_basis': {'type': 'string', 'minLength': 1, 'maxLength': MAX_BASIS_CHARS,
                          'description': 'Briefly state what the original sources establish about this assertion, including relevant field roles, selected options and action stage. Do not defend the candidate or supply new evidence.'},
         'checks': {'type': 'object', 'additionalProperties': False, 'required': list(FACETS),
@@ -76,8 +78,8 @@ def response_format(unit_ids, *, reference_schema=None):
     return {'type': 'json_schema', 'json_schema': {
         'name': 'source_audit_decisions', 'strict': True,
         'schema': {'type': 'object', 'additionalProperties': False, 'required': ['assessments'],
-                   'properties': {'assessments': {'type': 'array', 'minItems': len(unit_ids),
-                                  'maxItems': len(unit_ids), 'items': {'type': 'object',
+                   'properties': {'assessments': {'type': 'array', 'minItems': 1,
+                                  'maxItems': max(len(unit_ids), AUDIT_BATCH_SIZE), 'items': {'type': 'object',
                                   'additionalProperties': False, 'required': list(properties),
                                   'properties': properties}}}},
     }}

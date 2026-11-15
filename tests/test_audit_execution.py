@@ -20,8 +20,9 @@ class ConcurrentAuditor(SupportedAuditor):
         if self.active == 4:
             self.started.set()
         try:
-            await self.started.wait()
-            await asyncio.sleep(self.delay)
+            if self.calls > 1:  # The first batch runs alone, so only later batches meet at the barrier.
+                await self.started.wait()
+                await asyncio.sleep(self.delay)
             return await super().audit_answer_units(*args)
         finally:
             self.active -= 1
@@ -38,6 +39,24 @@ class AuditExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(auditor.active, 0)
         self.assertEqual([c["id"] for c in result["claim_ledger"]["claims"]], [f"u{i}" for i in range(1, 57)])
         self.assertEqual(result["claim_ledger"]["summary"]["supported"], 56)
+
+    async def test_first_batch_writes_sources_alone_and_later_audits_start_together(self):
+        events = []
+        class Recorder(SupportedAuditor):
+            async def audit_answer_units(self, question, units, spans, plan):
+                events.append(('start', units[0]['id']))
+                await asyncio.sleep(.01)
+                events.append(('end', units[0]['id']))
+                return await super().audit_answer_units(question, units, spans, plan)
+        finalizer = AnswerFinalizer(Recorder())
+        answer = "\n".join(["Monthly premium: $321.00 USD."] * 12)
+        for _ in range(2):  # A later audit of the same run, like a repair or subset audit.
+            result = await finalizer.finalize("Recorded premium?", answer, PACK)
+            self.assertEqual(result["finalization"]["disposition"], "supported")
+        first, later = events[:6], events[6:]
+        self.assertEqual(first[:3], [('start', 'u1'), ('end', 'u1'), ('start', 'u5')])
+        self.assertEqual(first[3], ('start', 'u9'))
+        self.assertEqual(later[:3], [('start', 'u1'), ('start', 'u5'), ('start', 'u9')])
 
     async def test_audit_timeout_cancels_every_worker_and_never_certifies_partial_output(self):
         auditor = ConcurrentAuditor(delay=10)

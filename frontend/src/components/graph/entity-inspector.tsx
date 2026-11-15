@@ -186,8 +186,8 @@ export function FocusInspector({ summary, onClose, ...events }: { summary: NodeS
 }
 
 /** A neighbor: built from the focus summary, so it shows the neighbor's links with the focus. */
-export function NeighborInspector({ summary, neighborId, onClose, ...events }: {
-  summary: NodeSummary; neighborId: string; onClose: () => void;
+export function NeighborInspector({ summary, neighborId, onClose, onFocusEntity, ...events }: {
+  summary: NodeSummary; neighborId: string; onClose: () => void; onFocusEntity: (id: string) => void;
 } & RowEvents) {
   const links = rankLinks(summary, summary.links.filter(link => link.neighbor.id === neighborId));
   const neighbor = links[0]?.neighbor;
@@ -199,7 +199,7 @@ export function NeighborInspector({ summary, neighborId, onClose, ...events }: {
       <h2 className="mt-2 mb-1 page-title break-words pr-8">{name}</h2>
       <p className="label-13 text-fg-muted">{plural(neighbor.evidence_doc_count, "document")} in the archive.</p>
       <Actions name={name}>
-        <Button variant="outline" asChild><Link href={`/graph?focus=${encodeURIComponent(neighbor.id)}`}>Focus this entity</Link></Button>
+        <Button variant="outline" onClick={() => onFocusEntity(neighbor.id)}>Focus this entity</Button>
       </Actions>
       <h3 className={heading}>Links with {entityName(summary.focus)}</h3>
       <ul>{links.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>

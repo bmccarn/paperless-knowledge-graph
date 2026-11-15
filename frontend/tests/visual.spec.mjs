@@ -135,6 +135,10 @@ const extraStates = [
     await page.clock.runFor(300);
     await page.getByRole("tooltip").waitFor();
   } },
+  { ...gallery, name: "gallery-view-sheet", state: "view-sheet", phoneOnly: true, prepare: async page => {
+    await page.getByRole("button", { name: "View: Focus", exact: true }).click();
+    await page.getByRole("dialog", { name: "View", exact: true }).waitFor();
+  } },
   { ...mainStates[0], name: "ask-history", state: "history-sheet", phoneOnly: true, prepare: async page => {
     await page.getByRole("button", { name: "Open conversations", exact: true }).click();
     await page.getByRole("dialog").waitFor();

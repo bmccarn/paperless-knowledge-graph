@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { errMsg } from "@/lib/utils";
 import { ApiError, getGraphNodeSummary } from "@/lib/api";
-import { graphNavigation, parseGraphState, parseLinkKey } from "@/lib/graph-url-state";
+import { graphNavigation, listedViews, parseGraphState, parseLinkKey, shownView } from "@/lib/graph-url-state";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
   drawableLinks,
@@ -25,6 +25,7 @@ import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
 import { rememberRecent } from "./graph-landing";
+import { ViewSheet, ViewSwitcher } from "./view-switcher";
 
 const ForceGraphClient = dynamic(
   () => import("./force-graph-client").then((module) => module.ForceGraphClient),
@@ -32,6 +33,8 @@ const ForceGraphClient = dynamic(
 );
 
 const PHONE = "(max-width: 767px)";
+// The switcher appears once a second view ships.
+const VIEWS = listedViews();
 const subscribePhone = (change: () => void) => {
   const query = window.matchMedia(PHONE);
   query.addEventListener("change", change);
@@ -146,6 +149,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, [summary, cap, extra, pill]);
   const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
+  const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   let inspector = null;
   if (summary && layout) {
@@ -197,11 +201,17 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             </p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
-          <Focus className="h-4 w-4" />
-          Fit view
-        </Button>
+        <div className="flex items-center gap-2">
+          {VIEWS.length > 1 && <ViewSwitcher {...switcher} className="max-md:hidden" />}
+          <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
+            <Focus className="h-4 w-4" />
+            Fit view
+          </Button>
+        </div>
       </header>
+      {VIEWS.length > 1 && (
+        <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden"><ViewSheet {...switcher} /></div>
+      )}
       {error && (
         <div role="alert" className="flex items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
           <span>Could not load the neighborhood: {error}</span>

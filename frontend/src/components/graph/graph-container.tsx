@@ -4,11 +4,13 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { GraphLanding } from "./graph-landing";
 import { NeighborhoodView } from "./neighborhood-view";
+import { useViewKeys } from "./view-switcher";
 
 function GraphRoute() {
   const params = useSearchParams();
   const focus = params.get("focus");
   const query = params.get("q") ?? "";
+  useViewKeys();
   return focus ? <NeighborhoodView key={focus} focusId={focus} /> : <GraphLanding key={query} initialQuery={query} />;
 }
 

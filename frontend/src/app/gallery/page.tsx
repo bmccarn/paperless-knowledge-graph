@@ -14,6 +14,8 @@ import { ClaimTable } from "@/components/claim-table";
 import { SourceList } from "@/components/source-list";
 import { KindShape, TypeDot } from "@/components/kind-shape";
 import { GraphLegend } from "@/components/graph/graph-legend";
+import { ViewSheet, ViewSwitcher } from "@/components/graph/view-switcher";
+import { GRAPH_VIEWS, type GraphView } from "@/lib/graph-url-state";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
 import { ArrowDown, ArrowUp, Check, FileText, Plus } from "lucide-react";
@@ -40,6 +42,9 @@ import { Toast } from "@/components/ui/toast";
 const variants = ["default", "secondary", "outline", "ghost", "destructive", "link"] as const;
 const sizes = ["xs", "sm", "default", "lg"] as const;
 const documents = ["Annual statement", "Home inventory", "Service agreement"];
+// Every view that follows the focus entity, as the switcher will list them once their tickets ship.
+const switcherViews = GRAPH_VIEWS.map(view => ({ ...view, listed: view.id !== "overview" })).filter(view => view.listed);
+const focusName = "Policy HM-4471 (auto)";
 
 const answerStates: AnswerState[] = ["verified", "documented", "partial", "withheld", "not_checked", "retry", "failed"];
 const claimResults: ClaimResult[] = ["supported", "unsupported", "conflicting", "left_out"];
@@ -83,6 +88,7 @@ export default function GalleryPage() {
   const [selected, setSelected] = useState<string | null>("Home inventory");
   const [page, setPage] = useState(0);
   const [claim, setClaim] = useState<number | null>(null);
+  const [view, setView] = useState<GraphView>("focus");
   return (
     <div className="relative h-full overflow-y-auto" data-gallery-scroll>
       <div className="mx-auto max-w-6xl space-y-10 p-4 md:px-12 md:py-10" data-gallery-content>
@@ -165,6 +171,17 @@ export default function GalleryPage() {
           <div className="flex min-h-12 flex-col justify-end">
             <GraphLegend defaultOpen items={{ labels: [...NODE_LABELS.filter(label => !label.startsWith("Document")), "Other"], styles: ["supported", "inferred", "aggregate"] }} />
           </div>
+        </Section>
+
+        <Section id="graph-views" title="Graph view switcher">
+          {/* The toolbar shows from 768 px; narrower screens scroll it here. */}
+          <Row name="Toolbar"><div className="-m-1 w-full overflow-x-auto p-1 contain-inline-size"><ViewSwitcher views={switcherViews} current={view} focusName={focusName} onSwitch={setView} /></div></Row>
+          <Row name="No focus entity"><div className="-m-1 w-full overflow-x-auto p-1 contain-inline-size"><ViewSwitcher views={GRAPH_VIEWS} current="overview" focusName={null} onSwitch={() => {}} /></div></Row>
+          <Row name="Phone">
+            <div className="flex h-14 w-full max-w-[390px] items-center rounded-lg border px-4">
+              <ViewSheet views={switcherViews} current={view} focusName={focusName} onSwitch={setView} />
+            </div>
+          </Row>
         </Section>
 
         <Section id="document-types" title="Document types">

@@ -18,6 +18,7 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     await context.addInitScript(theme => localStorage.setItem("theme", theme), theme);
     const page = await context.newPage();
     assert.equal((await (await context.request.get(`${base}/api/_fixture`)).json()).fixture, "paperless-accuracy-ui-v1");
+    assert.ok((await context.request.post(`${base}/api/_fixture/reset`)).ok());
     await page.goto(`${base}/documents/101`);
     await page.getByRole("heading", { name: "January premium statement", exact: true }).waitFor();
     const headings = await page.locator("main h2").allTextContents();
@@ -48,6 +49,17 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     assert.equal(await ocr.evaluate(element => element === document.activeElement), true);
     assert.match(await ocr.innerText(), /January statement: the premium is \$25/);
     assert.equal(await page.locator("main").evaluate(el => el.scrollWidth > el.clientWidth), false);
+    await page.getByRole("textbox", { name: "Extraction review report" }).fill("Check the original premium.");
+    await page.getByRole("button", { name: "Mark extraction wrong", exact: true }).click();
+    const resolution = page.getByRole("combobox", { name: "Resolution", exact: true });
+    await resolution.click();
+    await page.keyboard.press("Escape");
+    assert.ok(await resolution.evaluate(element => element === document.activeElement));
+    await resolution.click();
+    await page.getByRole("option", { name: "Checked original extraction; no correction needed" }).click();
+    await page.getByRole("textbox", { name: "Review note for report 1" }).fill("The original premium matches the extracted value.");
+    await page.getByRole("button", { name: "Resolve reviewed report", exact: true }).click();
+    await page.getByText("Dismissed after review:", { exact: false }).waitFor();
     await page.goto(`${base}/documents/102`);
     await page.getByText("Correspondent ID: 7", { exact: true }).waitFor();
     await page.goto(`${base}/documents/999999`);

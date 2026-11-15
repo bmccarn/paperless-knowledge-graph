@@ -25,11 +25,13 @@ const extraStates = [
     await page.getByRole("button", { name: "Original OCR text" }).click();
     await page.getByRole("region", { name: "Original OCR text" }).focus();
   } },
-  { ...mainStates[3], name: "document-feedback", state: "feedback", prepare: async page => {
+  ...["feedback", "resolution"].map(state => ({ ...mainStates[3], name: `document-${state}`, state, prepare: async page => {
     await page.getByRole("textbox", { name: "Extraction review report" }).fill("Check the premium against the original statement.");
     await page.getByRole("button", { name: "Mark extraction wrong", exact: true }).click();
-    await page.getByRole("combobox", { name: "Resolution", exact: true }).scrollIntoViewIfNeeded();
-  } },
+    const resolution = page.getByRole("combobox", { name: "Resolution", exact: true });
+    await resolution.scrollIntoViewIfNeeded();
+    if (state === "resolution") await resolution.click();
+  } })),
   { name: "document-missing", route: "/documents/999999", state: "missing", ready: page => page.getByRole("heading", { name: "Document not found", exact: true }) },
   { name: "document-empty", route: "/documents/102", state: "empty", ready: page => page.getByText("No entities extracted.", { exact: false }) },
   ...["dialog", "sheet"].map(kind => ({ ...gallery, name: `gallery-${kind}`, state: kind, prepare: async page => {

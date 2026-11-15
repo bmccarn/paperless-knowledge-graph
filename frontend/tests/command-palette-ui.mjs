@@ -82,7 +82,7 @@ test("debounce, stale results, paging and retry", async t => {
   });
   await page.goto(`${base}/documents`);
   await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  await page.clock.pauseAt(new Date(Date.now() + 10000));
   await page.getByRole("button", { name: "Search pages and archive", exact: true }).click();
   const input = page.getByRole("combobox", { name: "Search pages and archive", exact: true });
   await input.fill("f");

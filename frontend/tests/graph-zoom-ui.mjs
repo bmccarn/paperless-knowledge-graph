@@ -118,11 +118,11 @@ try {
   if (Math.abs(closeup.gap - initial.gap) > 0.2) failures.push(`Label gap changed with zoom: ${initial.gap} -> ${closeup.gap}`);
   assert.deepEqual(failures, []);
   // Place the selected node near the edge that the inspector will occupy.
-  // Real background gestures reproduce viewport clipping without camera APIs.
+  // Real background gestures reproduce viewport clipping without camera APIs. The pan is horizontal, as in
+  // graph-neighborhood-ui: after a pan with a vertical part, the hit areas miss nodes until the next drag.
   await page.mouse.move(bounds.x + 30, bounds.y + 30);
   await page.mouse.down();
-  await page.mouse.move(bounds.x + 30 + bounds.width - 60 - closeup.x,
-                        bounds.y + 30 + bounds.height / 2 - closeup.y, { steps: 10 });
+  await page.mouse.move(bounds.x + 30 + bounds.width - 60 - closeup.x, bounds.y + 30, { steps: 10 });
   await page.mouse.up();
   const edge = await page.evaluate(() => window.__graphPaint['Loaner gadget']);
   assert.ok(edge.x > bounds.width - 90 && edge.x < bounds.width, 'Target is near the inspector edge');

@@ -507,7 +507,7 @@ function GraphContent() {
             </span>
             <span className="hidden rounded-md border border-slate-600/40 bg-[#101820ed] px-3 py-2 sm:block">
               Click to inspect · Drag to pin · Scroll to zoom ·{" "}
-              Dashed amber = inferred
+              Dashed = inferred
             </span>
           </div>
           {graph.discarded > 0 && (

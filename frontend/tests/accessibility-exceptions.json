@@ -5,7 +5,7 @@
     "state": "main",
     "issue": 133,
     "targets": [
-      "[\".bg-\\\\[\\\\#0b131c\\\\]\"]"
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
     ]
   },
   {
@@ -14,7 +14,7 @@
     "state": "main",
     "issue": 133,
     "targets": [
-      "[\".bg-\\\\[\\\\#0b131c\\\\]\"]"
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
     ]
   },
   {
@@ -29,6 +29,33 @@
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
+    ]
+  },
+  {
+    "rule": "aria-prohibited-attr",
+    "route": "/graph?focus=nb-rowan",
+    "state": "selected-node",
+    "issue": 133,
+    "targets": [
+      "[\"div[aria-label=\\\"2D relationship graph\\\"]\"]"
+    ]
+  },
+  {
+    "rule": "color-contrast",
+    "route": "/graph?focus=nb-rowan",
+    "state": "selected-node",
+    "issue": 131,
+    "targets": [
+      "[\".w-fit\"]"
+    ]
+  },
+  {
+    "rule": "font-size",
+    "route": "/graph?focus=nb-rowan",
+    "state": "selected-node",
+    "issue": 131,
+    "targets": [
+      "[\"p.mb-3.text-[11px].leading-relaxed.text-muted-foreground\"]"
     ]
   }
 ]

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Compiled unit-test modules from npm test.
+    ".test-build/**",
   ]),
 ]);
 

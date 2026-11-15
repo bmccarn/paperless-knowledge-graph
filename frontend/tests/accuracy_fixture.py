@@ -96,6 +96,11 @@ NB_LINKS.extend((f'doc-{doc}', 'MENTIONS', 'nb-pharmacy', [(doc, False, None)]) 
 for rel_type, target in [('PRESCRIBED_BY', 'nb-health-0'), ('LOCATED_IN', 'nb-places-1'), ('PAID_TO', 'nb-money-1'),
                          ('FILED_WITH', 'nb-service-0'), ('RELATED_TO', 'nb-loose-0')]:
     nb_link('nb-pharmacy', rel_type, target)
+# A small focus whose neighbors have a name with markup characters, no name, and a label outside the kinds.
+NB_ENTITIES.update({'nb-desk': ('Organization', 'Front desk'), 'nb-markup': ('Organization', '<b>Acme</b> & "Sons" <i>'),
+                    'nb-unnamed': ('Organization', ''), 'nb-gadget': ('Gadget', 'Loaner gadget')})
+for rel_type, target in [('PAID_TO', 'nb-markup'), ('EMPLOYED_BY', 'nb-unnamed'), ('OWNS_VEHICLE', 'nb-gadget')]:
+    nb_link('nb-desk', rel_type, target, 2)
 
 
 def nb_node(uid):

@@ -147,6 +147,9 @@
   --cat-health: oklch(0.30 0.122 346);
   --cat-time: oklch(0.63 0.120 97);
   --cat-docs: oklch(0.36 0.010 255);
+  /* Icon ink on a filled graph node: each icon reaches 3:1 on its fill (from the graph mockup). */
+  --on-cat-people: var(--bg); --on-cat-org: var(--bg); --on-cat-place: var(--fg); --on-cat-money: var(--bg);
+  --on-cat-agree: var(--bg); --on-cat-thing: var(--bg); --on-cat-health: var(--bg); --on-cat-time: var(--fg); --on-cat-docs: var(--bg);
 
   --doc-financial-invoice: oklch(0.30 0.050 82);
   --doc-government-tax: oklch(0.31 0.174 275);
@@ -228,6 +231,8 @@
   --cat-health: oklch(0.66 0.180 5);
   --cat-time: oklch(0.73 0.151 98);
   --cat-docs: oklch(0.82 0.010 255);
+  --on-cat-people: oklch(0.97 0.004 90); --on-cat-org: var(--bg); --on-cat-place: var(--bg); --on-cat-money: var(--bg);
+  --on-cat-agree: var(--bg); --on-cat-thing: var(--bg); --on-cat-health: var(--bg); --on-cat-time: var(--bg); --on-cat-docs: var(--bg);
 
   --doc-financial-invoice: oklch(0.84 0.168 94);
   --doc-government-tax: oklch(0.70 0.124 280);

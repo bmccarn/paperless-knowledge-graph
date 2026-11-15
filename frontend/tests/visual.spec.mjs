@@ -243,9 +243,19 @@ const extraStates = [
   { ...mainStates[9], name: "graph-neighborhood-group", state: "selected-group", seed: graphText, prepare: async page => {
     await graphReady(page);
     const box = await page.locator("canvas").first().boundingBox();
-    const pill = await page.evaluate(() => window.__graphText["+23 Parties and roles"]);
+    // On phone a pill shows only its count.
+    const pill = await page.evaluate(() => window.__graphText["+23 Parties and roles"] ?? window.__graphText["+23"]);
     await page.mouse.click(box.x + pill.x, box.y + pill.y);
     await page.getByRole("list", { name: "Parties and roles group" }).waitFor();
+  } },
+  // On phone, the inspector sheet of a selected neighbor expanded from its 300 px peek.
+  { ...mainStates[9], name: "graph-neighborhood-sheet", state: "sheet-expanded", phoneOnly: true, seed: graphText, prepare: async page => {
+    await graphReady(page);
+    const box = await page.locator("canvas").first().boundingBox();
+    const node = await page.evaluate(() => window.__graphText["Juniper Okafor"]);
+    await page.mouse.click(box.x + node.x, box.y + node.y);
+    await page.getByRole("button", { name: "Expand inspector", exact: true }).click();
+    await page.getByRole("button", { name: "Collapse inspector", exact: true }).waitFor();
   } },
   // The legend opened on desktop (a strip above the evidence shelf), and its sheet on phone.
   { ...mainStates[9], name: "graph-neighborhood-legend", state: "legend", prepare: async page => {

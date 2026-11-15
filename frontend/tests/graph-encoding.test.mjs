@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  fitView,
   labelCandidates,
   linkWidth,
   nodeLabel,
@@ -66,4 +67,26 @@ test("an all-nodes label may overlap another label but stays inside the canvas",
   assert.ok(outside[0].x1 > 100);
   const [moved] = placeLabels([{ candidates: outside, rule: "all" }], [], bounds);
   assert.ok(moved && moved.x1 <= 100, "A label at the edge moves inside");
+});
+
+test("the fit keeps every shape, wide pills included, inside the padded canvas, and centers the margin", () => {
+  const items = [{ x: -100, y: 0, halfWidth: 10, halfHeight: 10 }, { x: 100, y: 0, halfWidth: 60, halfHeight: 14 },
+    { x: 0, y: -50, halfWidth: 10, halfHeight: 10 }, { x: 0, y: 50, halfWidth: 10, halfHeight: 10 }];
+  const pad = { top: 64, right: 16, bottom: 152, left: 16 };
+  const { x, y, k } = fitView(items, 390, 500, pad);
+  // Horizontal limit: 200 k <= 390 - 32 - 10 - 60.
+  assert.equal(k, (390 - 32 - 70) / 200);
+  const inside = [];
+  for (const item of items) {
+    const sx = (item.x - x) * k + 195, sy = (item.y - y) * k + 250;
+    inside.push(sx - item.halfWidth >= 16 - 1e-9 && sx + item.halfWidth <= 374 + 1e-9
+      && sy - item.halfHeight >= 64 - 1e-9 && sy + item.halfHeight <= 348 + 1e-9);
+  }
+  assert.deepEqual(inside, [true, true, true, true]);
+  // The wider right pill moves the center right of 0; the larger bottom pad moves it down.
+  assert.ok(x > 0);
+  assert.ok(y > 0);
+  // A tall pad binds the zoom on the vertical axis.
+  assert.equal(fitView(items, 390, 300, pad).k, (300 - 64 - 152 - 20) / 100);
+  assert.deepEqual(fitView([{ x: 5, y: 5, halfWidth: 9, halfHeight: 9 }], 390, 500, pad).k, 1);
 });

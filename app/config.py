@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     auto_sync_interval_minutes: int = 0
     entity_steward_interval_minutes: int = 360
     entity_steward_candidate_limit: int = 40
+    # "shadow" records would-merge suggestions only; nothing merges unless "on".
+    entity_steward_auto_merge: Literal["off", "shadow", "on"] = "shadow"
+    entity_steward_auto_merge_max_per_run: int = Field(default=10, ge=0, le=100)
 
     model_config = {"env_file": os.environ.get("KG_ENV_FILE", ".env") or None, "extra": "ignore"}
 

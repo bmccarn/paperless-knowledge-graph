@@ -280,11 +280,14 @@ class MergeEntrypointTests(unittest.TestCase):
                         continue
                     found.add((path.name, function.name, ast.unparse(call.func.value)))
                     self.assertIn("review_method", {keyword.arg for keyword in call.keywords})
+                    method = next(keyword.value for keyword in call.keywords if keyword.arg == "review_method")
                     if path.name == "main.py":
-                        method = next(keyword.value for keyword in call.keywords if keyword.arg == "review_method")
                         self.assertIsInstance(method, ast.Constant)
                         self.assertEqual(method.value, "entity_review_api")
+                    if path.name == "entity_steward.py":
+                        self.assertEqual(ast.unparse(method), "AUTO_MERGE_REVIEW_METHOD")
         self.assertEqual(found, {("main.py", "entity_review_merge", "entity_resolver"),
+                                 ("entity_steward.py", "_auto_merge_pass", "entity_resolver"),
                                  ("entity_resolver.py", "merge_entities", "graph_store")})
 
     def test_production_unmerge_callers_require_explicit_api_origin(self):

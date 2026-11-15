@@ -3,16 +3,22 @@ import asyncio
 import logging
 import uuid
 
+from app.config import settings
 from app.embeddings import embeddings_store
 from app.graph import MergeDrift, graph_store
 from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited, identity_has_unresolved_veto,
                                   alias_revocations, alias_replay_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, EXPLICIT_REVIEW_METHOD, display_name, name_key,
+    AUTO_MERGE_REVIEW_METHOD, LOW_RISK_LABELS, TERMINAL_DECISIONS, auto_merge_blocker, auto_merge_survivor,
     context_bound_name, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions,
     has_local_alias_definition, verified_coreference, valid_identity_receipt, digest)
 
 logger = logging.getLogger(__name__)
+
+
+class AutoMergeBlocked(ValueError):
+    """Fresh reads under the lock no longer pass the automatic merge gate."""
 
 
 class EntityResolver:
@@ -97,10 +103,58 @@ class EntityResolver:
         node = await graph_store.get_node(candidate["uuid"])
         return bool(node) and not merge_is_prohibited(incoming, entity_identity(node), decisions)
 
+    async def _auto_merge_gate(self, left_uuid: str, right_uuid: str, decisions: list[dict]) -> tuple[str, str, str]:
+        """Every automatic merge rule except the agent and the cap, on fresh reads.
+
+        Returns (blocker, primary_uuid, duplicate_uuid); "" means eligible. The caller holds the lock.
+        """
+        nodes = {left_uuid: await graph_store.get_node(left_uuid), right_uuid: await graph_store.get_node(right_uuid)}
+        if not all(nodes.values()) or left_uuid == right_uuid:
+            return "missing", left_uuid, right_uuid
+        left, right = nodes[left_uuid], nodes[right_uuid]
+        label = (left.get("labels") or [""])[0]
+        if label not in LOW_RISK_LABELS:
+            return "label", left_uuid, right_uuid
+        key = name_key(str(left["properties"].get("name") or ""), label)
+        # shortcut: reads the whole label per pair; batch the count if labels reach tens of thousands of nodes.
+        count = sum(1 for node in await graph_store.get_entities_by_type(label)
+                    if isinstance(node.get("name"), str) and name_key(node["name"], label) == key)
+        primary, duplicate = auto_merge_survivor({**left["properties"], "uuid": left_uuid},
+                                                 {**right["properties"], "uuid": right_uuid})
+        primary_uuid, duplicate_uuid = primary["uuid"], duplicate["uuid"]
+        blocker = auto_merge_blocker(left, right, label, count)
+        if blocker:
+            return blocker, primary_uuid, duplicate_uuid
+        if any({row.get("left_uuid"), row.get("right_uuid")} == {left_uuid, right_uuid}
+               and (row.get("decision") in TERMINAL_DECISIONS
+                    or (row.get("provenance") or "legacy_unknown") == "legacy_unknown")
+               for row in decisions):
+            return "decision_row", primary_uuid, duplicate_uuid
+        keep, remove = entity_identity(nodes[primary_uuid]), entity_identity(nodes[duplicate_uuid])
+        decisions = decisions + alias_revocations(left) + alias_revocations(right)
+        if (alias_replay_prohibited(nodes[primary_uuid]["properties"], remove["canonical_name"], keep["type"], decisions)
+                or merge_is_prohibited(keep, remove, decisions)):
+            return "prohibited", primary_uuid, duplicate_uuid
+        return "", primary_uuid, duplicate_uuid
+
+    async def auto_merge_check(self, left_uuid: str, right_uuid: str) -> dict:
+        """Read-only gate for the steward; merge_entities checks it again before merging."""
+        async with self._mutation_lock:
+            blocker, primary_uuid, duplicate_uuid = await self._auto_merge_gate(
+                left_uuid, right_uuid, await self._review_decisions())
+        return {"blocker": blocker, "primary_uuid": primary_uuid, "duplicate_uuid": duplicate_uuid}
+
     async def merge_entities(self, primary_uuid: str, duplicate_uuid: str,
-                             *, review_method: str | None = None) -> dict:
-        """Merge only with explicit review origin, after durably carrying vetoes."""
-        if review_method != EXPLICIT_REVIEW_METHOD:
+                             *, review_method: str | None = None, note: str = "") -> dict:
+        """Merge only with explicit review origin, after durably carrying vetoes.
+
+        The steward's automatic origin also needs the setting "on" and the full
+        automatic gate on fresh reads; it records `auto_merged` and no human alias.
+        """
+        automatic = review_method == AUTO_MERGE_REVIEW_METHOD
+        if automatic and settings.entity_steward_auto_merge != "on":
+            raise ValueError("Automatic entity merge is not enabled")
+        if review_method != EXPLICIT_REVIEW_METHOD and not automatic:
             raise ValueError("Explicit review origin is required for entity merge")
         if primary_uuid == duplicate_uuid:
             raise ValueError("An entity merge requires two different entities")
@@ -119,6 +173,10 @@ class EntityResolver:
             if "Document" in primary.get("labels", []) or "Document" in duplicate.get("labels", []):
                 raise ValueError("Paperless documents cannot be merged as entities")
             decisions = await self._review_decisions()
+            if automatic:
+                blocker, survivor, _ = await self._auto_merge_gate(primary_uuid, duplicate_uuid, decisions)
+                if blocker or survivor != primary_uuid:
+                    raise AutoMergeBlocked(blocker or "survivor")
             revocations = alias_revocations(primary) + alias_revocations(duplicate)
             await embeddings_store.preserve_alias_revocations(revocations)
             decisions += revocations
@@ -134,14 +192,16 @@ class EntityResolver:
                     identity_status=row.get("identity_status", "active"),
                     review_method=row.get("review_method", "legacy_unknown"), review_id=row.get("review_id"),
                 )
-            review_id = str(uuid.uuid4())
+            # No review_id: the graph then writes no human_review alias record.
+            review_id = None if automatic else str(uuid.uuid4())
             merge_id = str(uuid.uuid4())
             merged = await graph_store.merge_entities(primary_uuid, duplicate_uuid, merge_id=merge_id,
                                                        review_id=review_id, review_method=review_method)
             await embeddings_store.add_entity_review_decision(
-                primary_uuid, duplicate_uuid, "merged", "",
+                primary_uuid, duplicate_uuid, "auto_merged" if automatic else "merged", note,
                 left_identity=keep, right_identity=remove,
-                provenance="human_review", identity_status="active", review_id=review_id, review_method=review_method,
+                provenance="automated_merge" if automatic else "human_review", identity_status="active",
+                review_id=review_id, review_method=review_method,
             )
             await embeddings_store.set_merge_journal_status(merge_id, "applied")
             return {**merged, "merge_id": merge_id}
@@ -167,7 +227,8 @@ class EntityResolver:
                         nodes[edge[near]["uuid"]].setdefault("relationships", []).append(
                             {"neighbor_props": edge[far], "rel_props": edge["props"]})
             await embeddings_store.set_merge_journal_status(merge_id, "reverting", reverted_by=review_method, note=note)
-            await embeddings_store.set_entity_review_decision_status(primary_uuid, duplicate_uuid, "merged", "reverted")
+            merged_decision = "auto_merged" if journal.get("review_method") == AUTO_MERGE_REVIEW_METHOD else "merged"
+            await embeddings_store.set_entity_review_decision_status(primary_uuid, duplicate_uuid, merged_decision, "reverted")
             await embeddings_store.add_entity_review_decision(
                 primary_uuid, duplicate_uuid, "split", note,
                 left_identity=entity_identity(nodes[primary_uuid]), right_identity=entity_identity(nodes[duplicate_uuid]),

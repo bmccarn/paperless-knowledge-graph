@@ -8,7 +8,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional
@@ -1205,6 +1205,24 @@ async def graph_node(node_uuid: str, summary: bool = False):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
+
+
+PATH_SEARCH_SECONDS = 5
+
+
+@app.get("/graph/paths")
+async def graph_paths(a: str, b: str, max_len: int = Query(4, ge=2, le=4), k: int = Query(5, ge=1, le=5),
+                      include_owner: bool = False, allow_inferred: bool = True):
+    async def search():
+        _, owner = await graph_store.get_owner()
+        exclude = None if include_owner or owner in (a, b) else owner
+        # The query timeout only backs up the cancellation below, so the server stops too.
+        return await graph_store.find_paths(a, b, max_len=max_len, k=k, exclude=exclude, owner=owner,
+                                            allow_inferred=allow_inferred, timeout=PATH_SEARCH_SECONDS + 1)
+    try:
+        return await asyncio.wait_for(search(), PATH_SEARCH_SECONDS)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=503, detail="path_search_timeout") from exc
 
 
 @app.get("/graph/neighbors/{node_uuid}")

@@ -212,6 +212,7 @@ After changing models, test extraction on one small and one large document befor
 | `/graph/search?q=...&type=...` | GET | Searches graph nodes by name, with an optional type filter |
 | `/graph/node/{uuid}` | GET | Node details and relationships |
 | `/graph/neighbors/{uuid}?depth=2` | GET | Multi-hop neighborhood |
+| `/graph/paths?a=...&b=...` | GET | Up to 5 paths between two entities over semantic links, ranked by their weakest link; the owner is left out unless `include_owner=1` |
 | `/graph/initial?limit=300` | GET | Initial graph for the explorer |
 | `/conversations` | GET, POST | Lists or creates saved conversations |
 | `/conversations/{conv_id}` | GET, PATCH, DELETE | Reads, renames or deletes a conversation |

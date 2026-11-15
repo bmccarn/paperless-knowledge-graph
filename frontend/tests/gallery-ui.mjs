@@ -52,7 +52,7 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     assert.equal(await row.getAttribute("aria-selected"), "true");
     const rowHeight = (await row.boundingBox()).height;
     assert.equal((await page.getByRole("row", { name: "Loading document", exact: true }).boundingBox()).height, rowHeight);
-    const pager = page.getByRole("navigation", { name: "page navigation", exact: true });
+    const pager = page.getByRole("region", { name: "Table and pager", exact: true }).getByRole("navigation", { name: "page navigation", exact: true });
     await pager.getByRole("button", { name: "Next page", exact: true }).click();
     assert.match(await pager.textContent(), /11–20 of 23/);
     for (const kind of ["dialog", "sheet", "alert dialog"]) {

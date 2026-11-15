@@ -25,6 +25,7 @@ import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
 import { rememberRecent } from "./graph-landing";
+import { LinkTable } from "./link-table";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
 
 const ForceGraphClient = dynamic(
@@ -53,6 +54,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [attempt, setAttempt] = useState(0);
   const [extra, setExtra] = useState<Record<string, number>>({});
   const [atLimit, setAtLimit] = useState(false);
+  const isTable = shownView(urlState.view) === "table";
   const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
   const selectedNodeId = selectedLinkId ? null : urlState.selection;
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
@@ -141,13 +143,13 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const leaf = summary !== null && drawableLinks(summary).length === 0;
   const selectedLink = summary?.links.find(link => link.key === selectedLinkId);
   const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
-  const pill = selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
+  const pill = !isTable && selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
   const adds = useMemo(() => {
     if (!summary || !pill) return 0;
     const next = showMore(summary, cap, extra, pill.family);
     return next === extra ? 0 : neighborhoodLayout(summary, cap, next).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
   }, [summary, cap, extra, pill]);
-  const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
+  const selected = Boolean(selectedLink || pill || (selectedNodeId && (positions.has(selectedNodeId) || (isTable && summary?.links.some(link => link.neighbor.id === selectedNodeId)))));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
@@ -157,12 +159,12 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     else if (pill) {
       const drawn = new Set(layout.links.map(link => link.key));
       inspector = (
-        <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} {...rowEvents}
+        <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} atLimit={layout.entities >= VIEW_LIMIT} onOpenTable={() => navigate({ view: "table" })} {...rowEvents}
           links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);
     }
-    else if (selectedNodeId && selectedNodeId !== summary.focus.id && positions.has(selectedNodeId))
+    else if (selectedNodeId && selectedNodeId !== summary.focus.id && ((isTable && summary.links.some(link => link.neighbor.id === selectedNodeId)) || (!isTable && positions.has(selectedNodeId))))
       inspector = <NeighborInspector summary={summary} neighborId={selectedNodeId} onClose={clearSelection} onFocusEntity={openFocus} {...rowEvents} />;
-    else inspector = <FocusInspector summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
+    else if (!isTable) inspector = <FocusInspector onOpenTable={() => navigate({ view: "table" })} summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
   }
 
   if (missing) return (
@@ -194,7 +196,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
         <div>
           <h1 className="page-title">Graph</h1>
-          {summary && layout && (
+          {!isTable && summary && layout && (
             <p className="mt-1 text-sm text-muted-foreground">
               {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
               {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
@@ -203,10 +205,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         </div>
         <div className="flex items-center gap-2">
           {VIEWS.length > 1 && <ViewSwitcher {...switcher} className="max-md:hidden" />}
-          <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
+          {!isTable && <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
             <Focus className="h-4 w-4" />
             Fit view
-          </Button>
+          </Button>}
         </div>
       </header>
       {VIEWS.length > 1 && (
@@ -220,13 +222,15 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           </Button>
         </div>
       )}
-      {atLimit && (
+      {atLimit && !isTable && (
         <p role="status" className="border-b px-4 py-2 text-sm">
           The canvas shows at most {VIEW_LIMIT} entities. No more neighbors can be added to this view.
         </p>
       )}
       <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {isTable && summary && layout ? (
+          <LinkTable summary={summary} layout={layout} selection={urlState.selection} onSelectLink={selectLinkKey} />
+        ) : <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <section className="relative min-h-0 flex-1" aria-label="Graph workspace">
             {leaf ? (
               <div className="flex h-full items-center justify-center p-8">
@@ -274,7 +278,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             <EvidenceShelf documents={documents} entityId={summary.focus.id} marked={markedDocs} onMark={setMarkedDoc}
               className={selected ? "max-md:hidden" : undefined} />
           )}
-        </div>
+        </div>}
         {inspector && (
           <aside
             key={selectedLinkId ?? selectedNodeId ?? "focus"}

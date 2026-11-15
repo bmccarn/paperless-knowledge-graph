@@ -251,7 +251,10 @@ export function ForceGraphClient({
     // Room for the controls over the canvas: on phone the Legend button (top) and zoom buttons (bottom) in the
     // height a width-bound ring leaves spare; on desktop the zoom buttons at the right, where a wide canvas has room.
     const pad = phone ? { top: 64, right: 16, bottom: 152, left: 16 } : { top: 48, right: 64, bottom: 48, left: 48 };
-    const view = fitView(items, dimensions.width, dimensions.height, pad);
+    const roomy = fitView(items, dimensions.width, dimensions.height, pad);
+    // A short phone canvas (the inspector open) has no spare height: fit to its edges instead of shrinking the zoom.
+    const tight = phone ? fitView(items, dimensions.width, dimensions.height, { top: 16, right: 16, bottom: 16, left: 16 }) : roomy;
+    const view = roomy.k < tight.k ? tight : roomy;
     handle.centerAt(view.x, view.y, duration);
     handle.zoom(view.k, duration);
     zoomTarget.current = { k: view.k, until: performance.now() + duration };

@@ -76,18 +76,21 @@ try {
 
   // At the fit zoom on a hub, pills clear the nodes and each other and stay inside the canvas; labels never overlap.
   const canvas = await page.locator('canvas').first().boundingBox();
-  const pills = frame.filter(([text]) => /^\+\d+/.test(text));
-  assert.equal(pills.length, 9, `One pill per family: ${pills.map(([text]) => text)}`);
-  const pillCenters = new Set(pills.map(([, at]) => `${Math.round(at.x)},${Math.round(at.y)}`));
-  const nodes = shapes.filter(at => !pillCenters.has(`${Math.round(at.x)},${Math.round(at.y)}`));
-  for (const [index, [text, at]] of pills.entries()) {
-    const box = pillBox(at);
-    assert.ok(box.left >= 0 && box.right <= canvas.width && box.top >= 0 && box.bottom <= canvas.height,
-      `${text} is inside the ${canvas.width} x ${canvas.height} canvas: ${JSON.stringify(box)}`);
-    const nodesUnder = nodes.filter(node => hits(box, nodeBox(node)));
-    assert.deepEqual(nodesUnder, [], `${text} covers no node`);
-    for (const [other, at2] of pills.slice(index + 1)) assert.ok(!hits(box, pillBox(at2)), `${text} and ${other} do not overlap`);
-  }
+  const pillsClear = (items, shapes, area) => {
+    const pills = items.filter(([text]) => /^\+\d+/.test(text));
+    assert.equal(pills.length, 9, `One pill per family: ${pills.map(([text]) => text)}`);
+    const centers = new Set(pills.map(([, at]) => `${Math.round(at.x)},${Math.round(at.y)}`));
+    const nodes = shapes.filter(at => !centers.has(`${Math.round(at.x)},${Math.round(at.y)}`));
+    for (const [index, [text, at]] of pills.entries()) {
+      const box = pillBox(at);
+      assert.ok(box.left >= 0 && box.right <= area.width && box.top >= 0 && box.bottom <= area.height,
+        `${text} is inside the ${area.width} x ${area.height} canvas: ${JSON.stringify(box)}`);
+      assert.deepEqual(nodes.filter(node => hits(box, nodeBox(node))), [], `${text} covers no node`);
+      for (const [other, at2] of pills.slice(index + 1)) assert.ok(!hits(box, pillBox(at2)), `${text} and ${other} do not overlap`);
+    }
+    return nodes;
+  };
+  const nodes = pillsClear(frame, shapes, canvas);
   // Labels never overlap one another or a pill, at the fit zoom and zoomed out, where the ring is crowded.
   const labelsClear = items => {
     const labels = items.filter(([text]) => !/^\+\d+/.test(text));
@@ -145,6 +148,10 @@ try {
   };
   assert.equal(Math.round((await visible()).height), 300, 'The sheet peeks 300 px');
   await page.screenshot({ path: path.join(artifacts, 'graph-phone-sheet.png') });
+  // Fit view with the sheet open fits the shorter canvas without crowding the pills.
+  await page.getByRole('button', { name: 'Fit view', exact: true }).click();
+  await page.waitForTimeout(500);
+  pillsClear(...await page.evaluate(() => [window.__frame, window.__shapes]), await page.locator('canvas').first().boundingBox());
   const handle = page.getByRole('button', { name: 'Expand inspector', exact: true });
   assert.equal(await handle.getAttribute('aria-expanded'), 'false');
   await handle.click();

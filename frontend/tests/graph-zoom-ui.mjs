@@ -19,35 +19,22 @@ try {
   assert.equal((await marker.json()).fixture, 'paperless-accuracy-ui-v1');
   // Observe actual screen geometry without exposing a production test API or
   // changing the renderer's data, camera, paint calls or zoom transform.
+  // A node label is drawn in screen pixels with the context moved to its node's center, so the transform
+  // origin is the node's position. The text middle sits 18 px below a 6 px node: 4 px gap plus half the 16 px line.
   await page.addInitScript(() => {
     window.__graphPaint = {};
-    const backgrounds = new WeakMap();
-    const circles = new WeakMap();
     const proto = CanvasRenderingContext2D.prototype;
-    const fillRect = proto.fillRect;
-    proto.fillRect = function (...args) {
-      backgrounds.set(this, args);
-      return fillRect.apply(this, args);
-    };
-    const arc = proto.arc;
-    proto.arc = function (...args) {
-      circles.set(this, args);
-      return arc.apply(this, args);
-    };
     const fillText = proto.fillText;
     proto.fillText = function (text, x, y, ...rest) {
-      const box = backgrounds.get(this);
-      const circle = circles.get(this);
-      if (text === 'Alex Example' && box && circle) {
+      if (text === 'Alex Example') {
         const transform = this.getTransform();
         const scale = transform.a / devicePixelRatio;
-        const point = new DOMPoint(circle[0], circle[1]).matrixTransform(transform);
+        const point = new DOMPoint(0, 0).matrixTransform(transform);
+        const zoom = this.canvas.__zoom || { k: 1, x: 0, y: 0 };
+        const at = { x: point.x / devicePixelRatio, y: point.y / devicePixelRatio };
         window.__graphPaint[text] = {
-          scale, font: parseFloat(this.font) * scale,
-          padding: (box[2] - this.measureText(text).width) * scale,
-          height: box[3] * scale, gap: (y - circle[1]) * scale,
-          x: point.x / devicePixelRatio, y: point.y / devicePixelRatio,
-          worldX: circle[0], worldY: circle[1],
+          scale, font: parseFloat(this.font.match(/([\d.]+)px/)[1]) * scale, gap: y * scale, ...at,
+          worldX: (at.x - zoom.x) / zoom.k, worldY: (at.y - zoom.y) / zoom.k,
         };
       }
       return fillText.call(this, text, x, y, ...rest);
@@ -127,7 +114,7 @@ try {
   const failures = [];
   if (!(zoom > 16)) failures.push(`Wheel zoom stopped at ${zoom}; expected beyond 16x`);
   for (const [phase, paint] of Object.entries({ initial, closeup })) {
-    for (const [metric, expected] of Object.entries({ font: 11, padding: 6, height: 15, gap: 10 })) {
+    for (const [metric, expected] of Object.entries({ font: 12, gap: 18 })) {
       if (Math.abs(paint[metric] - expected) > 0.2) failures.push(`${phase} ${metric}: ${paint[metric]}, expected ${expected} screen pixels`);
     }
   }

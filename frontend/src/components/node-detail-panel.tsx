@@ -36,6 +36,8 @@ interface Props {
   onExpandNeighbors: (nodeId: string) => void;
   expanding: boolean;
   onSelectNode: (node: ExplorerNode) => void;
+  /** Keyboard focus on a neighbor's row, so the canvas can mark that node. */
+  onFocusNode?: (id: string | null) => void;
 }
 
 export function NodeDetailPanel({
@@ -44,6 +46,7 @@ export function NodeDetailPanel({
   onExpandNeighbors,
   expanding,
   onSelectNode,
+  onFocusNode,
 }: Props) {
   const [state, setState] = useState<{
     detail: NodeDetail | null;
@@ -258,6 +261,8 @@ export function NodeDetailPanel({
               {neighbor && (
                 <button
                   onClick={() => onSelectNode(neighbor)}
+                  onFocus={() => onFocusNode?.(neighbor.id)}
+                  onBlur={() => onFocusNode?.(null)}
                   className="text-blue-400 underline underline-offset-2"
                 >
                   Inspect {otherName}

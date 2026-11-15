@@ -40,6 +40,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [atLimit, setAtLimit] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
+  const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
   const handleRef = useRef<GraphHandle | null>(null);
 
@@ -54,8 +55,16 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const cap = summary ? familyCap(summary.focus.is_hub, phone) : 0;
   const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra), [summary, cap, extra]);
   const { graph, positions } = useMemo(() => {
+    // The canvas sizes and rings nodes from these fields of the summary.
+    const fields = new Map<string, Record<string, unknown>>(summary ? [
+      ...summary.links.map(({ neighbor }) => [neighbor.id, neighbor] as const),
+      [summary.focus.id, summary.focus] as const,
+    ] : []);
     const graph: ExplorerGraph = {
-      nodes: (layout?.nodes ?? []).map(({ id, name, label }) => ({ id, name, label, props: {} })),
+      nodes: (layout?.nodes ?? []).map(({ id, name, label }) => {
+        const { evidence_doc_count, link_count, is_hub, is_owner } = fields.get(id) ?? {};
+        return { id, name, label, props: { evidence_doc_count, link_count, is_hub, is_owner } };
+      }),
       links: (layout?.links ?? []).map(({ key, source, target, type, link }) => ({
         id: key, source, target, type,
         props: link
@@ -65,7 +74,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       discarded: 0,
     };
     return { graph, positions: new Map(layout?.nodes.map(({ id, x, y }) => [id, { x, y }])) };
-  }, [layout]);
+  }, [layout, summary]);
 
   const openFocus = useCallback((id: string) => router.push(`/graph?focus=${encodeURIComponent(id)}`), [router]);
   const selectNode = useCallback((node: ExplorerNode) => {
@@ -79,6 +88,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     }
     setSelectedNodeId(node.id);
     setSelectedLinkId(null);
+    setKeyboardNodeId(null);
   }, [summary, cap, extra, layout]);
   const selectLink = useCallback((link: ExplorerLink) => {
     setSelectedLinkId(link.id);
@@ -87,6 +97,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const clearSelection = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedLinkId(null);
+    setKeyboardNodeId(null);
   }, []);
   const onReady = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
 
@@ -129,6 +140,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             <ForceGraphClient
               graph={graph}
               positions={positions}
+              focusId={focusId}
+              keyboardNodeId={keyboardNodeId}
               showLabels
               selectedNodeId={selectedNodeId}
               selectedLinkId={selectedLinkId}
@@ -156,6 +169,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
               onExpandNeighbors={openFocus}
               expanding={false}
               onSelectNode={(node) => (positions.has(node.id) ? selectNode(node) : openFocus(node.id))}
+              onFocusNode={setKeyboardNodeId}
             />
           </aside>
         )}

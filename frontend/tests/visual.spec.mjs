@@ -195,6 +195,18 @@ const extraStates = [
     await page.getByRole("button", { name: title, exact: true }).click();
     await page.getByRole("article", { name: "Answer" }).waitFor();
   } })),
+  // The hub with its focus node selected: selection rings, faded links, arrows and link labels.
+  { ...mainStates[9], name: "graph-neighborhood-selected", state: "selected-node", prepare: async page => {
+    const canvas = page.locator("canvas").first();
+    await canvas.waitFor({ state: "visible" });
+    await page.waitForFunction(() => window.__visualGraphPainted === true);
+    // Let the initial fit run and the renderer refresh its hit canvas (at most every 800 ms).
+    await page.clock.runFor(1000);
+    const box = await canvas.boundingBox();
+    const zoom = await canvas.evaluate(element => element.__zoom);
+    await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
+    await page.getByRole("complementary", { name: "Evidence inspector" }).waitFor();
+  } },
 ];
 
 test.beforeEach(async ({ page, baseURL, request }, info) => {
@@ -224,7 +236,7 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  const graph = state.name === "graph" || state.name === "graph-neighborhood";
+  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood");
   if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.

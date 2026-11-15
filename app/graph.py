@@ -390,6 +390,28 @@ class GraphStore:
                 entities.append(entity)
             return entities
 
+    async def get_document_entity_counts(self, document_ids: list[int]) -> dict[int, int]:
+        """Count the distinct entities connected to each document, as get_document_entities lists them."""
+        if not document_ids:
+            return {}
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (d:Document) WHERE d.paperless_id IN $ids
+                RETURN d.paperless_id AS document_id,
+                       COUNT { MATCH (d)--(n) WHERE NOT n:Document RETURN DISTINCT n } AS count
+                """, ids=document_ids)
+            return {row["document_id"]: row["count"] for row in await result.data()}
+
+    async def get_entity_name(self, node_uuid: str) -> Optional[dict]:
+        """Name an entity for a filter chip without loading its links."""
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (n {uuid: $uuid}) WHERE NOT n:Document
+                RETURN n.uuid AS uuid, n.name AS name, labels(n) AS labels LIMIT 1
+                """, uuid=node_uuid)
+            record = await result.single()
+            return dict(record) if record else None
+
     async def get_document_detail_graph(self, paperless_id: int) -> dict:
         """Return a document node with extracted entities and relationships."""
         async with self.driver.session() as session:
@@ -804,7 +826,7 @@ class GraphStore:
     async def search_nodes(
         self, query: str, node_type: str = None, limit: int = 20, *,
         offset: int = 0, doc_type: str | None = None, sort: str = "relevance",
-        direction: str = "desc", include_page: bool = False,
+        direction: str = "desc", include_page: bool = False, entity: str = "",
     ) -> list[dict] | dict:
         """Filter the whole graph before bounded, deterministic pagination."""
         if node_type and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", node_type):
@@ -828,8 +850,15 @@ class GraphStore:
                      "has_more": False, "doc_types": {}}
             return empty if include_page else []
         label = f":{node_type}" if node_type else ""
-        match = f"""
-            MATCH (n{label})
+        # Only an entity filter adds this scope, so the default query stays unchanged.
+        scope = """
+            OPTIONAL MATCH (e {uuid: $entity}) WHERE NOT e:Document
+            WITH e, coalesce(e.source_doc_ids, []) AS entity_docs
+        """ if entity else ""
+        where = """WHERE e IS NOT NULL AND (n.paperless_id IN entity_docs
+                                         OR EXISTS { (n)-[:MENTIONS]-(e) })""" if entity else ""
+        match = f"""{scope}
+            MATCH (n{label}) {where}
             WITH n, toLower(
                 coalesce(toStringOrNull(n.title), '') + ' ' +
                 coalesce(toStringOrNull(n.name), '') + ' ' +
@@ -842,7 +871,8 @@ class GraphStore:
             WITH n, size([term IN $terms WHERE searchable CONTAINS term]) AS score
             WHERE size($terms) = 0 OR score > 0
         """
-        parameters = {"terms": terms, "doc_type": doc_type or "", "limit": limit, "offset": offset}
+        parameters = {"terms": terms, "doc_type": doc_type or "", "limit": limit, "offset": offset,
+                      "entity": entity}
         async with self.driver.session() as session:
             total = None
             facets = {}

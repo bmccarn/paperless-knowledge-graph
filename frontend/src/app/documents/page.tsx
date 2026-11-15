@@ -1,13 +1,23 @@
 "use client";
 
-import { Fragment, useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, Suspense, useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -17,118 +27,169 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { errMsg } from "@/lib/utils";
+import { KindShape, TypeDot } from "@/components/kind-shape";
+import { cn, errMsg } from "@/lib/utils";
 import { getDocuments, getGraphNode, postReindexDoc, getPaperlessDocUrl, usePaperlessUrl } from "@/lib/api";
 import { Pager } from "@/components/pager";
-import {
-  Search,
-  RefreshCw,
-  Loader2,
-  ExternalLink,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  ArrowUpDown,
-} from "lucide-react";
+import { Search, RefreshCw, Loader2, ExternalLink, ChevronRight, ArrowUp, ArrowDown, X } from "lucide-react";
 import type { GraphNode } from "@/lib/types";
 
+interface DocumentRow extends GraphNode {
+  entity_count?: number;
+}
+
+interface DocumentsPage {
+  results?: DocumentRow[];
+  total?: number;
+  doc_types?: Record<string, number>;
+  entity?: { uuid: string; name?: string; labels?: string[] } | null;
+}
+
+interface LinkedEntity {
+  uuid: string;
+  name: string;
+  label: string;
+}
+
 interface ExpandedDoc {
-  node: unknown;
+  entities: LinkedEntity[];
   loading: boolean;
 }
 
-const DOC_TYPE_COLORS: Record<string, string> = {
-  invoice: "bg-amber-500/15 text-amber-400 border-amber-500/20",
-  receipt: "bg-green-500/15 text-green-400 border-green-500/20",
-  letter: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-  contract: "bg-violet-500/15 text-violet-400 border-violet-500/20",
-  medical: "bg-red-500/15 text-red-400 border-red-500/20",
-  financial: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
-  statement: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20",
-  tax: "bg-orange-500/15 text-orange-400 border-orange-500/20",
-};
-
-function getDocTypeClass(type: string): string {
-  const lower = type?.toLowerCase() || "";
-  for (const [key, cls] of Object.entries(DOC_TYPE_COLORS)) {
-    if (lower.includes(key)) return `${cls} text-foreground`;
-  }
-  return "bg-muted text-muted-foreground";
+interface NodeDetail {
+  relationships?: { neighbor_labels?: string[]; neighbor_props?: Record<string, unknown> }[];
 }
 
 const PAGE_SIZE = 25;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-01-31" becomes "31 Jan 2026"; the stored date has no time zone to shift. */
+function formatDate(value: unknown): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
+  return match ? `${match[3]} ${MONTHS[Number(match[2]) - 1]} ${match[1]}` : String(value || "—");
+}
+
+/** The document's entities, once each, in name order. */
+function linkedEntities(node: NodeDetail): LinkedEntity[] {
+  const seen = new Map<string, LinkedEntity>();
+  for (const rel of node.relationships || []) {
+    const labels = rel.neighbor_labels || [];
+    const uuid = rel.neighbor_props?.uuid as string | undefined;
+    if (!uuid || labels.includes("Document") || seen.has(uuid)) continue;
+    seen.set(uuid, { uuid, name: String(rel.neighbor_props?.name || uuid), label: labels[0] || "" });
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const SORTS = [
+  { field: "title", label: "Title" },
+  { field: "doc_type", label: "Type" },
+  { field: "date", label: "Date" },
+] as const;
+
+function SortHeader({ field, label, sortField, sortDir, onSort, className }: {
+  field: string; label: string; sortField: string; sortDir: "asc" | "desc";
+  onSort: (field: string) => void; className?: string;
+}) {
+  const active = sortField === field;
+  const Arrow = active && sortDir === "desc" ? ArrowDown : ArrowUp;
+  return (
+    <TableHead aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : undefined} className={className}>
+      <Button variant="ghost" size="xs" className={cn("-ml-2 label-12", active ? "text-fg" : "text-fg-muted")} onClick={() => onSort(field)}>
+        {label}
+        {/* The hidden arrow keeps the column width when the sort moves. */}
+        <Arrow aria-hidden className={cn("size-3.5", !active && "invisible")} strokeWidth={1.75} />
+      </Button>
+    </TableHead>
+  );
+}
 
 export default function DocumentsPage() {
-  const [documents, setDocuments] = useState<GraphNode[]>([]);
-  const [loading, setLoading] = useState(false);
+  return (
+    <Suspense fallback={null}>
+      <DocumentsTable />
+    </Suspense>
+  );
+}
+
+function DocumentsTable() {
+  const router = useRouter();
+  const entity = useSearchParams().get("entity") || "";
   const [searchQuery, setSearchQuery] = useState("");
   const [query, setQuery] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
   const [typeFilter, setTypeFilter] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, ExpandedDoc>>({});
-  const [reindexing, setReindexing] = useState<Set<number>>(new Set());
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [batchReindexing, setBatchReindexing] = useState(false);
   const [sortField, setSortField] = useState<string>("title");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
-  const requestVersion = useRef(0);
-
-  const fetchDocs = useCallback(async () => {
-    const version = ++requestVersion.current;
-    setLoading(true);
-    setError(null);
-    setDocuments([]);
-    setSelected(new Set());
-    setExpanded({});
-    try {
-      const data = await getDocuments(query, typeFilter, page * PAGE_SIZE, PAGE_SIZE, sortField, sortDir);
-      if (version !== requestVersion.current) return;
-      setDocuments(data.results || []);
-      setTotal(data.total || 0);
-      setTypeCounts(data.doc_types || {});
-      if (page > 0 && page * PAGE_SIZE >= data.total) setPage(Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1));
-    } catch (e) {
-      if (version === requestVersion.current) setError(errMsg(e, "Failed to load documents"));
-    } finally {
-      if (version === requestVersion.current) setLoading(false);
-    }
-  }, [query, typeFilter, page, sortField, sortDir]);
-
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [result, setResult] = useState<{ key: string; data?: DocumentsPage; error?: string }>({ key: "" });
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, ExpandedDoc>>({});
+  const [reindexing, setReindexing] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const [batchReindexing, setBatchReindexing] = useState(false);
   const paperlessBaseUrl = usePaperlessUrl();
 
-  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  const requestKey = JSON.stringify([query, typeFilter, entity, page, sortField, sortDir, refreshVersion]);
+  // A new request clears the selection and expansions of the rows it replaces.
+  const [rowsKey, setRowsKey] = useState(requestKey);
+  if (rowsKey !== requestKey) {
+    setRowsKey(requestKey);
+    setSelected(new Set());
+    setExpanded({});
+  }
+
   useEffect(() => {
-    void fetchDocs();
-    return invalidateRequests;
-  }, [fetchDocs, invalidateRequests, refreshVersion]);
+    let active = true;
+    getDocuments(query, typeFilter, page * PAGE_SIZE, PAGE_SIZE, sortField, sortDir, entity).then(
+      (data: DocumentsPage) => {
+        if (!active) return;
+        setResult({ key: requestKey, data });
+        const total = data.total || 0;
+        if (page > 0 && page * PAGE_SIZE >= total) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1));
+      },
+      (e) => { if (active) setResult({ key: requestKey, error: errMsg(e, "Failed to load documents") }); },
+    );
+    return () => { active = false; };
+  }, [requestKey, query, typeFilter, page, sortField, sortDir, entity]);
+
+  const loading = result.key !== requestKey;
+  const error = loading ? null : result.error || null;
+  // Reloads keep the previous rows; only the first load has none to show.
+  const data = result.data;
+  const documents = data?.results || [];
+  const total = data?.total || 0;
+  const typeCounts = data?.doc_types || {};
+  const filtered = Boolean(query || typeFilter || entity);
+  const entityName = data?.entity?.name || (data && !loading ? "Unknown entity" : "Entity");
+
+  const refresh = () => setRefreshVersion(version => version + 1);
 
   const submitSearch = () => {
-    if (query === searchQuery.trim() && page === 0) void fetchDocs();
+    if (query === searchQuery.trim() && page === 0) refresh();
     else { setQuery(searchQuery.trim()); setPage(0); }
   };
 
-  const toggleExpand = async (docId: number, uuid?: string) => {
-    const version = requestVersion.current;
+  const clearFilters = () => {
+    setSearchQuery(""); setQuery(""); setTypeFilter(""); setPage(0);
+    if (entity) router.replace("/documents");
+  };
+
+  const toggleExpand = async (docId: number) => {
     const key = String(docId);
     if (expanded[key]) {
       setExpanded((prev) => { const next = { ...prev }; delete next[key]; return next; });
       return;
     }
-    setExpanded((prev) => ({ ...prev, [key]: { node: null, loading: true } }));
+    setExpanded((prev) => ({ ...prev, [key]: { entities: [], loading: true } }));
     try {
-      const nodeId = uuid || `doc-${docId}`;
-      const node = await getGraphNode(nodeId);
-      if (version !== requestVersion.current) return;
-      setExpanded((prev) => ({ ...prev, [key]: { node, loading: false } }));
+      const node = await getGraphNode(`doc-${docId}`);
+      // A newer request may have cleared this expansion while the details loaded.
+      setExpanded((prev) => prev[key] ? { ...prev, [key]: { entities: linkedEntities(node), loading: false } } : prev);
     } catch (e) {
-      if (version !== requestVersion.current) return;
+      setExpanded((prev) => { if (!prev[key]) return prev; const next = { ...prev }; delete next[key]; return next; });
       setActionError(errMsg(e, "Failed to load document details"));
-      setExpanded((prev) => { const next = { ...prev }; delete next[key]; return next; });
     }
   };
 
@@ -137,7 +198,7 @@ export default function DocumentsPage() {
     setReindexing((prev) => new Set([...prev, docId]));
     try {
       await postReindexDoc(docId);
-      setRefreshVersion(version => version + 1);
+      refresh();
     } catch (e) {
       setActionError(errMsg(e, "Reindex failed"));
     } finally {
@@ -146,6 +207,7 @@ export default function DocumentsPage() {
   };
 
   const handleBatchReindex = async () => {
+    setConfirmBatch(false);
     setActionError(null);
     setBatchReindexing(true);
     const failures: number[] = [];
@@ -158,7 +220,7 @@ export default function DocumentsPage() {
     }
     setBatchReindexing(false);
     setSelected(new Set());
-    setRefreshVersion(version => version + 1);
+    refresh();
     if (failures.length) setActionError(`Reindex failed for documents: ${failures.join(", ")}`);
   };
 
@@ -191,69 +253,45 @@ export default function DocumentsPage() {
     }
   };
 
+  const reindexButton = (docId: number, className?: string) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={className}
+          onClick={() => handleReindex(docId)}
+          aria-label={`Reindex document ${docId}`}
+          disabled={reindexing.has(docId)}
+        >
+          {reindexing.has(docId) ? <Loader2 className="animate-spin" /> : <RefreshCw strokeWidth={1.75} />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Reindex</TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <div className="flex flex-col h-full">
-      <div className="p-4 md:p-6 pb-0 space-y-3 md:space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2">
+      <div className="px-4 pt-4 md:px-12 md:pt-10 space-y-4">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="page-title">Documents</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {loading ? "Loading documents…" : error ? "Document results unavailable" : `${total} ${query || typeFilter ? "matching indexed documents" : "indexed documents"}`}
+            <p className="label-13 text-fg-muted mt-1 tabular-nums" aria-live="polite">
+              {loading ? "Loading documents…" : error ? "Document results unavailable" : `${total} ${filtered ? "matching indexed documents" : "indexed documents"}`}
             </p>
           </div>
           {selected.size > 0 && (
-            <Button
-              onClick={handleBatchReindex}
-              disabled={batchReindexing || loading}
-              size="sm"
-              className="gap-2"
-            >
-              {batchReindexing ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">Reindex</span> {selected.size}
+            <Button onClick={() => setConfirmBatch(true)} disabled={batchReindexing || loading} size="sm" loading={batchReindexing}>
+              <RefreshCw strokeWidth={1.75} />
+              Reindex {selected.size}
             </Button>
           )}
         </div>
 
-        {/* Stats bar */}
-        {!loading && !error && Object.keys(typeCounts).length > 0 && (
-          <div className="flex flex-wrap gap-1.5 md:gap-2 overflow-x-auto">
-            {Object.entries(typeCounts)
-              .sort((a, b) => b[1] - a[1])
-              .map(([type, count]) => (
-                <button
-                  key={type}
-                  onClick={() => { setTypeFilter(typeFilter === type ? "" : type); setPage(0); }}
-                  className="transition-all"
-                >
-                  <Badge
-                    variant="outline"
-                    className={`text-xs gap-1.5 cursor-pointer transition-all whitespace-nowrap ${
-                      typeFilter === type ? "ring-1 ring-primary" : "hover:bg-accent"
-                    } ${getDocTypeClass(type)}`}
-                  >
-                    <FileText className="h-3 w-3" />
-                    {type}
-                    <span className="font-mono">{count}</span>
-                  </Badge>
-                </button>
-              ))}
-            {typeFilter && (
-              <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => { setTypeFilter(""); setPage(0); }}>
-                Clear
-              </Button>
-            )}
-          </div>
-        )}
-
-        {/* Search */}
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search aria-hidden className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-fg-muted" strokeWidth={1.75} />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -263,183 +301,176 @@ export default function DocumentsPage() {
               className="pl-9"
             />
           </div>
-          <Button onClick={submitSearch} disabled={loading} variant="secondary" className="min-w-[44px]" aria-label="Search documents">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          <Button onClick={submitSearch} disabled={loading} variant="secondary" size="icon" aria-label="Search documents">
+            {loading ? <Loader2 className="animate-spin" /> : <Search strokeWidth={1.75} />}
           </Button>
         </div>
-        {error && (
-          <div role="alert" className="flex items-center justify-between gap-3 rounded border border-destructive/40 p-3 text-sm">
-            <span>{error}</span><Button variant="outline" size="sm" onClick={() => void fetchDocs()}>Retry loading</Button>
+
+        {(entity || (!error && Object.keys(typeCounts).length > 0)) && (
+          <div className="flex gap-2 overflow-x-auto max-md:-mx-4 max-md:px-4 md:flex-wrap" aria-label="Filters" role="group">
+            {entity && (
+              <Button variant="outline" size="xs" className="shrink-0 rounded-full max-md:min-h-11" onClick={() => router.replace("/documents")} aria-label={`Remove entity filter ${entityName}`}>
+                <span className="text-fg-muted">Entity</span>
+                <span className="max-w-48 truncate">{entityName}</span>
+                <X aria-hidden strokeWidth={1.75} />
+              </Button>
+            )}
+            {!error && Object.entries(typeCounts)
+              .sort((a, b) => b[1] - a[1])
+              .map(([type, count]) => (
+                <Button
+                  key={type}
+                  variant="outline"
+                  size="xs"
+                  aria-pressed={typeFilter === type}
+                  onClick={() => { setTypeFilter(typeFilter === type ? "" : type); setPage(0); }}
+                  className="shrink-0 rounded-full px-2.5 max-md:min-h-11 aria-pressed:border-fg aria-pressed:bg-raised [&[aria-pressed=true]_[data-type]]:text-fg"
+                >
+                  <TypeDot type={type} className="label-12" />{" "}
+                  <span className="label-12 text-fg-muted tabular-nums">{count}</span>
+                </Button>
+              ))}
+            {typeFilter && (
+              <Button variant="ghost" size="xs" className="shrink-0 max-md:min-h-11" onClick={() => { setTypeFilter(""); setPage(0); }}>
+                Clear
+              </Button>
+            )}
           </div>
         )}
-        {actionError && <div role="alert" className="rounded border border-destructive/40 p-3 text-sm">{actionError}</div>}
+
+        {error && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-error-line bg-error-bg p-3 label-13 text-fg">
+            <span>{error}</span><Button variant="outline" size="sm" onClick={refresh}>Retry loading</Button>
+          </div>
+        )}
+        {actionError && <div role="alert" className="rounded-md border border-error-line bg-error-bg p-3 label-13 text-fg">{actionError}</div>}
       </div>
 
-      {/* Content */}
-      <div className="flex flex-1 flex-col px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 min-h-0">
-        {loading && documents.length === 0 ? (
-          <div className="space-y-2">
-            {[...Array(8)].map((_, i) => (
-              <Skeleton key={i} className="h-12 rounded-lg" />
-            ))}
-          </div>
-        ) : error ? null : (
-          <Card className="flex h-full flex-col border-border/50 min-h-0">
+      <div className="flex flex-1 flex-col px-4 pb-4 pt-4 md:px-12 md:pb-10 min-h-0">
+        {error ? null : (
+          <Card className="relative flex h-full flex-col gap-0 overflow-hidden p-0 min-h-0">
+            {loading && data && <Progress indeterminate aria-label="Loading documents" className="absolute inset-x-0 top-0 z-10 h-0.5 rounded-none" />}
             <div className="flex-1 overflow-auto min-h-0">
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-10">
+                    <TableHead className="w-11 pl-3 md:w-10">
                       <Checkbox
                         checked={selected.size > 0 && selected.size === documents.length}
                         aria-label="Select documents on this page"
                         onCheckedChange={toggleSelectAll}
-                        className="h-3.5 w-3.5"
+                        disabled={!documents.length}
                       />
                     </TableHead>
-                    <TableHead className="hidden md:table-cell w-8" />
-                    <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("title")}
-                      >
-                        Title
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="hidden md:table-cell">
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("doc_type")}
-                      >
-                        Type
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="hidden md:table-cell">
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => handleSort("date")}
-                      >
-                        Date
-                        <ArrowUpDown className="h-3 w-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="w-16">ID</TableHead>
-                    <TableHead className="w-16" />
+                    <TableHead className="w-11 md:w-9"><span className="sr-only">Details</span></TableHead>
+                    <SortHeader {...SORTS[0]} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                    <SortHeader {...SORTS[1]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell w-40" />
+                    <SortHeader {...SORTS[2]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell w-32" />
+                    <TableHead className="hidden md:table-cell w-20 text-right label-12">Entities</TableHead>
+                    <TableHead className="w-11 md:w-20"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {!data && loading && [...Array(8)].map((_, i) => (
+                    <TableRow key={i} aria-hidden className="hover:bg-transparent">
+                      <TableCell colSpan={7}><Skeleton className="h-4 w-full" /></TableCell>
+                    </TableRow>
+                  ))}
                   {documents.map((doc) => {
                     const p = doc.properties || {};
                     const docId = p.paperless_id as number;
                     const key = String(docId);
-                    const isExpanded = !!expanded[key];
+                    const detail = expanded[key];
                     const docType = (p.doc_type as string) || "unknown";
+                    const title = (p.title as string) || `Document #${docId}`;
+                    const detailId = `document-details-${docId}`;
 
                     return (
                       <Fragment key={key}>
-                        <TableRow
-                          className="cursor-pointer group"
-                          onClick={() => toggleExpand(docId, p.uuid as string)}
-                        >
-                          <TableCell onClick={(e) => e.stopPropagation()}>
+                        <TableRow className="max-md:h-auto">
+                          <TableCell className="pl-3">
                             <Checkbox
                               aria-label={`Select document ${docId}`}
                               checked={selected.has(docId)}
                               onCheckedChange={() => toggleSelect(docId)}
-                              className="h-3.5 w-3.5"
                             />
                           </TableCell>
-                          <TableCell className="hidden md:table-cell">
-                            {isExpanded ? (
-                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium min-w-40 max-w-md">
-                            <span className="truncate block">
-                              <Link
-                                href={`/documents/${docId}`}
-                                className="hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {(p.title as string) || `Document #${docId}`}
-                              </Link>
-                            </span>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell">
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] ${getDocTypeClass(docType)}`}
-                            >
-                              {docType}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                            {(p.date as string) || "—"}
-                          </TableCell>
                           <TableCell>
-                            <a
-                              href={getPaperlessDocUrl(docId, paperlessBaseUrl)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-xs text-primary hover:underline"
-                              onClick={(e) => e.stopPropagation()}
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-expanded={!!detail}
+                              aria-controls={detail ? detailId : undefined}
+                              aria-label={`Show details for ${title}`}
+                              onClick={() => toggleExpand(docId)}
                             >
-                              #{docId}
-                              <ExternalLink className="h-2.5 w-2.5" />
-                            </a>
+                              <ChevronRight aria-hidden strokeWidth={1.75} className={cn("text-fg-muted transition-transform duration-(--dur-3)", detail && "rotate-90")} />
+                            </Button>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="max-md:py-2">
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={(e) => { e.stopPropagation(); handleReindex(docId); }}
-                                  aria-label={`Reindex document ${docId}`}
-                                  disabled={reindexing.has(docId)}
-                                >
-                                  {reindexing.has(docId) ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="h-3 w-3" />
-                                  )}
-                                </Button>
+                                <Link href={`/documents/${docId}`} className="doc-title text-[15px] block truncate hover:underline underline-offset-4">
+                                  {title}
+                                </Link>
                               </TooltipTrigger>
-                              <TooltipContent>Reindex</TooltipContent>
+                              <TooltipContent>{title}</TooltipContent>
                             </Tooltip>
+                            <div className="md:hidden flex items-center gap-2 label-12 text-fg-muted tabular-nums">
+                              <TypeDot type={docType} className="label-12" />
+                              <span aria-hidden>·</span>
+                              <span>{formatDate(p.date)}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell"><TypeDot type={docType} /></TableCell>
+                          <TableCell className="hidden md:table-cell label-13 text-fg-muted">{formatDate(p.date)}</TableCell>
+                          <TableCell className="hidden md:table-cell label-13 text-right">{doc.entity_count ?? "—"}</TableCell>
+                          <TableCell>
+                            <div className="flex justify-end">
+                              <Button asChild variant="ghost" size="icon-sm" className="hidden md:inline-flex">
+                                <a href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer" aria-label={`Open document ${docId} in Paperless`}>
+                                  <ExternalLink strokeWidth={1.75} />
+                                </a>
+                              </Button>
+                              {reindexButton(docId)}
+                            </div>
                           </TableCell>
                         </TableRow>
-                        {isExpanded && (
-                          <TableRow>
-                            <TableCell colSpan={7} className="bg-accent/20 p-0">
-                              <div className="p-4">
-                                {expanded[key]?.loading ? (
-                                  <div className="flex items-center gap-2 py-4 justify-center">
-                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    <span className="text-sm text-muted-foreground">Loading details...</span>
-                                  </div>
-                                ) : expanded[key]?.node ? (
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    {Object.entries(
-                                      (expanded[key].node as { properties?: Record<string, unknown> })?.properties || {}
-                                    )
-                                      .filter(([k]) => !["uuid"].includes(k))
-                                      .map(([k, v]) => (
-                                        <div key={k} className="space-y-0.5">
-                                          <p className="text-[10px] uppercase text-muted-foreground tracking-wider">{k}</p>
-                                          <p className="text-sm break-all">
-                                            {typeof v === "object" ? JSON.stringify(v) : String(v || "—")}
-                                          </p>
-                                        </div>
-                                      ))}
-                                  </div>
+                        {detail && (
+                          <TableRow id={detailId} className="hover:bg-transparent">
+                            <TableCell colSpan={7} className="bg-sunken p-0 whitespace-normal">
+                              <div className="px-4 py-4 md:pl-[5.25rem] md:pr-6">
+                                <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-[auto_minmax(0,2fr)_auto_auto]">
+                                  {([
+                                    ["Paperless ID", (
+                                      <a key="id" href={getPaperlessDocUrl(docId, paperlessBaseUrl)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 underline underline-offset-4">
+                                        {docId}<ExternalLink aria-hidden className="size-3.5" strokeWidth={1.75} /><span className="sr-only">(opens Paperless)</span>
+                                      </a>
+                                    )],
+                                    ["Title", <span key="title" className="doc-title text-[15px]">{title}</span>],
+                                    ["Date", formatDate(p.date)],
+                                    ["Type", <TypeDot key="type" type={docType} />],
+                                  ] as const).map(([label, value]) => (
+                                    <div key={label} className="min-w-0 space-y-0.5">
+                                      <dt className="label-12 text-fg-muted">{label}</dt>
+                                      <dd className="label-13 tabular-nums break-words">{value}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                                <h2 className="label-12 text-fg-muted mt-4 mb-1.5">Entities</h2>
+                                {detail.loading ? (
+                                  <p className="label-13 text-fg-muted" role="status">Loading entities…</p>
+                                ) : detail.entities.length ? (
+                                  <ul className="flex flex-wrap gap-x-5 gap-y-2">
+                                    {detail.entities.map((item) => (
+                                      <li key={item.uuid} className="flex items-center gap-2 label-13">
+                                        <Link href={`/graph?focus=${encodeURIComponent(item.uuid)}`} className="underline underline-offset-4">{item.name}</Link>
+                                        <KindShape label={item.label} className="label-12 text-fg-muted" />
+                                      </li>
+                                    ))}
+                                  </ul>
                                 ) : (
-                                  <p className="text-sm text-muted-foreground text-center py-2">No details available</p>
+                                  <p className="label-13 text-fg-muted">No entities were extracted from this document.</p>
                                 )}
                               </div>
                             </TableCell>
@@ -448,11 +479,11 @@ export default function DocumentsPage() {
                       </Fragment>
                     );
                   })}
-                  {documents.length === 0 && !loading && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                        <FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                        <p>No documents found</p>
+                  {data && documents.length === 0 && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={7} className="py-12 text-center whitespace-normal">
+                        <p className="copy-14 text-fg-muted">{filtered ? "No documents match these filters." : "No documents are indexed yet."}</p>
+                        {filtered && <Button variant="outline" size="sm" className="mt-3" onClick={clearFilters}>Clear filters</Button>}
                       </TableCell>
                     </TableRow>
                   )}
@@ -466,6 +497,21 @@ export default function DocumentsPage() {
           </Card>
         )}
       </div>
+
+      <Dialog open={confirmBatch} onOpenChange={setConfirmBatch}>
+        <DialogContent role="alertdialog">
+          <DialogHeader>
+            <DialogTitle>Reindex {selected.size} {selected.size === 1 ? "document" : "documents"}?</DialogTitle>
+            <DialogDescription>
+              Each document is read again from Paperless and its entities are extracted again. This can take several minutes.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button onClick={handleBatchReindex}>Reindex</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

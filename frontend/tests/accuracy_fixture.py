@@ -196,12 +196,22 @@ class Handler(BaseHTTPRequestHandler):
                 matches = [doc for doc in DOCS if query in (' '.join(str(v) for v in doc.values())).lower()]
                 facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
                 matches = [doc for doc in matches if not selected_type or doc['doc_type'] == selected_type]
+                entity = get('entity')
+                if entity:
+                    # The synthetic links stand in for source_doc_ids and MENTIONS.
+                    linked = {other for rel in RELS for uid, other in ((rel['start'], rel['end']), (rel['end'], rel['start'])) if uid == entity}
+                    matches = [doc for doc in matches if f"doc-{doc['paperless_id']}" in linked]
+                    facets = {kind: sum(doc['doc_type'] == kind for doc in matches) for kind in sorted({doc['doc_type'] for doc in matches})}
                 sort = get('sort', 'title')
                 matches.sort(key=lambda doc: (str(doc.get(sort, '')), doc['paperless_id']), reverse=get('direction') == 'desc')
                 offset, limit = int(get('offset', '0')), int(get('limit', '25'))
+                named = next((node for node in NODES if identity(node) == entity), None) if entity else None
                 return self.reply({'scope': 'indexed_documents', 'total': len(matches), 'offset': offset, 'limit': limit,
                                    'has_more': offset + limit < len(matches), 'doc_types': facets,
-                                   'results': [{'labels': ['Document'], 'properties': doc} for doc in matches[offset:offset + limit]]})
+                                   **({'entity': named and {'uuid': entity, 'name': named['props']['name'], 'labels': named['labels']}} if entity else {}),
+                                   'results': [{'labels': ['Document'], 'properties': doc,
+                                                'entity_count': sum(f"doc-{doc['paperless_id']}" in (rel['start'], rel['end']) for rel in RELS)}
+                                               for doc in matches[offset:offset + limit]]})
             if route == '/graph/initial' or route.startswith('/graph/neighbors/'):
                 return self.reply({'nodes': NODES, 'relationships': RELS})
             if route == '/graph/search':

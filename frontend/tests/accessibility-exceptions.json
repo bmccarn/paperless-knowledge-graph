@@ -49,45 +49,20 @@
     ]
   },
   {
-    "rule": "color-contrast",
-    "route": "/documents",
-    "state": "expanded",
-    "issue": 134,
-    "targets": [
-      "[\".bg-emerald-500\\\\/15\"]"
-    ]
-  },
-  {
     "rule": "font-size",
     "route": "/documents",
     "state": "expanded",
     "issue": 134,
     "targets": [
-      "[\"p.text-[10px].uppercase.text-muted-foreground.tracking-wider\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
   {
-    "rule": "color-contrast",
-    "route": "/documents",
-    "state": "main",
-    "issue": 134,
-    "targets": [
-      "[\".bg-emerald-500\\\\/15\"]"
-    ]
-  },
-  {
     "rule": "font-size",
     "route": "/documents",
     "state": "main",
     "issue": 134,
     "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-amber-500/15.border-amber-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-red-500/15.border-red-500/20.text-foreground\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px].bg-muted.text-muted-foreground\"]",
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]
   },
@@ -220,7 +195,7 @@
     "rule": "font-size",
     "route": "/visual-missing-page",
     "state": "main",
-    "issue": 122,
+    "issue": 134,
     "targets": [
       "[\"span.text-[10px].mt-0.5.font-medium\"]"
     ]

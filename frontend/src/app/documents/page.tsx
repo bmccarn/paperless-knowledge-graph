@@ -353,9 +353,20 @@ function DocumentsTable() {
             {loading && data && <Progress indeterminate aria-label="Loading documents" className="absolute inset-x-0 top-0 z-10 h-0.5 rounded-none" />}
             <div className="flex-1 overflow-auto min-h-0">
               <Table className="table-fixed">
+                {/* Phones hide type, date and entities, so their actions cell fills the fourth column.
+                    The last three columns are empty there; zero widths keep full-width rows from widening them. */}
+                <colgroup>
+                  <col className="w-11 md:w-10" />
+                  <col className="w-11 md:w-9" />
+                  <col />
+                  <col className="w-15 md:w-40" />
+                  <col className="w-0 md:w-32" />
+                  <col className="w-0 md:w-20" />
+                  <col className="w-0 md:w-20" />
+                </colgroup>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-11 pl-3 md:w-10">
+                    <TableHead className="pl-3">
                       <Checkbox
                         checked={selected.size > 0 && selected.size === documents.length}
                         aria-label="Select documents on this page"
@@ -363,12 +374,12 @@ function DocumentsTable() {
                         disabled={loading || !documents.length}
                       />
                     </TableHead>
-                    <TableHead className="w-11 md:w-9"><span className="sr-only">Details</span></TableHead>
+                    <TableHead><span className="sr-only">Details</span></TableHead>
                     <SortHeader {...SORTS[0]} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                    <SortHeader {...SORTS[1]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell w-40" />
-                    <SortHeader {...SORTS[2]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell w-32" />
-                    <TableHead className="hidden md:table-cell w-20 text-right label-12">Entities</TableHead>
-                    <TableHead className="w-11 md:w-20"><span className="sr-only">Actions</span></TableHead>
+                    <SortHeader {...SORTS[1]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell" />
+                    <SortHeader {...SORTS[2]} sortField={sortField} sortDir={sortDir} onSort={handleSort} className="hidden md:table-cell" />
+                    <TableHead className="hidden md:table-cell text-right label-12">Entities</TableHead>
+                    <TableHead><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

@@ -100,7 +100,13 @@ test("on a phone each row shows type and date under the title", async t => {
   const meta = await row.locator('[data-type="insurance"]').filter({ visible: true }).boundingBox();
   assert.ok(meta.y >= title.y + title.height - 1, "type sits on the line under the title");
   await row.getByText("31 Jan 2026", { exact: true }).filter({ visible: true }).waitFor();
-  await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).click();
+  await page.getByText("Paperless ID", { exact: true }).waitFor();
+  // The full-width details row must not add the columns phones hide.
+  const expandedTitle = await row.locator("a.doc-title").boundingBox();
+  const reindex = await row.getByRole("button", { name: "Reindex document 101", exact: true }).boundingBox();
+  assert.ok(expandedTitle.width >= title.width - 1, "the title keeps its width");
+  assert.ok(expandedTitle.x + expandedTitle.width <= reindex.x, "the title does not run under the reindex button");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 });
 

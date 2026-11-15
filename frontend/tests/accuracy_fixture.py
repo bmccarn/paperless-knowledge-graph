@@ -498,7 +498,9 @@ class Handler(BaseHTTPRequestHandler):
                 result['finalization']['timeline'] = receipt
             answer_state(result, question.lower())
             if 'markup' in question.lower():
-                result['answer'] += '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
+                markup = '\n\nLiteral source markup: <img src=x onerror="window.__fixture_xss=1"> <script>window.__fixture_xss=2</script>'
+                result['answer'] += markup
+                result['claim_ledger']['candidate_text'] += markup
             if 'coverage' in question.lower():
                 unavailable = 'unavailable' in question.lower()
                 partial_coverage = 'partial' in question.lower()

@@ -43,7 +43,8 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
   const tree = await page.locator("main").ariaSnapshot();
 
   for (const [status, [word, icon]] of Object.entries(statuses)) {
-    const labels = page.locator(`[data-status="${status}"]`);
+    // The verdict lines section repeats states inside a full header.
+    const labels = page.locator(`section:not([aria-labelledby="verdict-lines"]) [data-status="${status}"]`);
     assert.equal(await labels.count(), 2, `${status} renders in both sizes`);
     for (const label of await labels.all()) {
       assert.equal((await label.innerText()).trim(), word);
@@ -64,7 +65,7 @@ for (const theme of ["dark", "light"]) test(`${theme}: every state, level, kind 
   }
 
   for (const level of ["high", "medium", "low"]) {
-    const meter = page.getByRole("img", { name: `Evidence ${level}`, exact: true });
+    const meter = page.getByRole("region", { name: "Evidence levels", exact: true }).getByRole("img", { name: `Evidence ${level}`, exact: true });
     assert.equal(await meter.count(), 1);
     assert.equal(await meter.locator("[aria-hidden] > span.bg-fg-muted").count(), { high: 3, medium: 2, low: 1 }[level]);
   }

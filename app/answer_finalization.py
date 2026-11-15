@@ -1282,7 +1282,8 @@ class AnswerFinalizer:
         for _round in range(2):
             base_summary = base_ledger["summary"]
             gap = reply_gap and base_ledger is ledger
-            if not (self.allow_subset and (disposition == "unsupported" or reply_gap)
+            # A failed subset audit sets another disposition, which ends the rounds.
+            if not (self.allow_subset and (disposition == "unsupported" or reply_gap and disposition == "incomplete")
                     and (gap or base_ledger["complete"] and base_summary.get("audited") == base_summary.get("total"))
                     and 0 < base_summary.get("supported", 0) < base_summary.get("total", 0)
                     and not base_ledger.get("rejection_reasons")

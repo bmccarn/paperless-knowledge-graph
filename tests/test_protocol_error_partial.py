@@ -95,6 +95,14 @@ class ProtocolErrorPartialTests(unittest.IsolatedAsyncioTestCase):
         self.assert_withheld(result, 'incomplete')
         self.assertEqual(len(auditor.contexts), 5)  # Two batches and a correction, then the subset batch and its correction.
 
+    async def test_failed_subset_audit_is_not_retried(self):
+        for failure, disposition in [(RuntimeError('unavailable'), 'audit_failed'), (HANG, 'timeout')]:
+            with self.subTest(disposition):
+                auditor = ScriptedAuditor({EXTRA: [PROTOCOL, PROTOCOL], CHARGE: [OK, failure]})
+                result = await finalize(auditor, timeout_seconds=0.2)
+                self.assert_withheld(result, disposition)
+                self.assertEqual(len(auditor.contexts), 4)
+
     async def test_other_failures_keep_withholding(self):
         cases = {
             'empty reply': ({EXTRA: [None]}, 'incomplete'),

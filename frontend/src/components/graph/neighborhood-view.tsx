@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Focus, Info, Loader2, Search } from "lucide-react";
+import { Info, Loader2, Maximize, Minus, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -17,6 +17,8 @@ import {
   drawableLinks,
   familyCap,
   neighborhoodLayout,
+  PHONE_PILL_RADIUS,
+  PILL_RADIUS,
   showMore,
   VIEW_LIMIT,
   type NodeSummary,
@@ -24,8 +26,8 @@ import {
   type SubgraphLink,
   type SummaryLink,
 } from "@/lib/graph-layout";
-import { documentsByDate, entityName, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
-import type { GraphHandle } from "./force-graph-client";
+import { canvasName, documentsByDate, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
+import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
@@ -63,7 +65,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
   const [markedDoc, setMarkedDoc] = useState<number | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
-  const handleRef = useRef<GraphHandle | null>(null);
+  const cameraRef = useRef<Camera | null>(null);
+  const [expandedSheet, setExpandedSheet] = useState<string | null>(null);
   // The links between neighbors, for the drawn neighbor ids they were requested with.
   const [cross, setCross] = useState<{ ids: string; data: Subgraph | null } | null>(null);
   const [crossAttempt, setCrossAttempt] = useState(0);
@@ -87,7 +90,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, [focusId, attempt]);
 
   const cap = summary ? familyCap(summary.focus.is_hub, phone) : 0;
-  const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra), [summary, cap, extra]);
+  const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra, phone ? PHONE_PILL_RADIUS : PILL_RADIUS),
+    [summary, cap, extra, phone]);
   // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
   const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
   const wantCross = urlState.cross && crossIds.includes(",");
@@ -161,8 +165,9 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const clearSelection = useCallback(() => {
     navigate({ selection: null });
     setKeyboardNodeId(null);
-  }, [navigate]);
-  const onReady = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
+    setExpandedSheet(null);
+  }, [navigate, setExpandedSheet]);
+  const onReady = useCallback((camera: Camera | null) => { cameraRef.current = camera; }, []);
 
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;
   const documents = useMemo(() => (summary ? documentsByDate(summary) : []), [summary]);
@@ -187,9 +192,6 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const selected = Boolean(selectedLink || pill || (selectedNodeId && positions.has(selectedNodeId)));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
   const crossCount = !urlState.cross ? null : !wantCross ? 0 : shownCross && !crossLoading ? shownCross.links.length : null;
-  const inferred = summary ? drawableLinks(summary).filter(link => link.support_state === "inferred").length : 0;
-  const canvasName = summary && layout ? `Neighborhood of ${entityName(summary.focus)}: ${plural(linkTotal, "link")} in ${plural(layout.sectors.length, "family", "families")}, ${inferred} inferred`
-    + (crossCount === null ? "." : `; ${plural(crossCount, "link")} between neighbors.`) : "";
   let crossCaption = null;
   if (crossLoading) crossCaption = crossSlow === crossIds ? "Loading links between neighbors" : null;
   else if (crossFailed) crossCaption = (
@@ -201,6 +203,9 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     : `${plural(shownCross.total, "link")} between neighbors.`;
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
+  const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
+  // On phone the inspector is a bottom sheet: a 300 px peek, or expanded over all but 120 px of the canvas.
+  const expanded = phone && expandedSheet === sheetKey;
   let inspector = null;
   if (summary && layout) {
     if (selectedCross && selectedLink) inspector = (
@@ -258,13 +263,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {VIEWS.length > 1 && <ViewSwitcher {...switcher} className="max-md:hidden" />}
-          <Button variant="outline" size="sm" onClick={() => handleRef.current?.zoomToFit(300, 55)} disabled={!layout || leaf}>
-            <Focus className="h-4 w-4" />
-            Fit view
-          </Button>
-        </div>
+        {VIEWS.length > 1 && <ViewSwitcher {...switcher} className="max-md:hidden" />}
       </header>
       {VIEWS.length > 1 && (
         <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden"><ViewSheet {...switcher} /></div>
@@ -283,7 +282,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         </p>
       )}
       <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${expanded ? "max-md:h-[120px] max-md:flex-none" : ""}`}>
           <section className="relative min-h-0 flex-1" aria-label="Graph workspace">
             {leaf ? (
               <div className="flex h-full items-center justify-center p-8">
@@ -298,7 +297,6 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
                 focusId={focusId}
                 keyboardNodeId={keyboardNodeId}
                 markedLinkIds={markedLinkIds}
-                name={canvasName}
                 showLabels
                 selectedNodeId={selectedNodeId}
                 selectedLinkId={selectedLinkId}
@@ -306,6 +304,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
                 onSelectLink={selectLink}
                 onClear={clearSelection}
                 onReady={onReady}
+                name={canvasName(summary!, layout, crossCount)}
+                phone={phone}
               />
             ) : !error && (
               <div role="status" className="flex h-full items-center justify-center gap-2 text-sm">
@@ -313,7 +313,16 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
                 Loading neighbors…
               </div>
             )}
-            {legend && !leaf && (
+            {layout && !leaf && !expanded && (
+              <div role="group" aria-label="Zoom" className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-(--r-ctl) border border-border-strong bg-surface md:bottom-4 md:right-4">
+                {([["Zoom in", Plus, 1.5], ["Zoom out", Minus, 1 / 1.5], ["Fit view", Maximize, 0]] as const).map(([label, Icon, factor]) => (
+                  <Button key={label} variant="ghost" size="icon-lg" aria-label={label} title={label}
+                    onClick={() => (factor ? cameraRef.current?.zoomBy(factor) : cameraRef.current?.fit())}
+                    className="rounded-none text-fg not-first:border-t not-first:border-border md:size-8"><Icon /></Button>
+                ))}
+              </div>
+            )}
+            {legend && !leaf && !expanded && (
               <div className="absolute right-3 top-3 flex gap-2 md:right-4">
                 {/* A switch: on phone only its track shows, at the 44 px touch size. */}
                 <button type="button" aria-pressed={urlState.cross} onClick={() => { if (urlState.cross) setCross(null); navigate({ cross: !urlState.cross }); }}
@@ -343,10 +352,17 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         </div>
         {inspector && (
           <aside
-            key={selectedLinkId ?? selectedNodeId ?? "focus"}
+            key={sheetKey}
             aria-label="Evidence inspector"
-            className={`h-[300px] shrink-0 overflow-y-auto border-t border-border bg-background md:h-auto md:w-[380px] md:border-l md:border-t-0 ${selected || leaf ? "" : "max-md:hidden"}`}
+            className={`shrink-0 overflow-y-auto border-t border-border bg-background max-md:rounded-t-xl max-md:shadow-(--shadow-overlay) md:h-auto md:w-[380px] md:border-l md:border-t-0 ${expanded ? "max-md:min-h-0 max-md:flex-1" : "h-[300px]"} ${selected || leaf ? "" : "max-md:hidden"}`}
           >
+            {phone && selected && (
+              <button type="button" aria-expanded={expanded} onClick={() => setExpandedSheet(expanded ? null : sheetKey)}
+                className="sticky top-0 z-10 flex h-8 w-full items-center justify-center bg-background">
+                <span aria-hidden className="h-1 w-9 rounded-full bg-border-strong" />
+                <span className="sr-only">{expanded ? "Collapse inspector" : "Expand inspector"}</span>
+              </button>
+            )}
             {inspector}
           </aside>
         )}

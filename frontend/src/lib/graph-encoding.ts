@@ -99,6 +99,38 @@ export function labelCandidates(x: number, y: number, extent: number, width: num
     : [side(0), ...nudges, ...ends, ...shifted, inner];
 }
 
+/** A shape to keep in view: its center in graph units, its half size in screen pixels. */
+export interface FitItem { x: number; y: number; halfWidth: number; halfHeight: number }
+
+/** Screen pixels to keep free at each side of the canvas, for the controls drawn over it. */
+export interface Pad { top: number; right: number; bottom: number; left: number }
+
+/**
+ * The largest zoom, and the graph point to center, that keep every item inside a `width` x `height`
+ * canvas less `pad`. Shapes keep their screen size at every zoom, so a wide pill needs more room.
+ */
+export function fitView(items: FitItem[], width: number, height: number, pad: Pad): { x: number; y: number; k: number } {
+  type Axis = [at: (item: FitItem) => number, half: (item: FitItem) => number, size: number, low: number, high: number];
+  const zoom = ([at, half, size, low, high]: Axis) => {
+    // Two items a and b fit when k * (b - a) <= size - low - high - half(a) - half(b).
+    let k = Infinity;
+    for (const a of items) for (const b of items)
+      if (at(b) > at(a)) k = Math.min(k, (size - low - high - half(a) - half(b)) / (at(b) - at(a)));
+    return k;
+  };
+  const xAxis: Axis = [item => item.x, item => item.halfWidth, width, pad.left, pad.right];
+  const yAxis: Axis = [item => item.y, item => item.halfHeight, height, pad.top, pad.bottom];
+  const best = Math.min(zoom(xAxis), zoom(yAxis));
+  const k = Number.isFinite(best) ? Math.max(best, 0.1) : 1;
+  // Center the free margin: the graph point at the middle of the range of screen offsets that fit.
+  const center = ([at, half, size, low, high]: Axis) => {
+    const first = Math.max(...items.map(item => low + half(item) - k * at(item)));
+    const last = Math.min(...items.map(item => size - high - half(item) - k * at(item)));
+    return (size / 2 - (first + last) / 2) / k;
+  };
+  return { x: center(xAxis), y: center(yAxis), k };
+}
+
 const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
 const inside = (a: Box, bounds?: Box) => !bounds || (a.x0 >= bounds.x0 && a.y0 >= bounds.y0 && a.x1 <= bounds.x1 && a.y1 <= bounds.y1);
 

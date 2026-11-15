@@ -16,6 +16,8 @@ export const FAMILIES = [
 export const RING_RADIUS = 210;
 /** Pills sit just outside the ring, clear of the neighbor labels, as in the approved mockup. */
 export const PILL_RADIUS = RING_RADIUS + 34;
+/** On phone the canvas is fitted to a smaller zoom, so pills sit further out to clear the ring's nodes. */
+export const PHONE_PILL_RADIUS = RING_RADIUS + 80;
 export const MORE_STEP = 25;
 export const VIEW_LIMIT = 150;
 
@@ -143,7 +145,8 @@ const polar = (degrees: number, radius: number) => {
  * Lay out the focus and its capped neighbors. `extra` holds the neighbors added per family
  * by "+N more". Pill counts plus drawn links equal each family's link total.
  */
-export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Record<string, number> = {}): NeighborhoodLayout {
+export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Record<string, number> = {},
+  pillRadius = PILL_RADIUS): NeighborhoodLayout {
   const placed = placeNeighbors(summary);
   const totals = new Map<string, number>();
   for (const link of drawableLinks(summary)) totals.set(drawnFamily(link.family), (totals.get(drawnFamily(link.family)) ?? 0) + 1);
@@ -179,7 +182,7 @@ export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Rec
     if (hidden) {
       const id = `pill:${family}`;
       nodes.push({ id, kind: "pill", label: "Aggregate", name: `+${hidden} ${FAMILIES[ORDER.indexOf(family)][1]}`,
-        family, count: hidden, ...polar(angle(shown.length), PILL_RADIUS) });
+        family, count: hidden, ...polar(angle(shown.length), pillRadius) });
       links.push({ key: `${focus.id}~${id}`, source: focus.id, target: id, type: "AGGREGATE", family, link: null });
     }
     sectors.push({ family, name: FAMILIES[ORDER.indexOf(family)][1], start, end: start + width, total, drawn, hidden,

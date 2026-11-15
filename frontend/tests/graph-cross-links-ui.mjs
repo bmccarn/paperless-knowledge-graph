@@ -120,7 +120,7 @@ try {
   assert.ok(first.strokes.indexOf(cross.at(-1)) < first.strokes.findIndex(item => near(item.start, focusAt) || near(item.end, focusAt)),
     'Links between neighbors are drawn before the focus links');
   assert.equal(await canvasName(page),
-    'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred; 13 links between neighbors.');
+    'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred; 13 links between neighbors');
 
   // Reloading gives identical positions and curves.
   const second = await open(page, hubUrl, '13 links between neighbors.');
@@ -167,7 +167,7 @@ try {
   assert.equal(await page.evaluate(() => history.length), history, 'The switch replaces the history entry');
   await page.waitForTimeout(400);
   assert.equal(crossStrokes(await page.evaluate(() => ({ frame: window.__frame, strokes: window.__strokes }))).length, 0);
-  assert.equal(await canvasName(page), 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred.');
+  assert.equal(await canvasName(page), 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred');
   const off = await open(page, `${hubUrl}&cross=0`, page => page.getByText('Rowan Vale: 105 links in 9 families. Large hub: the top 2 of each family are shown.', { exact: true }));
   assert.equal(crossStrokes(off).length, 0, 'cross=0 from the URL draws no curve');
   await toggle.click();
@@ -194,7 +194,7 @@ try {
   await page.route('**/api/graph/subgraph?**', route => many(route, 64));
   const capped = await open(page, hubUrl, 'Showing the 60 strongest of 64 links between neighbors.');
   assert.equal(crossStrokes(capped).length, 60);
-  assert.match(await canvasName(page), /; 60 links between neighbors\.$/);
+  assert.match(await canvasName(page), /; 60 links between neighbors$/);
   await page.screenshot({ path: path.join(artifacts, 'cross-links-capped.png') });
   const phone = await context.newPage();
   await phone.setViewportSize({ width: 390, height: 844 });
@@ -208,11 +208,11 @@ try {
   await page.unroute('**/api/graph/subgraph?**');
   await page.route('**/api/graph/subgraph?**', route => route.fulfill({ json: { links: [], documents: {}, total: 0, truncated: false } }));
   await open(page, hubUrl, 'No links between these neighbors.');
-  assert.match(await canvasName(page), /; 0 links between neighbors\.$/);
+  assert.match(await canvasName(page), /; 0 links between neighbors$/);
   await page.unroute('**/api/graph/subgraph?**');
   await page.route('**/api/graph/subgraph?**', route => route.fulfill({ status: 500, json: { detail: 'Synthetic failure' } }));
   await open(page, hubUrl, /^Links between neighbors did not load\. Retry$/);
-  assert.equal(await canvasName(page), 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred.');
+  assert.equal(await canvasName(page), 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred');
   await page.unroute('**/api/graph/subgraph?**');
   await page.route('**/api/graph/subgraph?**', async route => { await new Promise(resolve => setTimeout(resolve, 1600)); await route.continue(); });
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
@@ -227,7 +227,7 @@ try {
   await page.getByText('No links between these neighbors.', { exact: true }).waitFor();
   await page.waitForTimeout(500);
   assert.equal(requested.length, 0);
-  assert.match(await canvasName(page), /; 0 links between neighbors\.$/);
+  assert.match(await canvasName(page), /; 0 links between neighbors$/);
   assert.deepEqual(errors, []);
   console.log('PASS graph_cross_links drawn once, curved, no pill member, 60 and 30 caps, fixed curves, switch and cross=0, inspector group, link selection, canvas name, loading, none and error');
 } finally {

@@ -97,6 +97,15 @@ export function entityName(entity: { id: string; name: string; label: string }):
   return displayName(entity.name, entity.id, entity.label);
 }
 
+/** The canvas's accessible name: "Neighborhood of <name>: N links in K families, J inferred", then "; C links between neighbors" when that count is known. */
+export function canvasName(summary: NodeSummary, layout: NeighborhoodLayout, cross: number | null = null): string {
+  const links = drawableLinks(summary);
+  const inferred = links.filter(link => link.support_state === "inferred").length;
+  return `Neighborhood of ${entityName(summary.focus)}: ${plural(links.length, "link")} in `
+    + `${plural(layout.sectors.length, "family", "families")}, ${inferred} inferred`
+    + (cross === null ? "" : `; ${plural(cross, "link")} between neighbors`);
+}
+
 /** The question "Ask about this" puts in the composer. */
 export const askAbout = (name: string) => `What do my documents say about ${name}?`;
 

@@ -45,8 +45,12 @@ test.beforeEach(async ({ page, baseURL, request }, info) => {
   assert.equal((await (await request.get("/api/_fixture")).json()).fixture, "paperless-accuracy-ui-v1");
   assert.ok((await request.post("/api/_fixture/reset")).ok());
   await page.clock.install({ time: fixedTime });
-  await page.clock.setFixedTime(fixedTime);
   await page.addInitScript(() => {
+    const fillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (...args) {
+      window.__visualGraphPainted = true;
+      return fillText.apply(this, args);
+    };
     // The physics renderer also uses randomness; give every capture the same seed.
     let seed = 112;
     Math.random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -66,6 +70,7 @@ for (const state of [...mainStates, ...extraStates]) test(`${state.name} ${state
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.
   await page.clock.runFor(2500);
+  if (state.name === "graph") await page.waitForFunction(() => window.__visualGraphPainted === true);
   await page.clock.pauseAt(new Date(fixedTime.getTime() + 10000));
   let capture;
   await expect(async () => {

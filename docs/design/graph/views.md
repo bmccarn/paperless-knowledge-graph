@@ -120,7 +120,7 @@ A network that grows in place from one entity (`views-mockup.html#explore`). It 
 - Error: nothing moves; the trail row shows "Links of <name> did not load." with Retry.
 - A root with no entity links shows the Focus message ("No direct links extracted…").
 
-**Phone.** The canvas in the Graph tab with 6 starting links and 4 per expansion, at most 60 entities. The trail is a bottom sheet with a 56 px peek ("3 expansions"). A selected node's sheet has 44 px "Show more links" and "Collapse" buttons (`views-mockup.html#phone-explore`).
+**Phone.** The canvas in the Graph tab with 6 starting links and 4 per expansion, at most 60 entities. The trail is a bottom sheet with a 56 px peek ("3 expansions"). A selected node's sheet has 44 px "Show more links" and "Collapse" buttons. `views-mockup.html#phone-explore` shows the trail peek.
 
 ## Timeline
 
@@ -281,8 +281,8 @@ Budgets for an archive of 7,400 nodes and 14,900 links with one entity of 660 li
 | Timeline: first draw for the 660-link entity | 100 ms after the summary | capped rows, merged marks |
 | Paths | 0.7 s typical, 5 s server limit | measured; #109 limit |
 | `/graph/overview` | 1.0 s server, 1.5 MB | prototype threshold |
-| Overview groups and layout | 1.5 s in a worker | measured 0.25 to 0.47 s in Node, synthetic |
-| Overview pan and zoom | 33 ms per frame | measured 23 to 40 ms, headless, software rendering |
+| Overview groups and layout | 1.5 s in a worker | measured 0.24 to 0.44 s in Node, synthetic |
+| Overview pan and zoom | 33 ms per frame | measured 23 to 33 ms as dots, headless, software rendering |
 
 The #109 limit stays: revisit server paging of the summary route when an entity passes about 2,000 links. The real 660-link summary (373 KB) is already above the 300 KB that #109 asserts for a synthetic 660-link entity. That test (`tests/test_graph_summary.py`) gives most links one record and names two documents; the real links name more documents, so the real response is larger. The 1.5 s budget allows for the real size.
 
@@ -327,7 +327,7 @@ Each ticket is one pull request under the working rules in the first comment of 
 **V2. Add the links-among route `GET /graph/subgraph`**
 - **Blocked by:** none.
 - **Parallel with:** V1, V6.
-- **What it delivers:** the route, its 2-to-150 id rule, the 600-link cap with `truncated`, and the documents map.
+- **What it delivers:** the route, its 2-to-150 id rule, the 600-link cap with `total` and `truncated`, and the documents map.
 - **Acceptance criteria:**
   - [ ] For three fixture entities, the route returns exactly the links among them, without evidence links or Document ends.
   - [ ] 151 ids return 400.
@@ -366,7 +366,7 @@ Each ticket is one pull request under the working rules in the first comment of 
 **V6. Add the overview route `GET /graph/overview`**
 - **Blocked by:** none.
 - **Parallel with:** V1, V2.
-- **What it delivers:** the route with merged pair links, `columns`, `version`, `owner`, `unlinked`, and the 8,000-node cap.
+- **What it delivers:** the route with merged pair links and their `families` mask, `columns`, `version`, `owner`, `unlinked`, and the 8,000-node cap.
 - **Acceptance criteria:**
   - [ ] Two fixture entities joined by two relationship types return one link row whose weight counts distinct documents.
   - [ ] No Document node and no evidence link appears.

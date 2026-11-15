@@ -78,12 +78,7 @@ CROSS = [  # a, b, type, weight, support: links between two neighbors of Policy 
 ]
 
 
-def bezier(p0, c, p2, n=24):
-    return [((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * c[0] + t ** 2 * p2[0],
-             (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * c[1] + t ** 2 * p2[1]) for t in (i / n for i in range(n + 1))]
-
-
-def cross_svg(neigh, cx, cy, R, links, sel=None, keep_slot=True):
+def cross_svg(neigh, cx, cy, R, links, keep_slot=True):
     """Curves between two neighbors on the ring. The control point sits on the bisector of the shorter arc
     between them, halfway between the chord and the ring, so each curve bows toward the ring and away from the focus."""
     slots, _ = bm.radial(neigh, cx, cy, R, None, keep_slot=keep_slot)  # the same slot rule as the nodes
@@ -98,9 +93,8 @@ def cross_svg(neigh, cx, cy, R, links, sel=None, keep_slot=True):
         s0 = trim(x0, y0, *c, e0 + 3, 0)[:2]
         s2 = trim(x2, y2, *c, e2 + 3, 0)[:2]
         dash = ' stroke-dasharray="6 4"' if sup == "inferred" else ""
-        dim = sel is not None and sel not in (a, b)
         out.append(f'<path d="M{s0[0]:.1f},{s0[1]:.1f}Q{c[0]:.1f},{c[1]:.1f} {s2[0]:.1f},{s2[1]:.1f}" '
-                   f'class="xl{" xl-dim" if dim else ""}" style="stroke-width:{link_width(w):.2f}"{dash}/>')
+                   f'class="xl" style="stroke-width:{link_width(w):.2f}"{dash}/>')
     return "".join(out)
 
 

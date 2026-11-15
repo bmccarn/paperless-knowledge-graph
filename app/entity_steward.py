@@ -70,7 +70,7 @@ class EntitySteward:
             }
             auto = {}
             if settings.entity_steward_auto_merge != "off":
-                auto = await self._auto_merge_pass(reason, decisions)
+                auto = await self._auto_merge_pass(reason, decisions, ignored_pairs)
             candidates = await graph_store.get_entity_review_candidates(
                 # The pass's own rows stay the newest for its pairs on the review page.
                 ignored_pairs | auto.pop("handled", set()),
@@ -137,7 +137,8 @@ class EntitySteward:
         finally:
             self._running = False
 
-    async def _auto_merge_pass(self, reason: str, decisions: list[dict]) -> dict[str, Any]:
+    async def _auto_merge_pass(self, reason: str, decisions: list[dict],
+                               ignored_pairs: set[tuple[str, str]]) -> dict[str, Any]:
         """Exact-duplicate low-risk pairs: shadow records them, "on" merges them.
 
         The agent can only block. At most `max_per_run` pairs reach the agent,
@@ -175,18 +176,18 @@ class EntitySteward:
         agent_calls = 0
         for label, left, right in pairs:
             pair = (left["uuid"], right["uuid"])
-            # Snapshot pre-filter; the resolver checks every rule again on fresh reads.
-            blocker = auto_merge_blocker({"labels": [label], "properties": left}, {"labels": [label], "properties": right},
-                                         label, 2)
+            # Cheap snapshot pre-filter; the resolver checks every rule again on fresh reads.
+            blocker = "decision_row" if pair in ignored_pairs else auto_merge_blocker(
+                {"labels": [label], "properties": left}, {"labels": [label], "properties": right}, label, 2)
+            if not blocker and agent_calls >= cap:
+                report["auto_merge_blocked"]["cap"] += 1
+                handled.add(pair)  # a later run reviews it; the regular pass must not refresh its timestamp
+                continue
             if not blocker:
                 check = await entity_resolver.auto_merge_check(*pair)
                 blocker = check["blocker"]
             if blocker:
                 report["auto_merge_blocked"][blocker] += 1
-                continue
-            if agent_calls >= cap:
-                report["auto_merge_blocked"]["cap"] += 1
-                handled.add(pair)  # a later run reviews it; the regular pass must not refresh its timestamp
                 continue
             agent_calls += 1
             nodes = {left["uuid"]: left, right["uuid"]: right}

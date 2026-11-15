@@ -155,6 +155,8 @@ class StewardAutoMergeTests(unittest.IsolatedAsyncioTestCase):
         # Deferred pairs wait for a later run; the regular pass must not refresh them.
         self.assertTrue({("2a", "2b"), ("3a", "3b"), ("4a", "4b")}
                         <= self.graph.get_entity_review_candidates.await_args.args[0])
+        # Deferred pairs skip the resolver's fresh reads too.
+        self.assertEqual(self.resolver.auto_merge_check.await_count, 2)
         report = await self.run_steward("on", cap=0)
         self.assertEqual(self.resolver.merge_entities.await_count, 2)
         self.assertEqual(report["auto_merge_blocked"]["cap"], 5)
@@ -190,6 +192,13 @@ class StewardAutoMergeTests(unittest.IsolatedAsyncioTestCase):
                 self.resolver.merge_entities.assert_not_awaited()
                 self.assertEqual(report["auto_merge_blocked"], {"agent": 1})
                 self.assertEqual([r["decision"] for r in self.decisions.rows], ["suggest_review"])
+
+    async def test_terminal_rows_block_before_any_fresh_read(self):
+        self.decisions.rows.append({"left_uuid": "a", "right_uuid": "b", "decision": "never_merge",
+                                    "provenance": "human_review"})
+        report = await self.run_steward("on")
+        self.resolver.auto_merge_check.assert_not_awaited()
+        self.assertEqual(report["auto_merge_blocked"], {"decision_row": 1})
 
     async def test_resolver_blocks_are_counted_and_skip_the_agent(self):
         self.resolver.auto_merge_check.side_effect = lambda left, right: {

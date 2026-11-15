@@ -46,7 +46,29 @@ incomplete results and visible text below 12 px to the HTML comparison report.
 
 CI runs in `mcr.microsoft.com/playwright:v1.65.1-noble`. Screenshots use a fixed
 clock, UTC, en-US, device scale factor 1, loaded fonts, disabled animation and
-seeded graph randomness. Do not create application baselines on a developer machine.
+seeded graph randomness. The shared Playwright configuration disables partial rasterization
+with `--disable-partial-raster` for both comparison and baseline updates. Chromium
+159.0.8154.6 produced intermittent differences at antialiased edges with partial
+rasterization enabled, even with identical layout and fonts. Do not create application
+baselines on a developer machine. Recheck capture determinism when the pinned
+Playwright image changes.
+
+The rasterization check on 2026-11-15 compared 30 complete capture runs with all
+40 CI-generated baselines: 1,200 byte-identical PNGs and zero differing pixels.
+The runs used the pinned image digest from `tests/visual-policy.mjs`, Node
+24.22.3 and Chromium 159.0.8154.6. Three independent containers each ran ten
+captures of every gated image, with one worker per run. The ordinary and manual
+jobs use the same capture settings. The [baseline run](https://github.com/bmccarn/paperless-knowledge-graph/actions/runs/43704770403)
+contains the reviewed images and comparison report.
+
+Without the flag, three complete runs of the same commit differed on Document,
+Documents, Graph and Logs: 3–45 pixels per affected image, usually one RGB level
+at rounded edges. A 30-capture Logs probe had identical element bounds and styles
+but one 23-pixel difference. Disabling GPU rasterization, LCD text, Skia runtime
+optimizations or the new screenshot surface did not eliminate the differences.
+Disabling partial rasterization did. Chromium's
+[`IsPartialRasterEnabled`](https://chromium.googlesource.com/chromium/src/+/refs/tags/159.0.8154.6/content/browser/gpu/compositor_util.cc#446)
+reads the flag directly. The zero-pixel comparison rule is unchanged.
 
 CI enables screenshot comparison with `UI_VISUAL_GATE` set to `"1"` and the
 approved CI-generated images in the repository. Comparison uses zero differing pixels

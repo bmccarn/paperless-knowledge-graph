@@ -17,6 +17,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.UI_TEST_BASE_URL,
     browserName: "chromium",
+    launchOptions: { args: ["--disable-partial-raster"] },
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "UTC",

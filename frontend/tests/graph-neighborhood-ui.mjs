@@ -132,6 +132,26 @@ try {
   for (const name of ['Harbor Mutual Insurance', 'Hypertension', '+20 Money and accounts'])
     assert.deepEqual([after[name].worldX, after[name].worldY], [before[name].worldX, before[name].worldY], `${name} keeps its place`);
   await page.screenshot({ path: path.join(artifacts, 'graph-neighborhood-more.png') });
+
+  // A node selected at the right edge stays visible when the inspector narrows the canvas.
+  // Pan the node next to the right edge with a background drag.
+  const start = after['Policy HO-5130 (home)'];
+  await page.mouse.move(box.x + 30, box.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 30 + box.width - 40 - start.x, box.y + 30, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(900);
+  const edge = (await page.evaluate(() => window.__frame))['Policy HO-5130 (home)'];
+  assert.ok(edge.x > box.width - 60, `Node panned to the edge: ${edge.x}`);
+  await page.mouse.move(box.x + edge.x, box.y + edge.y);
+  await page.getByText('Policy HO-5130 (home) · InsurancePolicy', { exact: true }).waitFor({ state: 'visible' });
+  await page.mouse.click(box.x + edge.x, box.y + edge.y);
+  await page.getByRole('complementary', { name: 'Evidence inspector' }).waitFor({ state: 'visible' });
+  await page.waitForFunction(width => document.querySelector('canvas').clientWidth < width, box.width);
+  await page.waitForTimeout(300);
+  const selected = (await page.evaluate(() => window.__frame))['Policy HO-5130 (home)'];
+  const narrowed = await page.locator('canvas').first().boundingBox();
+  assert.ok(selected.x > 10 && selected.x < narrowed.width - 10, `Selected node stays in view: ${selected.x} of ${narrowed.width}`);
   assert.deepEqual(errors, []);
   console.log('PASS graph_neighborhood caps, pills, fixed positions, no drag, initial fit, Fit view and +N more');
 } finally {

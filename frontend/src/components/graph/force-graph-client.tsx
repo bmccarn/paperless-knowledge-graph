@@ -146,10 +146,10 @@ export function ForceGraphClient({
   }, [graph, positions]);
 
   useLayoutEffect(() => {
-    if (positions) return;
     for (const node of data.nodes) {
       const previous = renderNodes.current.get(node.id);
-      Object.assign(node, { x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy });
+      // Fixed layouts keep their own positions; the cache still serves selection centering.
+      if (!positions) Object.assign(node, { x: previous?.x, y: previous?.y, fx: previous?.fx, fy: previous?.fy });
       renderNodes.current.set(node.id, node);
     }
   }, [data, positions]);

@@ -39,7 +39,7 @@ export interface NodeSummary {
   owner_status: string;
 }
 
-/** Neighbors per family before "+N more": 2 for a hub, else 6 (5 on phone). */
+/** Links per family before "+N more": 2 for a hub, else 6 (5 on phone). */
 export function familyCap(isHub: boolean, phone: boolean): number {
   return isHub ? 2 : phone ? 5 : 6;
 }
@@ -150,8 +150,15 @@ export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Rec
   const sectors: LayoutSector[] = [];
   present.forEach((family, index) => {
     const members = placed.get(family) ?? [];
-    const shown = members.slice(0, cap + (extra[family] ?? 0));
-    const drawn = shown.reduce((sum, member) => sum + member.links.length, 0);
+    // Caps count links: take neighbors in rank order while their links fit (the first always fits).
+    const budget = cap + (extra[family] ?? 0);
+    let drawn = 0;
+    const shown: Neighbor[] = [];
+    for (const member of members) {
+      if (shown.length && drawn + member.links.length > budget) break;
+      shown.push(member);
+      drawn += member.links.length;
+    }
     const total = totals.get(family)!;
     const hidden = total - drawn;
     const start = index * width - width / 2;
@@ -177,13 +184,20 @@ export function neighborhoodLayout(summary: NodeSummary, cap: number, extra: Rec
 }
 
 /**
- * One press of "+N more": add up to 25 hidden neighbors of the family, never past 150
+ * One press of "+N more": draw up to 25 more links of the family, never past 150
  * entities in view. Returns the same object when nothing can be added.
  */
 export function showMore(summary: NodeSummary, cap: number, extra: Record<string, number>, family: string): Record<string, number> {
-  const layout = neighborhoodLayout(summary, cap, extra);
-  const sector = layout.sectors.find(item => item.family === family);
-  if (!sector) return extra;
-  const added = Math.min(MORE_STEP, sector.members - sector.shown, VIEW_LIMIT - layout.entities);
-  return added > 0 ? { ...extra, [family]: (extra[family] ?? 0) + added } : extra;
+  const shown = (budget: Record<string, number>) => {
+    const layout = neighborhoodLayout(summary, cap, budget);
+    return { layout, sector: layout.sectors.find(item => item.family === family) };
+  };
+  const before = shown(extra).sector;
+  if (!before) return extra;
+  for (let added = MORE_STEP; added > 0; added--) {
+    const next = { ...extra, [family]: (extra[family] ?? 0) + added };
+    const { layout, sector } = shown(next);
+    if (layout.entities <= VIEW_LIMIT && sector!.drawn > before.drawn) return next;
+  }
+  return extra;
 }

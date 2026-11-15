@@ -79,7 +79,7 @@ test("one press adds up to 25 and never passes 150 entities in view", () => {
   assert.equal(neighborhoodLayout(data, 2, once).sectors.find(s => s.family === "parties").shown, 27);
   // 60 parties members: the third press adds the last 8.
   const thrice = showMore(data, 2, showMore(data, 2, once, "parties"), "parties");
-  assert.equal(thrice.parties, 58);
+  assert.equal(neighborhoodLayout(data, 2, thrice).sectors.find(s => s.family === "parties").shown, 60);
   assert.equal(showMore(data, 2, thrice, "parties"), thrice, "nothing left to add");
   // 1 focus + 60 parties + 2 places + 2 money = 65; three money presses reach 140, the fourth adds 10.
   let extra = thrice;
@@ -91,6 +91,21 @@ test("one press adds up to 25 and never passes 150 entities in view", () => {
   assert.equal(showMore(data, 2, extra, "money"), extra, "the limit stops further presses");
   const none = {};
   assert.equal(showMore(data, 2, none, "evidence"), none, "a family that is never drawn adds nothing");
+});
+
+test("caps and presses count links, not neighbors", () => {
+  docId = 1;
+  const links = [];
+  // Each neighbor has two parties links.
+  for (let i = 0; i < 30; i++)
+    links.push(link("parties", `n-${String(i).padStart(2, "0")}`, 30 - i), link("parties", `n-${String(i).padStart(2, "0")}`, 1, { type: "SIGNED_BY" }));
+  const data = summary(links, true);
+  const sector = extra => neighborhoodLayout(data, 2, extra).sectors[0];
+  assert.deepEqual([sector({}).shown, sector({}).drawn, sector({}).hidden], [1, 2, 58]);
+  const once = showMore(data, 2, {}, "parties");
+  assert.equal(sector(once).drawn - sector({}).drawn, 24, "one press draws at most 25 more links");
+  // A neighbor whose links exceed the cap is still drawn when it ranks first.
+  assert.equal(neighborhoodLayout(data, 1).sectors[0].shown, 1);
 });
 
 test("a two-family neighbor sits once, in the family with more evidence documents", () => {

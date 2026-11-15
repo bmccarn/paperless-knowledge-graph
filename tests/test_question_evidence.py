@@ -31,6 +31,7 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
         auditor = StrandsQueryOrchestrator()  # Production default remains flat.
         auditor.enabled = True
         calls = []
+        audit_prefixes = []
         async def model(**kwargs):
             payload = json.loads(kwargs['prompt']); calls.append((kwargs['name'], payload))
             if kwargs['name'] == 'source_reader':
@@ -39,6 +40,7 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 return json.dumps({'documents': [{'document_id': d['document_id'],
                     'observations': [{'text': 'UNTRUSTED NOTE', 'references': [
                         {'span_id': d['windows'][0]['span']['span_id']}]}], 'limitations': []}]})
+            audit_prefixes.append(kwargs['prompt'].split(', "question":', 1)[0].encode('utf-8'))
             return json.dumps({'assessments': [decision(unit_id=u['id'], references=[
                 {'span_id': payload['source_documents'][0]['windows'][0]['span']['span_id']}])
                 for u in payload['units']]})
@@ -55,12 +57,14 @@ class QuestionEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result['finalization']['answer_verified'])
                 self.assertNotIn('UNTRUSTED NOTE', json.dumps(result))
         self.assertEqual([n for n, _ in calls], ['source_reader', 'source_reader', 'source_auditor', 'source_auditor'])
+        self.assertEqual(audit_prefixes[0], audit_prefixes[1])
         for name, payload in calls:
             if name == 'source_reader':
                 self.assertNotIn('units', payload)
                 self.assertNotIn('source_reading', payload)
                 self.assertEqual(payload['requirements'], REQUIREMENTS['requirements'])
             else:
+                self.assertEqual(list(payload)[:2], ['source_documents', 'source_reading'])
                 windows = [w for d in payload['source_documents'] for w in d['windows']]
                 self.assertEqual([w['span'] for w in windows], self.spans)
                 self.assertEqual(len(payload['source_reading']['documents']), 2)

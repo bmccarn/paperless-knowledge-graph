@@ -108,8 +108,8 @@ class QueryEngine:
             raise
 
     async def _llm_json(self, prompt: str) -> any:
-        """LLM call expecting JSON response. Retries with fallback on parse errors or rate limits."""
-        models_to_try = [self._active_model(), settings.fallback_model]
+        """Use the configured helper route, independent of the answer-model override."""
+        models_to_try = [self.model, settings.fallback_model]
         last_error = None
         for model in models_to_try:
             try:
@@ -548,6 +548,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         identity = {"policy": f'{QUERY_CACHE_VERSION}:{PIPELINE_VERSION}' if self.question_pipeline else QUERY_CACHE_VERSION,
                     "mode": mode, "question": question,
                     "history": conversation_history or [], "model": self._active_model(),
+                    "helper_model": self.model,
                     "strands_model": settings.strands_model or settings.gemini_model,
                     "generation": _REQUEST_GENERATION.get(), "evaluated_at": evaluated_at,
                     "source_date_order": settings.source_date_order}

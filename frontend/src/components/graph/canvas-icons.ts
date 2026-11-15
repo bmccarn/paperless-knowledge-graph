@@ -44,7 +44,10 @@ const cache = new Map<string, Path2D | null>();
 export function iconPath(label: string): Path2D | null {
   if (!cache.has(label)) {
     const data = ((MODULES[label] ?? CircleQuestionMark) as IconModule).__iconData;
-    cache.set(label, data ? new Path2D(data.node.map(([tag, attributes]) => elementPath(tag, attributes)).join("")) : null);
+    // One subpath per element: a relative move at the start of an element must not follow the previous one.
+    const path = data ? new Path2D() : null;
+    for (const [tag, attributes] of data?.node ?? []) path!.addPath(new Path2D(elementPath(tag, attributes)));
+    cache.set(label, path);
   }
   return cache.get(label)!;
 }

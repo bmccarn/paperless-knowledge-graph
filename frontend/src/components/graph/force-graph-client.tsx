@@ -239,20 +239,6 @@ export function ForceGraphClient({
     return () => cancelAnimationFrame(frame);
   }, [selectedNodeId, dimensions.width, dimensions.height, renderer.Component, graph.nodes]);
 
-  // The selected node and its direct neighbors stay in color; everything else fades.
-  const highlighted = useMemo(() => {
-    const ids = new Set<string>();
-    if (selectedNodeId) {
-      ids.add(selectedNodeId);
-      for (const link of graph.links)
-        if (link.source === selectedNodeId || link.target === selectedNodeId) {
-          ids.add(link.source);
-          ids.add(link.target);
-        }
-    }
-    return ids;
-  }, [graph.links, selectedNodeId]);
-
   const setHandle = useCallback(
     (handle: GraphHandle | null) => {
       handleRef.current = handle;
@@ -297,7 +283,7 @@ export function ForceGraphClient({
       const r = nodeRadius(nodeDocs(node));
       const extent = shapeExtent(node.label, r);
       const selected = node.id === selectedNodeId;
-      const faded = Boolean(selectedNodeId) && !highlighted.has(node.id);
+      const faded = Boolean(selectedNodeId) && !selected;
       const color = faded ? colors["graph-faded"] : kind === "unknown" ? colors["fg-subtle"] : colors[`cat-${kind}`];
       const shape = (radius: number) => new Path2D(shapePath(node.label, radius));
       const ring = (path: Path2D, stroke: string, width: number, dash: number[] = []) => {
@@ -338,7 +324,7 @@ export function ForceGraphClient({
       }
       ctx.restore();
     },
-    [paint, pillWidth, selectedNodeId, highlighted, hoveredId, keyboardNodeId],
+    [paint, pillWidth, selectedNodeId, hoveredId, keyboardNodeId],
   );
 
   const selectedLink = (link: RenderLink) => link.id === selectedLinkId;
@@ -459,7 +445,7 @@ export function ForceGraphClient({
         const x = node.x! * scale, y = node.y! * scale;
         const outward: [number, number] | null = focus && node !== focus ? [node.x! - focus.x!, node.y! - focus.y!] : null;
         const extent = shapeExtent(node.label, nodeRadius(nodeDocs(node)));
-        const dim = Boolean(selectedNodeId) && !highlighted.has(node.id);
+        const dim = Boolean(selectedNodeId) && node.id !== selectedNodeId;
         labels.push({ x: node.x!, y: node.y!, text, weight, color: dim ? colors["fg-subtle"] : colors.fg, chip: false,
           candidates: labelCandidates(x, y, extent, ctx.measureText(text).width, outward),
           rule: important(node) ? "force" : all ? "all" : "optional" });
@@ -500,7 +486,7 @@ export function ForceGraphClient({
       ctx.restore();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [paint, data, focusId, selectedNodeId, selectedLinkId, hoveredId, keyboardNodeId, showLabels, highlighted, nodeLinked, pillWidth, font, dimensions],
+    [paint, data, focusId, selectedNodeId, selectedLinkId, hoveredId, keyboardNodeId, showLabels, nodeLinked, pillWidth, font, dimensions],
   );
 
   const hover = useCallback((node: RenderNode | null) => {

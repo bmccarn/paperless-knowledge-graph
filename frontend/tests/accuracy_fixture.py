@@ -19,7 +19,6 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.answer_delivery import render_verified_answer
-from app.answer_finalization import ABSTENTION
 from app.timeline import project_timeline
 
 NODES = [
@@ -131,6 +130,9 @@ def final_answer(question):
             'timeline_events': []}
 
 
+# app.answer_finalization.ABSTENTION; that module needs backend packages the frontend job does not install.
+ABSTENTION = ('I could not verify a complete answer from the retrieved source text. '
+              'Please review the source documents or narrow the question before relying on specific facts.')
 # The backend's missing-evidence sentence for each withheld disposition.
 WITHHELD = {
     'unsupported': 'Not every material claim has validated source support.',

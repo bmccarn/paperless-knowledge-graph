@@ -180,8 +180,10 @@ class StrandsQueryOrchestrator:
             prompt=json.dumps(payload, ensure_ascii=False),
             response_format=source_audit.response_format(payload['expected_unit_ids'],
                 reference_schema=scope_view.reference_schema if scope_view is not None else None),
-            # The cache breakpoint ends the shared sources, before the closing brace of their JSON.
-            cache_prefix_chars=len(json.dumps(shared, ensure_ascii=False)) - 1)
+            # The cache breakpoint ends the shared sources, before the closing brace of their JSON. Only
+            # Anthropic models get it: the gateway turns a marked Gemini message into context caching.
+            cache_prefix_chars=len(json.dumps(shared, ensure_ascii=False)) - 1
+                if 'claude' in (settings.strands_model or settings.gemini_model).lower() else None)
         if not text or not text.strip():
             return None
         try:

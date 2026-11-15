@@ -340,7 +340,7 @@ class SourceAuditCaptureTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, **kwargs):
                 configs.append(kwargs)
             async def invoke_async(self, prompt):
-                payload = json.loads(''.join(block['text'] for block in prompt))
+                payload = json.loads(prompt)
                 corrected = bool(payload.get('protocol_correction'))
                 handle = payload['source_spans'][0]['span_id'] if corrected or correction_kind == 'scope' else 'foreign'
                 row = decision(status='unsupported' if corrected else 'supported', references=[{'span_id': handle}])

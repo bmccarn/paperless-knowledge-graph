@@ -84,7 +84,7 @@ The capped one-hop neighborhood from #109, unchanged in layout, caps, pills, sec
 - None: the caption adds "No links between these neighbors."
 - Error: the ring stays; the caption says "Links between neighbors did not load." with a Retry button.
 
-**Phone.** The same canvas in the Graph tab, with at most 30 cross-links (`views-mockup.html#phone-focus`).
+**Phone.** The same canvas in the Graph tab, with at most 30 cross-links (`views-mockup.html#phone-focus`). At 390 px the ring has no room for 16 labels, so labels go in evidence order and a label that would overlap an earlier one is skipped, as `mockup.html#phone-graph` already shows. Hover, selection and the focus are still always labeled.
 
 ## Explore
 
@@ -306,6 +306,7 @@ When the owner approves this addendum, these parts of #109 change.
 - **URL state.** The view values, `x`, `cross` and `sel=grp:<id>` above; history rules as above.
 - **Keyboard model.** Keys 1 to 6; `n`, `t` and `p` stay as aliases.
 - **Filters.** The Owner default per view, and the groups that Overview disables.
+- **Labels.** On phone, the rule "with 40 or fewer nodes, every node is labeled" gives way to skipping overlapping labels, as in Focus.
 - **Encoding.** Overview's map zoom draws dots instead of shapes (see "Two zoom levels"). This is the one change to the shared encoding, and the owner's approval of this addendum covers it. Without that approval, Overview opens at detail zoom only.
 - `README.md` in this folder says the views are Neighborhood, Path and Table. It now points here.
 

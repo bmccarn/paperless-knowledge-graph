@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimRanges, emphasize, proseBlocks, quoteWindow, utf16Index } from "../.test-build/claim-prose.js";
+import { claimRanges, emphasize, plainQuote, proseBlocks, quoteWindow, utf16Index } from "../.test-build/claim-prose.js";
 
 // The backend counts offsets in code points (Python len); "🏠" is one code point and two UTF-16 units.
 const TEXT = "The policy covers the house on Elm Street 🏠.\n\n## Premium\n**Amount:** The January statement lists a premium of $25.";
@@ -85,4 +85,19 @@ test("emphasize splits the text around each matched value, case-insensitively", 
     { text: "Premium: " }, { text: "$612.00", match: true }, { text: ", due " }, { text: "March 1, 2025", match: true }, { text: "." },
   ]);
   assert.deepEqual(emphasize("No values here.", []), [{ text: "No values here." }]);
+});
+
+test("a quote from a passage with table pipes, bold markers, rules and line-break tags shows none of them", () => {
+  const passage = "## Results\n| Test | Value | Unit |\n|---|:---:|---|\n| **Glucose** | 95 | mg/dL |\n---\nCollected<br>2026-03-01 &amp; reviewed<br/>by <b>Example Lab</b>.";
+  const quote = plainQuote(passage);
+  assert.equal(quote, "Results Test · Value · Unit Glucose · 95 · mg/dL Collected 2026-03-01 & reviewed by Example Lab.");
+  assert.doesNotMatch(quote, /\||\*\*|<|---/);
+  // Value emphasis still finds the claim's values in the cleaned text.
+  const { values } = quoteWindow("Glucose was 95 mg/dL on 2026-03-01.", quote);
+  assert.deepEqual(emphasize(quote, values).filter(piece => piece.match).map(piece => piece.text), ["95", "2026-03-01"]);
+});
+
+test("a block tag between two values keeps them apart, and an inline tag joins its text", () => {
+  assert.equal(plainQuote("<p>Total: $100.00</p><p>2026 statement</p>"), "Total: $100.00 2026 statement");
+  assert.equal(plainQuote("Premium: <strong>$1,284</strong>.00 per <em>year</em>"), "Premium: $1,284.00 per year");
 });

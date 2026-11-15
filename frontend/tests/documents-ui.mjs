@@ -129,3 +129,35 @@ test("a reload after an error keeps the last rows, shows progress and locks sele
   await page.getByText("1 matching indexed documents", { exact: true }).waitFor();
   assert.equal(await checkbox.isDisabled(), false);
 });
+
+test("dates stored in several forms all show as dd MMM yyyy", async t => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  t.after(() => context.close());
+  await context.request.post(`${base}/api/_fixture/reset`);
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith("/api/documents"));
+  await page.goto(`${base}/documents`);
+  const stored = (await (await response).json()).results.map(row => row.properties.date);
+  assert.ok(stored.includes("September 1, 2026") && stored.includes("1 SEP 26") && stored.includes("2026-09-01"),
+    "the fixture page holds dates in three stored forms");
+  await page.getByText("303 indexed documents", { exact: true }).waitFor();
+  const shown = await page.locator("tbody tr td:nth-child(5)").filter({ visible: true }).allTextContents();
+  assert.equal(shown.length, stored.length);
+  for (const date of shown) assert.match(date, /^\d{2} [A-Z][a-z]{2} \d{4}$/);
+});
+
+test("an entity without a name is listed by its type and a short identifier, not its UUID", async t => {
+  const page = await documentsPage(t);
+  await page.route("**/api/graph/node/**", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.relationships.push({ rel_type: "MENTIONS", neighbor_labels: ["Organization"],
+      neighbor_props: { uuid: "3f2a9c1e-0000-4000-8000-000000000001" } });
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("button", { name: "Show details for January premium statement", exact: true }).click();
+  const link = page.getByRole("link", { name: "Organization 3f2a9c", exact: true });
+  await link.waitFor();
+  assert.equal(await page.getByText("3f2a9c1e-0000-4000-8000-000000000001").count(), 0);
+});

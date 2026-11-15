@@ -15,11 +15,13 @@ export interface ToastMessage {
 function Toast({
   toast,
   onDismiss,
+  disabled,
   className,
   ...props
 }: Omit<React.ComponentProps<"div">, "children"> & {
   toast: ToastMessage
   onDismiss: () => void
+  disabled?: boolean
 }) {
   const { action } = toast
   return (
@@ -33,7 +35,7 @@ function Toast({
     >
       <p className="label-13 min-w-0 flex-1 text-fg">{toast.text}</p>
       {action && (
-        <Button size="sm" variant="outline" onClick={() => { action.onClick(); onDismiss() }}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => { action.onClick(); onDismiss() }}>
           {action.label}
         </Button>
       )}
@@ -44,8 +46,11 @@ function Toast({
   )
 }
 
-function TimedToast({ toast, onDismiss, duration }: { toast: ToastMessage; onDismiss: () => void; duration: number }) {
+function TimedToast({ toast, onDismiss, duration, disabled }: { toast: ToastMessage; onDismiss: () => void; duration: number; disabled?: boolean }) {
   const [held, setHeld] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+  // The control that started the action may be gone; put focus on its Undo.
+  React.useEffect(() => { if (toast.action) ref.current?.querySelector("button")?.focus() }, [toast.action])
   const dismiss = React.useRef(onDismiss)
   React.useEffect(() => { dismiss.current = onDismiss })
   React.useEffect(() => {
@@ -56,8 +61,10 @@ function TimedToast({ toast, onDismiss, duration }: { toast: ToastMessage; onDis
   // Hold the timer while the pointer or focus is inside, so Undo stays reachable.
   return (
     <Toast
+      ref={ref}
       toast={toast}
       onDismiss={onDismiss}
+      disabled={disabled}
       onPointerEnter={() => setHeld(true)}
       onPointerLeave={() => setHeld(false)}
       onFocus={() => setHeld(true)}
@@ -71,11 +78,13 @@ function Toaster({
   toast,
   onDismiss,
   duration = 6000,
+  disabled,
   className,
 }: {
   toast: ToastMessage | null
   onDismiss: () => void
   duration?: number
+  disabled?: boolean
   className?: string
 }) {
   return (
@@ -88,7 +97,7 @@ function Toaster({
         className
       )}
     >
-      {toast && <TimedToast key={toast.id} toast={toast} onDismiss={onDismiss} duration={duration} />}
+      {toast && <TimedToast key={toast.id} toast={toast} onDismiss={onDismiss} duration={duration} disabled={disabled} />}
     </div>
   )
 }

@@ -90,7 +90,20 @@ try {
 
   // The toast's Undo calls the unmerge route with the id the merge returned.
   await recent.getByRole('button', { name: 'Undo', exact: true }).waitFor();
+  const toastUndo = toasts.getByRole('button', { name: 'Undo', exact: true });
+  assert.ok(await toastUndo.evaluate(element => element === document.activeElement), 'focus moves to the toast Undo');
   await capture('entity-review-merged-toast');
+  // While another review action runs, the toast's Undo waits like every other control.
+  let releaseSplit;
+  const heldSplit = new Promise(resolve => { releaseSplit = resolve; });
+  await page.route('**/api/entity-review/split', route => releaseSplit(route));
+  await candidate('Cedar Lab 3').getByRole('button', { name: 'Keep split', exact: true }).click();
+  const split = await heldSplit;
+  assert.ok(await toastUndo.isDisabled(), 'toast Undo enabled during a pending action');
+  await split.fulfill({ status: 500, json: { detail: 'Synthetic split failure' } });
+  await page.unroute('**/api/entity-review/split');
+  await page.getByRole('alert').getByText('Synthetic split failure').waitFor();
+  assert.ok(await toastUndo.isEnabled());
   await toasts.getByRole('button', { name: 'Undo', exact: true }).click();
   await toasts.getByText('Undid the merge of Cedar Laboratory 1 into Cedar Lab 1.', { exact: true }).waitFor();
   await recent.getByText('Undone', { exact: true }).waitFor();

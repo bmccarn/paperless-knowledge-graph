@@ -449,7 +449,7 @@ export default function EntityReviewPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Toaster toast={toast} onDismiss={() => setToast(null)} />
+      <Toaster toast={toast} onDismiss={() => setToast(null)} disabled={locked} />
     </div>
   );
 }

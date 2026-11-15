@@ -125,7 +125,8 @@ class MemoryGraph:
         if self.review_store:
             before = [{"labels": [self.nodes[u]["entity_type"]], "props": copy.deepcopy(self.nodes[u])} for u in (primary_uuid, duplicate_uuid)]
             await self.review_store.insert_merge_journal({"merge_id": merge_id, "review_id": review_id, "primary_uuid": primary_uuid,
-                "duplicate_uuid": duplicate_uuid, "before_image": {"nodes": before, "edges": []}})
+                "duplicate_uuid": duplicate_uuid, "review_method": review_method or "",
+                "before_image": {"nodes": before, "edges": []}})
         primary = self.nodes[primary_uuid]
         duplicate = self.nodes.pop(duplicate_uuid)
         primary["aliases"] = list(dict.fromkeys([*primary.get("aliases", []), duplicate["name"], *duplicate.get("aliases", [])]))
@@ -404,7 +405,8 @@ class EntityDecisionTests(unittest.IsolatedAsyncioTestCase):
     async def test_steward_records_review_for_unsafe_agent_merge(self):
         candidate = {"score": 100, "label": "Person", "left": {"uuid": "left", "name": "John Smith"},
                      "right": {"uuid": "right", "name": "John Smith"}}
-        graph = SimpleNamespace(get_entity_review_candidates=AsyncMock(return_value=[candidate]))
+        graph = SimpleNamespace(get_entity_review_candidates=AsyncMock(return_value=[candidate]),
+                                get_entities_by_type=AsyncMock(return_value=[]))
         reviewer = SimpleNamespace(review_entity_candidate=AsyncMock(return_value={"recommendation": "merge", "risk": "low", "confidence": .99}))
         with patch.object(steward_module, "graph_store", graph), patch.object(steward_module, "embeddings_store", self.decisions), patch.object(steward_module, "strands_orchestrator", reviewer):
             report = await steward_module.EntitySteward().run_once()
@@ -716,6 +718,31 @@ class GraphEntityMergeTests(unittest.IsolatedAsyncioTestCase):
         props = (await self.store.get_node(self.keep))["properties"]
         self.assertEqual(trusted_aliases(props, "Person", -1, ""), ["John Smyth"])
         self.assertEqual(set(props["aliases"]), {"First", "Second", "John Smyth"})
+
+    async def test_actual_automatic_merge_is_journaled_and_undone(self):
+        from app.entity_policy import AUTO_MERGE_REVIEW_METHOD
+        left, right = self.prefix + "auto-a", self.prefix + "auto-b"
+        async with self.driver.session() as session:
+            await session.run("""CREATE (:Organization {uuid:$left, name:$name, entity_type:'Organization', source_doc_ids:[11], identity_hints:[]}),
+                                        (:Organization {uuid:$right, name:toUpper($name), entity_type:'Organization', source_doc_ids:[22], identity_hints:[]})""",
+                              left=left, right=right, name=self.prefix + "Synthetic Merge Co")
+        before = await self.snapshot()
+        resolver = resolver_module.EntityResolver()
+        with patch.object(resolver_module, "graph_store", self.store), patch.object(resolver_module, "embeddings_store", self.journal), \
+                patch.object(resolver_module.settings, "entity_steward_auto_merge", "on"):
+            self.assertEqual(await resolver.auto_merge_check(right, left),
+                             {"blocker": "", "primary_uuid": left, "duplicate_uuid": right})
+            merged = await resolver.merge_entities(left, right, review_method=AUTO_MERGE_REVIEW_METHOD)
+            survivor = (await self.store.get_node(left))["properties"]
+            self.assertEqual(survivor["source_doc_ids"], [11, 22])
+            self.assertEqual(survivor.get("alias_records") or [], [])
+            journal = self.journal.journal[merged["merge_id"]]
+            self.assertEqual((journal["review_id"], journal["review_method"]), (None, AUTO_MERGE_REVIEW_METHOD))
+            result = await resolver.unmerge_entities(merged["merge_id"], review_method="entity_review_api")
+        self.assertEqual(result["status"], "reverted")
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual({row["decision"]: row["identity_status"] for row in self.journal.rows},
+                         {"auto_merged": "reverted", "split": "active"})
 
     async def test_storage_cannot_mint_human_alias_with_automated_origin(self):
         before_keep = await self.store.get_node(self.keep)

@@ -11,6 +11,9 @@ import unicodedata
 
 RESOLUTION_POLICY = "evidence-identity-v2"
 EXPLICIT_REVIEW_METHOD = "entity_review_api"
+AUTO_MERGE_REVIEW_METHOD = "entity_steward_auto"
+TERMINAL_DECISIONS = {"ignore", "split", "merged", "never_merge", "auto_merged"}
+LOW_RISK_LABELS = frozenset({"Organization", "Product", "System", "DocumentRef", "Location"})
 IDENTIFIER_PROPERTIES = frozenset({"identity_hints", "policy_number", "reference_number"})
 ENTITY_TYPES = frozenset({
     "Person", "Organization", "Location", "System", "Product", "Document",
@@ -36,6 +39,50 @@ def extract_identifiers(properties: dict) -> dict[str, list[str]]:
         if normalized:
             identifiers[key] = normalized
     return identifiers
+
+
+def auto_merge_blocker(left: dict, right: dict, label: str, same_key_count: int) -> str:
+    """Node-level gate for an automatic merge; "" means no node fact blocks it.
+
+    `left`/`right` are graph_store.get_node results. Decision rows, vetoes and
+    the agent check are the caller's job.
+    """
+    lp, rp = left.get("properties") or {}, right.get("properties") or {}
+    if label not in LOW_RISK_LABELS or left.get("labels") != [label] or right.get("labels") != [label]:
+        return "label"
+    names = [p.get("name") for p in (lp, rp)]
+    if not all(isinstance(n, str) and n.strip() for n in names) or name_key(names[0], label) != name_key(names[1], label):
+        return "name_key"
+    if same_key_count != 2:
+        return "group_size"
+    if any(p.get("resolution_status") in {"ambiguous", "isolated", "quarantined"} for p in (lp, rp)):
+        return "resolution_status"
+    if any(p.get("review_anchor") is True for p in (lp, rp)):
+        return "review_anchor"
+    if any(context_bound_name(p["name"], label, p.get("name_usage") or "") for p in (lp, rp)):
+        return "context_bound"
+    if set(lp.get("identity_hints") or []) != set(rp.get("identity_hints") or []):
+        return "identity_hints"
+    if set(lp.get("source_doc_ids") or []) & set(rp.get("source_doc_ids") or []):
+        return "shared_document"
+    if any((rel.get("neighbor_props") or {}).get("uuid") == rp.get("uuid") for rel in left.get("relationships") or []):
+        return "direct_edge"
+    # Stricter than a conflict: a one-sided identifier also blocks. Unlike
+    # extract_identifiers, keep short values, since "123" vs "456" still conflicts.
+    def identifiers(p):
+        return {key: {re.sub(r"[^a-zA-Z0-9@.-]+", "", str(v)).lower()
+                      for v in (p[key] if isinstance(p[key], list) else [p[key]]) if v not in (None, "")}
+                for key in IDENTIFIER_PROPERTIES - {"identity_hints"} if p.get(key) not in (None, "", [])}
+    if identifiers(lp) != identifiers(rp):
+        return "identifiers"
+    return ""
+
+
+def auto_merge_survivor(left: dict, right: dict) -> tuple[dict, dict]:
+    """(primary, duplicate) properties: more documents, then current policy, then smaller UUID."""
+    def rank(p):
+        return (-len(p.get("source_doc_ids") or []), p.get("resolution_policy") != RESOLUTION_POLICY, str(p.get("uuid")))
+    return tuple(sorted((left, right), key=rank))
 
 
 def display_name(name: str) -> str:

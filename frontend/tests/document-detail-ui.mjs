@@ -58,6 +58,8 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
     assert.equal(await page.getByRole("listbox").evaluate(element => element.contains(document.activeElement)), true);
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector("main").closest("[inert]"));
+    // Radix restores focus after unmount, after the background stops being inert.
+    await page.waitForFunction(element => element === document.activeElement, await resolution.elementHandle());
     assert.ok(await resolution.evaluate(element => element === document.activeElement));
     await resolution.click();
     await page.getByRole("option", { name: "Checked original extraction; no correction needed" }).click();

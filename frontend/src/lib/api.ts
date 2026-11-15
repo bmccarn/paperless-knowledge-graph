@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { StatusResponse } from "@/lib/types";
+import type { NodeSummary } from "@/lib/graph-layout";
 
 export const API_URL = "/api";
 
@@ -175,6 +176,10 @@ export async function getDocuments(q = "", docType = "", offset = 0, limit = 25,
 
 export async function getGraphNode(uuid: string) {
   return apiFetch(`/graph/node/${uuid}`);
+}
+
+export async function getGraphNodeSummary(uuid: string): Promise<NodeSummary> {
+  return apiFetch(`/graph/node/${encodeURIComponent(uuid)}?summary=1`);
 }
 
 export async function getGraphNeighbors(uuid: string, depth = 2) {

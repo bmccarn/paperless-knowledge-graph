@@ -19,6 +19,7 @@ const mainStates = [
   { name: "hubs", route: "/hubs", ready: page => page.getByText("303 matching indexed documents", { exact: true }) },
   { name: "logs", route: "/debug", ready: page => page.getByText("Connected", { exact: true }) },
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
+  { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("Rowan Vale: 105 links in 9 families.", { exact: false }) },
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
@@ -223,10 +224,11 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  if (state.name === "graph") await page.locator("canvas").first().waitFor({ state: "visible" });
+  const graph = state.name === "graph" || state.name === "graph-neighborhood";
+  if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.
-  if (state.name === "graph") await page.waitForFunction(() => window.__visualGraphPainted === true);
+  if (graph) await page.waitForFunction(() => window.__visualGraphPainted === true);
   await page.clock.runFor(2500);
   await page.clock.pauseAt(new Date(fixedTime.getTime() + 120000));
   if (state.name === "gallery") await page.evaluate(() => {

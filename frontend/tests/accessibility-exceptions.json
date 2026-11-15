@@ -9,6 +9,15 @@
     ]
   },
   {
+    "rule": "aria-prohibited-attr",
+    "route": "/graph?focus=nb-rowan",
+    "state": "main",
+    "issue": 133,
+    "targets": [
+      "[\".bg-\\\\[\\\\#0b131c\\\\]\"]"
+    ]
+  },
+  {
     "rule": "font-size",
     "route": "/graph",
     "state": "main",

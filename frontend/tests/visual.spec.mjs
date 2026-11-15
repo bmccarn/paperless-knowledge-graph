@@ -21,6 +21,21 @@ const mainStates = [
 ];
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const extraStates = [
+  ...["empty", "error"].map(state => ({
+    name: `logs-${state}`, route: "/debug", state,
+    seed: page => page.route("**/api/logs?**", route => route.fulfill(state === "error"
+      ? { status: 503, json: { detail: "Synthetic history failure" } }
+      : { json: { lines: [] } })),
+    ready: page => state === "error" ? page.getByRole("alert").filter({ hasText: "Logs unavailable" }) : page.getByText("No log lines yet.", { exact: true }),
+  })),
+  ...["empty", "error"].map(state => ({
+    name: `hubs-${state}`, route: "/hubs", state,
+    seed: page => page.route("**/api/graph/search?**", route => route.fulfill(state === "error"
+      ? { status: 503, json: { detail: "Synthetic hub search failure" } }
+      : { json: { results: [], total: 0 } })),
+    ready: page => state === "error" ? page.getByRole("alert").filter({ hasText: "Could not load documents" }) : page.getByText("No documents found for this hub search.", { exact: true }),
+  })),
+
   { ...mainStates[0], name: "ask-model", state: "model-select", prepare: async page => {
     await page.getByRole("combobox", { name: "Model", exact: true }).click();
     await page.getByRole("listbox").waitFor();

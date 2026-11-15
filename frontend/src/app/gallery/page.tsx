@@ -1,5 +1,7 @@
 "use client";
 
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+
 import { useState, type ReactNode } from "react";
 import { QueryModes, QueryModel, type QueryMode } from "@/components/query-controls";
 import { TabBar } from "@/components/sidebar-nav";
@@ -136,6 +138,15 @@ export default function GalleryPage() {
             <Button variant="ghost" onClick={() => setLoading(value => !value)} aria-pressed={loading}>Toggle loading</Button>
             <Button asChild variant="link"><a href="#fields-title">Go to fields</a></Button>
           </div>
+        </section>
+
+        <section aria-labelledby="tabs-title" className="space-y-4">
+          <h2 id="tabs-title" className="heading-16">Tabs</h2>
+          <Tabs defaultValue="insurance" activationMode="manual">
+            <TabsList aria-label="Example document domains"><TabsTrigger value="insurance">Insurance</TabsTrigger><TabsTrigger value="taxes">Taxes</TabsTrigger><TabsTrigger value="medical" disabled>Medical</TabsTrigger></TabsList>
+            <TabsContent value="insurance"><p className="copy-14">Insurance documents appear here.</p></TabsContent>
+            <TabsContent value="taxes"><p className="copy-14">Tax documents appear here.</p></TabsContent>
+          </Tabs>
         </section>
 
         <section aria-labelledby="fields-title" className="space-y-4">

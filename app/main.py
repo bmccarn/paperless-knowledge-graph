@@ -1209,6 +1209,14 @@ async def graph_node(node_uuid: str, summary: bool = False):
     return node
 
 
+@app.get("/graph/subgraph")
+async def graph_subgraph(ids: str):
+    entity_ids = [value.strip() for value in ids.split(",")]
+    if not 2 <= len(entity_ids) <= 150 or not all(entity_ids):
+        raise HTTPException(status_code=400, detail="Supply between 2 and 150 comma-separated entity ids")
+    return await graph_store.get_links_among(list(dict.fromkeys(entity_ids)))
+
+
 PATH_SEARCH_SECONDS = 5
 
 

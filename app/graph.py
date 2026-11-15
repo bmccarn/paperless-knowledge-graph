@@ -989,6 +989,38 @@ class GraphStore:
                                       "evidence_doc_count": person["evidence_doc_count"]}
                                      for person in matches[1:]] if focus_id == owner else []}
 
+    async def get_links_among(self, entity_ids: list[str]) -> dict:
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (a)-[r]->(b)
+                WHERE a.uuid IN $ids AND b.uuid IN $ids
+                  AND NOT a:Document AND NOT b:Document
+                  AND NOT type(r) IN $evidence_types
+                RETURN a.uuid AS source, b.uuid AS target, type(r) AS type, properties(r) AS props
+            """, ids=entity_ids, evidence_types=EVIDENCE_TYPES)
+            links = []
+            async for row in result:
+                family = classify_relationship(row["type"])[0]
+                records = support_records(row["props"])
+                links.append({
+                    "key": f"{row['source']}~{row['type']}~{row['target']}",
+                    "type": row["type"], "family": family, "source": row["source"], "target": row["target"],
+                    **link_support(row["props"]),
+                    "records": [{"doc_id": doc_id, "inferred": records[doc_id]["inferred"],
+                                 "confidence": records[doc_id].get("confidence")} for doc_id in sorted(records)],
+                })
+            total = len(links)
+            links = sorted(links, key=lambda link: (-len(link["records"]), link["key"]))[:600]
+            document_ids = sorted({record["doc_id"] for link in links for record in link["records"]})
+            result = await session.run("""
+                MATCH (d:Document) WHERE d.paperless_id IN $ids
+                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type
+                ORDER BY id
+            """, ids=document_ids)
+            documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
+                         async for row in result}
+        return {"links": links, "documents": documents, "total": total, "truncated": total > len(links)}
+
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
         depth = max(1, min(int(depth), 4))
         try:

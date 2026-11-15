@@ -39,7 +39,9 @@ const extraStates = [
     await page.getByRole("dialog").waitFor();
   } },
   { ...mainStates[2], name: "documents-expanded", state: "expanded", prepare: async page => {
-    await page.getByRole("row").filter({ has: page.getByRole("link", { name: "January premium statement", exact: true }) }).locator("td").nth(2).click({ position: { x: 2, y: 2 } });
+    const titleCell = page.getByRole("row").filter({ has: page.getByRole("link", { name: "January premium statement", exact: true }) }).locator("td").nth(2);
+    const { width } = await titleCell.boundingBox();
+    await titleCell.click({ position: { x: width - 2, y: 2 } });
     await page.getByText("paperless_id", { exact: true }).waitFor();
   } },
   { ...mainStates[0], name: "ask-verified", state: "verified", prepare: async page => {

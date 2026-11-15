@@ -42,9 +42,9 @@ export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
 }) {
   const result = claimResult(claim.status);
   const [showAll, setShowAll] = useState(false);
-  // References that hold a value the claim states come first; the sort is stable.
-  const holdsValue = (quote = "") => Number(quoteWindow(claim.claim ?? "", quote).values.length > 0);
-  const references = [...(claim.references ?? [])].sort((a, b) => holdsValue(b.quote) - holdsValue(a.quote));
+  // References that hold the claim's amount come first, then other values; the sort is stable.
+  const rank = (quote = "") => quoteWindow(claim.claim ?? "", quote).rank;
+  const references = [...(claim.references ?? [])].sort((a, b) => rank(a.quote) - rank(b.quote));
   const hidden = references.length - NOTE_REFERENCES;
   return (
     <span id={id} role="note" aria-label={`Claim ${n} source`} aria-current={active || undefined} tabIndex={0} onFocus={onSelect} onClick={onSelect}
@@ -63,7 +63,8 @@ export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
         );
       })}
       {hidden > 0 && (
-        <Button variant="link" size="xs" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}
+        // No focus on press: focus would select the note, expand its quotes and move the button before the click lands.
+        <Button variant="link" size="xs" aria-expanded={showAll} onMouseDown={event => event.preventDefault()} onClick={() => setShowAll(!showAll)}
           className="mt-1 h-auto px-0 text-fg-muted underline-offset-2 hover:text-fg">
           {showAll ? "Show fewer" : `and ${hidden} more`}
         </Button>

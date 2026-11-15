@@ -98,12 +98,14 @@ const valuePattern = (values: string[]) =>
 /**
  * The values a claim states that also appear in a quote, and where a short view of the quote should start:
  * a word boundary just before the first match of the highest-ranked value, or 0 when nothing matches.
+ * `rank` is that value's kind (0 for an amount), or the number of kinds when nothing matches.
  */
-export function quoteWindow(claim: string, quote: string): { start: number; values: string[] } {
+export function quoteWindow(claim: string, quote: string): { start: number; values: string[]; rank: number } {
   let rest = claim;
   const found: string[] = [];
   let anchor = -1;
-  for (const pattern of VALUE_PATTERNS) {
+  let rank = VALUE_PATTERNS.length;
+  for (const [kindIndex, pattern] of VALUE_PATTERNS.entries()) {
     const kind: string[] = [];
     // Blank each value out so a later pattern does not take its digits again.
     rest = rest.replace(pattern, (match, quoted?: string) => {
@@ -111,12 +113,15 @@ export function quoteWindow(claim: string, quote: string): { start: number; valu
       return " ".repeat(match.length);
     });
     const present = kind.filter(value => valuePattern([value]).test(quote));
-    if (anchor < 0 && present.length) anchor = Math.min(...present.map(value => quote.search(valuePattern([value]))));
+    if (anchor < 0 && present.length) {
+      anchor = Math.min(...present.map(value => quote.search(valuePattern([value]))));
+      rank = kindIndex;
+    }
     found.push(...present);
   }
-  if (anchor <= CONTEXT) return { start: 0, values: found };
+  if (anchor <= CONTEXT) return { start: 0, values: found, rank };
   const space = quote.indexOf(" ", anchor - CONTEXT);
-  return { start: space >= 0 && space < anchor ? space + 1 : anchor, values: found };
+  return { start: space >= 0 && space < anchor ? space + 1 : anchor, values: found, rank };
 }
 
 /** Split text into plain and matched pieces for emphasis. */

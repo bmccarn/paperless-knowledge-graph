@@ -58,6 +58,9 @@ test("the quote window starts shortly before the amount the claim states, not at
   assert.ok(start > 0 && PASSAGE[start - 1] === " ", "starts on a word boundary");
   assert.ok(shown.indexOf("$612.00") <= 40, "the amount is near the start of the window");
   assert.deepEqual(values, ["$612.00", "March 1, 2025", "March 1, 2026"]);
+  // An amount outranks a date, so a passage with only the dates ranks below this one.
+  assert.equal(quoteWindow(CLAIM, PASSAGE).rank, 0);
+  assert.equal(quoteWindow(CLAIM, "Effective March 1, 2025. Expires March 1, 2026.").rank, 2);
 });
 
 test("values match whole tokens only", () => {
@@ -71,7 +74,7 @@ test("a quoted name is a value; with no match the window starts at the beginning
   const passage = "x ".repeat(40) + "Product: Cordless drill kit, model CT-18V.";
   assert.deepEqual(quoteWindow('The warranty names "Cordless drill kit".', passage).values, ["Cordless drill kit"]);
   assert.ok(quoteWindow('The warranty names "Cordless drill kit".', passage).start > 0);
-  assert.deepEqual(quoteWindow("The policy covers the house.", PASSAGE), { start: 0, values: [] });
+  assert.deepEqual(quoteWindow("The policy covers the house.", PASSAGE), { start: 0, values: [], rank: 4 });
 });
 
 test("emphasize splits the text around each matched value, case-insensitively", () => {

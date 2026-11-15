@@ -12,33 +12,6 @@
     ]
   },
   {
-    "rule": "color-contrast",
-    "route": "/debug",
-    "state": "main",
-    "issue": 138,
-    "targets": [
-      "[\".text-amber-400.whitespace-pre-wrap > .text-zinc-500\"]",
-      "[\".text-red-400.whitespace-pre-wrap > .text-zinc-500\"]",
-      "[\".text-zinc-200.whitespace-pre-wrap > .text-zinc-500\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/debug",
-    "state": "main",
-    "issue": 138,
-    "targets": [
-      "[\"div.whitespace-pre-wrap.text-amber-400\"]",
-      "[\"div.whitespace-pre-wrap.text-red-400\"]",
-      "[\"div.whitespace-pre-wrap.text-zinc-200\"]",
-      "[\"span.inline-block.w-[52px].text-amber-400\"]",
-      "[\"span.inline-block.w-[52px].text-red-400\"]",
-      "[\"span.inline-block.w-[52px].text-zinc-200\"]",
-      "[\"span.text-zinc-400\"]",
-      "[\"span.text-zinc-500\"]"
-    ]
-  },
-  {
     "rule": "aria-prohibited-attr",
     "route": "/graph",
     "state": "main",
@@ -59,16 +32,6 @@
       "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]",
       "[\"span.rounded-md.border.border-slate-600/40.bg-[#101820ed].px-3.py-2\"]",
       "[\"span.text-[10px].text-muted-foreground\"]"
-    ]
-  },
-  {
-    "rule": "font-size",
-    "route": "/hubs",
-    "state": "main",
-    "issue": 138,
-    "targets": [
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.border-transparent.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.bg-secondary.text-secondary-foreground.[a&]:hover:bg-secondary/90.text-[10px]\"]",
-      "[\"span.inline-flex.items-center.justify-center.rounded-sm.border.px-2.py-0.5.font-medium.w-fit.whitespace-nowrap.shrink-0.[&>svg]:size-3.gap-1.[&>svg]:pointer-events-none.focus-visible:border-ring.aria-invalid:border-error.transition-colors.duration-(--dur-2).overflow-hidden.border-border-strong.text-foreground.[a&]:hover:bg-accent.[a&]:hover:text-accent-foreground.text-[10px]\"]"
     ]
   }
 ]

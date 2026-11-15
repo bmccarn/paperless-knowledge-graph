@@ -201,6 +201,7 @@ function CopyButton({ text }: { text: string }) {
 function QueryContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
+  const initialDraft = searchParams.get("draft") || "";
 
   const paperlessBaseUrl = usePaperlessUrl();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -423,6 +424,14 @@ function QueryContent() {
     // Let Strict Mode cancel its rehearsal before consuming the question.
     const timer = setTimeout(() => {
       const url = new URL(window.location.href);
+      const draft = url.searchParams.get("draft");
+      if (draft) {
+        url.searchParams.delete("draft");
+        window.history.replaceState(null, "", url);
+        setInput(draft);
+        textareaRef.current?.focus();
+        return;
+      }
       const question = url.searchParams.get("q");
       if (!question) return;
       url.searchParams.delete("q");
@@ -431,7 +440,7 @@ function QueryContent() {
       submitInitialQuery(question);
     }, 0);
     return () => clearTimeout(timer);
-  }, [initialQuery]);
+  }, [initialQuery, initialDraft]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

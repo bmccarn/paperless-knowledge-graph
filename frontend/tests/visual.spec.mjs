@@ -255,7 +255,7 @@ const extraStates = [
         await page.mouse.click(box.x + zoom.x, box.y + zoom.y);
       }
       await page.getByRole("complementary", { name: "Evidence inspector" }).getByRole("button", { name: /^2014 Honda Fit/ }).click();
-      await page.getByText("Stated in 1, inferred in 1", { exact: true }).waitFor();
+      await page.getByRole("region", { name: "Inspector: link" }).getByText("Stated in 1, inferred in 1", { exact: true }).waitFor();
     } },
   { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
     ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },

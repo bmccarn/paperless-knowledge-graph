@@ -87,7 +87,17 @@ def detail(doc_id):
     reports = [copy.deepcopy(row) for row in FEEDBACK if row['document_id'] == doc_id]
     content = SOURCE_TEXT if doc_id == 101 else f"Synthetic source text for {doc['title']}."
     return {'paperless': {'id': doc_id, **doc, 'content': content},
-            'graph': {'document': doc, 'entities': [], 'relationships': []},
+            'graph': {'document': {**doc, 'correspondent': 'Example Utility' if doc_id == 101 else 7},
+                      'entities': [{'labels': node['labels'], 'properties': node['props']}
+                                   for node in NODES[:2]] if doc_id == 101 else [],
+                      'relationships': [
+                          {'rel_type': 'ISSUED_BY', 'props': NODES[1]['props'], 'rel_props': {'source_doc': 101}},
+                          {'rel_type': 'MENTIONS', 'props': NODES[0]['props'], 'rel_props': {}},
+                          {'rel_type': 'COVERS', 'props': NODES[0]['props'], 'rel_props': {'source_doc': 101, 'inferred': True}},
+                          {'rel_type': 'RELATED_TO', 'props': NODES[1]['props'],
+                           'rel_props': {'support_records': [json.dumps({'source_doc': 101}),
+                                                            json.dumps({'source_doc': 102, 'inferred': True})]}},
+                      ] if doc_id == 101 else []},
             'chunks': [{'chunk_index': 0, 'title': doc['title'], 'doc_type': doc['doc_type'], 'content': content}],
             'processing': {'processed': True, 'processed_at': PROCESSED[doc_id], 'content_hash': 'synthetic-hash',
                            'chunk_count': 1, 'feedback_count': len(reports),

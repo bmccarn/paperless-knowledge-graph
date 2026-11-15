@@ -114,7 +114,7 @@ try {
   await page.getByRole('button', { name: /January premium statement/ }).last().click();
   await page.getByRole('dialog').getByRole('link', { name: 'Open', exact: true }).click();
   await page.waitForURL('**/documents/101');
-  await visible('Raw OCR');
+  await visible('Original OCR text');
   record('query_supported_citation', 'Accepted answer displays supported claim and complete quote; Document 101 citation opens original document inspection.');
 
   for (const scenario of ['interrupt', 'stream-error']) {

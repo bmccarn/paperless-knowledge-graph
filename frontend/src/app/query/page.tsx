@@ -5,7 +5,7 @@ import { QuestionCoverage, QuestionCoverageReceipt } from "@/components/question
 import { formatAnswerInline } from "@/lib/answer-format";
 import { answerView } from "@/lib/answer-state";
 import { StreamStatus, VerdictLine } from "@/components/answer-status";
-import { Alert } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 import { useState, useRef, useEffect, useEffectEvent, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -744,9 +744,11 @@ function QueryContent() {
               return (
               <article key={i} aria-label="Answer" className="space-y-4">
                 {view.state === "failed" ? (
-                  <Alert variant="error" className="space-y-3 [&_[data-testid=verdict]]:border-0 [&_[data-testid=verdict]]:p-0">
-                    {verdict}
-                    {question && <Button size="sm" onClick={() => handleSubmit(question)} disabled={loading}>Retry</Button>}
+                  <Alert variant="destructive" className="[&_[data-testid=verdict]]:border-0 [&_[data-testid=verdict]]:p-0">
+                    <AlertDescription className="gap-3">
+                      {verdict}
+                      {question && <Button size="sm" onClick={() => handleSubmit(question)} disabled={loading}>Retry</Button>}
+                    </AlertDescription>
                   </Alert>
                 ) : verdict}
                 {view.prose !== null && (

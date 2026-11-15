@@ -1,21 +1,21 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-
 import { cn } from "@/lib/utils"
 
 const alertVariants = cva(
-  "w-full rounded-lg border border-l-2 px-4 py-3 label-13 text-fg [&_a]:underline [&_a]:underline-offset-3",
+  "relative grid w-full grid-cols-[0_1fr] items-start gap-y-0.5 rounded-lg border px-4 py-3 text-sm has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-3 [&>svg]:size-4 [&>svg]:translate-y-0.5 [&>svg]:text-current",
   {
     variants: {
       variant: {
-        info: "border-border border-l-qualified-line bg-qualified-bg",
-        warning: "border-border border-l-partial-line bg-partial-bg",
-        error: "border-border border-l-error-line bg-error-bg",
-        success: "border-border border-l-verified-line bg-verified-bg",
+        default: "border-qualified-line bg-qualified-bg text-qualified",
+        warning: "border-partial-line bg-partial-bg text-partial",
+        success: "border-verified-line bg-verified-bg text-verified",
+        destructive:
+          "border-error-line bg-error-bg text-error",
       },
     },
     defaultVariants: {
-      variant: "info",
+      variant: "default",
     },
   }
 )
@@ -28,11 +28,40 @@ function Alert({
   return (
     <div
       data-slot="alert"
-      role={variant === "error" ? "alert" : "status"}
+      role="alert"
       className={cn(alertVariants({ variant }), className)}
       {...props}
     />
   )
 }
 
-export { Alert, alertVariants }
+function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="alert-title"
+      className={cn(
+        "col-start-2 line-clamp-1 min-h-4 font-medium",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function AlertDescription({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="alert-description"
+      className={cn(
+        "col-start-2 grid justify-items-start gap-1 copy-14 text-inherit [&_p]:leading-relaxed",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Alert, AlertTitle, AlertDescription }

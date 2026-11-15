@@ -131,7 +131,7 @@ for (const theme of ["dark", "light"]) test(`Ask keyboard focus clears the compo
   const input = page.getByPlaceholder("Ask a question...");
   await input.fill("What premium does the January statement list?");
   await input.press("Enter");
-  await page.getByText("Claim ledger (1)", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /^Claim table/ }).waitFor();
   // Exercise a long answer's controls, including controls at the end of its scroll region.
   await page.getByRole("link", { name: "Skip to content", exact: true }).focus();
   const visited = new Set();

@@ -107,8 +107,8 @@ try {
   await question.fill('What premium does the January statement list?');
   await question.press('Enter');
   await visible('The January statement lists a premium of $25.');
-  await visible('Claim ledger (1)');
-  await visible('supported');
+  await page.getByRole('button', { name: /^Claim table/ }).click();
+  await page.getByRole('table', { name: 'Claims' }).getByText('Supported', { exact: true }).waitFor();
   await visible('January statement: the premium is $25.');
   await capture('query-supported');
   await page.getByRole('button', { name: /January premium statement/ }).last().click();

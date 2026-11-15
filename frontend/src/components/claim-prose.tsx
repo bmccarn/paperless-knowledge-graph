@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { StatusLabel, STATUSES } from "@/components/status-label";
 import { formatAnswerInline } from "@/lib/answer-format";
 import { formatSourceDate, type AnswerState, type ClaimResult } from "@/lib/answer-state";
@@ -8,6 +8,9 @@ import { claimRanges, proseBlocks, type Block, type LedgerClaim } from "@/lib/cl
 
 const UNDERLINED = new Set<AnswerState>(["verified", "documented", "partial"]);
 const RESULTS = new Set(["supported", "unsupported", "conflicting"]);
+
+/** A ledger status as a claim result; "missing" and unknown statuses read as Unsupported. */
+export const claimResult = (status?: string) => (RESULTS.has(status ?? "") ? status : "unsupported") as ClaimResult;
 
 /**
  * One claim's proof: number, result, quote, and the document title with its date when known.
@@ -17,7 +20,7 @@ const RESULTS = new Set(["supported", "unsupported", "conflicting"]);
 export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
   id: string; n: number; claim: LedgerClaim; sourceDates?: Record<string, string>; active: boolean; onSelect: () => void;
 }) {
-  const result = (RESULTS.has(claim.status ?? "") ? claim.status : "unsupported") as ClaimResult;
+  const result = claimResult(claim.status);
   return (
     <span id={id} role="note" aria-label={`Claim ${n} source`} aria-current={active || undefined} tabIndex={0} onFocus={onSelect} onClick={onSelect}
       className="group/note mt-1.5 mb-3.5 block border-l-2 border-(--st-line) pl-3 font-sans label-12 leading-[18px] text-fg-muted not-italic font-normal aria-[current=true]:border-mark-line max-md:not-aria-[current=true]:hidden @min-[58rem]:float-right @min-[58rem]:clear-right @min-[58rem]:mt-0.5 @min-[58rem]:-mr-[356px] @min-[58rem]:w-[300px]">
@@ -41,11 +44,12 @@ export function MarginNote({ id, n, claim, sourceDates, active, onSelect }: {
 /**
  * Answer prose with each claim underlined in its state color and numbered in ledger order.
  * Not checked answers and saved answers without candidate text render as plain Markdown.
+ * The selected claim is shared with the claim table, so the caller holds it.
  */
-export function ClaimProse({ id, text, state, claims = [], sourceDates }: {
+export function ClaimProse({ id, text, state, claims = [], sourceDates, active, onSelect: setActive }: {
   id: string; text: string; state: AnswerState; claims?: LedgerClaim[]; sourceDates?: Record<string, string>;
+  active: number | null; onSelect: (n: number) => void;
 }) {
-  const [active, setActive] = useState<number | null>(null);
   const ranges = UNDERLINED.has(state) ? claimRanges(text, claims) : [];
   const noteId = (n: number) => `note-${id}-${n}`;
   const openNote = (n: number) => {

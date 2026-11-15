@@ -507,7 +507,11 @@ class Handler(BaseHTTPRequestHandler):
                 result['claim_ledger']['candidate_text'] = claim
                 result['verification']['supported_claims'] = [claim]
                 result['answer'] += '\n\nPartial answer: some claims could not be verified and were omitted. This does not answer every part of your question.'
-                result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1},
+                omitted = {'id': 'u2', 'claim': 'The January statement lists a late fee of $5.', 'status': 'unsupported',
+                           'rejection_reasons': [], 'value_mismatches': {}, 'omission_reason': 'source_rejection',
+                           'dependency_ids': []}
+                result['verification'].update(status='partial', partial={'original_total': 2, 'original_supported': 1, 'omitted_count': 1,
+                                                                         'omitted_units': [omitted]},
                                                missing_evidence=['Some claims were omitted because they could not be verified.'])
                 result['finalization'].update(disposition='partial', complete=False, answer_verified=True)
                 result['confidence'] = 0.65

@@ -51,7 +51,7 @@ function EntityLine({ entity, query = "", alias = null, bar }: { entity: RecentE
         <Marked text={entityName(entity)} query={query} />
         {alias && <span className="ml-2.5 label-12 text-fg-subtle">Also <Marked text={alias} query={query} /></span>}
       </span>
-      <span className="hidden w-[104px] truncate label-12 text-fg-subtle md:block">{nodeLabelText(entity.label)}</span>
+      <span className="w-[104px] truncate label-12 text-fg-subtle max-md:sr-only">{nodeLabelText(entity.label)}</span>
       {bar !== undefined && (
         <span aria-hidden className="hidden h-1 w-16 overflow-hidden rounded-[2px] bg-border md:block">
           <span className="block h-full rounded-r-[2px] bg-fg-subtle" style={{ width: `${bar}%` }} />
@@ -108,7 +108,8 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
 
   useEffect(() => {
     let current = true;
-    searchEntities("", 11, "documents")
+    // shortcut: 20 rows leave room for the owner and DocumentRef rows; page further if 10 entities are ever short.
+    searchEntities("", 20, "documents")
       .then(data => { if (current) setTop(mostConnected(rowsOf(data))); })
       .catch(error => { if (current) setTopError(errMsg(error, "Request failed.")); });
     return () => { current = false; };
@@ -130,8 +131,7 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
     return () => { current = false; clearTimeout(timer); };
   }, [search, retry, router]);
 
-  // Desktop opens with focus in the search box; a phone would open its keyboard over the lists.
-  useEffect(() => { if (window.matchMedia("(min-width: 768px)").matches) input.current?.focus(); }, []);
+  useEffect(() => input.current?.focus(), []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -158,7 +158,8 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
         <p className="mt-1.5 hidden max-w-[62ch] copy-14 text-fg-muted md:block">
           Find a person, organization, place or policy, then follow its links to the documents behind them.
         </p>
-        <div className="relative mb-6 mt-4 md:mb-0 md:mt-7">
+        <div className="relative mb-6 mt-4 md:mb-0 md:mt-7" onFocus={() => setClosed(false)}
+          onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setClosed(true); }}>
           <label className="flex h-12 items-center gap-3 rounded-[var(--r-panel)] border border-border-strong bg-surface pl-4 pr-3 text-fg-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring md:h-[52px]">
             <Search aria-hidden className="size-4 shrink-0" strokeWidth={1.75} />
             <span className="sr-only">Search entities</span>
@@ -167,7 +168,6 @@ export function GraphLanding({ initialQuery }: { initialQuery: string }) {
               role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={open ? "graph-results" : undefined}
               aria-activedescendant={open && options[active] ? `graph-option-${active}` : undefined}
               className="min-w-0 flex-1 bg-transparent text-base text-fg outline-none focus-visible:outline-none! placeholder:text-fg-subtle md:text-[17px] [&::-webkit-search-cancel-button]:hidden"
-              onFocus={() => setClosed(false)} onBlur={() => setClosed(true)}
               onChange={event => { autoOpen.current = false; setQuery(event.target.value); setActive(0); setClosed(false); }}
               onKeyDown={event => {
                 if (event.nativeEvent.isComposing) return;

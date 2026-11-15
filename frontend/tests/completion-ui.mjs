@@ -286,6 +286,9 @@ test("a graph URL with one exact name opens that entity, and an unmatched one of
   assert.match(page.url(), /\/graph\?q=Parties%20fixture$/);
   await search.fill("unmatched-entity");
   await page.getByText("No match for ‘unmatched-entity’.", { exact: true }).waitFor();
+  // The link stays reachable from the keyboard.
+  await search.press("Tab");
+  assert.equal(await page.locator(":focus").textContent(), "Search documents instead");
   assert.equal(await page.getByRole("link", { name: "Search documents instead", exact: true }).getAttribute("href"),
     "/documents?q=unmatched-entity");
 });

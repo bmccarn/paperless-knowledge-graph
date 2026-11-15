@@ -117,6 +117,7 @@ body:has(.board:target) .index { display: none }
 .nl-focus { font-weight: 500; font-size: 13px }
 .nl-dim { fill: var(--fg-subtle) }
 .ll { fill: var(--fg); font-weight: 500 }
+.chip { fill: var(--bg) }
 .pth-on { fill: none; stroke: var(--fg); stroke-width: 3.5 }
 .pth-off { fill: none; stroke: var(--border-strong); stroke-width: 1.5; opacity: 1 }
 .pill { position: absolute; transform: translate(-50%, -50%); height: 28px; padding: 0 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border-strong); font-size: 12px; line-height: 26px; color: var(--fg); white-space: nowrap; font-variant-numeric: tabular-nums }

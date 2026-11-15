@@ -268,32 +268,30 @@ def polar(cx, cy, R, deg):
     return cx + R * math.sin(a), cy - R * math.cos(a)
 
 
-def radial(neigh, cx, cy, R, pills=None):
-    """Fixed sectors: parties at 12 o'clock, then clockwise. Returns slots."""
+def radial(neigh, cx, cy, R, pills=None, keep_slot=False):
+    """Fixed sectors: parties at 12 o'clock, then clockwise. Returns slots.
+
+    With keep_slot, the family label (or a hub's pill) takes one of n + 1 even slots in its sector,
+    the one nearest the middle, and the n nodes take the others."""
     fams = [f for f in FAM_ORDER if any(n[2] == f for n in neigh) or (pills and f in pills)]
     sw = 360.0 / len(fams)
     slots, sectors = [], []
     for i, f in enumerate(fams):
         members = [n for n in neigh if n[2] == f]
         start = i * sw - sw / 2
-        sectors.append((f, start, start + sw, len(members), pills.get(f, 0) if pills else 0))
-        capped = bool(pills and pills.get(f))
+        n = len(members)
+        q = n // 2  # the label's slot; with two middle slots, the one nearer the horizontal axis has more room
+        if n % 2 and abs(math.sin(math.radians(start + (q + 1.5) / (n + 1) * sw))) > abs(math.sin(math.radians(start + (q + 0.5) / (n + 1) * sw))) + 1e-9:
+            q += 1
+        sectors.append((f, start, start + sw, n, pills.get(f, 0) if pills else 0, start + (q + 0.5) / (n + 1) * sw))
         for j, it in enumerate(members):
-            frac = (0.22, 0.78)[j] if capped and len(members) == 2 else (j + 0.5) / len(members)
+            frac = (j + (j >= q) + 0.5) / (n + 1) if keep_slot else (j + 0.5) / n
+            if keep_slot and n == 2 and pills and pills.get(f):  # a hub family: two nodes either side of its pill
+                frac = (0.2, 0.8)[j]
             a = start + frac * sw
             x, y = polar(cx, cy, R, a)
             slots.append((it, a, x, y))
-        if capped:  # the group sits just outside the ring, centred on its sector
-            x, y = polar(cx, cy, R + 60, i * sw)
-            slots.append((("__pill__", f), i * sw, x, y))
     return slots, sectors
-
-
-def arc_path(cx, cy, R, a0, a1):
-    x0, y0 = polar(cx, cy, R, a0)
-    x1, y1 = polar(cx, cy, R, a1)
-    large = 1 if (a1 - a0) > 180 else 0
-    return f"M{x0:.2f},{y0:.2f}A{R:.2f},{R:.2f} 0 {large},1 {x1:.2f},{y1:.2f}"
 
 
 def trim(x0, y0, x1, y1, r0, r1):
@@ -307,41 +305,98 @@ def cut(s, n=28):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+# Geist advance widths in px at 12 px, weight 500, for ASCII 32 to 126, measured in Chromium.
+# They are at least the weight 400 widths, so text_w is an upper bound for both weights.
+CHAR_W = [3, 3, 4, 6, 8, 10, 8, 2, 3, 3, 5, 7, 3, 5, 3, 6, 8, 5, 8, 8, 8, 8, 7, 6, 7, 7, 4, 4, 7, 7, 7, 7, 11, 8, 8, 9, 8,
+          7, 7, 9, 9, 3, 7, 8, 7, 11, 9, 9, 8, 9, 8, 8, 7, 8, 8, 12, 8, 7, 7, 4, 6, 4, 5, 7, 3, 7, 7, 7, 7, 7, 5, 7, 7, 3,
+          3, 7, 3, 11, 7, 7, 7, 7, 5, 6, 5, 7, 7, 10, 7, 7, 7, 5, 3, 5, 6]
+
+
 def text_w(text, size=12, weight=400):
-    return len(text) * (6.25 if size == 12 else 7.1) * (1.04 if weight >= 500 else 1)
+    return sum(CHAR_W[ord(c) - 32] if 32 <= ord(c) < 127 else 12 for c in text) * size / 12 + 2
+
+
+def hits(a, b):
+    return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
+
+
+def gap(b, x, y):
+    """Distance from a point to a box."""
+    return math.hypot(max(b[0] - x, 0, x - b[2]), max(b[1] - y, 0, y - b[3]))
 
 
 class Placer:
-    """Greedy label placement: first free candidate wins, else the label is skipped."""
+    """Greedy label placement: first free candidate wins, else the label is skipped.
+
+    It knows nodes, labels, overlay blocks and every drawn line, and check() asserts that no
+    label touches a line, a node or another label. A label on a chip may sit over lines."""
 
     def __init__(self, W, H, blocks=()):
         self.W, self.H = W, H
-        self.boxes = list(blocks)
+        self.boxes = [(b, "block", "") for b in blocks]
+        self.segs = []
+        self.owners = []
 
-    def add(self, b):
-        self.boxes.append(b)
+    def add(self, b, kind="node", name=""):
+        self.boxes.append((b, kind, name))
 
-    def free(self, b):
-        x0, y0, x1, y1 = b
-        if x0 < 6 or y0 < 6 or x1 > self.W - 6 or y1 > self.H - 6:
+    def line(self, pts, width=1.0):
+        """A drawn line as a polyline, with half its stroke width plus 1 px of clearance."""
+        self.segs.append((pts, width / 2 + 1))
+
+    def crosses(self, b):
+        for pts, m in self.segs:
+            for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+                n = max(1, int(math.hypot(x1 - x0, y1 - y0) / 2))
+                if any(b[0] - m < x0 + (x1 - x0) * i / n < b[2] + m and b[1] - m < y0 + (y1 - y0) * i / n < b[3] + m
+                       for i in range(n + 1)):
+                    return True
+        return False
+
+    def free(self, b, lines=True):
+        if b[0] < 6 or b[1] < 6 or b[2] > self.W - 6 or b[3] > self.H - 6:
             return False
-        return all(x1 <= o[0] or x0 >= o[2] or y1 <= o[1] or y0 >= o[3] for o in self.boxes)
+        return not any(hits(b, o) for o, _, _ in self.boxes) and not (lines and self.crosses(b))
 
-    def place(self, cands, w, force=False):
-        for lx, ly, anchor in cands:
+    def owner_ok(self, b, at):
+        """A node label must be nearer its own node than any other node, so it reads as that node's."""
+        if not at:
+            return True
+        d = gap(b, *at)
+        return all(gap(b, (o[0] + o[2]) / 2, (o[1] + o[3]) / 2) > d + 8 for o, k, _ in self.boxes
+                   if k == "node" and abs((o[0] + o[2]) / 2 - at[0]) + abs((o[1] + o[3]) / 2 - at[1]) > 1)
+
+    def place(self, cands, w, force=False, chip=False, name="", at=None):
+        """Candidates are (x, baseline y, anchor) for 12 px text; at is the labelled node's centre.
+        Returns the candidate used, or None."""
+        def box(lx, ly, anchor):
             x0 = lx - (w if anchor == "end" else w / 2 if anchor == "middle" else 0)
-            b = (x0 - 2, ly - 11, x0 + w + 2, ly + 3)
-            if self.free(b):
-                self.add(b)
-                return lx, ly, anchor
-        if force:  # the first candidate inside the canvas, even if it overlaps
-            for lx, ly, anchor in cands:
-                x0 = lx - (w if anchor == "end" else w / 2 if anchor == "middle" else 0)
-                if 6 <= x0 and x0 + w <= self.W - 6:
-                    self.add((x0 - 2, ly - 11, x0 + w + 2, ly + 3))
-                    return lx, ly, anchor
+            return (x0 - 3, ly - 13, x0 + w + 3, ly + 5) if chip else (x0 - 1, ly - 12, x0 + w + 1, ly + 4)
+        kind = "chip" if chip else "label"
+        for c in cands:
+            if self.free(box(*c), lines=not chip) and self.owner_ok(box(*c), at):
+                self.add(box(*c), kind, name)
+                self.owners.append((box(*c), at, name))
+                return c
+        if force:  # the first candidate; check() reports it if it overlaps
+            self.add(box(*cands[0]), kind, name)
+            self.owners.append((box(*cands[0]), at, name))
             return cands[0]
         return None
+
+    def check(self, where):
+        bad = []
+        for i, (b, kind, name) in enumerate(self.boxes):
+            if kind not in ("label", "chip"):
+                continue
+            bad += [f"{name} on {n2 or k2}" for j, (o, k2, n2) in enumerate(self.boxes) if j > i or k2 in ("node", "block")
+                    if j != i and hits(b, o)]
+            if kind == "label" and self.crosses(b):
+                bad.append(f"{name} on a line")
+            if b[0] < 0 or b[1] < 0 or b[2] > self.W or b[3] > self.H:
+                bad.append(f"{name} outside the canvas")
+        bad += [f"{name} reads as another node's label" for b, at, name in self.owners if not self.owner_ok(b, at)]
+        assert not bad, f"{where}: " + "; ".join(bad)
 
 
 def label_cands(x, y, r, a):
@@ -351,10 +406,13 @@ def label_cands(x, y, r, a):
     side = (x + (r + 7) * (1 if s > 0 else -1), y + 4, "start" if s > 0 else "end")
     below = (x, y + r + 16, "middle")
     above = (x, y - r - 7, "middle")
-    nudge = [(side[0], side[1] + d, side[2]) for d in ((-9, 9) if c < 0 else (9, -9))]
-    if abs(s) < 0.17:
-        return [below, side, *nudge, above] if c > 0 else [above, side, *nudge, below]
-    return [side, *nudge, below, above] if c > 0 else [side, *nudge, above, below]
+    nudge = [(side[0], side[1] + d, side[2]) for d in ((-9, 9, -18, 18) if c < 0 else (9, -9, 18, -18))]
+    out = 1 if s > 0 else -1  # shifted below and above, toward the outer side
+    shifted = [(x + out * dx, yy, "middle") for dx in (16, 32) for yy in (below[1], above[1])]
+    shifted += [(side[0], side[1] + d, side[2]) for d in (-r - 14, r + 14)]  # corner, clear of a pill on the same row
+    if abs(s) < 0.3:
+        return [below, side, *nudge, above, *shifted] if c > 0 else [above, side, *nudge, below, *shifted]
+    return [side, *nudge, below, above, *shifted] if c > 0 else [side, *nudge, above, below, *shifted]
 
 
 def link_svg(x0, y0, x1, y1, w, support, state=""):
@@ -378,66 +436,28 @@ def extent(label, r):
 
 
 def neighborhood_svg(W, H, cx, cy, R, focus, neigh, pills=None, sel_node=None, sel_link=None,
-                     focus_r=None, show_sectors=True, hidden=(), blocks=()):
-    """Return (svg, html_overlay) for a capped one-hop neighborhood."""
-    slots, sectors = radial(neigh, cx, cy, R, pills)
+                     focus_r=None, show_sectors=True, hidden=(), blocks=(), where="canvas", pill_gap=34):
+    """Return (svg, html_overlay) for a capped one-hop neighborhood.
+
+    Each family's label, or on a hub its "+N Family name" pill, takes its own slot in the sector and
+    sits at one radius outside the ring, where no link runs. Labels near the centre sit on chips."""
+    slots, sectors = radial(neigh, cx, cy, R, pills, keep_slot=show_sectors)
     fr = focus_r or radius(focus["docs"])
+    fe = extent(focus["label"], fr) + (4 if focus.get("hub") else 0)
     any_sel = isinstance(sel_node, str)
     pl = Placer(W, H, blocks)
     links, nodes, labels, overlay, sec = [], [], [], [], []
-    if show_sectors:
-        for f, a0, a1, n, extra in sectors:
-            n -= sum(1 for m in neigh if m[2] == f and m[0] in hidden)  # filtered links leave the count
-            if n + extra == 0:
-                continue
-            gap = 2.5
-            sec.append(f'<path d="{arc_path(cx, cy, R - 34, a0 + gap, a1 - gap)}" class="sector"/>')
-            mid = (a0 + a1) / 2
-            sn = math.sin(math.radians(mid))
-            sx, sy = polar(cx, cy, R - (46 if abs(sn) > 0.3 else 64), mid)
-            anchor = "end" if sn > 0.3 else ("start" if sn < -0.3 else "middle")
-            name = FAM_NAME[f]
-            count = f'<tspan class="sl-n">{n + extra}</tspan>'
-            if anchor != "middle" and len(name) > 14:  # two short lines keep side labels out of the centre
-                k = name.rfind(" ", 0, len(name) // 2 + 4)
-                body = (f'<tspan x="{sx:.1f}" dy="-4">{esc(name[:k])}</tspan>'
-                        f'<tspan x="{sx:.1f}" dy="16">{esc(name[k + 1:])} {count}</tspan>')
-            else:
-                body = f"{esc(name)} {count}"
-            sec.append(f'<text x="{sx:.1f}" y="{sy + 4:.1f}" text-anchor="{anchor}" class="sl">{body}</text>')
-            lines = [name] if body.startswith(esc(name)) else [name[:k], name[k + 1:] + " 00"]
-            sw_ = max(text_w(t) for t in lines) + 16
-            sx0 = sx - (sw_ if anchor == "end" else sw_ / 2 if anchor == "middle" else 0)
-            pl.add((sx0, sy - 12 - (4 if len(lines) > 1 else 0), sx0 + sw_, sy + 6 + (12 if len(lines) > 1 else 0)))
-    # obstacles first: every node and pill, the focus label
     placed = []
     for it, a, x, y in slots:
-        if it[0] == "__pill__":
-            f = it[1]
-            n = pills[f]
-            text = f"+{n} more"
-            w = text_w(text) + 26
-            pl.add((x - w / 2 - 3, y - 16, x + w / 2 + 3, y + 16))
-            x0, y0, x1, y1 = trim(cx, cy, x, y, fr + 4, 15)
-            links.append(f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" class="lk-agg"/>')
-            cls = "pill" + (" is-sel" if sel_node == ("pill", f) else "")
-            overlay.append(f'<button class="{cls}" style="left:{x:.1f}px;top:{y:.1f}px"'
-                           f' aria-label="{n} more in {esc(FAM_NAME[f])}">{esc(text)}</button>')
-            continue
         name, label, fam, typ, w, d, sup = it[:7]
         if name in hidden:
             continue
         r = radius(d)
         e = extent(label, r) + (4 if name == OWNER else 0)
-        pl.add((x - e - 2, y - e - 2, x + e + 2, y + e + 2))
+        pl.add((x - e - 2, y - e - 2, x + e + 2, y + e + 2), "node", name)
         placed.append((it, a, x, y, r, e))
-    fe = extent(focus["label"], fr) + (4 if focus.get("hub") else 0)
-    pl.add((cx - fe - 2, cy - fe - 2, cx + fe + 2, cy + fe + 2))
-    fy = cy + fe + 18
-    fname = cut(focus["name"])
-    pl.place([(cx, fy, "middle")], text_w(fname, 13, 500), force=True)
-    labels.append(f'<text x="{cx:.1f}" y="{fy:.1f}" text-anchor="middle" class="nl nl-focus">{esc(fname)}</text>')
-    # links, with the selected link's label reserved first
+    pl.add((cx - fe - 2, cy - fe - 2, cx + fe + 2, cy + fe + 2), "node", focus["name"])
+    # links first, so every label below knows where the lines run
     for it, a, x, y, r, e in placed:
         name, label, fam, typ, w, d, sup = it[:7]
         is_sel = sel_node == name
@@ -448,23 +468,99 @@ def neighborhood_svg(W, H, cx, cy, R, focus, neigh, pills=None, sel_node=None, s
             lstate = "arrow"
         x0, y0, x1, y1 = trim(cx, cy, x, y, fe + 3, e + 3)
         links.append(link_svg(x0, y0, x1, y1, link_width(w), sup, lstate))
-        if "arrow" in lstate:
-            text = f"{typ} · {w} docs"
-            spots = [(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + dy, "middle") for t in (0.55, 0.4, 0.7) for dy in (-9, 18)]
-            spot = pl.place(spots, text_w(text, 12, 500), force=True)
-            labels.append(f'<text x="{spot[0]:.1f}" y="{spot[1]:.1f}" text-anchor="middle" class="nl ll">{esc(text)}</text>')
+        pl.line([(x0, y0), (x1, y1)], link_width(w) + (12 if "sel" in lstate else 0))
         state = "sel" if is_sel else ("faded" if any_sel else "")
         nodes.append(kind_svg(label, x, y, r, state, hub=(name == OWNER)))
+    fam_jobs = []  # family labels wait until the node labels are placed
+    if show_sectors:
+        for f, a0, a1, n, extra, mid in sectors:
+            n -= sum(1 for m in neigh if m[2] == f and m[0] in hidden)  # filtered links leave the count
+            if n + extra == 0:
+                continue
+            gap = 2.5
+            arc = [polar(cx, cy, R - 34, a0 + gap + (a1 - a0 - 2 * gap) * t / 24) for t in range(25)]
+            sec.append(f'<path d="M{"L".join(f"{x:.1f},{y:.1f}" for x, y in arc)}" class="sector"/>')
+            pl.line(arc)
+            sn, down = math.sin(math.radians(mid)), -math.cos(math.radians(mid))
+            px, py = polar(cx, cy, R + pill_gap, mid)  # one radius for every family label and pill
+            name = FAM_NAME[f]
+            side = abs(sn) > 0.3
+            wrap = name.rfind(" ", 0, len(name) // 2 + 4) if side and len(name) > 14 else -1
+            rows = [name[:wrap], name[wrap + 1:]] if wrap > 0 else [name]
+            lw = max(text_w(t) for t in rows[:-1] + [f"{rows[-1]} {n + extra}"])
+            lh = 16 * len(rows)
+            anchor = ("start" if sn > 0 else "end") if side else "middle"
+            if extra:  # a hub family is one pill, "+N Family name", touching the ray
+                text = f"+{extra} {name}"
+                pw = text_w(text) + 26
+                ring = 7 if sel_node == ("pill", f) else 0  # the selection ring around the pill
+                if side:
+                    pb = (px if sn > 0 else px - pw, py - 14, px + pw if sn > 0 else px, py + 14)
+                else:
+                    pb = (px - pw / 2, py - 28 if down < 0 else py, px + pw / 2, py if down < 0 else py + 28)
+                x0, y0, x1, y1 = trim(cx, cy, px, py, fe + 4, 4 + ring)  # stops short of the pill
+                links.append(f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" class="lk-agg"/>')
+                pl.line([(x0, y0), (x1, y1)])
+                pl.add((pb[0] - ring, pb[1] - ring, pb[2] + ring, pb[3] + ring), "label", f"pill {f}")
+                cls = "pill" + (" is-sel" if sel_node == ("pill", f) else "")
+                overlay.append(f'<button class="{cls}" style="left:{(pb[0] + pb[2]) / 2:.1f}px;top:{(pb[1] + pb[3]) / 2:.1f}px"'
+                               f' aria-label="{extra} more in {esc(name)}">{esc(text)}</button>')
+                continue
+            top = py - lh / 2 if side else (py - lh if down < 0 else py)
+            cands = [(px, top + d, anchor) for d in (0, -9, 9, -18, 18)]
+            fam_jobs.append((cands, lw, lh, rows, n + extra, name))
+    # the focus label, then the selected link's label, both on chips over the converging links
+    fy = cy + fe + 18
+    fname = cut(focus["name"])
+    fw = text_w(fname, 13, 500)
+    pl.place([(cx, fy, "middle")], fw, force=True, chip=True, name=fname)
+    labels.append(f'<rect x="{cx - fw / 2 - 3:.1f}" y="{fy - 13:.1f}" width="{fw + 6:.1f}" height="18" rx="4" class="chip"/>'
+                  f'<text x="{cx:.1f}" y="{fy:.1f}" text-anchor="middle" class="nl nl-focus">{esc(fname)}</text>')
+    for it, a, x, y, r, e in placed:
+        name, label, fam, typ, w, d, sup = it[:7]
+        if sel_link == (name, typ) or sel_node == name:
+            text = f"{typ} · {w} docs"
+            tw = text_w(text, 12, 500)
+            x0, y0, x1, y1 = trim(cx, cy, x, y, fe + 3, e + 3)
+            spots = [(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + dy, "middle") for t in (0.55, 0.4, 0.7) for dy in (-9, 18)]
+            spot = pl.place(spots, tw, force=True, chip=True, name=text)
+            labels.append(f'<rect x="{spot[0] - tw / 2 - 3:.1f}" y="{spot[1] - 13:.1f}" width="{tw + 6:.1f}" height="18" rx="4" class="chip"/>'
+                          f'<text x="{spot[0]:.1f}" y="{spot[1]:.1f}" text-anchor="middle" class="nl ll">{esc(text)}</text>')
     # node labels: selection first, then evidence order
     order = sorted(placed, key=lambda p: (p[0][0] != sel_node, (sel_link or ("",))[0] != p[0][0], -p[0][4], p[0][0]))
     for it, a, x, y, r, e in order:
         name = it[0]
         text = cut(name)
         force = name == sel_node or (sel_link and sel_link[0] == name)
-        spot = pl.place(label_cands(x, y, e, a), text_w(text), force=bool(force))
+        tw = text_w(text)
+        cands = label_cands(x, y, e, a)
+        spot, chip = pl.place(cands, tw, name=text, at=(x, y)), False
+        if not spot:  # last, just inside the ring on a chip, below a top node or above a bottom one
+            ins = [(x + dx, y + (e + 18 if y < cy else -e - 9), "middle") for dx in (0, -12, 12, -24, 24)]
+            spot = pl.place(ins, tw, chip=True, name=text, at=(x, y))
+            chip = bool(spot)
+        if not spot and force:  # a required label may shift sideways, then sit on a chip over lines
+            cands += [(x + dx, y + dy, "middle") for dx in range(-64, 65, 8) for dy in (-e - 7, e + 16, -e - 14, e + 23)]
+            spot = pl.place(cands, tw, name=text, at=(x, y))
+            if not spot:
+                spot, chip = pl.place(cands, tw, force=True, chip=True, name=text, at=(x, y)), True
         if spot:
             lcls = "nl" + (" nl-dim" if any_sel and name != sel_node else "")
+            if chip:
+                cx0 = spot[0] - (tw if spot[2] == "end" else tw / 2 if spot[2] == "middle" else 0)
+                labels.append(f'<rect x="{cx0 - 3:.1f}" y="{spot[1] - 13:.1f}" width="{tw + 6:.1f}" height="18" rx="4" class="chip"/>')
             labels.append(f'<text x="{spot[0]:.1f}" y="{spot[1]:.1f}" text-anchor="{spot[2]}" class="{lcls}">{esc(text)}</text>')
+    for cands, lw, lh, rows, total, name in fam_jobs:
+        def fbox(c):
+            x0 = c[0] - (lw if c[2] == "end" else lw / 2 if c[2] == "middle" else 0)
+            return (x0 - 1, c[1], x0 + lw + 1, c[1] + lh)
+        ax, top, anchor = next((c for c in cands if pl.free(fbox(c))), cands[0])  # check() reports a forced overlap
+        pl.add(fbox((ax, top, anchor)), "label", name)
+        body = "".join(f'<tspan x="{ax:.1f}" y="{top + 12 + 16 * q:.1f}">{esc(t)}'
+                       f'{" " + f"<tspan class=sl-n>{total}</tspan>" if q == len(rows) - 1 else ""}</tspan>'
+                       for q, t in enumerate(rows))
+        sec.append(f'<text text-anchor="{anchor}" class="sl">{body}</text>')
+    pl.check(where)
     nodes.append(kind_svg(focus["label"], cx, cy, fr, hub=focus.get("hub", False)))
     svg = (f'<svg class="canvas" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" '
            f'aria-label="{esc(focus.get("aria", ""))}">{"".join(sec)}{"".join(links)}{"".join(nodes)}{"".join(labels)}</svg>')
@@ -648,7 +744,7 @@ def insp_pill():
 
 CV_W, CV_H = 876, 836  # canvas area of a desktop graph screen
 SHELF_H = 64
-LEG_H = 196  # open legend height
+LEG_H = 222  # open legend height, measured in Chromium
 
 
 def blocks_for(W, H, legend_open=True, caption_w=560):
@@ -688,7 +784,7 @@ def screen_hub():
                  aria="Neighborhood of Alex Rivera: 390 links in 10 families, 31 inferred")
     pills = {f: HUB_TOTALS[f] - 2 for f in HUB_TOTALS}
     H = CV_H - SHELF_H
-    svg, ov = neighborhood_svg(CV_W, H, 438, 392, 250, focus, HUB_N, pills=pills, sel_node=("pill", "parties"),
+    svg, ov = neighborhood_svg(CV_W, H, 420, 392, 215, focus, HUB_N, pills=pills, pill_gap=48, sel_node=("pill", "parties"),
                                blocks=blocks_for(CV_W, H, legend_open=False, caption_w=640))
     lg = legend(kinds_in(HUB_N, "Person"), agg=True, open_=False)
     docs = [("W-2, Brightline Logistics 2025", "work", "28 Jan 2026"), ("Power bill, October 2026", "financial_invoice", "6 Nov 2026"),
@@ -778,6 +874,7 @@ def path_svg(W, H, sel=0):
     b = (xs[-1], cy)
     out_l, out_n, out_t = [], [], []
     mids = []
+    pl = Placer(W, H)
     for pi, (nodes, links) in enumerate(PATHS):
         pts = [a]
         inner = nodes[1:-1]
@@ -797,6 +894,9 @@ def path_svg(W, H, sel=0):
             dash = ' stroke-dasharray="6 4"' if s == "inferred" else ""
             cls = "pth-on" if on else "pth-off"
             out_l.append(f'<path d="{d}" class="{cls}"{dash}/>')
+            pl.line([((1 - t) ** 3 * ax + 3 * (1 - t) * t * mx + t ** 3 * bx,
+                      (1 - t) ** 3 * ay + 3 * (1 - t) ** 2 * t * ay + 3 * (1 - t) * t ** 2 * by + t ** 3 * by)
+                     for t in (i / 24 for i in range(25))], 3.5 if on else 1.5)
             if on:  # 6 px arrowhead at 90 % along the curve
                 t_ = 0.9
                 px = (1 - t_) ** 3 * ax + 3 * (1 - t_) ** 2 * t_ * mx + 3 * (1 - t_) * t_ ** 2 * mx + t_ ** 3 * bx
@@ -807,15 +907,29 @@ def path_svg(W, H, sel=0):
             if on:  # beside the curve's midpoint, on its outer side
                 ty = (ay + by) / 2
                 anchor, tx = ("middle", mx) if abs(by - ay) < 1 else (("end", mx - 14) if by < ay else ("start", mx + 14))
-                out_t.append(f'<text x="{tx:.1f}" y="{ty - (10 if anchor == "middle" else 4):.1f}" text-anchor="{anchor}" class="nl ll">{t} · {w} docs</text>')
+                lw_ = text_w(f"{t} · {w} docs", 12, 500)
+                lx0 = tx - (lw_ if anchor == "end" else lw_ / 2 if anchor == "middle" else 0)
+                ly = ty - (10 if anchor == "middle" else 4)
+                pl.add((lx0 - 1, ly - 12, lx0 + lw_ + 1, ly + 4), "label", t)
+                out_t.append(f'<text x="{tx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" class="nl ll">{t} · {w} docs</text>')
         for k, (n, lab) in enumerate(nodes[1:-1], start=1):
             x, y = pts[k]
             out_n.append(kind_svg(lab, x, y, radius(6), "" if on else "faded"))
+            e = extent(lab, radius(6))
+            pl.add((x - e - 2, y - e - 2, x + e + 2, y + e + 2), "node", n)
+            nw = text_w(n)
+            pl.add((x - nw / 2 - 1, y + radius(6) + 6, x + nw / 2 + 1, y + radius(6) + 22), "label", n)
             out_t.append(f'<text x="{x:.1f}" y="{y + radius(6) + 18:.1f}" text-anchor="middle" class="nl{"" if on else " nl-dim"}">{esc(n)}</text>')
     out_n.append(kind_svg("Person", a[0], a[1], 18))
     out_n.append(kind_svg("Organization", b[0], b[1], 18))
-    out_t.append(f'<text x="{a[0]:.1f}" y="{a[1] + 40:.1f}" text-anchor="middle" class="nl nl-focus">Dana Whitlock</text>')
-    out_t.append(f'<text x="{b[0]:.1f}" y="{b[1] + 40:.1f}" text-anchor="middle" class="nl nl-focus">Northgate Credit Union</text>')
+    for (ex, ey), lab, n in ((a, "Person", "Dana Whitlock"), (b, "Organization", "Northgate Credit Union")):
+        e = extent(lab, 18)
+        pl.add((ex - e - 2, ey - e - 2, ex + e + 2, ey + e + 2), "node", n)
+        nw = text_w(n, 13, 500)
+        pl.add((ex - nw / 2 - 3, ey + 27, ex + nw / 2 + 3, ey + 45), "chip", n)  # the paths converge here
+        out_t.append(f'<rect x="{ex - nw / 2 - 3:.1f}" y="{ey + 27:.1f}" width="{nw + 6:.1f}" height="18" rx="4" class="chip"/>'
+                     f'<text x="{ex:.1f}" y="{ey + 40:.1f}" text-anchor="middle" class="nl nl-focus">{n}</text>')
+    pl.check("path")
     return (f'<svg class="canvas" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" '
             f'aria-label="4 paths from Dana Whitlock to Northgate Credit Union; path 1 selected">'
             f'{"".join(out_l)}{"".join(out_n)}{"".join(out_t)}</svg>')
@@ -1046,7 +1160,7 @@ def screen_encoding():
 <section><h2>Links</h2><ul class="enc-l">{"".join(lk)}</ul></section>
 <section><h2>Size: evidence documents</h2><div class="szs">{sizes}</div><p class="enc-p">Radius 6 to 18 px, growing with the log of the document count. Icons appear from 10 px.</p></section>
 <section><h2>States</h2><div class="szs">{states}</div></section>
-<section><h2>Group of hidden neighbors</h2><p class="enc-pill"><button class="pill pill-static">+86 more</button><button class="pill pill-static is-sel">+42 more</button></p><p class="enc-p">The family name sits in the sector label beside the group. Selected, as on the right, the group lists its members in the inspector.</p></section>
+<section><h2>Group of hidden neighbors</h2><p class="enc-pill"><button class="pill pill-static">+42 Health</button><button class="pill pill-static is-sel">+86 Parties and roles</button></p><p class="enc-p">On a hub, each family shows its top 2 neighbors and one pill for the rest. Every pill sits at the same distance outside the ring, at the end of a dashed aggregate link. Selected, as on the right, the group lists its members in the inspector.</p></section>
 </div></div></main></div>'''
 
 
@@ -1182,13 +1296,20 @@ SCREENS = [
 ]
 
 
+MIN_LABELS = {"neighborhood": 16, "link": 16, "hub": 18, "filters": 10, "path": 5, "phone-graph": 7, "phone-legend": 2}
+
+
 def build(design_dir):
     tokens = (design_dir / "tokens.css").read_text()
     src = (design_dir / "answer-mockup.html").read_text()
     faces = [f for f in re.findall(r"@font-face\{[^}]*\}", src) if "Geist Mono" not in f]
     assert len(faces) == 4, len(faces)
     css = (pathlib.Path(__file__).with_name("mockup.css")).read_text()
-    boards = "".join(f'<section id="{i}" class="board {k}" aria-label="{esc(t)}">{fn()}</section>' for i, k, t, fn in SCREENS)
+    html = {i: fn() for i, _, _, fn in SCREENS}
+    for i, n in MIN_LABELS.items():  # the overlap check must not pass by dropping node labels
+        got = len(re.findall(r'class="nl(?: nl-dim)?"', html[i]))
+        assert got >= n, f"{i}: {got} node labels, expected at least {n}"
+    boards = "".join(f'<section id="{i}" class="board {k}" aria-label="{esc(t)}">{html[i]}</section>' for i, k, t, _ in SCREENS)
     index = "".join(f'<li><a href="#{i}">{esc(t)}</a><span>{"1440 × 900" if k == "desk" else "390 × 844"}</span></li>' for i, k, t, _ in SCREENS)
     return f'''<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

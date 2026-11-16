@@ -59,7 +59,7 @@ export function filterLinks<T extends SummaryLink | SubgraphLink>(links: T[], do
     if (ownerHidden(filters, view) && ("neighbor" in link ? link.neighbor.is_owner : ownerIds.has(link.source) || ownerIds.has(link.target))) return [];
     const records = overview || (!filters.from && !filters.to && filters.types === null) ? link.records : link.records.filter(record => {
       const document = documents[String(record.doc_id)];
-      const date = document?.date?.slice(0, 7);
+      const date = (document?.parsed_date !== undefined ? document.parsed_date : document?.date)?.slice(0, 7);
       return (!filters.from || Boolean(date && date >= filters.from)) && (!filters.to || Boolean(date && date <= filters.to))
         && (filters.types === null || Boolean(document?.doc_type && filters.types.includes(document.doc_type)));
     });

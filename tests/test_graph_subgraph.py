@@ -136,8 +136,8 @@ class Neo4jSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['links'][3]['support_state'], 'inferred')
         self.assertEqual(data['links'][3]['records'], [])
         self.assertEqual(data['documents'], {
-            str(FIRST_ID): {'title': 'Subgraph statement', 'date': '2026-04-01', 'doc_type': 'work'},
-            str(FIRST_ID + 1): {'title': 'Undated subgraph note', 'date': None, 'doc_type': None}})
+            str(FIRST_ID): {'title': 'Subgraph statement', 'date': '2026-04-01', 'parsed_date': '2026-04-01', 'doc_type': 'work'},
+            str(FIRST_ID + 1): {'title': 'Undated subgraph note', 'date': None, 'parsed_date': None, 'doc_type': None}})
         self.assertNotIn('Excluded', response.text)
         self.assertEqual((await get(self.store, ','.join(reversed(ids.split(','))))).content, response.content)
         self.assertEqual(await self.store.get_node(PREFIX + 'a'), before)

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { graphUrl, parseGraphState, linkKey, parseLinkKey, graphNavigation, GRAPH_VIEWS, listedViews, shownView, viewForKey, keyedView, rovingIndex } from "../.test-build/graph-url-state.js";
+import { graphUrl, parseGraphState, linkKey, parseLinkKey, graphNavigation, GRAPH_VIEWS, listedViews, shownView, drawnView, viewForKey, keyedView, rovingIndex } from "../.test-build/graph-url-state.js";
 
 test("focus, every view and selection round-trip without losing later graph parameters", () => {
   const filters = new URLSearchParams("fam=parties,money&support=inferred&minconf=0.70&noscore=1&mindocs=2&from=2024-01&to=2026-11&dtype=insurance&owner=hide&a=a&b=b&maxlen=4&tab=evidence&q=Harbor+%26+Sons");
@@ -129,6 +129,12 @@ test("keys 1 and 2 switch views with one pushed entry each, and do nothing in a 
   for (const modifier of ["ctrlKey", "metaKey", "altKey", "defaultPrevented"]) assert.equal(keyedView({ ...press("2"), [modifier]: true }, false, parseGraphState(params), twoViews), null);
   assert.equal(keyedView(press("2"), false, parseGraphState(new URLSearchParams()), twoViews), null, "Explore needs a focus entity");
   assert.equal(keyedView(press("5"), false, parseGraphState(new URLSearchParams()), allViews), "path", "Paths has its own pickers");
+  // Overview draws from its URL before #204 lists it; key 1 leaves it for Focus.
+  assert.equal(drawnView("overview"), "overview");
+  assert.equal(drawnView("explore"), "focus");
+  const overview = parseGraphState(new URLSearchParams("focus=a&view=overview"));
+  assert.equal(keyedView(press("1"), false, overview), "focus");
+  assert.equal(keyedView(press("6"), false, overview), null, "Overview is unlisted, so key 6 does nothing");
   // Unlisted views ignore their keys. Table aliases return to Focus.
   for (const key of ["2", "6", "t"]) assert.equal(keyedView(press(key), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), null);
   // p opens Paths, with or without a focus, and does nothing in a text field.

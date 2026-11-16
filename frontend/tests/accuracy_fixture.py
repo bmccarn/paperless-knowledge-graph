@@ -239,6 +239,105 @@ def nb_paths(a, b, max_len, k, include_owner, allow_inferred, candidates=1000):
     }
 
 
+def overview_archive():
+    """GET /graph/overview for a synthetic archive shaped like a real one: few links between entities, hubs whose
+    neighbors do not link to each other, near-duplicate copies around one organization, records without a name, pairs
+    and triples, and entities linked only to the owner. Only this route reads it, so search and the other pages keep
+    their data. Four group leads are neighborhood ids, so "Open in Focus" resolves."""
+    state = [20261115]
+
+    def random():
+        state[0] = (state[0] * 1664525 + 1013904223) % 4294967296
+        return state[0] / 4294967296
+
+    def uid(seed):
+        digest = hashlib.sha256(f'overview-{seed}'.encode()).hexdigest()
+        return f'{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}'
+    nodes, pairs = {}, {}
+    family = {name: bit for bit, name in enumerate(
+        ['parties', 'money', 'coverage', 'health', 'service', 'places', 'time', 'doclinks', 'loose', 'other'])}
+
+    def node(key, label, name, documents=None):
+        if key not in nodes:
+            nodes[key] = [key if key in NB_ENTITIES else uid(key), label, name,
+                          documents if documents is not None else 1 + int(random() ** 3 * 6)]
+        return key
+
+    def link(a, b, families, weight=None, support=0):
+        pair = tuple(sorted((a, b)))
+        weight = weight if weight is not None else 1 + int(random() * 3)
+        old = pairs.get(pair)
+        mask = sum(1 << family[f] for f in families)
+        pairs[pair] = [weight, support, mask] if old is None else [old[0] + weight, 1 if old[1] != support else support, old[2] | mask]
+    owner = node(HUB, 'Person', 'Rowan Vale', nb_fields(HUB)['evidence_doc_count'])
+    groups = [
+        # lead key, label, name, member kinds (label, name or '' for a record without a name, families)
+        ('nb-money-0', 'Organization', 'Harbor Mutual Insurance', 46, [
+            ('InsurancePolicy', 'Policy HM-{n} (auto)', ['coverage']), ('FinancialItem', '', ['money']),
+            ('Product', 'Vehicle {n}', ['coverage']), ('Person', 'Claims adjuster {n}', ['parties'])]),
+        ('nb-parties-0', 'Organization', 'Marlow Freight Co.', 38, [
+            ('FinancialItem', '', ['money']), ('Person', 'Dispatcher {n}', ['parties']), ('Event', 'Shift review {n}', ['time'])]),
+        ('ov-bayline', 'Organization', 'Bayline Property Group', 34, [('Address', '2 Harbor Way', ['places'])]),
+        ('nb-service-0', 'Organization', 'County Tax Office', 24, [
+            ('FinancialItem', 'Tax bill {n}', ['money']), ('DateEvent', 'Due {n} Apr', ['time']), ('Contract', 'Assessment {n}', ['service'])]),
+        ('ov-clinic', 'Organization', 'Port Ellery Clinic', 21, [
+            ('Condition', 'Condition {n}', ['health']), ('MedicalResult', 'Lab result {n}', ['health']), ('Person', 'Dr. Example {n}', ['parties'])]),
+        # More than 10 entities, with tied document counts below the lead.
+        ('nb-pharmacy', 'Organization', 'Lakeshore Pharmacy', 13, [('FinancialItem', 'Prescription receipt {n}', ['money'])]),
+    ]
+    minor = ['Riverside 10K', 'Northgate Credit Union', 'Lakeside HOA', 'Ellis and Park LLP', 'Benefits portal',
+             'Fitness club', 'Cedar Grove School', 'Summit Auto Repair', 'Greenway Utilities', 'Oak Street Library']
+    hubs = []
+    for index, (key, label, name, size, kinds) in enumerate(groups):
+        lead = node(key, label, name, nb_fields(key)['evidence_doc_count'] + 20 if key in NB_ENTITIES else 30)
+        hubs.append(lead)
+        members = []
+        for n in range(size - 1):
+            member_label, member_name, families = kinds[n % len(kinds)]
+            text = member_name.format(n=1000 + n * 7) if '{n}' in member_name else member_name
+            documents = 3 if key == 'nb-pharmacy' else None
+            members.append(node(f'{key}-{n}', member_label, text, documents))
+            link(lead, members[-1], families, support=2 if n % 9 == 4 else 0)
+        # A few links among a hub's neighbors; most neighbors of a hub do not link to each other.
+        for n in range(0, len(members) - 3, 6):
+            link(members[n], members[n + 3], kinds[0][2], 1, 2 if n % 12 else 0)
+        if index < 3:
+            link(owner, lead, ['parties'], 9)
+    for index, name in enumerate(minor):
+        lead = node(f'ov-minor-{index}', ['Organization', 'Organization', 'Person', 'System'][index % 4], name, 12 - index // 2)
+        for n in range(3 + index % 5):
+            label = ['Person', 'FinancialItem', 'Event', 'Contract', 'Address'][(index + n) % 5]
+            link(lead, node(f'ov-minor-{index}-{n}', label, '' if label == 'FinancialItem' else f'{name} item {n + 1}'), ['loose'])
+    # Bridges between groups, drawn dotted.
+    for a, b in [(hubs[0], 'nb-parties-0-4'), (hubs[3], 'ov-clinic-2'), ('ov-minor-1', hubs[1]), ('nb-money-0-7', 'ov-minor-4')]:
+        link(a, b, ['parties'], 1, 1)
+    small_names = ['Spare key tag', 'Storage unit 14', 'Parking permit', 'Library card', 'Gym locker', 'Bike lock',
+                   'Garden plot 3', 'Boat slip 22', 'Mailbox 7', 'Water meter', 'Gas meter', 'Alarm code card',
+                   'Visitor pass', 'Toll tag', 'Transit card', 'Warranty card', 'Recycling bin', 'Smoke detector']
+    for index, name in enumerate(small_names):
+        a = node(f'ov-small-{index}', ['Product', 'Contract', 'System'][index % 3], name)
+        b = node(f'ov-small-{index}-b', ['Organization', 'FinancialItem', 'Person'][index % 3], '' if index % 3 == 1 else f'{name} issuer')
+        link(a, b, ['other'], 1 + index % 2)
+        if index % 4 == 0:
+            link(b, node(f'ov-small-{index}-c', 'DateEvent', f'Renewal {index + 1}'), ['time'], 1)
+    for index in range(12):
+        link(owner, node(f'ov-owner-only-{index}', ['Person', 'Organization', 'Event'][index % 3], f'Owner contact {index + 1}'), ['parties'], 2)
+    degree = {}
+    for a, b in pairs:
+        degree[a] = degree.get(a, 0) + 1
+        degree[b] = degree.get(b, 0) + 1
+    ordered = sorted(nodes, key=lambda key: nodes[key][0])
+    index = {key: at for at, key in enumerate(ordered)}
+    links = sorted([sorted((index[a], index[b])) + value for (a, b), value in pairs.items()])
+    return {'version': hashlib.sha256(json.dumps([nodes[key][0] for key in ordered] + [list(pair) for pair in sorted(pairs)]).encode()).hexdigest(),
+            'columns': ['id', 'label', 'name', 'evidence_doc_count', 'link_count'],
+            'nodes': [nodes[key] + [degree.get(key, 0) + nodes[key][3]] for key in ordered],
+            'links': links, 'link_columns': ['source', 'target', 'weight', 'support', 'families'],
+            'owner': index[owner], 'unlinked': 412, 'truncated': False}
+
+
+OVERVIEW = overview_archive()
+
 LOCK = threading.RLock()
 NOW = '2026-09-04T12:00:00+00:00'
 clock_tick = 0
@@ -645,6 +744,8 @@ class Handler(BaseHTTPRequestHandler):
                 documents = sorted({record['doc_id'] for link in links for record in link['records']})
                 return self.reply({'links': links, 'total': total, 'truncated': total > len(links),
                                    'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in documents}})
+            if route == '/graph/overview':
+                return self.reply(OVERVIEW)
             if route == '/graph/paths':
                 max_len, k = int(get('max_len', '4')), int(get('k', '5'))
                 if not get('a') or not get('b') or not 2 <= max_len <= 4 or not 1 <= k <= 5:

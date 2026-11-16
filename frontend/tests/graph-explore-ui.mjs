@@ -51,11 +51,19 @@ async function settle(page, text) {
   return page.evaluate(() => window.__frame);
 }
 const params = page => new URL(page.url()).searchParams;
-/** Click a point recorded on the canvas, in canvas pixels, once force-graph's hit map has caught up (it repaints at most every 800 ms). */
+/**
+ * Rest the pointer on the canvas's bottom-left corner, where no node is drawn. force-graph keeps hovering whatever comes
+ * under the last pointer position it saw on the canvas, even after the pointer leaves it or the camera moves.
+ */
+async function park(page) {
+  const box = await page.locator('canvas').first().boundingBox();
+  await page.mouse.move(box.x + 8, box.y + box.height - 8);
+}
+/** Click a point recorded on the canvas, in canvas pixels, then park the pointer. */
 async function clickAt(page, point) {
-  await page.waitForTimeout(900);
   const box = await page.locator('canvas').first().boundingBox();
   await page.mouse.click(box.x + point.x, box.y + point.y);
+  await park(page);
 }
 const inspector = page => page.getByRole('complementary', { name: 'Evidence inspector' });
 const trail = page => page.getByRole('region', { name: 'Explored from Policy KT-9030 (auto)' });
@@ -79,9 +87,8 @@ try {
   frame = await settle(page, '9 entities');
   assert.ok(frame['+8'], 'the car has 8 entities not in view');
   await inspector(page).getByRole('button', { name: 'Show 6 more links from here' }).waitFor();
+  // clickAt parks the pointer: a hovered node's handle would replace the selected node's.
   await clickAt(page, frame['+8']);
-  // Move off the canvas: a hovered node's handle replaces the selected node's.
-  await page.mouse.move(0, 0);
   await page.waitForURL(url => url.searchParams.get('x') === 'ex-car');
   frame = await settle(page, 'Explore from Policy KT-9030 (auto): 15 entities, 21 links, 2 hops.');
   assert.equal(await page.evaluate(() => history.length), length + 1, 'an expansion is one history entry');
@@ -159,7 +166,6 @@ try {
   await page.unroute('**/api/graph/node/ex-loan?summary=1');
   await page.goto(root);
   frame = await settle(page, ': 9 entities');
-  await page.waitForTimeout(900);
   const box = await page.locator('canvas').first().boundingBox();
   await page.mouse.move(box.x + frame['2021 Mazda CX-5'].x, box.y + frame['2021 Mazda CX-5'].y);
   const handle = await (await page.waitForFunction(() => window.__frame['+8'])).jsonValue();

@@ -38,7 +38,13 @@ def entity_identity(node: dict) -> dict:
     labels = node.get("labels") or []
     kind = props.get("entity_type") or (labels[0] if labels else "")
     kind = "DocumentRef" if kind == "Document" else kind
-    names = _names(props.get("name")) | _names(props.get("aliases") or [])
+    name = props.get("name")
+    if kind == "Address" and not (isinstance(name, str) and name.strip()):
+        name = props.get("full_address")  # document-owned addresses have no name
+    names = _names(name) | _names(props.get("aliases") or [])
+    if kind == "Address":  # a recorded veto must still meet a respelled copy of the address
+        from app.entity_policy import address_key
+        names |= {address_key(name)} - {""}
     docs = _document_ids(props.get("source_doc_ids") or [])
     for relationship in node.get("relationships") or []:
         docs |= _document_ids((relationship.get("neighbor_props") or {}).get("paperless_id"))
@@ -47,7 +53,7 @@ def entity_identity(node: dict) -> dict:
         docs |= _document_ids(rel_props.get("source_doc_ids") or [])
     from app.entity_policy import trusted_aliases
     reviewed_names = trusted_aliases(props, kind, -1, "")
-    return {"uuid": props.get("uuid"), "type": kind, "canonical_name": props.get("name") or "",
+    return {"uuid": props.get("uuid"), "type": kind, "canonical_name": name or "",
             "reviewed_names": reviewed_names,
             "names": sorted(names), "source_doc_ids": sorted(docs)}
 

@@ -439,6 +439,36 @@ class EntityDatastoreEvidenceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(module.EntityMergeProhibited):
             await self.resolver.merge_entities(keep, remove, review_method="entity_review_api")
 
+    async def test_automatic_merge_of_nameless_addresses_is_journaled_and_undone_with_links(self):
+        from app.entity_policy import AUTO_MERGE_REVIEW_METHOD
+        keep, remove = self.prefix + "address-a", self.prefix + "address-b"
+        async with self.graph.driver.session() as session:
+            # Document-owned addresses as ingestion attaches them: no name, the document on the edge.
+            await session.run("""UNWIND $rows AS row
+                CREATE (d:Document {paperless_id: row.doc})-[:LOCATED_AT {source_doc: row.doc}]->
+                       (a:Address {uuid: row.uuid, full_address: row.address})""", rows=[
+                {"doc": 991711, "uuid": keep, "address": "14 Larkspur Ct, Springfield, IL 62701"},
+                {"doc": 991712, "uuid": remove, "address": "14 LARKSPUR COURT SPRINGFIELD IL 62701"}])
+        async def links(entity_uuid):
+            async with self.graph.driver.session() as session:
+                result = await session.run("MATCH (d:Document)-[r:LOCATED_AT]->(a {uuid: $uuid}) "
+                                           "RETURN d.paperless_id AS doc ORDER BY doc", uuid=entity_uuid)
+                return [row["doc"] for row in await result.data()]
+        self.assertEqual((await self.resolver.auto_merge_check(keep, remove))["blocker"], "")
+        with patch.object(module.settings, "entity_steward_auto_merge", "on"):
+            merge_id = (await self.resolver.merge_entities(keep, remove, review_method=AUTO_MERGE_REVIEW_METHOD,
+                                                           note="{}"))["merge_id"]
+        self.assertIsNone(await self.graph.get_node(remove))
+        self.assertEqual(await links(keep), [991711, 991712])
+        journal = await self.store.get_merge_journal(merge_id)
+        self.assertEqual((journal["status"], journal["review_method"]), ("applied", AUTO_MERGE_REVIEW_METHOD))
+        result = await self.resolver.unmerge_entities(merge_id, review_method="entity_review_api")
+        self.assertEqual(result["status"], "reverted")
+        self.assertEqual((await self.graph.get_node(remove))["properties"],
+                         {"uuid": remove, "full_address": "14 LARKSPUR COURT SPRINGFIELD IL 62701"})
+        self.assertEqual((await links(keep), await links(remove)), ([991711], [991712]))
+        self.assertEqual((await self.resolver.auto_merge_check(keep, remove))["blocker"], "decision_row")
+
     async def test_failed_entity_embedding_delete_leaves_graph_unchanged(self):
         keep = await self.seed("fail-keep", "Birch Partners", "Organization", [991712])
         remove = await self.seed("fail-remove", "Birch Partner", "Organization", [991711])

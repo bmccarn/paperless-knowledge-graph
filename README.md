@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/f7b28ffc-746a-4237-bc67-d10b57a2c045
 - **Planned, audited queries.** A [Strands](https://strandsagents.com) planner drives retrieval and synthesis. A full source audit follows, with at most one repair before the app returns an answer limited to what the evidence supports.
 - **Strict mode.** For high-stakes questions, the app builds an evidence pack, a claim ledger, trust scores and repair notes.
 - **Timeline mode.** Change-over-time questions return dated events from the verified answer, sorted by date, with the source wording and links kept.
-- **Entity steward.** The steward suggests merges, splits and review items after manual merges, after each sync and on a schedule. It merges entities by itself only for exact-duplicate pairs of low-risk types, and only when `ENTITY_STEWARD_AUTO_MERGE=on`. The default, `shadow`, records those pairs as suggestions and merges nothing.
+- **Entity steward.** The steward suggests merges, splits and review items after manual merges, after each sync and on a schedule. It merges entities by itself only for exact-duplicate pairs of low-risk types and of addresses, and only when `ENTITY_STEWARD_AUTO_MERGE=on`. The default, `shadow`, records those pairs as suggestions and merges nothing.
 - **Concurrent processing.** A semaphore limits how many documents process in parallel.
 - **Retries.** LLM and database calls retry transient errors with exponential backoff and jitter.
 - **Caching.** Query, vector and graph caches use Redis. Set `REDIS_URL` to a value starting with `memory:` to use bounded in-process caches instead.
@@ -154,7 +154,7 @@ To run only the databases and start the backend directly on your machine, use [`
 | `AUTO_SYNC_INTERVAL_MINUTES` | Minutes between automatic incremental syncs. `0` turns this off. | `0` |
 | `ENTITY_STEWARD_INTERVAL_MINUTES` | Minutes between scheduled steward reviews. `0` turns this off. | `360` |
 | `ENTITY_STEWARD_CANDIDATE_LIMIT` | Candidates per scheduled steward run | `40` |
-| `ENTITY_STEWARD_AUTO_MERGE` | `off`, `shadow` or `on`. `shadow` records exact-duplicate low-risk pairs as `suggest_auto_merge` and merges nothing; `on` merges them. Each merge can be undone. | `shadow` |
+| `ENTITY_STEWARD_AUTO_MERGE` | `off`, `shadow` or `on`. `shadow` records exact-duplicate low-risk and address pairs as `suggest_auto_merge` and merges nothing; `on` merges them. Each merge can be undone. | `shadow` |
 | `ENTITY_STEWARD_AUTO_MERGE_MAX_PER_RUN` | Pairs the automatic merge pass reviews per steward run (0 to 100) | `10` |
 | `FRESHNESS_CACHE_TTL_SECONDS` | Seconds to cache `/freshness` results | `60` |
 

@@ -56,6 +56,8 @@ export interface GraphUrlState {
   focus: string | null;
   view: GraphView;
   selection: string | null;
+  /** Focus draws the links between neighbors unless the URL says `cross=0`. */
+  cross: boolean;
 }
 
 export function linkKey(source: string, type: string, target: string): string {
@@ -76,12 +78,13 @@ export function parseGraphState(params: URLSearchParams): GraphUrlState {
     focus: params.get("focus") || null,
     view,
     selection: params.get("sel") || null,
+    cross: params.get("cross") !== "0",
   };
 }
 
 export function graphUrl(state: GraphUrlState, current = new URLSearchParams()): string {
   const params = new URLSearchParams(current);
-  for (const [key, value] of [["focus", state.focus], ["view", state.view === "focus" ? null : state.view], ["sel", state.selection]] as const) {
+  for (const [key, value] of [["focus", state.focus], ["view", state.view === "focus" ? null : state.view], ["sel", state.selection], ["cross", state.cross ? null : "0"]] as const) {
     if (value) params.set(key, value);
     else params.delete(key);
   }

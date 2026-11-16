@@ -201,7 +201,7 @@ export function ForceGraphClient({
       const at = positions?.get(node.id);
       return { ...node, props: { ...node.props }, ...(at && { x: at.x, y: at.y, fx: at.x, fy: at.y }) };
     });
-    // Parallel links between one pair curve at +/-0.15; a single link is straight.
+    // A link's own curvature (a link between neighbors bows toward the ring); parallel links between one pair add +/-0.15.
     const pairs = new Map<string, number>();
     const pair = (link: ExplorerLink) => [link.source, link.target].sort().join("\n");
     for (const link of graph.links) pairs.set(pair(link), (pairs.get(pair(link)) ?? 0) + 1);
@@ -211,7 +211,8 @@ export function ForceGraphClient({
       links: graph.links.map((link) => {
         const index = seen.get(pair(link)) ?? 0;
         seen.set(pair(link), index + 1);
-        const curvature = (pairs.get(pair(link)) ?? 1) > 1 ? 0.15 * (index % 2 ? -1 : 1) * (link.source < link.target ? 1 : -1) : 0;
+        const curvature = (Number(link.props.curvature) || 0)
+          + ((pairs.get(pair(link)) ?? 1) > 1 ? 0.15 * (index % 2 ? -1 : 1) * (link.source < link.target ? 1 : -1) : 0);
         return { ...link, props: { ...link.props }, curvature };
       }),
     };

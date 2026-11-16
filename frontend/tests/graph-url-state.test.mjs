@@ -5,8 +5,8 @@ import { graphUrl, parseGraphState, linkKey, parseLinkKey, graphNavigation, GRAP
 test("focus, every view and selection round-trip without losing later graph parameters", () => {
   const filters = new URLSearchParams("fam=parties,money&support=inferred&minconf=0.70&noscore=1&mindocs=2&from=2024-01&to=2026-11&dtype=insurance&owner=hide&a=a&b=b&maxlen=4&tab=evidence&q=Harbor+%26+Sons");
   for (const view of ["focus", "explore", "timeline", "table", "path", "overview"]) {
-    for (const selection of [null, "entity-a", linkKey("entity-a", "PAID_TO", "entity-b")]) {
-      const state = { focus: "entity-a", view, selection };
+    for (const [selection, cross] of [[null, true], ["entity-a", false], [linkKey("entity-a", "PAID_TO", "entity-b"), true]]) {
+      const state = { focus: "entity-a", view, selection, cross };
       const url = new URL(graphUrl(state, filters), "https://example.test");
       assert.deepEqual(parseGraphState(url.searchParams), state);
       for (const [key, value] of filters) assert.equal(url.searchParams.get(key), value);
@@ -19,14 +19,14 @@ test("link keys match summary keys and preserve direction", () => {
   assert.equal(key, "doc-123~PREPARED_BY~entity-b");
   assert.deepEqual(parseLinkKey(key), { source: "doc-123", type: "PREPARED_BY", target: "entity-b" });
   assert.notEqual(key, linkKey("entity-b", "PREPARED_BY", "doc-123"));
-  assert.equal(new URL(graphUrl({ focus: "entity-b", view: "focus", selection: key }), "https://example.test").searchParams.get("sel"), key);
+  assert.equal(new URL(graphUrl({ focus: "entity-b", view: "focus", selection: key, cross: true }), "https://example.test").searchParams.get("sel"), key);
   for (const bad of ["element-id", "a~TYPE", "a~~b", "a~TYPE~b~c"]) assert.equal(parseLinkKey(bad), null);
 });
 
 test("invalid view defaults to Focus, older neighborhood links open Focus, and absent state stays empty", () => {
-  assert.deepEqual(parseGraphState(new URLSearchParams("view=unknown&focus=&sel=")), { focus: null, view: "focus", selection: null });
-  assert.deepEqual(parseGraphState(new URLSearchParams("focus=a&view=neighborhood")), { focus: "a", view: "focus", selection: null });
-  assert.equal(graphUrl({ focus: "a", view: "focus", selection: null }, new URLSearchParams("view=neighborhood")), "/graph?focus=a");
+  assert.deepEqual(parseGraphState(new URLSearchParams("view=unknown&focus=&sel=")), { focus: null, view: "focus", selection: null, cross: true });
+  assert.deepEqual(parseGraphState(new URLSearchParams("focus=a&view=neighborhood")), { focus: "a", view: "focus", selection: null, cross: true });
+  assert.equal(graphUrl({ focus: "a", view: "focus", selection: null, cross: true }, new URLSearchParams("view=neighborhood")), "/graph?focus=a");
   assert.equal(graphUrl(parseGraphState(new URLSearchParams())), "/graph");
 });
 
@@ -34,7 +34,7 @@ test("focus and view push; selection replaces; focus clears old selection", () =
   const current = new URLSearchParams("focus=a&view=table&sel=a~PAID_TO~b&fam=money&q=Harbor");
   const next = graphNavigation(current, { focus: "b" });
   assert.equal(next.method, "push");
-  assert.deepEqual(parseGraphState(new URL(next.href, "https://example.test").searchParams), { focus: "b", view: "table", selection: null });
+  assert.deepEqual(parseGraphState(new URL(next.href, "https://example.test").searchParams), { focus: "b", view: "table", selection: null, cross: true });
   assert.equal(graphNavigation(current, { view: "path" }).method, "push");
   assert.equal(graphNavigation(current, { selection: "b" }).method, "replace");
   assert.equal(graphNavigation(current, { selection: null }).method, "replace");
@@ -42,6 +42,15 @@ test("focus and view push; selection replaces; focus clears old selection", () =
   assert.equal(cleared.searchParams.has("focus"), false);
   assert.equal(cleared.searchParams.has("sel"), false);
   assert.equal(cleared.searchParams.get("fam"), "money");
+});
+
+test("the cross-link switch writes cross=0 when off, replaces the history entry and survives a focus change", () => {
+  const off = graphNavigation(new URLSearchParams("focus=a&sel=b"), { cross: false });
+  assert.equal(off.method, "replace");
+  assert.equal(off.href, "/graph?focus=a&sel=b&cross=0");
+  assert.equal(graphNavigation(new URLSearchParams("focus=a&cross=0"), { cross: true }).href, "/graph?focus=a");
+  assert.equal(parseGraphState(new URLSearchParams("cross=1")).cross, true);
+  assert.equal(new URL(graphNavigation(new URLSearchParams("focus=a&cross=0"), { focus: "b" }).href, "https://example.test").searchParams.get("cross"), "0");
 });
 
 // A registry with the later views turned on, so the switcher rules are proven before those views ship.

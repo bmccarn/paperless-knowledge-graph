@@ -72,7 +72,7 @@ try {
   // The canvas is an image named by its summary.
   const { frame, shapes } = await open(page, `${base}/graph?focus=nb-rowan`);
   await page.screenshot({ path: path.join(artifacts, 'graph-phone-hub.png') });
-  await page.getByRole('img', { name: 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred', exact: true }).waitFor();
+  await page.getByRole('img', { name: 'Neighborhood of Rowan Vale: 105 links in 9 families, 1 inferred; 13 links between neighbors', exact: true }).waitFor();
 
   // At the fit zoom on a hub, pills clear the nodes and each other and stay inside the canvas; labels never overlap.
   const canvas = await page.locator('canvas').first().boundingBox();

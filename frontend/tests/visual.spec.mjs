@@ -19,7 +19,8 @@ const mainStates = [
   { name: "hubs", route: "/hubs", ready: page => page.getByText("303 matching indexed documents", { exact: true }) },
   { name: "logs", route: "/debug", ready: page => page.getByText("Connected", { exact: true }) },
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
-  { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("Rowan Vale: 105 links in 9 families.", { exact: false }) },
+  // The links between neighbors come from a second request: wait for its caption, so the curves are in every capture.
+  { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("13 links between neighbors.", { exact: true }) },
 ];
 mainStates.push({ name: "graph-table", route: "/graph?focus=nb-rowan&view=table", ready: page => page.getByRole("table", { name: "Links of Rowan Vale" }) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
@@ -265,7 +266,7 @@ const extraStates = [
   } },
   // A chip in focus marks the link its document supports.
   { name: "graph-neighborhood-evidence", route: "/graph?focus=nb-desk", state: "evidence-marked",
-    ready: page => page.getByText("Front desk: 3 links in 3 families.", { exact: false }), prepare: async page => {
+    ready: page => page.getByText("No links between these neighbors.", { exact: true }), prepare: async page => {
       await graphReady(page);
       await page.getByRole("region", { name: /^Evidence/ }).getByRole("link").first().focus();
     } },

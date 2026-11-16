@@ -125,6 +125,8 @@ test("the canvas name counts drawn-family links and only fully inferred ones; a 
     link("money", "OWES", "c", [4]), link("evidence", "MENTIONS", "d", [5], { inferred: [5] })];
   const data = summary(links);
   assert.equal(canvasName(data, neighborhoodLayout(data, 6)), "Neighborhood of Focus: 3 links in 2 families, 1 inferred");
+  assert.equal(canvasName(data, neighborhoodLayout(data, 6), 11), "Neighborhood of Focus: 3 links in 2 families, 1 inferred; 11 links between neighbors");
+  assert.equal(canvasName(data, neighborhoodLayout(data, 6), 1), "Neighborhood of Focus: 3 links in 2 families, 1 inferred; 1 link between neighbors");
   const one = summary([link("parties", "EMPLOYED_BY", "a", [1])]);
   assert.equal(canvasName(one, neighborhoodLayout(one, 6)), "Neighborhood of Focus: 1 link in 1 family, 0 inferred");
 });

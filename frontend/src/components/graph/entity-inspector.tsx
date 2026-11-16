@@ -205,9 +205,12 @@ export function FocusInspector({ summary, onClose, onOpenTable, ...events }: { s
   );
 }
 
-/** A neighbor: built from the focus summary, so it shows the neighbor's links with the focus. */
-export function NeighborInspector({ summary, neighborId, onClose, onFocusEntity, ...events }: {
-  summary: NodeSummary; neighborId: string; onClose: () => void; onFocusEntity: (id: string) => void;
+/**
+ * A neighbor: built from the focus summary, so it shows the neighbor's links with the focus,
+ * then its drawn links to other neighbors, seen from this neighbor.
+ */
+export function NeighborInspector({ summary, neighborId, crossLinks = [], onClose, onFocusEntity, ...events }: {
+  summary: NodeSummary; neighborId: string; crossLinks?: SummaryLink[]; onClose: () => void; onFocusEntity: (id: string) => void;
 } & RowEvents) {
   const links = rankLinks(summary, summary.links.filter(link => link.neighbor.id === neighborId));
   const neighbor = links[0]?.neighbor;
@@ -223,13 +226,21 @@ export function NeighborInspector({ summary, neighborId, onClose, onFocusEntity,
       </Actions>
       <h3 className={heading}>Links with {entityName(summary.focus)}</h3>
       <ul>{links.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>
+      {crossLinks.length > 0 && (
+        <>
+          <h3 className={heading}>Linked to other neighbors</h3>
+          <ul aria-label="Linked to other neighbors">{crossLinks.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>
+        </>
+      )}
     </Shell>
   );
 }
 
-/** Phase 1 link summary: family, endpoints, type, support state and the documents. */
-export function LinkInspector({ summary, link, onClose }: { summary: NodeSummary; link: SummaryLink; onClose: () => void }) {
-  const [from, to] = link.direction === "out" ? [summary.focus, link.neighbor] : [link.neighbor, summary.focus];
+/** Phase 1 link summary: family, endpoints, type, support state and the documents. `end` replaces the focus for a link between neighbors. */
+export function LinkInspector({ summary, link, end = summary.focus, onClose }: {
+  summary: NodeSummary; link: SummaryLink; end?: { id: string; name: string; label: string }; onClose: () => void;
+}) {
+  const [from, to] = link.direction === "out" ? [end, link.neighbor] : [link.neighbor, end];
   const ids = new Set(link.records.map(record => record.doc_id));
   const documents = documentsByDate({ ...summary, documents: Object.fromEntries(
     [...ids].map(id => [String(id), summary.documents[String(id)] ?? { title: "", date: null, doc_type: null }])) });

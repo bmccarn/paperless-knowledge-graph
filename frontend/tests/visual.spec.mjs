@@ -23,6 +23,7 @@ const mainStates = [
   { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("13 links between neighbors.", { exact: true }) },
 ];
 mainStates.push({ name: "graph-table", route: "/graph?focus=nb-rowan&view=table", ready: page => page.getByRole("table", { name: "Links of Rowan Vale" }) });
+mainStates.push({ name: "graph-filters", route: "/graph?focus=nb-rowan&support=supported&minconf=0.70&from=2026-01", ready: page => page.getByText("10 links between neighbors.", { exact: true }) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -45,6 +46,10 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { ...mainStates[11], name: "graph-filters-sheet", state: "filters", prepare: async page => {
+    await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
+    await page.getByRole("dialog", { name: "Filters", exact: true }).waitFor();
+  } },
   { name: "graph-missing", route: "/graph?focus=removed-entity",
     ready: page => page.getByText("This entity no longer exists. It may have been merged.", { exact: true }) },
   ...["initial", "results", "empty", "error"].map(state => ({
@@ -324,7 +329,7 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  const graph = state.name.startsWith("graph-neighborhood");
+  const graph = state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters");
   if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.

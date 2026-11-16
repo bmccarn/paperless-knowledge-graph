@@ -13,6 +13,8 @@ import { ClaimProse, MarginNote } from "@/components/claim-prose";
 import { ClaimTable } from "@/components/claim-table";
 import { SourceList } from "@/components/source-list";
 import { KindShape, TypeDot } from "@/components/kind-shape";
+import { defaultFilters } from "@/lib/graph-filters";
+import { GraphFiltersSheet, GraphFilterChips } from "@/components/graph/graph-filters";
 import { LinkTable } from "@/components/graph/link-table";
 import { neighborhoodLayout, type NodeSummary } from "@/lib/graph-layout";
 import { GraphLegend } from "@/components/graph/graph-legend";
@@ -91,6 +93,7 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
 }
 
 export default function GalleryPage() {
+  const [graphFilters, setGraphFilters] = useState(defaultFilters);
   const [tableSelection, setTableSelection] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mode, setMode] = useState<QueryMode>("strict");
@@ -200,6 +203,11 @@ export default function GalleryPage() {
           <div className="flex h-72 min-w-0 flex-col border border-border">
             <LinkTable summary={tableSummary} layout={neighborhoodLayout(tableSummary, 6)} selection={tableSelection} onSelectLink={setTableSelection} />
           </div>
+        </Section>
+
+        <Section id="graph-filters" title="Graph filters">
+          <Row name="Current view"><GraphFiltersSheet summary={tableSummary} filters={graphFilters} view={view} onChange={setGraphFilters} /><GraphFilterChips filters={graphFilters} onChange={setGraphFilters} /></Row>
+          <Row name="Overview"><div role="group" aria-label="Overview filters"><GraphFiltersSheet summary={tableSummary} filters={graphFilters} view="overview" onChange={setGraphFilters} /></div></Row>
         </Section>
 
         <Section id="document-types" title="Document types">

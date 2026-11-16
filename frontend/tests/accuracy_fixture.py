@@ -104,6 +104,23 @@ for rel_type, target in [('PAID_TO', 'nb-markup'), ('EMPLOYED_BY', 'nb-unnamed')
 # A renewal notice whose one link is stated in one document and inferred in another.
 NB_ENTITIES.update({'nb-renewal': ('Contract', 'Renewal notice 2026'), 'nb-car': ('Product', '2014 Honda Fit')})
 nb_link('nb-renewal', 'COVERS', 'nb-car', 2, inferred={1})
+# Timeline-only entities keep existing graph layouts and evidence counts unchanged.
+NB_ENTITIES.update({'nb-timeline': ('InsurancePolicy', 'Policy TL-2208 (auto)'),
+                    'nb-timeline-insurer': ('Organization', 'Harbor Mutual Insurance'),
+                    'nb-timeline-car': ('Product', '2014 Honda Fit'),
+                    'nb-timeline-unnamed': ('MedicalResult', '')})
+NB_LINKS.extend([
+    ('nb-timeline', 'ISSUED_BY', 'nb-timeline-insurer', [(9270, False, 0.9), (9271, False, 0.9), (9272, True, 0.8)]),
+    ('nb-timeline', 'COVERS', 'nb-timeline-car', [(9270, False, 0.9), (9273, True, 0.8)]),
+    ('nb-timeline', 'RELATED_TO', 'nb-timeline-unnamed', [(9274, True, None)]),
+])
+TIMELINE_DOCS = {
+    '9270': {'title': 'Declarations, spring 2024', 'date': 'March 12, 2024', 'parsed_date': '2024-03-12', 'doc_type': 'insurance'},
+    '9271': {'title': 'Policy schedule', 'date': '2024-03-20', 'parsed_date': '2024-03-20', 'doc_type': 'insurance'},
+    '9272': {'title': 'Renewal notice, autumn 2026', 'date': '2 SEP 26', 'parsed_date': '2026-09-02', 'doc_type': 'insurance'},
+    '9273': {'title': 'Undated vehicle note', 'date': None, 'parsed_date': None, 'doc_type': 'personal'},
+    '9274': {'title': 'Legacy record', 'date': 'sometime last spring', 'parsed_date': None, 'doc_type': 'medical_lab'},
+}
 # Links between the hub's drawn neighbors, for the curves in Focus: one inferred, one parallel pair, and one link to a
 # member of the parties pill, which is never drawn. Only GET /graph/subgraph reads them, so the summaries, document
 # counts and search order of every other page stay as they were; their document ids come after every other nb_link.
@@ -169,7 +186,7 @@ def nb_summary(uid):
                          **{k: v for k, v in nb_fields(other).items() if k != 'is_hub'}}})
     return {'focus': {'id': uid, 'label': label, 'name': name, 'aliases': [], **nb_fields(uid)},
             'links': sorted(links, key=lambda link: link['key']),
-            'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in sorted(documents)},
+            'documents': {str(doc): TIMELINE_DOCS[str(doc)] if uid == 'nb-timeline' else {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in sorted(documents)},
             'owner_status': 'chosen',
             'owner_duplicates': [{'id': other, 'label': 'Person', 'name': NB_ENTITIES[other][1],
                                   'evidence_doc_count': nb_fields(other)['evidence_doc_count']}

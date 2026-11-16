@@ -58,7 +58,7 @@ const allViews = GRAPH_VIEWS.map(view => ({ ...view, listed: view.id !== "overvi
 
 test("the switcher order is fixed and only shipped views are listed", () => {
   assert.deepEqual(GRAPH_VIEWS.map(view => view.label), ["Focus", "Explore", "Timeline", "Table", "Paths", "Overview"]);
-  assert.deepEqual(listedViews().map(view => view.id), ["focus", "table", "path"]);
+  assert.deepEqual(listedViews().map(view => view.id), ["focus", "timeline", "table", "path"]);
   assert.deepEqual(listedViews(allViews).map(view => view.id), ["focus", "explore", "timeline", "table", "path"]);
   assert.equal(shownView("explore"), "focus", "an unlisted view in the URL draws as Focus");
   assert.equal(shownView("table"), "table");
@@ -84,7 +84,7 @@ test("keys 1 to 6 follow the switcher order, n t p are aliases, and unlisted vie
   assert.equal(viewForKey("t"), "table");
   assert.equal(viewForKey("5"), "path");
   assert.equal(viewForKey("p"), "path");
-  for (const key of ["2", "3", "6"]) assert.equal(viewForKey(key), null);
+  for (const key of ["2", "6"]) assert.equal(viewForKey(key), null);
 });
 
 test("Left and Right move through the toolbar and wrap; Home and End jump", () => {
@@ -136,7 +136,7 @@ test("keys 1 and 2 switch views with one pushed entry each, and do nothing in a 
   assert.equal(keyedView(press("1"), false, overview), "focus");
   assert.equal(keyedView(press("6"), false, overview), null, "Overview is unlisted, so key 6 does nothing");
   // Unlisted views ignore their keys. Table aliases return to Focus.
-  for (const key of ["2", "3", "6", "t"]) assert.equal(keyedView(press(key), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), null);
+  for (const key of ["2", "6", "t"]) assert.equal(keyedView(press(key), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), null);
   // p opens Paths, with or without a focus, and does nothing in a text field.
   for (const query of ["focus=a&view=table", "", "q=Harbor"]) {
     assert.equal(keyedView(press("p"), false, parseGraphState(new URLSearchParams(query))), "path");

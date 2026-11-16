@@ -15,7 +15,7 @@ import {
   type ExplorerNode,
   type ExplorerLink,
 } from "@/lib/graph-data";
-import { nodeKind, nodeLabelText } from "@/lib/categories";
+import { nodeLabelText } from "@/lib/categories";
 import {
   fitView,
   LABEL_ALL,
@@ -25,11 +25,10 @@ import {
   nodeRadius,
   placeLabels,
   shapeExtent,
-  shapePath,
   type Box,
   type LabelRule,
 } from "@/lib/graph-encoding";
-import { iconPath } from "./canvas-icons";
+import { paintShape, readColors, type Colors } from "./canvas-paint";
 
 type RenderNode = NodeObject<ExplorerNode>;
 type RenderLink = LinkObject<
@@ -68,25 +67,6 @@ interface Props {
   keyboardNodeId?: string | null;
   /** Links the hovered or focused evidence chip supports, marked like a selected link. */
   markedLinkIds?: ReadonlySet<string>;
-}
-
-const KINDS = ["people", "org", "place", "money", "agree", "thing", "health", "time", "docs"];
-const TOKENS = ["bg", "surface", "fg", "fg-muted", "fg-subtle", "border", "border-strong", "ring", "mark",
-  "graph-edge", "graph-faded", ...KINDS.flatMap(kind => [`cat-${kind}`, `on-cat-${kind}`])];
-type Colors = Record<string, string>;
-
-/** Every canvas color from the CSS tokens, resolved to sRGB through a 1 x 1 canvas. */
-function readColors(element: Element): Colors {
-  const style = getComputedStyle(element);
-  const context = Object.assign(document.createElement("canvas"), { width: 1, height: 1 })
-    .getContext("2d", { willReadFrequently: true })!;
-  return Object.fromEntries(TOKENS.map(name => {
-    context.clearRect(0, 0, 1, 1);
-    context.fillStyle = style.getPropertyValue(`--${name}`).trim() || "transparent";
-    context.fillRect(0, 0, 1, 1);
-    const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
-    return [name, `rgb(${r}, ${g}, ${b})`];
-  }));
 }
 
 const LABEL_FONT = 12;
@@ -347,50 +327,9 @@ export function ForceGraphClient({
         ctx.restore();
         return;
       }
-      const { kind, outlined } = nodeKind(node.label);
-      const r = nodeRadius(nodeDocs(node));
-      const extent = shapeExtent(node.label, r);
       const selected = node.id === selectedNodeId;
-      const faded = entitySelected && !selected;
-      const color = faded ? colors["graph-faded"] : kind === "unknown" ? colors["fg-subtle"] : colors[`cat-${kind}`];
-      const shape = (radius: number) => new Path2D(shapePath(node.label, radius));
-      const ring = (path: Path2D, stroke: string, width: number, dash: number[] = []) => {
-        ctx.setLineDash(dash);
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = width;
-        ctx.stroke(path);
-        ctx.setLineDash([]);
-      };
-      ctx.lineJoin = "round";
-      if (selected) ring(shape(r + 3), colors.mark, 20);
-      if (ringed(node)) {
-        const hub = new Path2D();
-        hub.arc(0, 0, extent + 3, 0, Math.PI * 2);
-        ring(hub, colors["fg-muted"], 2);
-      }
-      const body = shape(r);
-      if (outlined || kind === "unknown") {
-        // A 3 px --bg rim, then a 2 px outline over a --bg fill.
-        ring(body, colors.bg, 6);
-        ctx.fillStyle = colors.bg;
-        ctx.fill(body);
-        ring(body, color, 2, kind === "unknown" ? [3.2, 2.4] : []);
-      } else {
-        ring(body, colors.bg, 4);
-        ctx.fillStyle = color;
-        ctx.fill(body);
-      }
-      if (selected) ring(shape(r + 1.5), colors.fg, 3);
-      if (node.id === hoveredId && !selected) ring(shape(r + 3), colors.fg, 2);
-      if (node.id === keyboardNodeId) ring(shape(r + 4), colors.ring, 2, [4, 3]);
-      const icon = r >= 10 ? iconPath(node.label) : null;
-      if (icon) {
-        const size = r >= 14 ? 16 : 12;
-        ctx.translate(-size / 2, -size / 2 + (kind === "thing" ? r * 0.16 : 0));
-        ctx.scale(size / 24, size / 24);
-        ctx.lineCap = "round"; // lucide draws its dots as zero-length round-capped segments
-        ring(icon, outlined || kind === "unknown" ? color : faded ? colors.bg : colors[`on-cat-${kind}`], size < 16 ? 2 : 1.9);
-      }
+      paintShape(ctx, node.label, nodeRadius(nodeDocs(node)), colors, { selected, faded: entitySelected && !selected,
+        hovered: node.id === hoveredId, keyboard: node.id === keyboardNodeId, ringed: ringed(node) });
       ctx.restore();
     },
     [paint, pillWidth, pillText, selectedNodeId, entitySelected, hoveredId, keyboardNodeId],

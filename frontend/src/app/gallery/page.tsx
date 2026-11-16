@@ -19,6 +19,7 @@ import { LinkTable } from "@/components/graph/link-table";
 import { neighborhoodLayout, type NodeSummary } from "@/lib/graph-layout";
 import { GraphLegend } from "@/components/graph/graph-legend";
 import { ViewSheet, ViewSwitcher } from "@/components/graph/view-switcher";
+import { KindMix } from "@/components/graph/overview-view";
 import { GRAPH_VIEWS, type GraphView } from "@/lib/graph-url-state";
 import type { AnswerState, ClaimResult } from "@/lib/answer-state";
 import { DOCUMENT_TYPE_KEYS, NODE_LABELS } from "@/lib/categories";
@@ -208,6 +209,16 @@ export default function GalleryPage() {
         <Section id="graph-filters" title="Graph filters">
           <Row name="Current view"><GraphFiltersSheet summary={tableSummary} filters={graphFilters} view={view} onChange={setGraphFilters} /><GraphFilterChips filters={graphFilters} onChange={setGraphFilters} /></Row>
           <Row name="Overview"><div role="group" aria-label="Overview filters"><GraphFiltersSheet summary={tableSummary} filters={graphFilters} view="overview" onChange={setGraphFilters} /></div></Row>
+        </Section>
+
+        <Section id="graph-overview" title="Graph overview">
+          <Row name="Kind mix">
+            <div className="grid w-full max-w-sm gap-3">
+              <KindMix kinds={[{ label: "InsurancePolicy", count: 12 }, { label: "Person", count: 12 }, { label: "FinancialItem", count: 11 }, { label: "Product", count: 11 }, { label: "Organization", count: 1 }]} />
+              <KindMix kinds={[{ label: "Address", count: 33 }, { label: "Organization", count: 1 }]} />
+              <KindMix kinds={[{ label: "Condition", count: 1 }]} />
+            </div>
+          </Row>
         </Section>
 
         <Section id="document-types" title="Document types">

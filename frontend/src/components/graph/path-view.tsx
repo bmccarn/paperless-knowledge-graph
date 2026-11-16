@@ -27,7 +27,7 @@ const nameOf = (node: PathNode | undefined) => (node ? entityName(node) : "");
 const askHref = (a: string, b: string) => `/query?draft=${encodeURIComponent(askRelated(a, b))}`;
 
 /** A switch button, drawn like "Links between neighbors". */
-function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick: () => void }) {
+export function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick: () => void }) {
   return (
     <button type="button" aria-pressed={on} onClick={onClick}
       className="inline-flex h-11 items-center gap-2 rounded-md pr-1 label-13 text-fg hover:text-fg md:h-8">

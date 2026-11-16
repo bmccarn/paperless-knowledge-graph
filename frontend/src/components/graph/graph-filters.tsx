@@ -23,20 +23,23 @@ export function filterChips(filters: GraphFilters): { label: string; clear: Part
   return chips;
 }
 
-type Props = { summary: NodeSummary; filters: GraphFilters; view: GraphView; onChange: (filters: GraphFilters) => void };
+type Props = { summary?: NodeSummary; filters: GraphFilters; view: GraphView; onChange: (filters: GraphFilters) => void;
+  /** Overview has no summary: it counts its merged pairs itself. */
+  count?: (filters: GraphFilters) => number };
 const row = "flex min-h-11 cursor-pointer items-center gap-3 label-13 md:min-h-8";
 const countClass = "ml-auto tabular-nums text-fg-muted";
 const field = "space-y-2 border-b border-border pb-5 disabled:opacity-50 [&>legend]:mb-3 [&>legend]:label-13 [&>legend]:font-semibold";
 
 /** The same controls serve every view; Overview and Paths retain the disabled groups' URL values. */
-export function GraphFilterControls({ summary, filters, view, onChange }: Props) {
+export function GraphFilterControls({ summary, filters, view, onChange, count: countLinks }: Props) {
   const change = (next: Partial<GraphFilters>) => onChange({ ...filters, ...next });
-  const links = view === "table" ? summary.links : drawableLinks(summary);
-  const count = (next: Partial<GraphFilters> = {}) => filterLinks(links, summary.documents, { ...filters, ...next }, undefined, view).length;
+  const links = !summary ? [] : view === "table" ? summary.links : drawableLinks(summary);
+  const documents = summary?.documents ?? {};
+  const count = (next: Partial<GraphFilters> = {}) => countLinks ? countLinks({ ...filters, ...next }) : filterLinks(links, documents, { ...filters, ...next }, undefined, view).length;
   const overview = view === "overview";
   // The path search takes only the owner and support rules.
   const path = view === "path";
-  const types = [...new Set([...DOCUMENT_TYPE_KEYS, ...Object.values(summary.documents).flatMap(doc => doc.doc_type ? [doc.doc_type] : [])])];
+  const types = [...new Set([...DOCUMENT_TYPE_KEYS, ...Object.values(documents).flatMap(doc => doc.doc_type ? [doc.doc_type] : [])])];
   const toggle = (values: string[], key: string) => values.includes(key) ? values.filter(value => value !== key) : [...values, key];
   return <div className="space-y-5">
     {overview && <p className="copy-14 text-fg-muted">The map does not use document dates, types or confidence, and leaves out the owner.</p>}
@@ -56,7 +59,7 @@ export function GraphFilterControls({ summary, filters, view, onChange }: Props)
     <fieldset disabled={overview || path} className={field}><legend>Confidence</legend>
       <label className={row} htmlFor="graph-confidence">Minimum <output className="ml-auto tabular-nums">{filters.minConfidence.toFixed(2)}</output><span className="tabular-nums text-fg-muted">{count()} links</span></label>
       <input id="graph-confidence" type="range" min="0" max="1" step="0.05" value={filters.minConfidence} onChange={event => change({ minConfidence: Number(event.target.value) })} className="h-11 w-full accent-(--accent-solid) md:h-6" />
-      <label className={row}><input type="checkbox" checked={filters.noScore} onChange={event => change({ noScore: event.target.checked })} className="size-4 accent-(--accent-solid)" />Include links with no score<span className={countClass}>{filterLinks(links, summary.documents, { ...filters, noScore: true }, undefined, view).filter(link => link.records.some(record => record.confidence === null)).length}</span></label>
+      <label className={row}><input type="checkbox" checked={filters.noScore} onChange={event => change({ noScore: event.target.checked })} className="size-4 accent-(--accent-solid)" />Include links with no score<span className={countClass}>{filterLinks(links, documents, { ...filters, noScore: true }, undefined, view).filter(link => link.records.some(record => record.confidence === null)).length}</span></label>
     </fieldset>
     <fieldset disabled={path} className={field}><legend>Evidence documents per link</legend>
       <div className="flex gap-1">{[1, 2, 3, 5, 10].map(value => <Button key={value} variant={filters.minDocs === value ? "default" : "outline"} aria-pressed={filters.minDocs === value}
@@ -80,11 +83,13 @@ export function GraphFilterControls({ summary, filters, view, onChange }: Props)
 
 export function GraphFiltersSheet(props: Props) {
   const chips = filterChips(props.filters);
-  const total = filterLinks(props.view === "table" ? props.summary.links : drawableLinks(props.summary), props.summary.documents, props.filters, undefined, props.view).length;
+  const { summary } = props;
+  const total = props.count ? props.count(props.filters)
+    : filterLinks(!summary ? [] : props.view === "table" ? summary.links : drawableLinks(summary), summary?.documents ?? {}, props.filters, undefined, props.view).length;
   return <Sheet>
     <SheetTrigger asChild><Button variant="outline" className="h-11 gap-2 md:h-9"><SlidersHorizontal className="size-4" />Filters{chips.length > 0 && <span className="tabular-nums">{chips.length}</span>}</Button></SheetTrigger>
     <SheetContent side="left" className="gap-0 max-md:max-w-none md:w-[380px]" aria-describedby="graph-filter-description">
-      <div className="border-b px-5 pb-4 pt-5"><SheetTitle className="heading-16">Filters</SheetTitle><SheetDescription id="graph-filter-description" className="mt-1">{props.summary.focus.name} · <span role="status" className="tabular-nums">{total} links match</span></SheetDescription></div>
+      <div className="border-b px-5 pb-4 pt-5"><SheetTitle className="heading-16">Filters</SheetTitle><SheetDescription id="graph-filter-description" className="mt-1">{summary?.focus.name ?? "The archive"} · <span role="status" className="tabular-nums">{total} links match</span></SheetDescription></div>
       <div className="min-h-0 flex-1 overflow-y-auto p-5"><GraphFilterControls {...props} /></div>
       <div className="flex shrink-0 items-center justify-between gap-3 border-t p-4 pb-[calc(16px+env(safe-area-inset-bottom))]">
         <Button variant="ghost" className="h-11" onClick={() => props.onChange(defaultFilters())}>Reset filters</Button>

@@ -7,6 +7,7 @@ import {
   exactMatch,
   groupResults,
   highlight,
+  markTerms,
   mostConnected,
   parseRecent,
 } from "../.test-build/graph-landing.js";
@@ -78,4 +79,11 @@ test("highlight marks each query word without changing the text", () => {
     { text: "ual ", match: false }, { text: "harbor", match: true }]);
   assert.equal(highlight("<b>Acme</b>", "acme").map(part => part.text).join(""), "<b>Acme</b>");
   assert.deepEqual(highlight("Dana", ""), [{ text: "Dana", match: false }]);
+});
+
+test("markTerms marks whole names, the longest first, and skips empty names", () => {
+  const parts = markTerms("Policy HM-2208 (auto) covers the 2014 HONDA FIT.", ["Policy HM-2208 (auto)", "2014 Honda Fit", "", "Policy"]);
+  assert.deepEqual(parts, [{ text: "Policy HM-2208 (auto)", match: true }, { text: " covers the ", match: false },
+    { text: "2014 HONDA FIT", match: true }, { text: ".", match: false }]);
+  assert.deepEqual(markTerms("A <b>quote</b>", ["", ""]), [{ text: "A <b>quote</b>", match: false }]);
 });

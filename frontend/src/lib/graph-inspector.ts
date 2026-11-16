@@ -1,6 +1,7 @@
 /** Pure inspector, evidence shelf and legend data, from the node summary and the drawn layout. */
 import { NODE_LABELS, nodeKind } from "./categories";
 import { displayName } from "./graph-encoding";
+import { markTerms } from "./graph-landing";
 import { drawableLinks, FAMILIES, type NeighborhoodLayout, type NodeSummary, type SummaryLink } from "./graph-layout";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -24,6 +25,18 @@ export function supportText(link: Pick<SummaryLink, "support_state" | "stated_co
 }
 
 export const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+/** A quote split for marking the link's end names; a name under 3 characters would mark letters all over the quote. */
+export const quoteParts = (quote: string, names: string[]) => markTerms(quote, names.filter(name => name.trim().length >= 3));
+
+/** "0.94" with a prefix, or "No score". */
+export const scoreText = (prefix: string, confidence: number | null) => confidence === null ? "No score" : `${prefix} ${confidence.toFixed(2)}`;
+
+/** The lowest record confidence; null ("No score") when the link has no records or any record lacks a score. */
+export function lowestConfidence(link: Pick<SummaryLink, "records">): number | null {
+  return !link.records.length || link.records.some(record => record.confidence === null)
+    ? null : Math.min(...link.records.map(record => record.confidence!));
+}
 
 export interface SummaryDocument { id: number; title: string; date: string | null; doc_type: string | null }
 

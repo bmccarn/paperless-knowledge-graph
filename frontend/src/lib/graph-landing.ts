@@ -59,8 +59,11 @@ export function parseRecent(text: string | null): RecentEntity[] {
 }
 
 /** Text split into parts that match a query word (ignoring case) and parts that do not. */
-export function highlight(text: string, query: string): { text: string; match: boolean }[] {
-  const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+export const highlight = (text: string, query: string) => markTerms(text, query.split(/\s+/));
+
+/** Text split into parts that match one of the terms (ignoring case; the longest at a position) and parts that do not. */
+export function markTerms(text: string, terms: string[]): { text: string; match: boolean }[] {
+  const words = terms.map(term => term.toLocaleLowerCase()).filter(Boolean);
   const lower = text.toLocaleLowerCase();
   const parts: { text: string; match: boolean }[] = [];
   let at = 0;

@@ -1,7 +1,7 @@
 /** Table rows come from every semantic link, independently of the Focus canvas cap. */
 import { nodeLabelText } from "./categories";
 import { FAMILIES, type NeighborhoodLayout, type NodeSummary, type SummaryLink } from "./graph-layout";
-import { entityName, supportText, typeWords } from "./graph-inspector";
+import { entityName, lowestConfidence, supportText, typeWords } from "./graph-inspector";
 
 export const TABLE_PAGE_SIZE = 50;
 export const TABLE_COLUMNS = [
@@ -34,8 +34,7 @@ export function tableRows(summary: NodeSummary, layout: NeighborhoodLayout): Lin
       relationship: typeWords(link.type), direction: link.direction === "in" ? "In" : "Out",
       name: entityName(link.neighbor), type: nodeLabelText(link.neighbor.label), support: supportText(link),
       documents: new Set(link.records.map(record => record.doc_id)).size,
-      confidence: !link.records.length || link.records.some(record => record.confidence === null)
-        ? null : Math.min(...link.records.map(record => record.confidence!)),
+      confidence: lowestConfidence(link),
       latest: dates.sort().pop() ?? null,
     };
   });

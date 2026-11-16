@@ -582,6 +582,19 @@ class Handler(BaseHTTPRequestHandler):
                 documents = sorted({record['doc_id'] for link in links for record in link['records']})
                 return self.reply({'links': links, 'total': total, 'truncated': total > len(links),
                                    'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in documents}})
+            if route == '/graph/link':
+                # GET /graph/link: one link's records with a synthetic quote naming both ends, and a rationale when inferred.
+                start, rel_type, end = get('source'), get('type'), get('target')
+                records = next((records for *link, records in NB_LINKS + NB_CROSS if link == [start, rel_type, end]), None)
+                if records is None:
+                    return self.reply({'detail': 'Link not found'}, 404)
+                names = nb_node(start)[1], nb_node(end)[1]
+                words = rel_type.replace('_', ' ').lower()
+                return self.reply({'records': [{
+                    'doc_id': doc, 'inferred': flag, 'confidence': score,
+                    'quotes': [RELATIONSHIP_QUOTE if start == 'person-1' else f'{names[0]} {words} {names[1]}, as listed in this record.'],
+                    'rationale': (f'The record names {names[0]} and {names[1]} on one account but does not state that '
+                                  f'they are linked.') if flag else None} for doc, flag, score in records]})
             if route.startswith('/graph/node/'):
                 uid = route.rsplit('/', 1)[1]
                 if uid in NB_ENTITIES and get('summary') in ('1', 'true'):

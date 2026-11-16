@@ -6,7 +6,7 @@ import { ChevronUp, Info, Loader2, Maximize, Minus, Plus, RotateCw, X } from "lu
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { KindShape } from "@/components/kind-shape";
-import { ApiError, getGraphNodeSummary, getGraphSubgraph } from "@/lib/api";
+import { getGraphNodeSummary, getGraphSubgraph } from "@/lib/api";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
   collapse,
@@ -55,7 +55,7 @@ function useLoad(wanted: readonly string[], failed: ReadonlySet<string>, arrived
     let active = true;
     for (const id of missing.split(",")) loadSummary(id).then(
       () => { if (active) arrived(); },
-      error => { if (active && !(error instanceof ApiError && error.status === 404)) setFailed(previous => new Set(previous).add(id)); },
+      () => { if (active) setFailed(previous => new Set(previous).add(id)); },
     );
     return () => { active = false; };
   }, [missing, arrived, setFailed]);

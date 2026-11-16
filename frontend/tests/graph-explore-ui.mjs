@@ -33,7 +33,7 @@ async function newPage(viewport = { width: 1440, height: 900 }) {
     };
   });
   const page = await context.newPage();
-  page.on('console', message => { if (message.type() === 'error' && !message.text().includes('503')) errors.push(message.text()); });
+  page.on('console', message => { if (message.type() === 'error' && !/\b(404|503)\b/.test(message.text())) errors.push(message.text()); });
   page.on('pageerror', error => errors.push(error.message));
   return page;
 }
@@ -144,9 +144,9 @@ try {
   await page.getByText('This view holds at most 20 expansions. Collapse a branch or open one entity in Focus.').waitFor();
   assert.equal(page.url(), before);
 
-  // A summary that fails leaves the view as it was and offers Retry in the trail.
+  // A summary that fails, here an entity removed since (404), leaves the view as it was and offers Retry in the trail.
   let fail = true;
-  await page.route('**/api/graph/node/ex-loan?summary=1', route => (fail ? route.fulfill({ status: 503, json: { detail: 'Synthetic failure' } }) : route.fallback()));
+  await page.route('**/api/graph/node/ex-loan?summary=1', route => (fail ? route.fulfill({ status: 404, json: { detail: 'Not found' } }) : route.fallback()));
   await page.goto(`${root}&x=ex-car,ex-loan`);
   await trail(page).getByRole('alert').filter({ hasText: 'Links of Car loan CL-7710 did not load.' }).waitFor();
   frame = await settle(page, ': 15 entities');

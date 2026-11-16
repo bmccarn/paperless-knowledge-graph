@@ -1183,7 +1183,7 @@ async def graph_search(q: str = "", type: str = None, limit: int = 20, offset: i
     for row in page["results"]:
         row["is_owner"] = owner is not None and row["properties"].get("uuid") == owner
         row["owner_match"] = row["properties"].get("uuid") in duplicates
-    return {"query": q, "type": type, **page}
+    return {"query": q, "type": type, "owner": owner, **page}
 
 
 @app.get("/documents")

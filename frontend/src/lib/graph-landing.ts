@@ -42,6 +42,9 @@ export function exactMatch(rows: EntityRow[], text: string): EntityRow | null {
 /** The top 10 by evidence documents, without the owner and the other Persons that match the owner setting. */
 export const mostConnected = (rows: EntityRow[]) => rows.filter(row => !row.owner && !row.ownerMatch).slice(0, 10);
 
+/** The entity `/graph` opens after Recent: the owner, else the first Most connected; null for an archive without entities. */
+export const defaultFocus = (owner: string | null | undefined, rows: EntityRow[]) => owner || mostConnected(rows)[0]?.id || null;
+
 export type RecentEntity = Pick<EntityRow, "id" | "name" | "label" | "documents">;
 
 /** Put an entity first in Recent, once, keeping the last 10. */

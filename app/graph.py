@@ -26,6 +26,15 @@ def _calendar_date(value: str) -> bool:
         return False
 
 
+def _parsed_graph_date(value: str) -> str | None:
+    calendar = value[:10]
+    if _calendar_date(calendar):
+        return calendar
+    if re.fullmatch(r"\d{4}-\d{2}", value) and _calendar_date(value + '-01'):
+        return value
+    return None
+
+
 async def source_dates(store, document_ids: list[int]) -> dict[str, str]:
     """Calendar dates for answer sources; a failed lookup omits dates, never the answer."""
     try:
@@ -1045,12 +1054,14 @@ class GraphStore:
                              **{key: value for key, value in fields[neighbor_id].items() if key != "is_hub"}},
             })
         async with self.driver.session() as session:
-            result = await session.run("""
+            result = await session.run(f"""
                 MATCH (d:Document) WHERE d.paperless_id IN $ids
-                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type
+                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type,
+                       {_DATE_SORT_KEY.replace("n.date", "d.date")} AS parsed_date
                 ORDER BY id
             """, ids=sorted(document_ids))
-            documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
+            documents = {str(row["id"]): {**{key: row[key] for key in ("title", "date", "doc_type")},
+                                           "parsed_date": _parsed_graph_date(row["parsed_date"])}
                          async for row in result}
         return {"focus": focus, "links": sorted(links, key=lambda link: link["key"]),
                 "documents": documents, "owner_status": owner_status, "owner_match_count": len(matches),
@@ -1081,12 +1092,14 @@ class GraphStore:
             total = len(links)
             links = sorted(links, key=lambda link: (-len(link["records"]), link["key"]))[:600]
             document_ids = sorted({record["doc_id"] for link in links for record in link["records"]})
-            result = await session.run("""
+            result = await session.run(f"""
                 MATCH (d:Document) WHERE d.paperless_id IN $ids
-                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type
+                RETURN d.paperless_id AS id, d.title AS title, d.date AS date, d.doc_type AS doc_type,
+                       {_DATE_SORT_KEY.replace("n.date", "d.date")} AS parsed_date
                 ORDER BY id
             """, ids=document_ids)
-            documents = {str(row["id"]): {key: row[key] for key in ("title", "date", "doc_type")}
+            documents = {str(row["id"]): {**{key: row[key] for key in ("title", "date", "doc_type")},
+                                           "parsed_date": _parsed_graph_date(row["parsed_date"])}
                          async for row in result}
         return {"links": links, "documents": documents, "total": total, "truncated": total > len(links)}
 

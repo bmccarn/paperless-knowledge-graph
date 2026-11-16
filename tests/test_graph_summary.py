@@ -90,6 +90,23 @@ class Neo4jSummaryTests(unittest.IsolatedAsyncioTestCase):
                     await (await session.run('MATCH (n) WHERE n.uuid STARTS WITH $prefix OR n.paperless_id IN [$first, $first + 1] DETACH DELETE n', prefix=PREFIX, first=FIRST_ID)).consume()
         asyncio.run(clean())
 
+    async def test_parsed_dates_keep_raw_values_and_reject_unparseable_values(self):
+        async with AsyncGraphDatabase.driver(TEST_URI, auth=None) as driver:
+            async with driver.session() as session:
+                try:
+                    for raw, expected in [('April 1, 2026', '2026-04-01'), ('1 APR 26', '2026-04-01'),
+                                          ('2026-04-01', '2026-04-01'), ('2026-04-01T09:30:00', '2026-04-01'),
+                                          ('2026-04', '2026-04'), ('2026-02-30', None),
+                                          ('undated', None), (None, None)]:
+                        await (await session.run('MATCH (d:Document {paperless_id: $id}) SET d.date = $raw',
+                                                id=FIRST_ID, raw=raw)).consume()
+                        summary = await self.store.get_node_summary(PREFIX + '000000000660')
+                        self.assertEqual(summary['documents'][str(FIRST_ID)]['date'], raw)
+                        self.assertEqual(summary['documents'][str(FIRST_ID)]['parsed_date'], expected)
+                finally:
+                    await (await session.run("MATCH (d:Document {paperless_id: $id}) SET d.date = '2026-04-01'",
+                                            id=FIRST_ID)).consume()
+
     async def asyncSetUp(self):
         self.store = GraphStore()
         self.store.driver = AsyncGraphDatabase.driver(TEST_URI, auth=None)
@@ -134,8 +151,8 @@ class Neo4jSummaryTests(unittest.IsolatedAsyncioTestCase):
             'neighbor': {'id': PREFIX + '000000000000', 'label': 'Person', 'name': 'Person 0',
                          'evidence_doc_count': 1, 'link_count': 1, 'is_owner': True}})
         self.assertEqual(summary['documents'], {
-            str(FIRST_ID): {'title': 'Summary statement', 'date': '2026-04-01', 'doc_type': 'financial_invoice'},
-            str(FIRST_ID + 1): {'title': 'Summary note', 'date': '2026-05-01', 'doc_type': 'other'}})
+            str(FIRST_ID): {'title': 'Summary statement', 'date': '2026-04-01', 'parsed_date': '2026-04-01', 'doc_type': 'financial_invoice'},
+            str(FIRST_ID + 1): {'title': 'Summary note', 'date': '2026-05-01', 'parsed_date': '2026-05-01', 'doc_type': 'other'}})
         self.assertNotIn('Excluded', response.text)
         print(f'660-link summary plus one mention: {len(response.content)} bytes')
 

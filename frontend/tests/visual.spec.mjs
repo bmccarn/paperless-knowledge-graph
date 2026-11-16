@@ -27,6 +27,7 @@ mainStates.push({ name: "graph-filters", route: "/graph?focus=nb-rowan&support=s
 const pathRoute = "/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1";
 // The best quotes arrive per link after the paths; path 1 has three links.
 mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(2) });
+mainStates.push({ name: "graph-timeline", route: "/graph?focus=nb-timeline&view=timeline", ready: page => page.getByRole("region", { name: "Timeline of Policy TL-2208 (auto)", exact: true }) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -49,6 +50,12 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { name: "graph-timeline-hub", route: "/graph?focus=nb-rowan&view=timeline", state: "hub", ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }) },
+  { name: "graph-timeline-leaf", route: "/graph?focus=nb-leaf&view=timeline", state: "leaf", ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
+  { name: "graph-timeline-undated", route: "/graph?focus=nb-timeline&view=timeline", state: "undated",
+    seed: page => page.route("**/api/graph/node/nb-timeline?summary=1", async route => { const response = await route.fetch(); const data = await response.json(); for (const doc of Object.values(data.documents)) { doc.date = null; doc.parsed_date = null; } await route.fulfill({ json: data }); }),
+    ready: page => page.getByText("None of the 5 documents has a date.", { exact: true }) },
+  { name: "graph-timeline-range", route: "/graph?focus=nb-timeline&view=timeline&from=2026-01&to=2026-09", state: "date-range", ready: page => page.getByRole("group", { name: "Timeline date range", exact: true }) },
   { ...mainStates[11], name: "graph-filters-types", state: "filter-types", prepare: async page => {
     await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
     const types = page.getByRole("dialog", { name: "Filters", exact: true }).getByRole("group", { name: "Document type", exact: true });

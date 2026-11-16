@@ -196,6 +196,14 @@ export async function getGraphNodeSummary(uuid: string): Promise<NodeSummary> {
   return summary;
 }
 
+export interface LinkRecord { doc_id: number; inferred: boolean; confidence: number | null; quotes: string[]; rationale: string | null }
+
+/** One link's records with quotes and rationale, fetched when the link is selected. */
+export async function getGraphLink(key: string): Promise<{ records: LinkRecord[] }> {
+  const [source, type, target] = key.split("~");
+  return apiFetch(`/graph/link?${new URLSearchParams({ source, type, target })}`);
+}
+
 /** The links among 2 to 150 entities, for the links between neighbors in Focus. */
 export async function getGraphSubgraph(ids: string[]): Promise<Subgraph> {
   return apiFetch(`/graph/subgraph?${new URLSearchParams({ ids: ids.join(",") })}`);

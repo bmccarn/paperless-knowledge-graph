@@ -1090,6 +1090,29 @@ class GraphStore:
                          async for row in result}
         return {"links": links, "documents": documents, "total": total, "truncated": total > len(links)}
 
+    async def get_link(self, source: str, rel_type: str, target: str) -> Optional[dict]:
+        """The per-document records of one link, with quotes and rationale; None when no such link exists."""
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (a) WHERE a.uuid = $source OR 'doc-' + toString(a.paperless_id) = $source
+                MATCH (a)-[r]->(b) WHERE type(r) = $type AND (b.uuid = $target OR 'doc-' + toString(b.paperless_id) = $target)
+                RETURN properties(r) AS props
+            """, source=source, type=rel_type, target=target)
+            props = [row["props"] async for row in result]
+        if not props:
+            return None
+        records = support_records(merge_support_properties(*props))
+        rows = []
+        for doc_id in sorted(records):
+            record = records[doc_id]
+            quotes = [span.get("quote") if isinstance(span, dict) else span for span in record.get("evidence_spans") or []]
+            rationale = record.get("rationale")
+            rationale = " ".join(rationale) if isinstance(rationale, list) else rationale
+            rows.append({"doc_id": doc_id, "inferred": record["inferred"], "confidence": record.get("confidence"),
+                         "quotes": [quote for quote in quotes if isinstance(quote, str) and quote.strip()],
+                         "rationale": rationale if isinstance(rationale, str) and rationale.strip() else None})
+        return {"records": rows}
+
     async def get_neighbors(self, node_uuid: str, depth: int = 2) -> dict:
         depth = max(1, min(int(depth), 4))
         try:

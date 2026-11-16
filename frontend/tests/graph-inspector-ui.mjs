@@ -129,7 +129,7 @@ test('the inspector lists documents by title and date, never "Document #"', asyn
   // A selected neighbor and a selected link also name documents and entities, not ids.
   await panel.getByRole('button', { name: /^Marlow Freight Co\./ }).click();
   await panel.getByText('Link in Parties and roles', { exact: true }).waitFor();
-  assert.match(await panel.getByRole('link').first().innerText(), /^Synthetic archive \d+/);
+  assert.match(await panel.getByRole('article').first().getByRole('heading', { level: 3 }).innerText(), /^Synthetic archive \d+$/);
   assert.ok(!(await page.textContent('body')).includes('Document #'), 'The text "Document #" does not appear');
 });
 
@@ -196,18 +196,88 @@ test('"Ask about this" opens Ask with the question in the composer and sends not
   assert.deepEqual(writes, [], 'Nothing is sent');
 });
 
-test('selecting the mixed link shows "Stated in 1, inferred in 1" and its documents', async t => {
+test('selecting the mixed link shows two evidence cards, the inferred one with its rationale', async t => {
   const page = await newPage(t);
+  const evidence = [];
+  page.on('request', request => { if (request.url().includes('/api/graph/link?')) evidence.push(new URL(request.url()).searchParams.toString()); });
   await open(page, 'nb-renewal', 'Renewal notice 2026: 1 links in 1 families.');
   await settled(page);
+  assert.deepEqual(evidence, [], 'Evidence is fetched only when a link is selected');
   await inspector(page).getByRole('button', { name: /^2014 Honda Fit/ }).click();
   const link = inspector(page).getByRole('region', { name: 'Inspector: link' });
   await link.getByText('Stated in 1, inferred in 1', { exact: true }).waitFor();
   assert.equal(await link.getByText('Link in Coverage and obligations', { exact: true }).count(), 1);
-  assert.equal(await link.getByRole('link').count(), 2);
-  assert.match(await link.getByRole('link').first().innerText(), /^Synthetic archive \d+\s+\S+\s+1 Sep 2026$/);
+  assert.equal(await link.getByText('Lowest confidence 0.90', { exact: true }).count(), 1);
+  const cards = link.getByRole('article');
+  await cards.locator('blockquote').first().waitFor();
+  assert.deepEqual(evidence, ['source=nb-renewal&type=COVERS&target=nb-car']);
+  assert.equal(await cards.count(), 2);
+  const [stated, inferred] = [cards.nth(0), cards.nth(1)];
+  assert.match(await stated.getByRole('heading', { level: 3 }).innerText(), /^Synthetic archive \d+$/);
+  assert.equal(await stated.getByText('Stated', { exact: true }).count(), 1);
+  assert.equal(await stated.getByText('Confidence 0.90', { exact: true }).count(), 1);
+  assert.equal(await stated.getByText('Rationale', { exact: true }).count(), 0, 'A stated record has no rationale');
+  assert.equal(await inferred.getByText('Inferred', { exact: true }).count(), 1);
+  assert.equal(await inferred.getByText(/^Rationale The record names Renewal notice 2026 and 2014 Honda Fit/).count(), 1);
+  // Both end names are marked in each quote.
+  assert.deepEqual(await stated.locator('blockquote mark').allInnerTexts(), ['Renewal notice 2026', '2014 Honda Fit']);
+  for (const card of [stated, inferred]) {
+    const title = await card.getByRole('heading', { level: 3 }).innerText();
+    const id = title.match(/\d+$/)[0];
+    assert.equal(await card.getByRole('link', { name: `Open document ${title}`, exact: true }).getAttribute('href'), `/documents/${Number(id) + 9000}`);
+    assert.match(await card.getByRole('link', { name: `Open in Paperless ${title}`, exact: true }).getAttribute('href'), new RegExp(`/documents/${Number(id) + 9000}/$`));
+    assert.equal(await card.getByRole('link', { name: `Wrong link? ${title}`, exact: true }).getAttribute('href'), `/documents/${Number(id) + 9000}#review`);
+  }
+  assert.equal(await link.getByRole('link', { name: 'Ask about this link', exact: true }).getAttribute('href'),
+    `/query?draft=${encodeURIComponent('How is Renewal notice 2026 related to 2014 Honda Fit?')}`);
   // The shelf marks the selected link's documents.
   assert.equal(await shelfOf(page).locator('[data-marked]').count(), 2);
+});
+
+test('"Wrong link?" opens that document\'s extraction review form, focused', async t => {
+  const page = await newPage(t);
+  await page.goto(`${base}/graph?focus=nb-renewal&sel=nb-renewal~COVERS~nb-car`);
+  const card = inspector(page).getByRole('article').first();
+  const title = await card.getByRole('heading', { level: 3 }).innerText();
+  await card.getByRole('link', { name: `Wrong link? ${title}`, exact: true }).click();
+  await page.getByRole('heading', { name: title, exact: true, level: 1 }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Extraction review report');
+  assert.equal(new URL(page.url()).hash, '#review');
+});
+
+test('a link with an unscored record shows "No score"', async t => {
+  const page = await newPage(t);
+  await page.goto(`${base}/graph?focus=nb-rowan&sel=nb-rowan~ASSOCIATED_WITH~nb-loose-1`);
+  const link = inspector(page).getByRole('region', { name: 'Inspector: link' });
+  await link.locator('blockquote').first().waitFor();
+  assert.equal(await link.getByText('No score', { exact: true }).count(), 3, 'The link line and each of its two cards');
+  assert.equal(await link.getByText(/Confidence/).count(), 0);
+});
+
+test('a link between two neighbors opens the same evidence from "Linked to other neighbors"', async t => {
+  const page = await newPage(t);
+  await page.goto(`${base}/graph?focus=nb-rowan&sel=nb-coverage-0`);
+  await inspector(page).getByRole('list', { name: 'Linked to other neighbors' }).getByRole('button', { name: /^Harbor Mutual Insurance/ }).click();
+  await page.waitForURL(url => url.searchParams.get('sel') === 'nb-coverage-0~ISSUED_BY~nb-money-0');
+  const link = inspector(page).getByRole('region', { name: 'Inspector: link' });
+  await link.locator('blockquote').first().waitFor();
+  assert.equal(await link.getByRole('article').count(), 5);
+  assert.deepEqual(await link.locator('blockquote').first().locator('mark').allInnerTexts(), ['Policy HM-2208 (auto)', 'Harbor Mutual Insurance']);
+  for (const title of await link.getByRole('article').getByRole('heading', { level: 3 }).allInnerTexts()) assert.match(title, /^Synthetic archive \d+$/);
+});
+
+test('when the evidence does not load, the cards stay and Retry loads the quotes', async t => {
+  const page = await newPage(t);
+  let fail = true;
+  await page.route('**/api/graph/link?**', route => fail ? route.fulfill({ status: 503, json: { detail: 'down' } }) : route.continue());
+  await page.goto(`${base}/graph?focus=nb-renewal&sel=nb-renewal~COVERS~nb-car`);
+  const link = inspector(page).getByRole('region', { name: 'Inspector: link' });
+  await link.getByText('The quotes for this link did not load.').waitFor();
+  assert.equal(await link.getByRole('article').count(), 2);
+  fail = false;
+  await link.getByRole('button', { name: 'Retry', exact: true }).click();
+  await link.locator('blockquote').first().waitFor();
+  assert.equal(await link.getByText('The quotes for this link did not load.').count(), 0);
 });
 
 test('the fixture leaf shows its empty state and its documents', async t => {

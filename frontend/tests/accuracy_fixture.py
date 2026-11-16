@@ -634,6 +634,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'detail': 'Invalid path search'}, 422)
                 return self.reply(nb_paths(get('a'), get('b'), max_len, k, get('include_owner') in ('1', 'true'),
                                            get('allow_inferred', '1') in ('1', 'true')))
+            if route == '/graph/link':
+                # GET /graph/link: one link's records with a synthetic quote naming both ends, and a rationale when inferred.
+                start, rel_type, end = get('source'), get('type'), get('target')
+                records = next((records for *link, records in NB_LINKS + NB_CROSS if link == [start, rel_type, end]), None)
+                if records is None:
+                    return self.reply({'detail': 'Link not found'}, 404)
+                names = nb_node(start)[1], nb_node(end)[1]
+                words = rel_type.replace('_', ' ').lower()
+                return self.reply({'records': [{
+                    'doc_id': doc, 'inferred': flag, 'confidence': score,
+                    'quotes': [RELATIONSHIP_QUOTE if start == 'person-1' else f'{names[0]} {words} {names[1]}, as listed in this record.'],
+                    'rationale': (f'The record names {names[0]} and {names[1]} on one account but does not state that '
+                                  f'they are linked.') if flag else None} for doc, flag, score in records]})
             if route.startswith('/graph/node/'):
                 uid = route.rsplit('/', 1)[1]
                 if uid in NB_ENTITIES and get('summary') in ('1', 'true'):

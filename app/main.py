@@ -1222,6 +1222,14 @@ async def graph_subgraph(ids: str):
     return await graph_store.get_links_among(list(dict.fromkeys(entity_ids)))
 
 
+@app.get("/graph/link")
+async def graph_link(source: str, type: str, target: str):
+    link = await graph_store.get_link(source, type, target)
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return link
+
+
 PATH_SEARCH_SECONDS = 5
 
 

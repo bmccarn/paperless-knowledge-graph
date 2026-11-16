@@ -42,6 +42,9 @@ def entity_identity(node: dict) -> dict:
     if kind == "Address" and not (isinstance(name, str) and name.strip()):
         name = props.get("full_address")  # document-owned addresses have no name
     names = _names(name) | _names(props.get("aliases") or [])
+    if kind == "Address":  # a recorded veto must still meet a respelled copy of the address
+        from app.entity_policy import address_key
+        names |= {address_key(name)} - {""}
     docs = _document_ids(props.get("source_doc_ids") or [])
     for relationship in node.get("relationships") or []:
         docs |= _document_ids((relationship.get("neighbor_props") or {}).get("paperless_id"))

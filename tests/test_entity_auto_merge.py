@@ -422,9 +422,24 @@ class ResolverAddressAutoMergeTests(ResolverAutoMergeTests):
     async def test_undo_still_blocks_after_a_reindex_recreates_the_node(self):
         merged = await self.auto_merge()
         await self.resolver.unmerge_entities(merged["merge_id"], review_method="entity_review_api")
-        # A reindex deletes the orphaned document-owned node and attaches a new UUID.
-        self.graph.nodes["c"] = {**self.graph.nodes.pop("b"), "uuid": "c"}
-        self.assertEqual((await self.resolver.auto_merge_check("a", "c"))["blocker"], "prohibited")
+        # A reindex deletes the orphaned document-owned node and attaches a new UUID,
+        # possibly with another spelling of the same address.
+        for spelling in ("14 LARKSPUR COURT SPRINGFIELD IL 62701", "14 Larkspur Ct. Springfield IL 62701"):
+            with self.subTest(spelling=spelling):
+                self.graph.nodes.pop("b", None)
+                self.graph.nodes["c"] = address("c", spelling)
+                self.assertEqual((await self.resolver.auto_merge_check("a", "c"))["blocker"], "prohibited")
+
+    async def test_undo_after_drift_names_the_documents_to_reindex(self):
+        merged = await self.auto_merge()
+        journal = self.decisions.journal[merged["merge_id"]]
+        journal["before_image"]["edges"] = [
+            {"type": "LOCATED_AT", "start": {"paperless_id": doc}, "end": {"uuid": node_uuid}, "props": {"source_doc": doc}}
+            for doc, node_uuid in ((11, "a"), (12, "b"))]
+        self.graph.unmerge_entities = AsyncMock(side_effect=resolver_module.MergeDrift("changed"))
+        self.graph.reset_unmerged_fields = AsyncMock(return_value=True)
+        result = await self.resolver.unmerge_entities(merged["merge_id"], review_method="entity_review_api")
+        self.assertEqual((result["status"], result["reindex_doc_ids"]), ("conflict", [12]))
 
     async def test_address_without_name_or_full_address_never_qualifies(self):
         self.graph.nodes = {"a": {"uuid": "a", "entity_type": "Address"}, "b": {"uuid": "b", "entity_type": "Address"}}

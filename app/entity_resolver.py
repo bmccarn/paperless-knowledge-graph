@@ -260,9 +260,9 @@ class EntityResolver:
                         "alias": duplicate["name"], "canonical_name": primary["name"], "type": kind,
                         "status": "revoked", "review_id": journal["review_id"], "review_method": review_method})
                 await embeddings_store.set_merge_journal_status(merge_id, "conflict")
-                docs = nodes[duplicate_uuid]["properties"].get("source_doc_ids") or []
+                # Document-owned nodes carry their document on the journaled edges.
                 return {"status": "conflict", "merge_id": merge_id,
-                        "reindex_doc_ids": sorted(d for d in docs if type(d) is int)}
+                        "reindex_doc_ids": entity_identity(nodes[duplicate_uuid])["source_doc_ids"]}
             await embeddings_store.restore_merge_embedding(merge_id)
             for node in nodes.values():
                 props = node["properties"]

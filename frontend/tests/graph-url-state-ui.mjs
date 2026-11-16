@@ -21,7 +21,7 @@ try {
       return fillText.call(this, text, ...args);
     };
   });
-  const state = "focus=nb-rowan&view=table&fam=money&sel=nb-coverage-1";
+  const state = "focus=nb-rowan&view=table&fam=coverage&sel=nb-coverage-1";
   await page.goto(`${base}/graph?${state}`);
   const inspector = page.getByRole("complementary", { name: "Evidence inspector" });
   await inspector.waitFor();
@@ -32,7 +32,7 @@ try {
   await page.waitForURL(url => url.searchParams.get("focus") === "nb-coverage-1");
   assert.equal(await page.evaluate(() => history.length), historyLength + 1);
   assert.equal(new URL(page.url()).searchParams.get("sel"), null);
-  assert.equal(new URL(page.url()).searchParams.get("fam"), "money");
+  assert.equal(new URL(page.url()).searchParams.get("fam"), "coverage");
   await page.goBack();
   await inspector.getByRole("heading", { name: "Policy HO-5130 (home)", exact: true }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get("focus"), "nb-rowan");

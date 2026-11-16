@@ -140,6 +140,8 @@ export function ForceGraphClient({
   const initialFitPending = useRef(true);
   /** The zoom a running camera move ends at, so a second press builds on it. */
   const zoomTarget = useRef({ k: 0, until: 0 });
+  /** The canvas transform of the last painted frame. */
+  const painted = useRef<DOMMatrix | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -514,6 +516,7 @@ export function ForceGraphClient({
   // Labels go last, in one pass, so no node paints over them and the skip rule sees every label.
   const paintLabels = useCallback(
     (ctx: CanvasRenderingContext2D, scale: number) => {
+      painted.current = ctx.getTransform();
       if (!paint) return;
       const { colors } = paint;
       const nodes = data.nodes.filter((node) => node.x !== undefined && node.y !== undefined);
@@ -607,22 +610,25 @@ export function ForceGraphClient({
   /**
    * The node under a click, from the shapes the hit map paints; later nodes are painted on top. force-graph picks the
    * clicked object from a hit map it repaints at most every 800 ms (HOVER_CANVAS_THROTTLE_DELAY, force-graph.mjs:762
-   * in 1.52.0), so for that long after the camera moves it names whatever used to be under the pointer.
+   * in 1.52.0), so for that long after the camera moves it names whatever used to be under the pointer. Positions use
+   * the camera of the last painted frame: force-graph advances a camera animation after painting (force-graph.mjs:1428).
    */
   const nodeAt = (event: MouseEvent) => {
-    const graph = handleRef.current;
+    const m = painted.current;
     const ctx = event.target instanceof HTMLCanvasElement ? event.target.getContext("2d") : null;
-    if (!graph || !ctx) return null;
-    const rect = ctx.canvas.getBoundingClientRect(), scale = graph.zoom();
+    if (!m || !ctx) return null;
+    const rect = ctx.canvas.getBoundingClientRect(), ratio = devicePixelRatio, scale = m.a / ratio;
+    /** Inside a capsule of radius r around the segment from x0 to x1 at height cy, as roundRect paints it. */
+    const capsule = (x: number, y: number, x0: number, x1: number, cy: number, r: number) =>
+      Math.hypot(x - Math.min(Math.max(x, x0 + r), x1 - r), y - cy) <= r;
     return data.nodes.findLast(node => {
       if (node.x === undefined || node.y === undefined) return false;
-      const at = graph.graph2ScreenCoords(node.x, node.y);
-      const x = event.clientX - rect.left - at.x, y = event.clientY - rect.top - at.y;
+      const x = event.clientX - rect.left - (m.a * node.x + m.e) / ratio, y = event.clientY - rect.top - (m.d * node.y + m.f) / ratio;
       if (node.label === HANDLE) {
         const box = handleBox(ctx, node, scale);
-        return x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1;
+        return capsule(x, y, box.x0, box.x1, box.y0 + HANDLE_HEIGHT / 2, HANDLE_HEIGHT / 2);
       }
-      if (node.label === "Aggregate") return Math.abs(x) <= pillWidth(ctx, node) / 2 && Math.abs(y) <= PILL_HEIGHT / 2;
+      if (node.label === "Aggregate") return capsule(x, y, -pillWidth(ctx, node) / 2, pillWidth(ctx, node) / 2, 0, PILL_HEIGHT / 2);
       return Math.hypot(x, y) <= shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 2;
     }) ?? null;
   };

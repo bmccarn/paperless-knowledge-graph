@@ -60,6 +60,8 @@ interface Props {
   name: string;
   /** Below 768 px: overlapping labels are skipped, whatever the node count, and a pill shows only its "+N". */
   phone?: boolean;
+  /** Skip overlapping labels at any node count, as on phone. */
+  skipOverlaps?: boolean;
   /** Fixed positions: no simulation, no node drag, one fit on the first draw. */
   positions?: ReadonlyMap<string, { x: number; y: number }>;
   /** The focus entity: labeled in 500 weight; other labels sit on the side away from it. */
@@ -68,6 +70,20 @@ interface Props {
   keyboardNodeId?: string | null;
   /** Links the hovered or focused evidence chip supports, marked like a selected link. */
   markedLinkIds?: ReadonlySet<string>;
+  /** Explore: the text of the handle a hovered or selected node shows on its outer side, by node id. */
+  handles?: ReadonlyMap<string, string>;
+  onHandle?: (id: string) => void;
+  /** The hovered node, after the hover delay, or null. */
+  onHover?: (id: string | null) => void;
+  /** Screen pixels at the left that a panel covers, kept clear when fitting and panning. */
+  inset?: number;
+  /** After the first fit, pan without zooming when new nodes land off screen. */
+  panToNew?: boolean;
+  /**
+   * The largest zoom a fit may choose, so a small start leaves room to grow. Keep it below 1: force-graph re-zooms
+   * a canvas left at exactly 1, its untouched default, on the next data update (force-graph.mjs:1287 in 1.52.0).
+   */
+  maxZoom?: number;
 }
 
 const KINDS = ["people", "org", "place", "money", "agree", "thing", "health", "time", "docs"];
@@ -91,6 +107,10 @@ function readColors(element: Element): Colors {
 
 const LABEL_FONT = 12;
 const PILL_HEIGHT = 28;
+const HANDLE_HEIGHT = 24;
+const HANDLE = "Handle";
+/** Handle spots: two distances from the shape, then turns away from straight out. */
+const HANDLE_SPOTS = [34, 24].flatMap(gap => [0, 45, -45, 90, -90, 135, -135, 180].map(turn => ({ gap, turn })));
 const HOVER_DELAY = 120;
 const docs = (count: number) => `${count} ${count === 1 ? "doc" : "docs"}`;
 const nodeDocs = (node: ExplorerNode) => Number(node.props.evidence_doc_count) || 0;
@@ -121,6 +141,13 @@ export function ForceGraphClient({
   markedLinkIds,
   name,
   phone = false,
+  skipOverlaps = false,
+  handles,
+  onHandle,
+  onHover,
+  inset = 0,
+  panToNew = false,
+  maxZoom = Infinity,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<GraphHandle | null>(null);
@@ -184,7 +211,7 @@ export function ForceGraphClient({
     const read = () => { if (active) setPaint({ colors: readColors(element), font: getComputedStyle(element).fontFamily }); };
     read();
     const family = getComputedStyle(element).fontFamily;
-    void Promise.all([400, 500].map(weight => document.fonts.load(`${weight} ${LABEL_FONT}px ${family}`))).then(read, read);
+    void Promise.all([400, 500, 600].map(weight => document.fonts.load(`${weight} ${LABEL_FONT}px ${family}`))).then(read, read);
     const observer = new MutationObserver(read);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
     return () => {
@@ -194,13 +221,20 @@ export function ForceGraphClient({
   }, []);
 
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
+  useEffect(() => onHover?.(hoveredId), [hoveredId, onHover]);
 
+  // One handle: on the hovered node, else on the selected one.
+  const handleOf = [hoveredId, selectedNodeId].find(id => id && handles?.has(id)) ?? null;
   // Mutable force coordinates belong only to the renderer, never graph metadata.
   const data = useMemo(() => {
     const nodes: RenderNode[] = graph.nodes.map((node) => {
       const at = positions?.get(node.id);
       return { ...node, props: { ...node.props }, ...(at && { x: at.x, y: at.y, fx: at.x, fy: at.y }) };
     });
+    // The handle is a node at its owner's center, so it takes the pointer; it is painted beside the owner.
+    const owner = nodes.find(node => node.id === handleOf);
+    if (owner && handleOf) nodes.push({ id: `handle:${handleOf}`, name: handles!.get(handleOf)!, label: HANDLE, props: { of: handleOf },
+      x: owner.x, y: owner.y, fx: owner.x, fy: owner.y });
     // A link's own curvature (a link between neighbors bows toward the ring); parallel links between one pair add +/-0.15.
     const pairs = new Map<string, number>();
     const pair = (link: ExplorerLink) => [link.source, link.target].sort().join("\n");
@@ -216,7 +250,7 @@ export function ForceGraphClient({
         return { ...link, props: { ...link.props }, curvature };
       }),
     };
-  }, [graph, positions]);
+  }, [graph, positions, handleOf, handles]);
 
   useLayoutEffect(() => {
     for (const node of data.nodes) {
@@ -237,12 +271,36 @@ export function ForceGraphClient({
     return ctx.measureText(pillText(node)).width + 24;
   }, [font, pillText]);
 
+  /** The handle's box around its owner in screen pixels: straight out from the focus, else the first free turn. */
+  const handleBox = useCallback((ctx: CanvasRenderingContext2D, node: RenderNode, scale: number): Box => {
+    const owner = data.nodes.find(item => item.id === node.props.of)!;
+    const focus = data.nodes.find(item => item.id === focusId);
+    ctx.font = font(600);
+    const width = ctx.measureText(node.name).width + 20;
+    const extent = shapeExtent(owner.label, nodeRadius(nodeDocs(owner)));
+    const out = focus && focus !== owner ? Math.atan2(owner.y! - focus.y!, owner.x! - focus.x!) : -Math.PI / 2;
+    const others = data.nodes.filter(item => item !== owner && item.label !== HANDLE && item.x !== undefined).map(item => {
+      const size = shapeExtent(item.label, nodeRadius(nodeDocs(item))) + 4;
+      const x = (item.x! - owner.x!) * scale, y = (item.y! - owner.y!) * scale;
+      return { x0: x - size, y0: y - size, x1: x + size, y1: y + size };
+    });
+    const boxes = HANDLE_SPOTS.map(({ gap, turn }) => {
+      const angle = out + (turn * Math.PI) / 180;
+      // The distance to a box edge along the angle, so a wide handle clears the shape on every side.
+      const reach = extent + gap + Math.abs(Math.cos(angle)) * (width / 2 - HANDLE_HEIGHT / 2);
+      const x = Math.cos(angle) * reach, y = Math.sin(angle) * reach;
+      return { x0: x - width / 2, y0: y - HANDLE_HEIGHT / 2, x1: x + width / 2, y1: y + HANDLE_HEIGHT / 2 };
+    });
+    const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+    return boxes.find(box => !others.some(other => overlaps(box, other))) ?? boxes[0];
+  }, [data, focusId, font]);
+
   /** Center and zoom so every node and pill, at its screen size, sits inside the canvas. */
   const fit = useCallback((duration: number) => {
     const handle = handleRef.current;
     const ctx = document.createElement("canvas").getContext("2d");
     if (!handle || !ctx || !dimensions.width || !dimensions.height) return;
-    const items = data.nodes.filter(node => node.x !== undefined && node.y !== undefined).map(node => {
+    const items = data.nodes.filter(node => node.x !== undefined && node.y !== undefined && node.label !== HANDLE).map(node => {
       const [halfWidth, halfHeight] = node.label === "Aggregate"
         ? [pillWidth(ctx, node) / 2, PILL_HEIGHT / 2]
         : Array(2).fill(shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 3);
@@ -251,15 +309,21 @@ export function ForceGraphClient({
     if (!items.length) return;
     // Room for the controls over the canvas: on phone the Legend button (top) and zoom buttons (bottom) in the
     // height a width-bound ring leaves spare; on desktop the zoom buttons at the right, where a wide canvas has room.
-    const pad = phone ? { top: 64, right: 16, bottom: 152, left: 16 } : { top: 48, right: 64, bottom: 48, left: 48 };
+    const pad = phone ? { top: 64, right: 16, bottom: 152, left: 16 + inset } : { top: 48, right: 64, bottom: 48, left: 48 + inset };
     const roomy = fitView(items, dimensions.width, dimensions.height, pad);
     // A short phone canvas (the inspector open) has no spare height: fit to its edges instead of shrinking the zoom.
     const tight = phone ? fitView(items, dimensions.width, dimensions.height, { top: 16, right: 16, bottom: 16, left: 16 }) : roomy;
-    const view = roomy.k < tight.k ? tight : roomy;
+    let view = roomy.k < tight.k ? tight : roomy;
+    if (view.k > maxZoom) {
+      // Center the items' extent, keeping the padding's offset.
+      const xs = items.map(item => item.x), ys = items.map(item => item.y);
+      view = { k: maxZoom, x: (Math.min(...xs) + Math.max(...xs)) / 2 - (pad.left - pad.right) / 2 / maxZoom,
+        y: (Math.min(...ys) + Math.max(...ys)) / 2 - (pad.top - pad.bottom) / 2 / maxZoom };
+    }
     handle.centerAt(view.x, view.y, duration);
     handle.zoom(view.k, duration);
     zoomTarget.current = { k: view.k, until: performance.now() + duration };
-  }, [data, dimensions, phone, pillWidth]);
+  }, [data, dimensions, phone, pillWidth, inset, maxZoom]);
 
   // Fixed layouts have no engine-stop event: fit once, when the first layout is drawn, after the label
   // font has loaded, so pill widths and the fitted zoom are the same on every load.
@@ -279,10 +343,10 @@ export function ForceGraphClient({
     return () => cancelAnimationFrame(frame);
   }, [fixed, renderer.Component, dimensions.width, dimensions.height, paint, font, fit]);
 
+  const selectedDrawn = graph.nodes.some((node) => node.id === selectedNodeId);
   useEffect(() => {
     if (!renderer.Component || !selectedNodeId ||
-        dimensions.width <= 0 || dimensions.height <= 0 ||
-        !graph.nodes.some((node) => node.id === selectedNodeId)) return;
+        dimensions.width <= 0 || dimensions.height <= 0 || !selectedDrawn) return;
     // The inspector and responsive layout resize the canvas. Center after its
     // new dimensions are applied, retaining zoom and renderer-owned positions.
     const frame = requestAnimationFrame(() => {
@@ -292,7 +356,27 @@ export function ForceGraphClient({
       handleRef.current?.centerAt(node.x, node.y, 0);
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedNodeId, dimensions.width, dimensions.height, renderer.Component, graph.nodes]);
+  }, [selectedNodeId, dimensions.width, dimensions.height, renderer.Component, selectedDrawn]);
+
+  // Explore: once the first fit is done, a new branch off screen pans the camera into view without zooming.
+  const seenIds = useRef(new Set<string>());
+  useEffect(() => {
+    const entities = data.nodes.filter(node => node.label !== HANDLE && node.x !== undefined && node.y !== undefined);
+    const fresh = entities.filter(node => !seenIds.current.has(node.id));
+    seenIds.current = new Set(entities.map(node => node.id));
+    const handle = handleRef.current;
+    if (!panToNew || !handle || initialFitPending.current || !fresh.length || !dimensions.width || !dimensions.height) return;
+    const k = handle.zoom();
+    const points = fresh.map(node => handle.graph2ScreenCoords(node.x!, node.y!));
+    const pad = phone ? { top: 64, right: 16, bottom: 152, left: 16 + inset } : { top: 48, right: 64, bottom: 48, left: 48 + inset };
+    const shift = (low: number, high: number, start: number, end: number) =>
+      high - low > end - start ? ((low + high) - (start + end)) / 2 : low < start ? low - start : high > end ? high - end : 0;
+    const dx = shift(Math.min(...points.map(point => point.x)), Math.max(...points.map(point => point.x)), pad.left, dimensions.width - pad.right);
+    const dy = shift(Math.min(...points.map(point => point.y)), Math.max(...points.map(point => point.y)), pad.top, dimensions.height - pad.bottom);
+    if (!dx && !dy) return;
+    const center = handle.centerAt();
+    handle.centerAt(center.x + dx / k, center.y + dy / k, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
+  }, [data, panToNew, phone, inset, dimensions]);
 
   const setHandle = useCallback((handle: GraphHandle | null) => { handleRef.current = handle; }, []);
   useEffect(() => {
@@ -324,6 +408,21 @@ export function ForceGraphClient({
       ctx.save();
       ctx.translate(node.x, node.y);
       ctx.scale(1 / scale, 1 / scale);
+      if (node.label === HANDLE) {
+        const box = handleBox(ctx, node, scale);
+        ctx.fillStyle = colors.fg;
+        ctx.beginPath();
+        ctx.roundRect(box.x0, box.y0, box.x1 - box.x0, HANDLE_HEIGHT, HANDLE_HEIGHT / 2);
+        ctx.fill();
+        ctx.font = font(600);
+        ctx.fillStyle = colors.bg;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.translate((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
+        ctx.fillText(node.name, 0, 0.5);
+        ctx.restore();
+        return;
+      }
       if (node.label === "Aggregate") {
         const width = pillWidth(ctx, node);
         const pill = new Path2D();
@@ -393,7 +492,7 @@ export function ForceGraphClient({
       }
       ctx.restore();
     },
-    [paint, pillWidth, pillText, selectedNodeId, entitySelected, hoveredId, keyboardNodeId],
+    [paint, pillWidth, pillText, selectedNodeId, entitySelected, hoveredId, keyboardNodeId, handleBox, font],
   );
 
   const selectedLink = (link: RenderLink) => link.id === selectedLinkId || Boolean(markedLinkIds?.has(link.id));
@@ -478,7 +577,10 @@ export function ForceGraphClient({
       const obstacles: Box[] = [];
       for (const node of nodes) {
         const x = node.x! * scale, y = node.y! * scale;
-        if (node.label === "Aggregate") {
+        if (node.label === HANDLE) {
+          const box = handleBox(ctx, node, scale);
+          obstacles.push({ x0: x + box.x0, y0: y + box.y0, x1: x + box.x1, y1: y + box.y1 });
+        } else if (node.label === "Aggregate") {
           const width = pillWidth(ctx, node);
           obstacles.push({ x0: x - width / 2, y0: y - PILL_HEIGHT / 2, x1: x + width / 2, y1: y + PILL_HEIGHT / 2 });
         } else {
@@ -503,8 +605,8 @@ export function ForceGraphClient({
       }
       const important = (node: RenderNode) =>
         node.id === focusId || node.id === selectedNodeId || node.id === hoveredId || node.id === keyboardNodeId;
-      const all = nodes.length <= LABEL_ALL && showLabels && !phone;
-      const ranked = nodes.filter((node) => node.label !== "Aggregate")
+      const all = nodes.length <= LABEL_ALL && showLabels && !phone && !skipOverlaps;
+      const ranked = nodes.filter((node) => node.label !== "Aggregate" && node.label !== HANDLE)
         .sort((a, b) => Number(important(b)) - Number(important(a)) || nodeDocs(b) - nodeDocs(a) || a.id.localeCompare(b.id));
       for (const node of ranked) {
         if (!important(node) && !showLabels) continue;
@@ -555,11 +657,13 @@ export function ForceGraphClient({
       ctx.restore();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, phone, nodeLinked, pillWidth, font, dimensions],
+    [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, phone, skipOverlaps, nodeLinked, pillWidth, font, dimensions, handleBox],
   );
 
   const hover = useCallback((node: RenderNode | null) => {
     clearTimeout(hoverTimer.current);
+    // Moving onto the handle keeps its node hovered, so the handle stays.
+    if (node?.label === HANDLE) return;
     if (!node || node.label === "Aggregate") setHoveredId(null);
     else hoverTimer.current = setTimeout(() => setHoveredId(node.id), HOVER_DELAY);
   }, []);
@@ -604,7 +708,7 @@ export function ForceGraphClient({
           nodeCanvasObjectMode={() => "replace"}
           nodeCanvasObject={paintNode}
           nodeLabel={(node) =>
-            node.label === "Aggregate"
+            node.label === "Aggregate" || node.label === HANDLE
               ? escapeGraphLabel(node.name)
               : `${escapeGraphLabel(fullName(node))} · ${escapeGraphLabel(nodeLabelText(node.label))}`
           }
@@ -620,14 +724,17 @@ export function ForceGraphClient({
             if (node.x === undefined || node.y === undefined) return;
             ctx.fillStyle = color;
             ctx.beginPath();
-            if (node.label === "Aggregate") {
+            if (node.label === HANDLE) {
+              const box = handleBox(ctx, node, scale);
+              ctx.roundRect(node.x + box.x0 / scale, node.y + box.y0 / scale, (box.x1 - box.x0) / scale, HANDLE_HEIGHT / scale, HANDLE_HEIGHT / 2 / scale);
+            } else if (node.label === "Aggregate") {
               const width = pillWidth(ctx, node) / scale;
               ctx.roundRect(node.x - width / 2, node.y - PILL_HEIGHT / 2 / scale, width, PILL_HEIGHT / scale, PILL_HEIGHT / 2 / scale);
             } else ctx.arc(node.x, node.y, (shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 2) / scale, 0, Math.PI * 2);
             ctx.fill();
           }}
           onNodeHover={hover}
-          onNodeClick={(node, event) => onSelectNode(node, event)}
+          onNodeClick={(node, event) => (node.label === HANDLE ? onHandle?.(String(node.props.of)) : onSelectNode(node, event))}
           onBackgroundClick={onClear}
           onLinkClick={(link) =>
             onSelectLink({

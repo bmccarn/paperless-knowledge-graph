@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, FileText, MessageSquareText, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, MessageSquareText, Minus, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { KindShape, TypeDot } from "@/components/kind-shape";
@@ -233,6 +233,45 @@ export function NeighborInspector({ summary, neighborId, crossLinks = [], onClos
         <>
           <h3 className={heading}>Linked to other neighbors</h3>
           <ul aria-label="Linked to other neighbors">{crossLinks.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>
+        </>
+      )}
+    </Shell>
+  );
+}
+
+/**
+ * An entity in Explore, at any hop: its kind, name and distance from the root, the action that grows the view from it
+ * (or opens it in Focus at the last hop), Collapse when it was expanded, and its links drawn in this view.
+ */
+export function ExploreInspector({ entity, hop, rootName, links, grow, onCollapse, onFocusEntity, onClose, ...events }: {
+  entity: { id: string; name: string; label: string; evidence_doc_count: number };
+  hop: number;
+  rootName: string;
+  /** Links drawn in this view, seen from this entity. */
+  links: SummaryLink[];
+  grow: { label: string; disabled: boolean; onClick: () => void };
+  onCollapse?: () => void;
+  onFocusEntity: (id: string) => void;
+  onClose: () => void;
+} & RowEvents) {
+  const name = entityName(entity);
+  return (
+    <Shell label={`Inspector: ${name}`} onClose={onClose}>
+      <p className="label-12 text-fg-muted"><KindShape label={entity.label} className="label-12 text-fg-muted" /></p>
+      <h2 className="mt-2 mb-1 page-title break-words pr-8">{name}</h2>
+      <p className="label-13 text-fg-muted">
+        {plural(entity.evidence_doc_count, "document")} in the archive. {plural(hop, "step")} from {rootName}.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button onClick={grow.onClick} disabled={grow.disabled}>{!grow.disabled && <Plus />}{grow.label}</Button>
+        {onCollapse && <Button variant="outline" onClick={onCollapse}><Minus />Collapse</Button>}
+        {hop < 3 && <Button variant="outline" onClick={() => onFocusEntity(entity.id)}>Open in Focus</Button>}
+        <Button variant="outline" asChild><Link href={askHref(name)}><MessageSquareText />Ask about this</Link></Button>
+      </div>
+      {links.length > 0 && (
+        <>
+          <h3 className={heading}>Linked in this view</h3>
+          <ul aria-label="Linked in this view">{links.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>
         </>
       )}
     </Shell>

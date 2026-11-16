@@ -15,7 +15,7 @@ export interface GraphViewInfo {
 /** Switcher order; keys 1 to 6 follow it. */
 export const GRAPH_VIEWS: readonly GraphViewInfo[] = [
   { id: "focus", label: "Focus", question: "What is this entity linked to, and how do those things link to each other?", alias: "n", needsFocus: true, listed: true },
-  { id: "explore", label: "Explore", question: "What lies two or three steps away, and where do the links loop back?", needsFocus: true, listed: false },
+  { id: "explore", label: "Explore", question: "What lies two or three steps away, and where do the links loop back?", needsFocus: true, listed: true },
   { id: "timeline", label: "Timeline", question: "When was each link documented, and what arrived when?", needsFocus: true, listed: false },
   { id: "table", label: "Table", question: "Every link of this entity, sorted and filtered.", alias: "t", needsFocus: true, listed: true },
   { id: "path", label: "Paths", question: "How are these two entities connected?", alias: "p", needsFocus: false, listed: true },
@@ -58,7 +58,11 @@ export interface GraphUrlState {
   selection: string | null;
   /** Focus draws the links between neighbors unless the URL says `cross=0`. */
   cross: boolean;
+  /** Explore's expanded entities (`x`), in the order they were expanded; at most 20. */
+  expanded: string[];
 }
+
+export const EXPANSION_LIMIT = 20;
 
 export function linkKey(source: string, type: string, target: string): string {
   return `${source}~${type}~${target}`;
@@ -79,12 +83,13 @@ export function parseGraphState(params: URLSearchParams): GraphUrlState {
     view,
     selection: params.get("sel") || null,
     cross: params.get("cross") !== "0",
+    expanded: (params.get("x") ?? "").split(",").filter(Boolean).slice(0, EXPANSION_LIMIT),
   };
 }
 
 export function graphUrl(state: GraphUrlState, current = new URLSearchParams()): string {
   const params = new URLSearchParams(current);
-  for (const [key, value] of [["focus", state.focus], ["view", state.view === "focus" ? null : state.view], ["sel", state.selection], ["cross", state.cross ? null : "0"]] as const) {
+  for (const [key, value] of [["focus", state.focus], ["view", state.view === "focus" ? null : state.view], ["sel", state.selection], ["cross", state.cross ? null : "0"], ["x", state.expanded.join(",")]] as const) {
     if (value) params.set(key, value);
     else params.delete(key);
   }
@@ -96,17 +101,18 @@ export function graphUrl(state: GraphUrlState, current = new URLSearchParams()):
 const viewHolds = (view: GraphView, selection: string) =>
   selection.startsWith("pill:") ? view === "focus" : selection.startsWith("grp:") ? view === "overview" : true;
 
-/** Focus/view are history steps; selection edits the current step. */
+/** Focus, view and Explore's expansions are history steps; selection edits the current step. A new focus clears `x`. */
 export function graphNavigation(current: URLSearchParams, change: Partial<GraphUrlState>) {
   const previous = parseGraphState(current);
   const next = { ...previous, ...change };
   if (next.focus !== previous.focus && change.selection === undefined) next.selection = null;
+  if (next.focus !== previous.focus && change.expanded === undefined) next.expanded = [];
   if (next.view !== previous.view && next.selection && change.selection === undefined && !viewHolds(next.view, next.selection)) next.selection = null;
   const params = new URLSearchParams(current);
   // A switch to Paths starts the search from the focus when A is empty.
   if (next.view === "path" && previous.view !== "path" && next.focus && !params.get("a")) params.set("a", next.focus);
   return {
     href: graphUrl(next, params),
-    method: next.focus !== previous.focus || next.view !== previous.view ? "push" as const : "replace" as const,
+    method: next.focus !== previous.focus || next.view !== previous.view || next.expanded.join() !== previous.expanded.join() ? "push" as const : "replace" as const,
   };
 }

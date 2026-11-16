@@ -47,7 +47,7 @@ try {
     const arc = Path2D.prototype.arc;
     Path2D.prototype.arc = function (x, y, r, ...rest) { (this.dots ??= []).push([x, y, r]); return arc.call(this, x, y, r, ...rest); };
     CanvasRenderingContext2D.prototype.clearRect = function (...args) {
-      if (this.canvas.isConnected) frame.texts = [], frame.dots = [];
+      if (this.canvas.isConnected) { frame.texts = []; frame.dots = []; }
       return clearRect.apply(this, args);
     };
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y, ...rest) {

@@ -28,17 +28,20 @@ const row = "flex min-h-11 cursor-pointer items-center gap-3 label-13 md:min-h-8
 const countClass = "ml-auto tabular-nums text-fg-muted";
 const field = "space-y-2 border-b border-border pb-5 disabled:opacity-50 [&>legend]:mb-3 [&>legend]:label-13 [&>legend]:font-semibold";
 
-/** The same controls serve every view; Overview retains the disabled groups' URL values. */
+/** The same controls serve every view; Overview and Paths retain the disabled groups' URL values. */
 export function GraphFilterControls({ summary, filters, view, onChange }: Props) {
   const change = (next: Partial<GraphFilters>) => onChange({ ...filters, ...next });
   const links = view === "table" ? summary.links : drawableLinks(summary);
   const count = (next: Partial<GraphFilters> = {}) => filterLinks(links, summary.documents, { ...filters, ...next }, undefined, view).length;
   const overview = view === "overview";
+  // The path search takes only the owner and support rules.
+  const path = view === "path";
   const types = [...new Set([...DOCUMENT_TYPE_KEYS, ...Object.values(summary.documents).flatMap(doc => doc.doc_type ? [doc.doc_type] : [])])];
   const toggle = (values: string[], key: string) => values.includes(key) ? values.filter(value => value !== key) : [...values, key];
   return <div className="space-y-5">
     {overview && <p className="copy-14 text-fg-muted">The map does not use document dates, types or confidence, and leaves out the owner.</p>}
-    <fieldset className={field}><legend>Relationship families</legend>
+    {path && <p className="copy-14 text-fg-muted">The path search does not use families, confidence, document counts, dates or types.</p>}
+    <fieldset disabled={path} className={field}><legend>Relationship families</legend>
       {FAMILIES.map(([key, name]) => <label key={key} className={row}>
         <input type="checkbox" checked={filters.families.includes(key)} onChange={() => change({ families: toggle(filters.families, key) })} className="size-4 accent-(--accent-solid)" />
         <span>{name}</span><span className={countClass}>{count({ families: [key] })}</span>
@@ -50,21 +53,21 @@ export function GraphFilterControls({ summary, filters, view, onChange }: Props)
         <span>{label}</span><span className={countClass}>{count({ support: key })}</span>
       </label>)}
     </fieldset>
-    <fieldset disabled={overview} className={field}><legend>Confidence</legend>
+    <fieldset disabled={overview || path} className={field}><legend>Confidence</legend>
       <label className={row} htmlFor="graph-confidence">Minimum <output className="ml-auto tabular-nums">{filters.minConfidence.toFixed(2)}</output><span className="tabular-nums text-fg-muted">{count()} links</span></label>
       <input id="graph-confidence" type="range" min="0" max="1" step="0.05" value={filters.minConfidence} onChange={event => change({ minConfidence: Number(event.target.value) })} className="h-11 w-full accent-(--accent-solid) md:h-6" />
       <label className={row}><input type="checkbox" checked={filters.noScore} onChange={event => change({ noScore: event.target.checked })} className="size-4 accent-(--accent-solid)" />Include links with no score<span className={countClass}>{filterLinks(links, summary.documents, { ...filters, noScore: true }, undefined, view).filter(link => link.records.some(record => record.confidence === null)).length}</span></label>
     </fieldset>
-    <fieldset className={field}><legend>Evidence documents per link</legend>
+    <fieldset disabled={path} className={field}><legend>Evidence documents per link</legend>
       <div className="flex gap-1">{[1, 2, 3, 5, 10].map(value => <Button key={value} variant={filters.minDocs === value ? "default" : "outline"} aria-pressed={filters.minDocs === value}
         onClick={() => change({ minDocs: value })} className="h-11 flex-1 flex-col gap-0 px-1 tabular-nums"><span><span className="sr-only">At least </span>{value}<span className="sr-only"> {value === 1 ? "document" : "documents"}</span></span><span className="label-12">{count({ minDocs: value })}<span className="sr-only"> links</span></span></Button>)}</div>
     </fieldset>
-    <fieldset disabled={overview} className={field}><legend>Document date</legend>
+    <fieldset disabled={overview || path} className={field}><legend>Document date</legend>
       <div className="grid grid-cols-2 gap-3">{([['from', 'From'], ['to', 'To']] as const).map(([key, label]) => <label key={key} className="min-w-0 space-y-2 label-13"><span className="flex justify-between">{label}<span className="tabular-nums text-fg-muted">{count()}</span></span>
         <input aria-label={label} type="month" value={filters[key]} max={key === "from" ? filters.to || undefined : undefined} min={key === "to" ? filters.from || undefined : undefined}
           onChange={event => change({ [key]: event.target.value })} className="h-11 w-full min-w-0 rounded-md border border-border-strong bg-surface px-2 text-base text-fg md:h-9 md:text-sm" /></label>)}</div>
     </fieldset>
-    <fieldset disabled={overview} className={field}><legend>Document type</legend>
+    <fieldset disabled={overview || path} className={field}><legend>Document type</legend>
       <div className="flex flex-wrap gap-2">{types.map(key => <Button key={key} variant="outline" aria-pressed={filters.types === null || filters.types.includes(key)}
         onClick={() => { const next = toggle(filters.types ?? types, key); change({ types: next.length === types.length ? null : next }); }}
         className="h-11 gap-2 px-2.5 aria-pressed:border-fg aria-pressed:bg-raised md:h-8"><TypeDot type={key} /><span className="tabular-nums text-fg-muted">{count({ types: [key] })}</span></Button>)}</div>

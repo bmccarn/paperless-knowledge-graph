@@ -176,6 +176,52 @@ def nb_summary(uid):
                                  for other in OWNER_MATCHES] if uid == HUB else []}
 
 
+def nb_paths(a, b, max_len, k, include_owner, allow_inferred, candidates=1000):
+    """GET /graph/paths over the neighborhood graph, by the backend's rules: semantic links between entities, every
+    match of the owner setting left out except an endpoint, shorter lengths first, at most `candidates` paths checked."""
+    if a not in NB_ENTITIES or b not in NB_ENTITIES:
+        return {'paths': [], 'exhausted': True, 'nodes': {}, 'links_detail': {}}
+    blocked = set() if include_owner else ({HUB, *OWNER_MATCHES} - {a, b})
+    edges = {}
+    for start, rel_type, end, records in NB_LINKS + NB_CROSS:
+        if (start.startswith('doc-') or end.startswith('doc-') or classify_relationship(rel_type)[0] == 'evidence'
+                or (not allow_inferred and all(flag for _, flag, _ in records))):
+            continue
+        for here, there in ((start, end), (end, start)):
+            edges.setdefault(here, []).append((there, f'{start}~{rel_type}~{end}', start, rel_type, end, records))
+    found, checked = [], 0
+    for length in range(1, max_len + 1):
+        stack = [(a, [a], [])]
+        while stack and checked < candidates:
+            node, nodes, links = stack.pop()
+            if len(links) == length:
+                if node == b:
+                    checked += 1
+                    found.append((nodes, links))
+                continue
+            for there, *link in sorted(edges.get(node, []), key=lambda edge: edge[1], reverse=True):
+                if there not in nodes and there not in blocked and (there == b) == (len(links) + 1 == length):
+                    stack.append((there, nodes + [there], links + [link]))
+        if checked >= candidates:
+            break
+    rank = lambda path: (-min(len(link[4]) for link in path[1]), len(path[1]),
+                         sum(all(f for _, f, _ in link[4]) for link in path[1]), [link[0] for link in path[1]])
+    found = sorted(found, key=rank)[:k]
+    ids = {node for nodes, _ in found for node in nodes} or {a, b}
+    support = lambda records: {'support_state': 'supported' if not any(f for _, f, _ in records) else 'inferred' if all(f for _, f, _ in records) else 'mixed',
+                               'stated_count': sum(not f for _, f, _ in records), 'inferred_count': sum(f for _, f, _ in records)}
+    return {
+        'paths': [{'nodes': nodes, 'links': [link[0] for link in links], 'length': len(links),
+                   'weakest_weight': min(len(link[4]) for link in links),
+                   'has_inferred': any(all(f for _, f, _ in link[4]) for link in links)} for nodes, links in found],
+        'exhausted': checked < candidates,
+        'nodes': {uid: {'id': uid, 'label': NB_ENTITIES[uid][0], 'name': NB_ENTITIES[uid][1], **nb_fields(uid)} for uid in sorted(ids)},
+        'links_detail': {key: {'source': start, 'type': rel_type, 'target': end, 'family': classify_relationship(rel_type)[0],
+                               'weight': len(records), **support(records)}
+                         for _, links in found for key, start, rel_type, end, records in links},
+    }
+
+
 LOCK = threading.RLock()
 NOW = '2026-09-04T12:00:00+00:00'
 clock_tick = 0
@@ -582,6 +628,12 @@ class Handler(BaseHTTPRequestHandler):
                 documents = sorted({record['doc_id'] for link in links for record in link['records']})
                 return self.reply({'links': links, 'total': total, 'truncated': total > len(links),
                                    'documents': {str(doc): {key: document(doc)[key] for key in ('title', 'date', 'doc_type')} for doc in documents}})
+            if route == '/graph/paths':
+                max_len, k = int(get('max_len', '4')), int(get('k', '5'))
+                if not get('a') or not get('b') or not 2 <= max_len <= 4 or not 1 <= k <= 5:
+                    return self.reply({'detail': 'Invalid path search'}, 422)
+                return self.reply(nb_paths(get('a'), get('b'), max_len, k, get('include_owner') in ('1', 'true'),
+                                           get('allow_inferred', '1') in ('1', 'true')))
             if route == '/graph/link':
                 # GET /graph/link: one link's records with a synthetic quote naming both ends, and a rationale when inferred.
                 start, rel_type, end = get('source'), get('type'), get('target')

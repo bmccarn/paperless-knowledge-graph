@@ -1445,9 +1445,14 @@ class GraphStore:
                 found += [{**path, "length": length} for path in (row["paths"] if row else [])]
                 if checked >= PATH_CANDIDATES:
                     break
+            # With no path, the response still names both ends, so the path view can show them.
+            ends = [] if found else [row.data() async for row in await session.run("""
+                MATCH (n) WHERE n.uuid IN $ids AND NOT n:Document
+                RETURN n.uuid AS id, head(labels(n)) AS label, coalesce(n.name, n.title, '') AS name
+                """, ids=[a, b])]
         found.sort(key=lambda p: (-p["weakest"], p["length"], p["inferred"], [l["key"] for l in p["links"]]))
         found = found[:k]
-        nodes = {n["id"]: n for path in found for n in path["nodes"]}
+        nodes = {n["id"]: n for path in found for n in path["nodes"]} or {n["id"]: n for n in ends}
         fields = await self.get_node_fields(list(nodes), owner)
         links = {l["key"]: l for path in found for l in path["links"]}
         return {

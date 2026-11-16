@@ -40,13 +40,19 @@ function elementPath(tag: string, a: Record<string, string>): string {
 
 const cache = new Map<string, Path2D | null>();
 
-/** The kind icon of a node label as one path in a 24 x 24 box; unknown labels get CircleHelp. */
+/** The kind icon of a node label as SVG path data, one entry per element, in a 24 x 24 box; unknown labels get CircleHelp. */
+export function iconData(label: string): string[] | null {
+  const data = ((MODULES[label] ?? CircleQuestionMark) as IconModule).__iconData;
+  return data ? data.node.map(([tag, attributes]) => elementPath(tag, attributes)) : null;
+}
+
+/** The kind icon of a node label as one canvas path. */
 export function iconPath(label: string): Path2D | null {
   if (!cache.has(label)) {
-    const data = ((MODULES[label] ?? CircleQuestionMark) as IconModule).__iconData;
+    const data = iconData(label);
     // One subpath per element: a relative move at the start of an element must not follow the previous one.
     const path = data ? new Path2D() : null;
-    for (const [tag, attributes] of data?.node ?? []) path!.addPath(new Path2D(elementPath(tag, attributes)));
+    for (const d of data ?? []) path!.addPath(new Path2D(d));
     cache.set(label, path);
   }
   return cache.get(label)!;

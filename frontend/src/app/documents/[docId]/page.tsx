@@ -78,6 +78,12 @@ export default function DocumentDetailPage() {
     load();
   }, [load]);
 
+  // "Wrong link?" in the graph opens /documents/<id>#review: the form renders after the fetch, so focus it then.
+  const loaded = detail !== null;
+  useEffect(() => {
+    if (loaded && window.location.hash === "#review") document.getElementById("review")?.focus();
+  }, [loaded]);
+
   const reload = () => {
     setLoading(true);
     setError("");
@@ -236,7 +242,7 @@ export default function DocumentDetailPage() {
           <h2 id="review-heading" className="heading-16 flex items-center gap-2"><ThumbsDown className="size-4" aria-hidden />Extraction review</h2>
           <Alert role="note"><AlertDescription>Open reports mark derived extraction as disputed. Original OCR remains available. Reindexing keeps reports open until you inspect and resolve them.</AlertDescription></Alert>
           <div className="max-w-2xl space-y-3">
-            <Textarea value={feedbackNote} onChange={event => setFeedbackNote(event.target.value)} placeholder="What looks wrong?" aria-label="Extraction review report" rows={3} />
+            <Textarea id="review" className="scroll-mt-24" value={feedbackNote} onChange={event => setFeedbackNote(event.target.value)} placeholder="What looks wrong?" aria-label="Extraction review report" rows={3} />
             <Button onClick={handleFeedback} disabled={!feedbackNote.trim()} loading={feedbackSending} variant="secondary"><FileText aria-hidden />Mark extraction wrong</Button>
             {(detail.feedback || []).map(report => <div key={report.id} className="space-y-3 rounded-lg border bg-surface p-4 copy-14">
               <div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={report.status === "open" ? "destructive" : "outline"}>{report.status === "open" ? "Open" : "Resolved"}</Badge><span className="label-12 text-fg-muted tabular-nums">{new Date(report.created_at).toLocaleDateString()}</span></div>

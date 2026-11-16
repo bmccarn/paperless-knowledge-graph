@@ -25,14 +25,20 @@ try {
   // The focus inspector lists the inferred link; selecting it opens the link summary with its document.
   await page.getByRole('region', { name: 'Inspector: Alex Example', exact: true }).getByRole('button', { name: /Example Utility/ }).first().click();
   const link = page.getByRole('region', { name: 'Inspector: link', exact: true });
-  await link.getByText('Inferred', { exact: true }).waitFor({ state: 'visible' });
-  assert.equal(await link.getByRole('link').count(), 1);
+  await link.getByText('Inferred', { exact: true }).first().waitFor({ state: 'visible' });
+  // One evidence card: its quote is text, never markup, and it has no score.
+  await link.locator('blockquote').waitFor();
+  assert.equal(await link.getByRole('article', { name: 'January premium statement', exact: true }).count(), 1);
+  assert.match(await link.locator('blockquote').innerText(), /<img src=x onerror=/);
+  assert.equal(await link.locator('blockquote img').count(), 0);
+  assert.equal(await page.evaluate(() => window.__relationship_xss), undefined);
+  assert.equal(await link.getByText('No score', { exact: true }).count(), 2);
   assert.equal(await page.getByText(/Document #/).count(), 0);
   assert.deepEqual(errors, []);
   await page.screenshot({ path: path.join(artifacts, 'graph-relationship-support.png'), fullPage: true });
   await writeFile(path.join(artifacts, 'graph-support-results.json'), JSON.stringify({
     scenario: 'graph_relationship_support', status: 'passed', page_errors: errors,
-    detail: 'Selecting the inferred link opens its summary: the inferred label stays explicit and its one document is listed by title.',
+    detail: 'Selecting the inferred link opens its evidence: the inferred label stays explicit and its one document has a card whose quote stays text.',
   }, null, 2) + '\n');
   console.log('PASS graph_relationship_support');
 } finally {

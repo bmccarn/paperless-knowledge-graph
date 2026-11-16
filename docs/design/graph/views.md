@@ -175,9 +175,10 @@ A zoomable map of the whole archive, in groups of entities that link to each oth
 
 **Layout.**
 1. Each group is laid out on its own by the d3-force-3d simulation that force-graph already ships. It starts from the library's phyllotaxis positions in id order, runs `min(300, 60 + size)` ticks with the timer stopped, and is then frozen.
-2. Groups are placed from largest to smallest along a spiral from the center, each at the first spot where its circle touches no other.
-3. Small groups pack in a band above the map, ordered by size, then name, under the heading "Small groups" with their count.
-4. The result is kept in memory for the session, keyed by the response's `version`.
+2. Groups are placed from largest to smallest along a spiral from the center, stretched to the screen's shape, each at the first spot where its circle touches no other. The 16 largest groups bring a box for their name above the circle, which touches no other circle or name.
+3. Small groups pack in a band above the map, ordered by size, then name, under the caption "Small groups" with their count on its own line. A hairline and a gap separate the band from the map.
+4. Gaps, name boxes and the band are sized in screen pixels at the fit zoom of a 1440 × 900 screen, found in a few packing rounds, so they keep their size on screen for any archive.
+5. The result is kept in memory for the session, keyed by the response's `version`.
 
 **Renderer.** The force-graph canvas that the app already uses (`react-force-graph-2d` 1.29.2 over `force-graph` 1.52.0), with fixed positions and `cooldownTicks` 0, so no simulation runs. Reasons:
 - It draws today's encoding already; a WebGL library such as Sigma would need its own shape programs for ten node shapes.
@@ -187,7 +188,7 @@ A zoomable map of the whole archive, in groups of entities that link to each oth
 d3-force-3d 3.0.6 becomes a direct dependency at the version the lockfile already holds, so no new code ships.
 
 **Two zoom levels.**
-- Map zoom (scale below 1): nodes are dots 3 to 7 px across (by evidence documents) in kind color, links are 1 px hairlines in `--border`, links between groups are dotted, and each group's name sits above it in Geist Serif 15 px with its size. Node shapes and labels are not drawn: at 6,000 nodes a 6 px minimum radius would cover most of the screen. This is the one exception to the shared encoding; it needs the owner's approval (see "Changes to the specification"), and the legend says so ("Dots show kind by color. Zoom in for shapes, sizes and names."). The legend names each color's kind family, so color is not the only signal.
+- Map zoom (scale below 1): nodes are dots 3 to 7 px across (by evidence documents) in kind color, links are 1 px hairlines in `--border`, and each group's name sits above it (or below it) in Geist Serif 15 px with its size, where it covers no other name, group or the small groups band. Links between groups are dotted in `--border`, one for each of the 16 pairs of groups with the most supporting documents between them (the pair's link with the most documents); a selected group shows all of its links to other groups and the band in `--fg-muted`. Node shapes and labels are not drawn: at 6,000 nodes a 6 px minimum radius would cover most of the screen. This is the one exception to the shared encoding; it needs the owner's approval (see "Changes to the specification"), and the legend says so ("Dots show kind by color. Zoom in for shapes, sizes and names."). The legend names each color's kind family, so color is not the only signal. Small groups' dots are 2.8 px across and touch, so each pair or triple reads as one mark. The legend starts collapsed and keeps its state, as on Focus.
 - Detail zoom (scale 1 or more): the shared encoding, unchanged, with labels in evidence order and overlapping labels skipped.
 
 **Interaction.**

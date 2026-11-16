@@ -361,6 +361,43 @@ def overview_archive():
             link(b, node(f'ov-small-{index}-c', 'DateEvent', f'Renewal {index + 1}'), ['time'], 1)
     for index in range(12):
         link(owner, node(f'ov-owner-only-{index}', ['Person', 'Organization', 'Event'][index % 3], f'Owner contact {index + 1}'), ['parties'], 2)
+    # The spread of a real archive: a few groups of 100 to 200, many of 5 to 30, a long tail of pairs and triples, and
+    # links between groups. Each member links to its lead; every sixth links to a sibling too, so a bridge from it to
+    # another group leaves it where it is.
+    spread = [('Brightline Logistics', 196), ('Coastal Power Co.', 148), ('Ridgeview Medical Group', 112), ('US Navy', 64)]
+    prefixes = ['Alder', 'Birchwood', 'Cobalt', 'Dunmore', 'Elmhurst', 'Fairview', 'Granite', 'Hollis', 'Ironwood', 'Juniper',
+                'Kestrel', 'Linden', 'Meridian', 'Northfield', 'Orchard', 'Pinecrest', 'Quarry', 'Redwood', 'Silverline',
+                'Tidewater', 'Upland', 'Valemont', 'Westbrook']
+    trades = ['Dental', 'Realty', 'Auto Group', 'Veterinary', 'Plumbing', 'Savings Bank', 'Insurance', 'Pediatrics',
+              'Storage', 'Electric', 'Law Office', 'Roofing', 'Academy']
+    spread += [(f'{prefixes[n % len(prefixes)]} {trades[(n * 5) % len(trades)]}', 5 + int(random() ** 2 * 26)) for n in range(46)]
+    kinds = ['Person', 'FinancialItem', 'Contract', 'Event', 'Address', 'Product', 'InsurancePolicy', 'Condition', 'DateEvent']
+    words = {'FinancialItem': 'payment', 'InsurancePolicy': 'policy', 'DateEvent': 'date'}
+    anchors = []
+    for index, (name, size) in enumerate(spread):
+        lead = node(f'ov-spread-{index}', 'Organization', name, 30)
+        members = []
+        # Each group has a main kind and a few others.
+        mix = [kinds[(index + step) % len(kinds)] for step in (0, 0, 0, 1, 1, 2, 3)]
+        for n in range(size - 1):
+            label = mix[n % len(mix)]
+            members.append(node(f'ov-spread-{index}-{n}', label, '' if label == 'FinancialItem' else f'{name} {words.get(label, label.lower())} {n + 1}'))
+            link(lead, members[-1], ['other'], support=2 if n % 11 == 5 else 0)
+        for n in range(0, len(members) - 1, 6):
+            link(members[n], members[n + 1], ['other'], 1)
+        anchors.append(members[0::6])
+    pick = 0
+    for n in range(60):
+        a, b = int(random() * len(spread)), int(random() * len(spread))
+        if a != b:
+            link(anchors[a][pick % len(anchors[a])], anchors[b][pick % len(anchors[b])], ['parties'], 1 + int(random() * 4), 1)
+            pick += 1
+    items = ['Receipt', 'Warranty', 'Ticket', 'Permit', 'Statement', 'Coupon', 'Invoice', 'Manual', 'Voucher', 'Form']
+    for index in range(330):
+        a = node(f'ov-pair-{index}', ['Product', 'FinancialItem', 'Contract', 'Event'][index % 4], f'{items[index % len(items)]} {2000 + index}')
+        link(a, node(f'ov-pair-{index}-b', ['Organization', 'Person', 'Address'][index % 3], f'{items[index % len(items)]} issuer {index + 1}'), ['other'])
+        if index % 3 == 0:
+            link(a, node(f'ov-pair-{index}-c', 'DateEvent', f'Renewal {index + 101}'), ['time'], 1)
     degree = {}
     for a, b in pairs:
         degree[a] = degree.get(a, 0) + 1

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { arrangeOverview, GROUP_MIN, overviewLinks, packCircles, propagateLabels } from "../.test-build/graph-overview.js";
+import { arrangeOverview, BRIDGES, bridgeLinks, GROUP_MIN, nameBox, overviewLinks, packCircles, propagateLabels } from "../.test-build/graph-overview.js";
 
 const ALL = ["parties", "money", "coverage", "health", "service", "places", "time", "doclinks", "loose", "other"];
 const filters = (change = {}) => ({ families: ALL, support: "all", minDocs: 1, ...change });
@@ -113,4 +113,40 @@ test("a link to a node outside the response is an arranging error", () => {
 test("an archive with no entity links arranges to nothing", () => {
   const empty = arrangeOverview({ ...response(), nodes: [], links: [], owner: null }, filters());
   assert.deepEqual([empty.groups.length, empty.small.length, empty.band], [0, 0, null]);
+});
+
+test("a name box touches no other circle or name box", () => {
+  const radii = [90, 70, 60, 50, 40, 30, 30, 20, 20, 12, 12, 12];
+  const names = radii.map((_, index) => (index < 6 ? { w: 220, h: 30 } : null));
+  const gap = 10;
+  const centers = packCircles(radii, gap, names, 1.7);
+  const boxes = names.map((name, index) => name && nameBox(centers[index].x, centers[index].y, radii[index], name));
+  const reach = (x, y, box) => Math.hypot(Math.max(box.x0 - x, 0, x - box.x1), Math.max(box.y0 - y, 0, y - box.y1));
+  for (let i = 0; i < radii.length; i++) for (let j = 0; j < radii.length; j++) {
+    if (i === j) continue;
+    assert.ok(Math.hypot(centers[i].x - centers[j].x, centers[i].y - centers[j].y) >= radii[i] + radii[j] + gap, `circles ${i} and ${j}`);
+    if (boxes[i]) assert.ok(reach(centers[j].x, centers[j].y, boxes[i]) >= radii[j] + gap, `name ${i} and circle ${j}`);
+    if (boxes[i] && boxes[j]) assert.ok(boxes[i].x1 <= boxes[j].x0 || boxes[j].x1 <= boxes[i].x0 || boxes[i].y1 <= boxes[j].y0 || boxes[j].y1 <= boxes[i].y0, `names ${i} and ${j}`);
+  }
+});
+
+test("the small groups band sits above the map, with room for its caption inside the bounds", () => {
+  const map = arrangeOverview(response(), filters());
+  assert.ok(map.band.y1 < Math.min(...map.groups.map(group => group.y - group.r)), "the band ends above every group");
+  assert.ok(map.bounds.y0 < map.band.y0, "the caption's line is inside the bounds");
+  assert.ok(map.scale > 0 && map.scale <= 2);
+});
+
+test("map zoom draws the strongest links between groups, and every link of a selected group", () => {
+  // Groups 0 to 3 and the band (-1). Pairs: 0-1 weight 5 in two links, 1-2 weight 5 in two links, 0-2 weight 4, 2-3 weight 1.
+  const groupOf = Int32Array.from([0, 0, 1, 1, 2, 2, 3, -1, -1]);
+  const link = (source, target, weight) => ({ source, target, weight, support: 0, families: 1 });
+  const links = [link(0, 1, 9), link(0, 2, 2), link(1, 3, 3), link(0, 4, 4), link(2, 5, 4), link(4, 6, 1), link(0, 7, 6), link(7, 8, 1), link(5, 3, 1)];
+  // Inside a group (0) and inside the band (7) never count; the band link (6) shows only for a selected group.
+  assert.deepEqual(bridgeLinks(links, groupOf, null, 2), [2, 4], "0-1 and 1-2 tie on weight and count, ahead of 0-2");
+  assert.deepEqual(bridgeLinks(links, groupOf, null, 1), [2], "the pair 0-1 is drawn as its heaviest link");
+  assert.deepEqual(bridgeLinks(links, groupOf, null), [2, 3, 4, 5]);
+  assert.deepEqual(bridgeLinks(links, groupOf, 0, 0), [1, 2, 3, 6], "a selected group shows all of its links to other groups and the band");
+  assert.deepEqual(bridgeLinks(links, groupOf, 3, 1), [2, 5]);
+  assert.equal(BRIDGES, 16);
 });

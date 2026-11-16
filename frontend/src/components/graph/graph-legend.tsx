@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { KindShape } from '@/components/kind-shape';
 import type { LegendItems } from '@/lib/graph-inspector';
@@ -44,9 +44,9 @@ const OPEN_KEY = "graph-legend-open";
 /**
  * Desktop legend, placed under the canvas. Collapsed (the default) it is a button at the canvas's bottom left;
  * open, a strip above the evidence shelf, so it never covers a node. The open state is kept in browser storage,
- * unless `defaultOpen` sets it (the gallery).
+ * unless `defaultOpen` sets it (the gallery). `children` replaces the rows (Overview draws dots, not shapes).
  */
-export function GraphLegend({ items, className, defaultOpen }: { items: LegendItems; className?: string; defaultOpen?: boolean }) {
+export function GraphLegend({ items, children, className, defaultOpen }: { items?: LegendItems; children?: ReactNode; className?: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(() => {
     if (defaultOpen !== undefined) return defaultOpen;
     try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
@@ -73,7 +73,7 @@ export function GraphLegend({ items, className, defaultOpen }: { items: LegendIt
       </div>
       {open && (
         <div id="graph-legend-content" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-1 py-0.5">
-          <LegendContent items={items} inline />
+          {children ?? (items && <LegendContent items={items} inline />)}
         </div>
       )}
     </section>

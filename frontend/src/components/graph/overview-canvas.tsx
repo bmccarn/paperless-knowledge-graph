@@ -290,11 +290,12 @@ export function OverviewCanvas({ map, selectedGroup, selectedNode, onSelectGroup
         const width = nameWidth + 6 + ctx.measureText(count).width;
         // Above the circle, else below it; a name never covers another name or another group.
         const spots = [(group.y - group.r) * k - 12, (group.y + group.r) * k + 12].map(cy => ({ cy, box: { x0: group.x * k - width / 2 - 2, y0: cy - 10, x1: group.x * k + width / 2 + 2, y1: cy + 10 } }));
-        const free = ({ box }: { box: Box }) => box.x0 > bounds.x0 && box.x1 < bounds.x1 && box.y0 > bounds.y0 && box.y1 < bounds.y1
-          && !(band && box.x0 < band.x1 && box.x1 > band.x0 && box.y0 < band.y1 && box.y1 > band.y0)
+        const clear = ({ box }: { box: Box }) => !(band && box.x0 < band.x1 && box.x1 > band.x0 && box.y0 < band.y1 && box.y1 > band.y0);
+        const free = ({ box }: { box: Box }) => clear({ box }) && box.x0 > bounds.x0 && box.x1 < bounds.x1 && box.y0 > bounds.y0 && box.y1 < bounds.y1
           && !boxes.some(({ box: other }) => box.x0 < other.x1 && box.x1 > other.x0 && box.y0 < other.y1 && box.y1 > other.y0)
           && !map.groups.some((other, at) => at !== index && Math.hypot(Math.max(box.x0 - other.x * k, 0, other.x * k - box.x1), Math.max(box.y0 - other.y * k, 0, other.y * k - box.y1)) < other.r * k);
-        const spot = spots.find(free) ?? (index === selectedGroup ? spots[0] : undefined);
+        // The selected group's name shows even where it covers other groups, but never over the band.
+        const spot = spots.find(free) ?? (index === selectedGroup ? spots.find(clear) : undefined);
         if (!spot) continue;
         const { cy, box } = spot;
         boxes.push({ group: index, box });

@@ -73,6 +73,15 @@ try {
   await map.waitForTimeout(500);
   const { texts, dots } = await map.evaluate(() => window.__overviewFrame);
   const hits = (p, q) => p.x0 < q.x1 && p.x1 > q.x0 && p.y0 < q.y1 && p.y1 > q.y0;
+  // No text covers other text, and no group name covers the band, whose dots are the 1.4 px ones.
+  const apart = ({ texts, dots }) => {
+    for (let i = 0; i < texts.length; i++) for (let j = i + 1; j < texts.length; j++)
+      assert.ok(!hits(texts[i].box, texts[j].box), `"${texts[i].text}" overlaps "${texts[j].text}"`);
+    const small = dots.filter(dot => Math.abs(dot.r - 1.4) < 0.01);
+    const band = { x0: Math.min(...small.map(dot => dot.x - dot.r)), y0: Math.min(...small.map(dot => dot.y - dot.r)),
+      x1: Math.max(...small.map(dot => dot.x + dot.r)), y1: Math.max(...small.map(dot => dot.y + dot.r)) };
+    for (const text of texts.filter(text => text.size === 15)) assert.ok(!hits(text.box, band), `"${text.text}" covers the small groups band`);
+  };
   // Group names are the 15 px text; the 12 largest groups, from the list, are all named.
   const names = texts.filter(text => text.size === 15).map(text => text.text);
   await map.getByRole('button', { name: 'Show as list' }).click();
@@ -80,8 +89,7 @@ try {
   await map.getByRole('button', { name: 'Show as list' }).click();
   assert.ok(names.length >= 12, `at least 12 group names at the fit zoom: ${names.join(', ')}`);
   assert.deepEqual(largest.filter(name => !names.includes(name.trim())), [], 'the 12 largest groups are named');
-  for (let i = 0; i < texts.length; i++) for (let j = i + 1; j < texts.length; j++)
-    assert.ok(!hits(texts[i].box, texts[j].box), `"${texts[i].text}" overlaps "${texts[j].text}"`);
+  apart({ texts, dots });
   // The small groups caption sits on its own line above every dot, and no group name covers it.
   const caption = texts.filter(text => text.text === 'Small groups' || /^348 groups of 2 or 3 entities$/.test(text.text));
   assert.equal(caption.length, 2);
@@ -89,11 +97,24 @@ try {
   assert.ok(caption.every(text => text.box.y1 <= firstDot), `the caption ends at ${Math.max(...caption.map(text => text.box.y1))} px, above the first dot at ${firstDot} px`);
   assert.ok(dots.length > 2000, `${dots.length} dots drawn`);
   await map.screenshot({ path: path.join(artifacts, 'map-1440.png') });
+  // A selected group's name always shows, but zoomed out it still keeps off the band. Upland Electric sits just below
+  // the band; after two steps out, its name has room neither above nor below its circle.
+  await map.getByRole('button', { name: 'Show as list' }).click();
+  await map.getByRole('table', { name: 'Groups of the archive' }).getByRole('button', { name: 'Upland Electric', exact: true }).click();
+  await map.getByRole('button', { name: 'Show as list' }).click();
+  await map.getByRole('img', { name: /^Map of the archive:/ }).waitFor();
+  for (let at = 0; at < 2; at++) {
+    await map.getByRole('button', { name: 'Zoom out' }).click();
+    await map.waitForTimeout(400);
+  }
+  const zoomed = await map.evaluate(() => window.__overviewFrame);
+  assert.ok(zoomed.texts.some(text => text.text === 'Upland Electric'), 'the selected group is named');
+  apart(zoomed);
   // The legend starts collapsed over the canvas and keeps its state, as on Focus.
   const legend = map.getByRole('button', { name: 'Legend' });
   assert.equal(await legend.getAttribute('aria-expanded'), 'false');
   await legend.click();
-  await map.getByRole('list', { name: 'Kinds' }).waitFor();
+  await map.getByRole('list', { name: 'Kinds', exact: true }).waitFor();
   await map.reload();
   await map.getByRole('img', { name: /^Map of the archive:/ }).waitFor();
   assert.equal(await map.getByRole('button', { name: /legend/i }).getAttribute('aria-expanded'), 'true');

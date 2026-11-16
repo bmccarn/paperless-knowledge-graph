@@ -28,6 +28,9 @@ mainStates.push({ name: "graph-filters", route: "/graph?focus=nb-rowan&support=s
 const pathRoute = "/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1";
 // The best quotes arrive per link after the paths; path 1 has three links.
 mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(2) });
+// The map on a wide screen; the group list on a phone, which has no canvas.
+mainStates.push({ name: "graph-overview", route: "/graph?view=overview",
+  ready: page => page.locator('[role="img"][aria-label^="Map of the archive"], ul[aria-label="Groups"]').first() });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -353,7 +356,8 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters");
+  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters")
+    || (state.name.startsWith("graph-overview") && !info.project.name.startsWith("phone"));
   if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.

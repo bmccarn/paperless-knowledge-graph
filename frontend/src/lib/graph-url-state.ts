@@ -28,6 +28,10 @@ export const listedViews = (views: readonly GraphViewInfo[] = GRAPH_VIEWS) => vi
 export const shownView = (view: GraphView, views: readonly GraphViewInfo[] = GRAPH_VIEWS): GraphView =>
   views.find(entry => entry.id === view)?.listed ? view : "focus";
 
+/** The view the page draws: as shownView, except that Overview draws by URL before the switcher lists it (#204). */
+export const drawnView = (view: GraphView, views: readonly GraphViewInfo[] = GRAPH_VIEWS): GraphView =>
+  view === "overview" ? view : shownView(view, views);
+
 /** The view a key press opens, or null. Number keys keep their place even while earlier views are unlisted. */
 export function viewForKey(key: string, views: readonly GraphViewInfo[] = GRAPH_VIEWS): GraphView | null {
   const view = /^[1-6]$/.test(key) ? views[Number(key) - 1] : views.find(view => view.alias === key);
@@ -40,7 +44,7 @@ export interface ViewKeyEvent { key: string; ctrlKey: boolean; metaKey: boolean;
 export function keyedView(event: ViewKeyEvent, inTextField: boolean, state: GraphUrlState, views: readonly GraphViewInfo[] = GRAPH_VIEWS): GraphView | null {
   if (inTextField || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return null;
   const view = views.find(entry => entry.id === viewForKey(event.key, views));
-  if (!view || (view.needsFocus && !state.focus) || view.id === shownView(state.view, views)) return null;
+  if (!view || (view.needsFocus && !state.focus) || view.id === drawnView(state.view, views)) return null;
   return view.id;
 }
 

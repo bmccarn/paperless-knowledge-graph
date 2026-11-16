@@ -40,14 +40,14 @@ try {
   await page.goForward();
   await page.waitForURL(url => url.searchParams.get("focus") === "nb-coverage-1");
 
-  // An older neighborhood link opens Focus. Unlisted view keys do nothing.
+  // An older neighborhood link opens Focus. Keys of the shown or unlisted views do nothing.
   await page.goto(`${base}/graph?focus=nb-rowan&view=neighborhood`);
   await page.getByText("Rowan Vale: 105 links in 9 families.", { exact: false }).waitFor();
   await page.locator("canvas").first().waitFor();
   assert.equal(await page.getByRole("toolbar", { name: "View" }).count(), 1);
   const keysUrl = page.url();
   const keysHistory = await page.evaluate(() => history.length);
-  for (const key of ["1", "n", "2", "p"]) {
+  for (const key of ["1", "n", "2"]) {
     await page.keyboard.press(key);
     await page.waitForTimeout(100);
     assert.equal(page.url(), keysUrl, `key ${key}`);

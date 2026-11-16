@@ -24,6 +24,9 @@ const mainStates = [
 ];
 mainStates.push({ name: "graph-table", route: "/graph?focus=nb-rowan&view=table", ready: page => page.getByRole("table", { name: "Links of Rowan Vale" }) });
 mainStates.push({ name: "graph-filters", route: "/graph?focus=nb-rowan&support=supported&minconf=0.70&from=2026-01", ready: page => page.getByText("10 links between neighbors.", { exact: true }) });
+const pathRoute = "/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1";
+// The best quotes arrive per link after the paths; path 1 has three links.
+mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(2) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -309,6 +312,8 @@ const extraStates = [
       await page.getByRole("button", { name: "View: Focus" }).click();
       await page.getByRole("dialog", { name: "View", exact: true }).waitFor();
     } },
+  { name: "graph-path-owner", route: `${pathRoute}&owner=show`, state: "owner-included",
+    ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(1) },
   { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
     ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
 ];

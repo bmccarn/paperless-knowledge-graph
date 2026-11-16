@@ -165,6 +165,15 @@ class Neo4jPathTests(unittest.IsolatedAsyncioTestCase):
         unset = (await get(self.store, owner='', a=P + 'a', b=P + 'b')).json()
         self.assertEqual(self.node_paths(unset)[0], ['a', 'owner', 'b'])
 
+    async def test_no_path_still_names_both_ends(self):
+        body = (await get(self.store, a=P + 'a', b=P + 'hub-b', max_len=2)).json()
+        self.assertEqual(body['paths'], [])
+        self.assertTrue(body['exhausted'])
+        self.assertEqual({key: (node['label'], node['name']) for key, node in body['nodes'].items()},
+                         {P + 'a': ('Person', 'Path Start'), P + 'hub-b': ('Organization', 'Hub End')})
+        self.assertEqual(body['nodes'][P + 'a']['link_count'], 6)
+        self.assertEqual(body['links_detail'], {})
+
     async def test_inferred_links_can_be_left_out(self):
         body = (await get(self.store, a=P + 'a', b=P + 'b', allow_inferred=0)).json()
         # The fully inferred link goes; the mixed link has a stated record and stays.

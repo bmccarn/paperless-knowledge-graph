@@ -6,6 +6,8 @@ import hashlib
 import re
 import asyncio
 import contextlib
+import time
+import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
@@ -20,7 +22,8 @@ def _owner_name():
 
 def _owner_context():
     return settings.owner_context or ""
-from app.embeddings import chunk_text, embeddings_store, table_header_chunks
+from app.embeddings import chunk_text, embeddings_store, table_header_chunks, query_embedding_scope
+from app.async_ownership import bounded_map
 from app.paperless import paperless_client
 from app.graph import graph_store, source_dates
 from app.cache import (query_cache, vector_cache, graph_cache,
@@ -57,6 +60,34 @@ logger = logging.getLogger(__name__)
 QUERY_CACHE_VERSION = f"{POLICY_VERSION}:bounded-context-v1"
 _REQUEST_MODEL = ContextVar("query_model", default=None)
 _REQUEST_GENERATION = ContextVar("query_generation", default="initial")
+
+
+_REQUEST_TIMINGS = ContextVar("query_timings", default=None)
+
+
+async def _timed_call(stage, operation):
+    started = time.monotonic()
+    try:
+        return await operation
+    finally:
+        timings = _REQUEST_TIMINGS.get()
+        if timings is not None:
+            timings.setdefault(stage, []).append(round(time.monotonic() - started, 6))
+
+
+class _TimedFinalization:
+    """Observe each auditor/editor invocation without changing audit inputs."""
+    def __init__(self, target):
+        self.target = target
+
+    def __getattr__(self, name):
+        return getattr(self.target, name)
+
+    async def audit_answer_units(self, *args, **kwargs):
+        return await _timed_call("audit", self.target.audit_answer_units(*args, **kwargs))
+
+    async def repair_answer(self, *args, **kwargs):
+        return await _timed_call("repair", self.target.repair_answer(*args, **kwargs))
 
 
 def _is_rate_limited(e: Exception) -> bool:
@@ -356,7 +387,7 @@ class QueryEngine:
         if self.question_pipeline:
             from app.source_discovery import SourceDiscovery
             try:
-                first_pass = await self._synthesize_with_gaps(question, context, conversation_history)
+                first_pass = await _timed_call("gap_planning", self._synthesize_with_gaps(question, context, conversation_history))
                 proposals = first_pass.get('follow_up_queries')
                 if not isinstance(proposals, list) or any(not isinstance(q, str) or not q.strip() for q in proposals):
                     raise ValueError('invalid_gap_proposals')
@@ -365,11 +396,14 @@ class QueryEngine:
                     'sampling': 'sampled', 'document_ids': [], 'error': type(exc).__name__})
                 return {}, context, [], [trace_step('gap_review', 'unavailable', 'Gap planning unavailable')]
             search = SourceDiscovery(embeddings_store, graph_store)
-            for number, proposal in enumerate(proposals):
-                context = self._merge_context(context, await search.search(proposal, f'gap:{number}'))
+            async def retrieve_proposal(item):
+                number, proposal = item
+                return await search.search(proposal, f'gap:{number}')
+            for found in await bounded_map(retrieve_proposal, enumerate(proposals)):
+                context = self._merge_context(context, found)
             return first_pass, context, proposals, [trace_step('gap_review', 'ok',
                 'Every proposed search retained for acquisition', {'query_count': len(proposals)})]
-        first_pass = await self._synthesize_with_gaps(question, context, conversation_history)
+        first_pass = await _timed_call("gap_planning", self._synthesize_with_gaps(question, context, conversation_history))
         follow_ups_used = []
         follow_up_queries = first_pass.get("follow_up_queries", [])[:5 if broad else 3]
         if broad:
@@ -381,10 +415,7 @@ class QueryEngine:
                 follow_up_queries = injected + [q for q in follow_up_queries if q not in injected]
                 follow_up_queries = follow_up_queries[:7]
             if follow_up_queries:
-                follow_results = await asyncio.gather(
-                    *[self._retrieve_light(follow_up) for follow_up in follow_up_queries],
-                    return_exceptions=True,
-                )
+                follow_results = await bounded_map(self._retrieve_light, follow_up_queries, return_exceptions=True)
                 for follow_up, extra_context in zip(follow_up_queries, follow_results):
                     if isinstance(extra_context, dict):
                         context = self._merge_context(context, extra_context)
@@ -396,8 +427,8 @@ class QueryEngine:
                     {"queries": follow_ups_used},
                 ))
         else:
-            for follow_up in follow_up_queries:
-                extra_context = await self._retrieve(follow_up)
+            follow_results = await bounded_map(self._retrieve, follow_up_queries)
+            for follow_up, extra_context in zip(follow_up_queries, follow_results):
                 context = self._merge_context(context, extra_context)
                 follow_ups_used.append(follow_up)
                 trace.append(trace_step(
@@ -455,10 +486,11 @@ class QueryEngine:
         flagged = await embeddings_store.get_open_feedback_document_ids(doc_ids)
         for item in evidence_pack.get("items", []):
             item["feedback_open"] = item.get("document_id") in flagged
+        timed_orchestrator = _TimedFinalization(strands_orchestrator)
         if self.question_pipeline:
-            final = await finalize_question(strands_orchestrator, question, evidence_pack, plan, mode)
+            final = await finalize_question(timed_orchestrator, question, evidence_pack, plan, mode)
         else:
-            final = await AnswerFinalizer(strands_orchestrator, strands_orchestrator,
+            final = await AnswerFinalizer(timed_orchestrator, timed_orchestrator,
                                           timeout_seconds=settings.answer_audit_timeout_seconds,
                                           concurrency=settings.strands_max_concurrent_calls,
                                           date_order=settings.source_date_order).finalize(
@@ -530,14 +562,22 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
         generation_token = _REQUEST_GENERATION.set(generation)
         metrics = QueryMetrics() if self.question_pipeline else None
         metrics_token = CURRENT_QUERY_METRICS.set(metrics)
+        timings = {stage: [] for stage in ("planning", "primary_retrieval", "gap_review", "expansion", "draft", "audit", "repair")}
+        timing_token = _REQUEST_TIMINGS.set(timings)
+        started = time.monotonic()
         try:
-            result = await self._query(question, conversation_history, mode)
+            async with query_embedding_scope():
+                result = await self._query(question, conversation_history, mode)
             # Read before the final snapshot check, which must be the last await.
             result["source_dates"] = await source_dates(graph_store,
                 [s["document_id"] for s in result.get("sources", []) if type(s.get("document_id")) is int])
             await self._check_delivery_snapshot(result)
             return result
         finally:
+            logger.info("query_stage_timings %s", json.dumps({"request_id": uuid.uuid4().hex,
+                "mode": normalize_mode(mode), "seconds": timings,
+                "total_seconds": round(time.monotonic() - started, 6)}))
+            _REQUEST_TIMINGS.reset(timing_token)
             CURRENT_QUERY_METRICS.reset(metrics_token)
             _REQUEST_MODEL.reset(token)
             _REQUEST_GENERATION.reset(generation_token)
@@ -561,7 +601,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             return cached
 
         is_broad = mode != "quick" and self._is_broad_query(question)
-        plan, trace = await self._build_query_plan(question, mode, conversation_history)
+        plan, trace = await _timed_call("planning", self._build_query_plan(question, mode, conversation_history))
         plan["evaluated_at"] = evaluated_at
         if self.question_pipeline:
             plan['source_date_order'] = settings.source_date_order
@@ -571,21 +611,21 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             plan["broad_query"] = True
             trace.append(trace_step("broad_query", "ok", "Broad query coverage enabled"))
 
-        all_context, planned_queries_used, latest_check_used, retrieval_trace = await self._execute_retrieval_plan(question, plan, mode)
+        all_context, planned_queries_used, latest_check_used, retrieval_trace = await _timed_call("primary_retrieval", self._execute_retrieval_plan(question, plan, mode))
         trace.extend(retrieval_trace)
 
-        first_pass, all_context, gap_follow_ups, gap_trace = await self._gap_review(
+        first_pass, all_context, gap_follow_ups, gap_trace = await _timed_call("gap_review", self._gap_review(
             question, all_context, conversation_history, mode, broad=is_broad
-        )
+        ))
         trace.extend(gap_trace)
 
         entities_found = first_pass.get("entities_found", []) or all_context.get("entity_names", [])
-        all_context, graph_trace = await self._expand_planned_graph(all_context, entities_found)
+        all_context, graph_trace = await _timed_call("expansion", self._expand_planned_graph(all_context, entities_found))
         trace.extend(graph_trace)
 
         sources = self._build_sources(all_context, question=question)
-        evidence_pack = await self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad)
-        final = {} if self.question_pipeline else await self._final_synthesis(
+        evidence_pack = await _timed_call("expansion", self._build_evidence_pack(question, all_context, sources, plan, mode, broad=is_broad))
+        final = {} if self.question_pipeline else await _timed_call("draft", self._final_synthesis(
             question,
             all_context,
             first_pass.get("draft_answer", ""),
@@ -594,7 +634,7 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
             broad=is_broad,
             plan=plan,
             evidence_pack=evidence_pack,
-        )
+        ))
         answer, verification, evidence, verify_trace, claim_ledger, evidence_pack, sources, all_context, timeline_events = await self._verify_repair_and_grade(
             question,
             final.get("answer", ""),
@@ -754,11 +794,11 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
     async def _retrieve(self, query_text: str) -> dict:
         """Hybrid retrieval: vector + keyword + entity search + graph."""
         # Wider retrieval: 20 vector, 15 keyword, 8 entity
-        vector_results = await self._cached_vector_search(query_text, limit=20)
-        keyword_results = await embeddings_store.keyword_search(query_text, limit=15)
-        entity_results = await embeddings_store.entity_vector_search(query_text, limit=8)
-        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=8)
-        entity_names = await self._extract_entities_from_query(query_text)
+        vector_results = await _timed_call("document_vector", self._cached_vector_search(query_text, limit=20))
+        keyword_results = await _timed_call("document_keyword", embeddings_store.keyword_search(query_text, limit=15))
+        entity_results = await _timed_call("entity_vector", embeddings_store.entity_vector_search(query_text, limit=8))
+        entity_kw_results = await _timed_call("entity_keyword", embeddings_store.entity_keyword_search(query_text, limit=8))
+        entity_names = await _timed_call("entity_extraction", self._extract_entities_from_query(query_text))
 
         graph_nodes = []
         seen_uuids = set()
@@ -820,10 +860,10 @@ Return JSON: {{"sub_queries": ["focused query 1", "focused query 2", ...]}}"""
 
     async def _retrieve_light(self, query_text: str) -> dict:
         """Fast retrieval: vector + keyword only, no LLM entity extraction."""
-        vector_results = await self._cached_vector_search(query_text, limit=15)
-        keyword_results = await embeddings_store.keyword_search(query_text, limit=10)
-        entity_results = await embeddings_store.entity_vector_search(query_text, limit=5)
-        entity_kw_results = await embeddings_store.entity_keyword_search(query_text, limit=5)
+        vector_results = await _timed_call("document_vector", self._cached_vector_search(query_text, limit=15))
+        keyword_results = await _timed_call("document_keyword", embeddings_store.keyword_search(query_text, limit=10))
+        entity_results = await _timed_call("entity_vector", embeddings_store.entity_vector_search(query_text, limit=5))
+        entity_kw_results = await _timed_call("entity_keyword", embeddings_store.entity_keyword_search(query_text, limit=5))
         return {
             "vector_results": vector_results,
             "keyword_results": keyword_results,
@@ -1082,19 +1122,18 @@ Respond in JSON: {{"draft_answer": "...", "confidence": 0.8, "follow_up_queries"
         graph_nodes = []
         seen_uuids = set()
 
-        # Expand up to 12 entities (was 8), get 5 results each (was 3)
-        for name in entity_names[:12]:
-            if not isinstance(name, str):
-                name = str(name)
-            try:
-                results = await graph_store.search_nodes(name, limit=5)
-                for r in results:
-                    uid = r.get("properties", {}).get("uuid", "")
-                    if uid and uid not in seen_uuids:
-                        seen_uuids.add(uid)
-                        graph_nodes.append(r)
-            except Exception:
-                pass
+        async def lookup(name):
+            return await graph_store.search_nodes(str(name), limit=5)
+
+        results_by_name = await bounded_map(lookup, entity_names[:12], return_exceptions=True)
+        for results in results_by_name:
+            if isinstance(results, Exception):
+                continue
+            for r in results:
+                uid = r.get("properties", {}).get("uuid", "")
+                if uid and uid not in seen_uuids:
+                    seen_uuids.add(uid)
+                    graph_nodes.append(r)
 
         subgraph = {}
         if seen_uuids:
@@ -1481,15 +1520,14 @@ TEMPORAL AWARENESS — CRITICAL:
             return []
 
         expanded = []
-        seen = set()
-        for doc_id in doc_ids[:5]:
-            if doc_id in seen:
-                continue
-            seen.add(doc_id)
-            try:
-                doc = await paperless_client.get_document(int(doc_id))
-            except Exception as e:
-                logger.warning("Full source fetch failed for Paperless doc %s: %s", doc_id, e)
+        doc_ids = list(dict.fromkeys(doc_ids[:5]))
+        async def fetch(doc_id):
+            return await paperless_client.get_document(int(doc_id))
+
+        documents = await bounded_map(fetch, doc_ids, return_exceptions=True)
+        for doc_id, doc in zip(doc_ids, documents):
+            if isinstance(doc, Exception):
+                logger.warning("Full source fetch failed for Paperless doc %s: %s", doc_id, doc)
                 continue
 
             content = str(doc.get("content") or "")
@@ -1519,7 +1557,7 @@ TEMPORAL AWARENESS — CRITICAL:
                     "_source_document_content": content,
                 })
         if expanded:
-            logger.info("Expanded %s full-document evidence chunks from %s source docs", len(expanded), len(seen))
+            logger.info("Expanded %s full-document evidence chunks from %s source docs", len(expanded), len(doc_ids))
         return expanded
 
     def _rank_full_document_chunks(self, question: str, chunks: list[str]) -> list[tuple[int, str]]:

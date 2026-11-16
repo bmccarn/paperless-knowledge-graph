@@ -1,4 +1,9 @@
 import logging
+import asyncio
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+
+from app.async_ownership import owned_call
 import json
 import re
 from typing import Optional
@@ -10,6 +15,26 @@ from app.config import settings
 from app.retry import retry_db, retry_with_backoff
 
 logger = logging.getLogger(__name__)
+
+_QUERY_EMBEDDINGS = ContextVar("query_embeddings", default=None)
+
+
+@asynccontextmanager
+async def query_embedding_scope():
+    """Share search vectors only within one request; drain tasks before I/O closes."""
+    tasks = {}
+    token = _QUERY_EMBEDDINGS.set(tasks)
+    try:
+        yield
+    finally:
+        _QUERY_EMBEDDINGS.reset(token)
+        for task in tasks.values():
+            if not task.done():
+                task.cancel()
+        async def drain():
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+        await owned_call(drain())
+
 
 EMBEDDING_DIMENSIONS = 3072  # text-embedding-3-large
 
@@ -522,9 +547,20 @@ class EmbeddingsStore:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM entity_embeddings WHERE entity_uuid = ANY($1::text[])", entity_uuids)
 
+    async def _query_embedding(self, query: str, *, strict=False):
+        tasks = _QUERY_EMBEDDINGS.get()
+        if tasks is None:
+            return await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
+        # Strict searches retain their full input and fail-closed transport policy.
+        key = (self, query, strict)
+        if key not in tasks:
+            tasks[key] = asyncio.create_task(self.generate_embedding(query, strict=True) if strict
+                                             else self.generate_embedding(query))
+        return await asyncio.shield(tasks[key])
+
     async def vector_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Exact cosine search over every document chunk."""
-        embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
+        embedding = await self._query_embedding(query, strict=strict)
         if not embedding:
             if strict: raise SearchUnavailable()
             return []
@@ -544,7 +580,7 @@ class EmbeddingsStore:
         to the query. Returns chunks sorted by similarity score."""
         if not doc_ids:
             return []
-        embedding = await self.generate_embedding(query)
+        embedding = await self._query_embedding(query)
         if not embedding:
             return []
         async with self.pool.acquire() as conn:
@@ -563,7 +599,7 @@ class EmbeddingsStore:
 
     async def entity_vector_search(self, query: str, limit: int = 10, *, strict: bool = False) -> list[dict]:
         """Search entity embeddings by vector similarity."""
-        embedding = await self.generate_embedding(query, strict=True) if strict else await self.generate_embedding(query)
+        embedding = await self._query_embedding(query, strict=strict)
         if not embedding:
             if strict: raise SearchUnavailable()
             return []

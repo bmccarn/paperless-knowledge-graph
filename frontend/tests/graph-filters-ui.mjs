@@ -35,6 +35,11 @@ try {
   assert.equal(await table.locator('tbody tr[data-link-key] td').nth(6).innerText(), 'Supported');
   assert.equal(await table.locator('tbody tr[data-link-key] td').nth(7).innerText(), '1');
   assert.equal(await table.locator('tbody tr[data-link-key] td').nth(8).innerText(), '0.90');
+  await table.locator('tbody tr[data-link-key]').click();
+  const evidence = page.getByRole('region', { name: 'Inspector: link', exact: true });
+  await evidence.getByRole('article', { name: 'Current statement', exact: true }).waitFor();
+  assert.equal(await evidence.getByRole('article').count(), 1, 'Full link evidence keeps only the date-matched source');
+  assert.equal(await evidence.getByRole('article', { name: 'Previous statement', exact: true }).count(), 0);
   await page.reload();
   await page.getByRole('group', { name: 'Active filters' }).getByRole('button', { name: 'Remove From 2026-01' }).waitFor();
   await page.getByRole('button', { name: 'Filters', exact: false }).filter({ visible: true }).first().click();

@@ -10,7 +10,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { defaultFilters, filterLayout, filterLinks, filterUrl, parseFilters, showMoreFiltered, type GraphFilters } from "@/lib/graph-filters";
 import { GraphFilterChips, GraphFiltersSheet, filterChips } from "./graph-filters";
 import { cn, errMsg } from "@/lib/utils";
-import { ApiError, getGraphNodeSummary, getGraphSubgraph } from "@/lib/api";
+import { ApiError, getGraphSubgraph } from "@/lib/api";
 import { graphNavigation, listedViews, parseGraphState, parseLinkKey, shownView } from "@/lib/graph-url-state";
 import type { ExplorerGraph, ExplorerLink, ExplorerNode } from "@/lib/graph-data";
 import {
@@ -32,7 +32,7 @@ import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
-import { rememberRecent } from "./graph-landing";
+import { focusSummary, GraphHeader, rememberRecent } from "./graph-landing";
 import { LinkTable } from "./link-table";
 import { PathView } from "./path-view";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
@@ -80,7 +80,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
 
   useEffect(() => {
     let active = true;
-    getGraphNodeSummary(focusId)
+    focusSummary(focusId)
       .then((data) => {
         if (!active) return;
         setSummary(data);
@@ -282,24 +282,20 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
-        <div>
-          <h1 className="page-title">Graph</h1>
-          {!isTable && !isPath && summary && layout && (
-            <p className="mt-1 text-sm text-muted-foreground">
-              <span>
-                {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
-                {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
-              </span>
-              {" "}<span role="status" className={crossQuiet ? "max-md:sr-only" : undefined}>{crossCaption}</span>
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-3 max-md:hidden">
-          {VIEWS.length > 1 && <ViewSwitcher {...switcher} />}
-          {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
-        </div>
-      </header>
+      <GraphHeader controls={<>
+        {VIEWS.length > 1 && <ViewSwitcher {...switcher} />}
+        {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
+      </>}>
+        {!isTable && !isPath && summary && layout && (
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            <span>
+              {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
+              {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
+            </span>
+            {" "}<span role="status" className={crossQuiet ? "max-md:sr-only" : undefined}>{crossCaption}</span>
+          </p>
+        )}
+      </GraphHeader>
       {VIEWS.length > 1 && (
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 md:hidden"><ViewSheet {...switcher} />
           {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}

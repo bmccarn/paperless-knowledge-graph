@@ -227,6 +227,8 @@ class Neo4jGraphFieldTests(unittest.IsolatedAsyncioTestCase):
                     'q': 'Fields Owner Example', 'type': 'OwnerRuleAudit', 'exclude_documents': 1})
                 self.assertEqual(response.status_code, 200)
                 rows = response.json()['results']
+                # The owner's id comes with every page, so a caller finds it even when its row is not listed.
+                self.assertEqual(response.json()['owner'], ids[2])
                 self.assertEqual({row['properties']['uuid']: row['is_owner'] for row in rows},
                                  dict(zip(ids, [False, False, True])))
                 # The matches the rule did not choose are flagged, so lists can leave them out with the owner.

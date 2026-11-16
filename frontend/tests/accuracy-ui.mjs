@@ -52,7 +52,7 @@ try {
   record('documents_failure', 'Search failure is visible with retry action.');
 
   // Graph search offers at most 8 entities; the inspector keeps source text literal.
-  await page.goto(`${base}/graph`);
+  await page.goto(`${base}/graph?focus=nb-rowan`);
   await page.getByRole('combobox', { name: 'Search entities', exact: true }).fill('Search Fixture');
   const results = page.getByRole('listbox', { name: '8 results', exact: true });
   await results.waitFor();

@@ -15,7 +15,8 @@ const mainStates = [
   { name: "documents", route: "/documents", ready: page => page.getByText("303 indexed documents", { exact: true }) },
   { name: "document", route: "/documents/101", ready: page => page.getByRole("heading", { name: "January premium statement", exact: true }) },
   { name: "entities", route: "/entities/review", ready: page => page.getByText("Cedar Lab 1", { exact: true }) },
-  { name: "graph", route: "/graph", ready: page => page.getByRole("region", { name: "Most connected", exact: true }).getByRole("link").first() },
+  // The Graph tab opens the owner's graph at once.
+  { name: "graph", route: "/graph", ready: page => page.getByText("13 links between neighbors.", { exact: true }) },
   { name: "hubs", route: "/hubs", ready: page => page.getByText("303 matching indexed documents", { exact: true }) },
   { name: "logs", route: "/debug", ready: page => page.getByText("Connected", { exact: true }) },
   { name: "not-found", route: "/visual-missing-page", ready: page => page.getByRole("heading", { name: "Page not found", exact: true }) },
@@ -233,17 +234,24 @@ const extraStates = [
     await page.getByRole("button", { name: title, exact: true }).click();
     await page.getByRole("article", { name: "Answer" }).waitFor();
   } })),
-  { ...mainStates[5], name: "graph-results", state: "results", prepare: async page => {
+  { ...mainStates[9], name: "graph-neighborhood-results", state: "results", prepare: async page => {
     await page.getByRole("combobox", { name: "Search entities", exact: true }).fill("ar");
     await page.clock.runFor(200);
     await page.getByRole("listbox", { name: "8 results", exact: true }).waitFor();
   } },
-  { ...mainStates[5], name: "graph-recent", state: "recent", seed: page => page.addInitScript(() => localStorage.setItem("graph-recent", JSON.stringify([
+  // The header search with focus and no text: Recent, then Most connected.
+  { ...mainStates[9], name: "graph-neighborhood-search", state: "search-empty", seed: page => page.addInitScript(() => localStorage.setItem("graph-recent", JSON.stringify([
     { id: "nb-money-0", name: "Harbor Mutual Insurance", label: "Organization", documents: 10 },
     { id: "nb-coverage-0", name: "Policy HM-2208 (auto)", label: "InsurancePolicy", documents: 6 },
     { id: "nb-unnamed", name: "", label: "Organization", documents: 2 },
-    { id: "nb-places-0", name: "14 Larkspur Ct", label: "Address", documents: 6 },
-  ]))) },
+  ]))), prepare: async page => {
+    await page.locator("h1").click();
+    await page.keyboard.press("/");
+    await page.getByRole("group", { name: "Most connected", exact: true }).getByRole("option").first().waitFor();
+  } },
+  { name: "graph-empty", route: "/graph", state: "empty",
+    seed: page => page.route("**/api/graph/search?**", route => route.fulfill({ json: { query: "", owner: null, total: 0, offset: 0, limit: 20, has_more: false, results: [] } })),
+    ready: page => page.getByText("No entities yet.", { exact: true }) },
   // The hub with its focus node selected: selection rings, faded links, arrows and link labels.
   { ...mainStates[9], name: "graph-neighborhood-selected", state: "selected-node", prepare: async page => {
     const canvas = page.locator("canvas").first();
@@ -345,7 +353,7 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  const graph = state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters");
+  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters");
   if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
   // Finish count-up and graph cooldown on the fixed clock, then freeze all timers.

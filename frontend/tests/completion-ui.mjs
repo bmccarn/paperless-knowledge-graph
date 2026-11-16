@@ -191,36 +191,114 @@ for (const batch of [false, true]) test(`${batch ? "batch" : "single"} reindex r
   await record(page, `document-${batch ? "batch" : "single"}-refresh`);
 });
 
-test("the graph opens on entity search with Recent and Most connected, never the sample graph", async t => {
-  const { context, page } = await fixturePage(t);
+const ownerCaption = "Rowan Vale: ";
+const storedRecent = page => page.evaluate(() => JSON.parse(localStorage.getItem("graph-recent") ?? "[]").map(item => item.id));
+// The search the page makes for its default entity, with the owner and its flags removed or every row dropped.
+const searchWithout = (page, change) => page.route("**/api/graph/search?**", async route => {
+  if (new URL(route.request().url()).searchParams.get("sort") !== "documents") return route.continue();
+  const data = await (await route.fetch()).json();
+  await route.fulfill({ json: change(data) });
+});
+
+test("the Graph tab opens the owner's graph at once, and Back leaves the Graph page", async t => {
+  const { page } = await fixturePage(t);
   const requests = [];
   page.on("request", request => requests.push(new URL(request.url()).pathname));
-  await page.goto(`${base}/graph`);
+  await page.goto(`${base}/documents`);
+  await page.getByRole("link", { name: "Graph", exact: true }).first().click();
+  // One history entry: the chosen focus replaces /graph.
+  await page.waitForURL(url => url.pathname === "/graph" && url.search === "?focus=nb-rowan");
+  await page.getByText(ownerCaption, { exact: false }).first().waitFor();
+  await page.locator("canvas").first().waitFor({ state: "visible" });
   const search = page.getByRole("combobox", { name: "Search entities", exact: true });
-  const most = page.getByRole("region", { name: "Most connected", exact: true });
-  await most.getByRole("link").first().waitFor();
-  assert.ok(await search.evaluate(element => element === document.activeElement), "Focus starts in the search box");
-  await page.getByRole("region", { name: "Recent", exact: true }).getByText("Entities you open appear here.", { exact: true }).waitFor();
-  // The server lists the owner first and flags it; the landing leaves it out and still shows 10.
-  const ranked = await (await context.request.get(`${base}/api/graph/search?q=&sort=documents&exclude_documents=1&limit=11`)).json();
-  assert.equal(ranked.results[0].properties.name, "Rowan Vale");
-  assert.equal(ranked.results[0].is_owner, true);
-  // Two more Persons match the owner setting; the server flags them, and the landing leaves them out too.
-  const matches = ranked.results.filter(row => row.owner_match).map(row => row.properties.name);
-  assert.deepEqual(matches, ["Rowan Vale", "Rowan Vale"], "Both other matches rank in the top 11");
-  const rows = await most.getByRole("link").allTextContents();
-  assert.equal(rows.length, 10);
-  assert.ok(!rows.some(row => row.includes("Rowan Vale")), `Neither the owner nor its other matches is listed: ${rows}`);
-  assert.match(rows[0], /^Lakeshore Pharmacy.*120 documents$/);
-  // "/" returns focus to the search box without typing a slash.
-  await most.getByRole("link").first().focus();
+  assert.equal(await search.evaluate(element => element === document.activeElement), false, "The search box does not take focus");
+  assert.equal(await search.getAttribute("aria-expanded"), "false");
+  assert.ok(!requests.some(path => path.startsWith("/api/graph/initial")), "No request goes to /graph/initial");
+  await page.goBack();
+  await page.waitForURL(url => url.pathname === "/documents");
+  await record(page, "graph-opens-owner");
+});
+
+test("/graph opens the last entity in Recent, and a stale one is removed before the owner opens", async t => {
+  const { page } = await fixturePage(t);
+  await page.goto(`${base}/documents`);
+  await page.evaluate(() => localStorage.setItem("graph-recent", JSON.stringify([
+    { id: "nb-money-0", name: "Harbor Mutual Insurance", label: "Organization", documents: 10 }])));
+  await page.goto(`${base}/graph`);
+  await page.waitForURL(url => url.search === "?focus=nb-money-0");
+  await page.getByText("Harbor Mutual Insurance: ", { exact: false }).first().waitFor();
+  await page.evaluate(() => localStorage.setItem("graph-recent", JSON.stringify([
+    { id: "removed-entity", name: "Merged away", label: "Person", documents: 1 },
+    { id: "nb-money-0", name: "Harbor Mutual Insurance", label: "Organization", documents: 10 }])));
+  await page.goto(`${base}/graph`);
+  await page.waitForURL(url => url.search === "?focus=nb-rowan");
+  await page.getByText(ownerCaption, { exact: false }).first().waitFor();
+  assert.deepEqual(await storedRecent(page), ["nb-rowan", "nb-money-0"]);
+});
+
+test("without an owner /graph opens the first Most connected entity, and an empty archive shows search", async t => {
+  const { page } = await fixturePage(t);
+  // An archive where the owner rule finds no one: no owner, no flags, and no Rowan Vale.
+  await searchWithout(page, data => ({ ...data, owner: null, results: data.results
+    .filter(row => row.properties.name !== "Rowan Vale").map(row => ({ ...row, is_owner: false, owner_match: false })) }));
+  await page.goto(`${base}/graph`);
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy");
+  await page.getByText("Lakeshore Pharmacy: 5 links", { exact: false }).waitFor();
+
+  await page.unrouteAll({ behavior: "wait" });
+  let fail = true;
+  await page.route("**/api/graph/search?**", route => route.fulfill(fail
+    ? { status: 503, json: { detail: "Synthetic graph search failure" } }
+    : { json: { query: "", owner: null, total: 0, offset: 0, limit: 20, has_more: false, results: [] } }));
+  await page.evaluate(() => localStorage.clear());
+  await page.goto(`${base}/graph`);
+  await page.getByRole("alert").filter({ hasText: "Synthetic graph search failure" }).waitFor();
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.getByText("No entities yet.", { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).search, "");
+  await page.getByRole("combobox", { name: "Search entities", exact: true }).waitFor();
+  assert.equal(await page.locator("canvas").count(), 0);
+  assert.equal(await page.locator("h1").count(), 1);
+  await record(page, "graph-empty-archive");
+});
+
+test("the header search lists Recent and Most connected when empty, and a choice keeps the view", async t => {
+  const { context, page } = await fixturePage(t);
+  await page.goto(`${base}/graph?focus=nb-money-0`);
+  await page.getByText("Harbor Mutual Insurance: ", { exact: false }).first().waitFor();
+  await page.goto(`${base}/graph?focus=nb-rowan&view=table`);
+  await page.getByRole("table", { name: "Links of Rowan Vale" }).waitFor();
+  const search = page.getByRole("combobox", { name: "Search entities", exact: true });
+  // "/" focuses the search box without typing a slash.
+  await page.locator("h1").click();
   await page.keyboard.press("/");
   assert.ok(await search.evaluate(element => element === document.activeElement), "/ focuses the search box");
   assert.equal(await search.inputValue(), "");
-  await page.waitForLoadState("networkidle");
-  assert.ok(!requests.some(path => path.startsWith("/api/graph/initial")), "No request goes to /graph/initial");
-  for (const removed of ["Reset sample", "Sample seed size", "Show labels"]) assert.equal(await page.getByText(removed).count(), 0);
-  await record(page, "graph-landing");
+  const list = page.getByRole("listbox", { name: "Recent and most connected entities", exact: true });
+  const most = list.getByRole("group", { name: "Most connected", exact: true });
+  await most.getByRole("option").first().waitFor();
+  const recent = await list.getByRole("group", { name: "Recent", exact: true }).getByRole("option").allTextContents();
+  assert.deepEqual(recent.map(text => text.match(/^(Rowan Vale|Harbor Mutual Insurance)/)?.[0]), ["Rowan Vale", "Harbor Mutual Insurance"]);
+  // The server lists the owner first and flags it with its other matches; Most connected leaves all of them out.
+  const ranked = await (await context.request.get(`${base}/api/graph/search?q=&sort=documents&exclude_documents=1&limit=11`)).json();
+  assert.equal(ranked.owner, "nb-rowan");
+  assert.equal(ranked.results[0].is_owner, true);
+  assert.deepEqual(ranked.results.filter(row => row.owner_match).map(row => row.properties.name), ["Rowan Vale", "Rowan Vale"]);
+  const rows = await most.getByRole("option").allTextContents();
+  assert.equal(rows.length, 10);
+  assert.ok(!rows.some(row => row.includes("Rowan Vale")), `Neither the owner nor its other matches is listed: ${rows}`);
+  assert.match(rows[0], /^Lakeshore Pharmacy.*120 documents$/);
+  await record(page, "graph-search-empty");
+  await page.keyboard.press("Escape");
+  assert.equal(await search.getAttribute("aria-expanded"), "false");
+  assert.match(page.url(), /\/graph\?focus=nb-rowan&view=table$/);
+  await page.keyboard.press("ArrowDown");
+  await most.getByRole("option", { name: /^Lakeshore Pharmacy/ }).click();
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy&view=table");
+  await page.getByRole("table", { name: "Links of Lakeshore Pharmacy" }).waitFor();
+  await page.goBack();
+  await page.waitForURL(url => url.search === "?focus=nb-rowan&view=table");
 });
 
 test("two characters show at most 8 entities grouped by kind, without documents, and Enter opens the first", async t => {
@@ -229,6 +307,7 @@ test("two characters show at most 8 entities grouped by kind, without documents,
   const all = await (await context.request.get(`${base}/api/graph/search?q=ar&limit=50`)).json();
   assert.ok(all.results.some(row => row.labels.includes("Document")));
   await page.goto(`${base}/graph`);
+  await page.waitForURL(url => url.search === "?focus=nb-rowan");
   const search = page.getByRole("combobox", { name: "Search entities", exact: true });
   await search.fill("ar");
   const list = page.getByRole("listbox", { name: "8 results", exact: true });
@@ -247,13 +326,12 @@ test("two characters show at most 8 entities grouped by kind, without documents,
   await page.keyboard.press("ArrowUp");
   await record(page, "graph-typeahead");
   await search.press("Enter");
-  await page.waitForURL(/\/graph\?focus=nb-money-0$/);
+  await page.waitForURL(url => url.search === "?focus=nb-money-0");
   await page.getByText("Harbor Mutual Insurance: ", { exact: false }).first().waitFor();
-  // The focused entity is now first in Recent.
+  assert.deepEqual((await storedRecent(page)).slice(0, 2), ["nb-money-0", "nb-rowan"]);
+  // A search choice is a history step.
   await page.goBack();
-  const recent = page.getByRole("region", { name: "Recent", exact: true });
-  await recent.getByRole("link").first().waitFor();
-  assert.deepEqual(await recent.getByRole("link").allTextContents(), ["Harbor Mutual InsuranceOrganization10 documents"]);
+  await page.waitForURL(url => url.search === "?focus=nb-rowan");
 });
 
 test("a late search answer never replaces the results of newer text", async t => {
@@ -264,7 +342,7 @@ test("a late search answer never replaces the results of newer text", async t =>
     await route.continue();
   });
   t.after(() => held.resolve());
-  await page.goto(`${base}/graph`);
+  await page.goto(`${base}/graph?focus=nb-rowan`);
   const search = page.getByRole("combobox", { name: "Search entities", exact: true });
   await search.fill("har");
   await page.waitForRequest(request => new URL(request.url()).searchParams.get("q") === "har");
@@ -274,19 +352,23 @@ test("a late search answer never replaces the results of newer text", async t =>
   assert.deepEqual(await page.getByRole("option").allTextContents(), ["Lakeshore PharmacyOrganization120 documents"]);
 });
 
-test("a graph URL with one exact name opens that entity, and an unmatched one offers documents", async t => {
+test("a graph URL with one exact name opens that entity, and other text opens the graph with its results", async t => {
   const { page } = await fixturePage(t);
   await page.goto(`${base}/graph?q=lakeshore%20PHARMACY`);
-  await page.waitForURL(/\/graph\?focus=nb-pharmacy$/);
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy");
   await page.getByText("Lakeshore Pharmacy: 5 links", { exact: false }).waitFor();
   await page.goto(`${base}/graph?q=Port%20Ellery`);
   // Two results contain the text, but only one name equals it.
-  await page.waitForURL(/\/graph\?focus=nb-places-1$/);
+  await page.waitForURL(url => url.search === "?focus=nb-places-1");
+  await page.getByText("Port Ellery: ", { exact: false }).first().waitFor();
+  // Without Recent, other text opens the owner's graph with the results listed.
+  await page.evaluate(() => localStorage.clear());
   await page.goto(`${base}/graph?q=Parties%20fixture`);
+  await page.waitForURL(url => url.search === "?focus=nb-rowan&q=Parties+fixture");
   const search = page.getByRole("combobox", { name: "Search entities", exact: true });
   await page.getByRole("listbox", { name: "8 results", exact: true }).waitFor();
   assert.equal(await search.inputValue(), "Parties fixture");
-  assert.match(page.url(), /\/graph\?q=Parties%20fixture$/);
+  await page.getByText(ownerCaption, { exact: false }).first().waitFor();
   await search.fill("unmatched-entity");
   await page.getByText("No match for ‘unmatched-entity’.", { exact: true }).waitFor();
   // The link stays reachable from the keyboard.
@@ -510,8 +592,9 @@ test("a whitespace-only graph URL does not search the archive", async t => {
     if (new URL(request.url()).pathname === "/api/graph/search") searches.push(request.url());
   });
   await page.goto(`${base}/graph?q=%20%20`);
-  await page.getByRole("region", { name: "Most connected", exact: true }).getByRole("link").first().waitFor();
+  await page.waitForURL(url => url.search === "?focus=nb-rowan");
+  await page.getByText("Rowan Vale: ", { exact: false }).first().waitFor();
   await page.waitForLoadState("networkidle");
-  // Only the empty-query Most connected list is requested.
+  // Only the empty-query list that picks the default entity is requested.
   assert.deepEqual(searches.map(url => new URL(url).searchParams.get("q")), [""]);
 });

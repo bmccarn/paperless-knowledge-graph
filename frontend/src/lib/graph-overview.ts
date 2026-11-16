@@ -164,7 +164,7 @@ export function layoutGroup(members: number[], links: OverviewLink[], entities: 
 
 /**
  * Circles placed largest first along a spiral from the center, each at the first spot where it touches no other.
- * A step inside another circle skips ahead by the overlap, which never passes a free spot. Radii must not increase.
+ * A step inside another circle skips ahead by the overlap, which never passes a free spot.
  */
 export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: number }[] {
   const placed: { x: number; y: number; r: number }[] = [];

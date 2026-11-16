@@ -58,9 +58,9 @@ const allViews = GRAPH_VIEWS.map(view => ({ ...view, listed: view.id !== "overvi
 
 test("the switcher order is fixed and only shipped views are listed", () => {
   assert.deepEqual(GRAPH_VIEWS.map(view => view.label), ["Focus", "Explore", "Timeline", "Table", "Paths", "Overview"]);
-  assert.deepEqual(listedViews().map(view => view.id), ["focus", "explore", "table", "path"]);
+  assert.deepEqual(listedViews().map(view => view.id), ["focus", "explore", "timeline", "table", "path"]);
   assert.deepEqual(listedViews(allViews).map(view => view.id), ["focus", "explore", "timeline", "table", "path"]);
-  assert.equal(shownView("timeline"), "focus", "an unlisted view in the URL draws as Focus");
+  assert.equal(shownView("overview"), "focus", "an unlisted view in the URL draws as Focus");
   assert.equal(shownView("explore"), "explore");
   assert.equal(shownView("table"), "table");
   assert.equal(shownView("table", allViews), "table");
@@ -86,7 +86,7 @@ test("keys 1 to 6 follow the switcher order, n t p are aliases, and unlisted vie
   assert.equal(viewForKey("t"), "table");
   assert.equal(viewForKey("5"), "path");
   assert.equal(viewForKey("p"), "path");
-  for (const key of ["3", "6"]) assert.equal(viewForKey(key), null);
+  for (const key of ["6"]) assert.equal(viewForKey(key), null);
 });
 
 test("Left and Right move through the toolbar and wrap; Home and End jump", () => {
@@ -133,13 +133,14 @@ test("keys 1 and 2 switch views with one pushed entry each, and do nothing in a 
   assert.equal(keyedView(press("5"), false, parseGraphState(new URLSearchParams()), allViews), "path", "Paths has its own pickers");
   // Overview draws from its URL before #204 lists it; key 1 leaves it for Focus.
   assert.equal(drawnView("overview"), "overview");
-  assert.equal(drawnView("timeline"), "focus");
+  assert.equal(drawnView("timeline"), "timeline");
   const overview = parseGraphState(new URLSearchParams("focus=a&view=overview"));
   assert.equal(keyedView(press("1"), false, overview), "focus");
   assert.equal(keyedView(press("6"), false, overview), null, "Overview is unlisted, so key 6 does nothing");
   // Unlisted views ignore their keys. Table aliases return to Focus.
-  for (const key of ["3", "6", "t"]) assert.equal(keyedView(press(key), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), null);
+  for (const key of ["6", "t"]) assert.equal(keyedView(press(key), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), null);
   assert.equal(keyedView(press("2"), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), "explore");
+  assert.equal(keyedView(press("3"), false, parseGraphState(new URLSearchParams("focus=a&view=table"))), "timeline");
   // p opens Paths, with or without a focus, and does nothing in a text field.
   for (const query of ["focus=a&view=table", "", "q=Harbor"]) {
     assert.equal(keyedView(press("p"), false, parseGraphState(new URLSearchParams(query))), "path");

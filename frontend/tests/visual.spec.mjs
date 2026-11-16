@@ -32,6 +32,7 @@ mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getB
 // a phone adds 4 entities per expansion instead of 6.
 mainStates.push({ name: "graph-explore", route: "/graph?focus=ex-policy&view=explore&x=ex-car,ex-loan", ready: page => page.getByRole("img", {
   name: page.viewportSize().width < 768 ? "Explore from Policy KT-9030 (auto): 15 entities, 20 links, 3 hops." : "Explore from Policy KT-9030 (auto): 18 entities, 24 links, 3 hops.", exact: true }) });
+mainStates.push({ name: "graph-timeline", route: "/graph?focus=nb-timeline&view=timeline", ready: page => page.getByRole("region", { name: "Timeline of Policy TL-2208 (auto)", exact: true }) });
 // The map on a wide screen; the group list on a phone, which has no canvas.
 mainStates.push({ name: "graph-overview", route: "/graph?view=overview",
   ready: page => page.locator('[role="img"][aria-label^="Map of the archive"], ul[aria-label="Groups"]').first() });
@@ -57,6 +58,25 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { name: "graph-timeline-source", route: "/graph?focus=nb-rowan&view=timeline", state: "selected-source",
+    ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }), prepare: async page => {
+      await page.evaluate(() => document.fonts.ready);
+      if (page.viewportSize().width < 768) {
+        const summary = await (await page.request.get("/api/graph/node/nb-rowan?summary=1")).json();
+        await page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }).getByRole("button", { name: new RegExp(`^${summary.documents["9030"].title}`) }).click();
+      } else {
+        await page.locator('[data-document-ids="9030"]').click();
+        await page.getByRole("region", { name: /^Evidence ·/ }).locator('a[data-document-id="9030"][data-marked]').waitFor();
+      }
+      await page.getByRole("region", { name: "Inspector: link", exact: true }).locator("blockquote").first().waitFor();
+    } },
+  { name: "graph-timeline-unnamed", route: "/graph?focus=nb-unnamed&view=timeline", state: "unnamed", ready: page => page.getByRole("region", { name: "Timeline of Organization nb-unn", exact: true }) },
+  { name: "graph-timeline-hub", route: "/graph?focus=nb-rowan&view=timeline", state: "hub", ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }) },
+  { name: "graph-timeline-leaf", route: "/graph?focus=nb-leaf&view=timeline", state: "leaf", ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
+  { name: "graph-timeline-undated", route: "/graph?focus=nb-timeline&view=timeline", state: "undated",
+    seed: page => page.route("**/api/graph/node/nb-timeline?summary=1", async route => { const response = await route.fetch(); const data = await response.json(); for (const doc of Object.values(data.documents)) { doc.date = null; doc.parsed_date = null; } await route.fulfill({ json: data }); }),
+    ready: page => page.getByText("None of the 5 documents has a date.", { exact: true }) },
+  { name: "graph-timeline-range", route: "/graph?focus=nb-timeline&view=timeline&from=2026-01&to=2026-09", state: "date-range", ready: page => page.getByRole("group", { name: "Timeline date range", exact: true }) },
   { ...mainStates[11], name: "graph-filters-types", state: "filter-types", prepare: async page => {
     await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
     const types = page.getByRole("dialog", { name: "Filters", exact: true }).getByRole("group", { name: "Document type", exact: true });

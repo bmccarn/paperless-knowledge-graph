@@ -27,7 +27,7 @@ import {
   type SubgraphLink,
   type SummaryLink,
 } from "@/lib/graph-layout";
-import { canvasName, documentsByDate, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
+import { canvasName, documentsByDate, entityName, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
 import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
 import { ExploreView } from "./explore-view";
@@ -35,6 +35,7 @@ import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from
 import { GraphLegend, LegendContent } from "./graph-legend";
 import { focusSummary, GraphHeader, rememberRecent } from "./graph-landing";
 import { LinkTable } from "./link-table";
+import { TimelineView } from "./timeline-view";
 import { PathView } from "./path-view";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
 
@@ -68,9 +69,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const isTable = view === "table";
   const isPath = view === "path";
   const isExplore = view === "explore";
+  const isTimeline = view === "timeline";
   const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
   const selectedNodeId = selectedLinkId ? null : urlState.selection;
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
+  const [selectedDoc, setSelectedDoc] = useState<number | null>(null);
   const [markedDoc, setMarkedDoc] = useState<number | null>(null);
   const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE).matches, () => false);
   const cameraRef = useRef<Camera | null>(null);
@@ -85,7 +88,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     focusSummary(focusId)
       .then((data) => {
         if (!active) return;
-        setSummary(data);
+        setSummary({ ...data, documents: Object.fromEntries(Object.entries(data.documents)
+          .map(([id, doc]) => [id, { ...doc, date: doc.parsed_date !== undefined ? doc.parsed_date : doc.date }])) });
         const { id, name, label, evidence_doc_count } = data.focus;
         rememberRecent({ id, name, label, documents: evidence_doc_count });
       })
@@ -100,7 +104,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const parsedFilters = useMemo(() => parseFilters(new URLSearchParams(params)), [params]);
   const [filters, setOptimisticFilters] = useOptimistic(parsedFilters);
   const summary = useMemo(() => rawSummary && ({ ...rawSummary,
-    links: filterLinks(rawSummary.links, rawSummary.documents, filters, undefined, shownView(parseGraphState(new URLSearchParams(params)).view)) }), [rawSummary, filters, params]);
+    documents: isTimeline ? Object.fromEntries(Object.entries(rawSummary.documents)
+      .filter(([, doc]) => filters.types === null || Boolean(doc.doc_type && filters.types.includes(doc.doc_type)))) : rawSummary.documents,
+    links: filterLinks(rawSummary.links, rawSummary.documents, isTimeline ? { ...filters, from: "", to: "" } : filters,
+      undefined, shownView(parseGraphState(new URLSearchParams(params)).view)) }), [rawSummary, filters, params, isTimeline]);
   const filtering = filterChips(filters).length > 0;
   const changeFilters = (next: GraphFilters) => startTransition(() => {
     setOptimisticFilters(next);
@@ -114,7 +121,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     [summary, rawSummary, cap, extra, pillRadius]);
   // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
   const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
-  const wantCross = !isTable && !isPath && !isExplore && urlState.cross && crossIds.includes(",");
+  const wantCross = !isTable && !isPath && !isExplore && !isTimeline && urlState.cross && crossIds.includes(",");
   useEffect(() => {
     if (!wantCross) return;
     let active = true;
@@ -192,7 +199,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     navigate({ selection: null });
     setKeyboardNodeId(null);
     setExpandedSheet(null);
-  }, [navigate, setExpandedSheet]);
+    setSelectedDoc(null);
+  }, [navigate, setExpandedSheet, setSelectedDoc]);
   const onReady = useCallback((camera: Camera | null) => { cameraRef.current = camera; }, []);
 
   const linkTotal = layout?.sectors.reduce((sum, sector) => sum + sector.total, 0) ?? 0;
@@ -209,14 +217,15 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const selectedCross = shownCross?.links.find(link => link.key === selectedLinkId);
   const selectedLink = summary?.links.find(link => link.key === selectedLinkId)
     ?? (selectedCross && asLink(selectedCross.link, selectedCross.source));
-  const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
+  const timelineDocument = isTimeline && selectedDoc !== null && selectedLink?.records.some(record => record.doc_id === selectedDoc) ? selectedDoc : null;
+  const markedDocs = new Set([...(timelineDocument !== null ? [timelineDocument] : selectedLink?.records.map(record => record.doc_id) ?? []), ...(isTimeline && markedDoc !== null ? [markedDoc] : [])]);
   const pill = !isTable && selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
   const adds = useMemo(() => {
     if (!rawSummary || !summary || !pill) return 0;
     const next = showMoreFiltered(rawSummary, summary, cap, extra, pill.family);
     return next === extra ? 0 : filterLayout(neighborhoodLayout(rawSummary, cap, next), summary).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
   }, [rawSummary, summary, cap, extra, pill]);
-  const selected = Boolean(selectedLink || pill || (selectedNodeId && (positions.has(selectedNodeId) || (isTable && summary?.links.some(link => link.neighbor.id === selectedNodeId)))));
+  const selected = Boolean(selectedLink || pill || (selectedNodeId && (positions.has(selectedNodeId) || ((isTable || isTimeline) && summary?.links.some(link => link.neighbor.id === selectedNodeId)))));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
   const crossCount = !urlState.cross ? null : !wantCross ? 0 : shownCross && !crossLoading ? shownCross.links.length : null;
   let crossCaption = null;
@@ -235,11 +244,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     crossCaption = <>{crossCaption} Filters apply to the 600 strongest links between neighbors.</>;
     crossQuiet = false;
   }
-  const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
+  const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary ? entityName(summary.focus) : null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
   // On phone the inspector is a bottom sheet: a 300 px peek, or expanded over all but 120 px of the canvas.
-  const expanded = phone && !isTable && expandedSheet === sheetKey;
+  const expanded = phone && !isTable && !isTimeline && expandedSheet === sheetKey;
   let inspector = null;
   if (summary && layout && !isPath) {
     if (selectedCross && selectedLink) inspector = (
@@ -252,10 +261,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} atLimit={!adds && pill.hidden > 0} onOpenTable={() => navigate({ view: "table" })} {...rowEvents}
           links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);
     }
-    else if (selectedNodeId && selectedNodeId !== summary.focus.id && ((isTable && summary.links.some(link => link.neighbor.id === selectedNodeId)) || (!isTable && positions.has(selectedNodeId))))
+    else if (selectedNodeId && selectedNodeId !== summary.focus.id && (((isTable || isTimeline) && summary.links.some(link => link.neighbor.id === selectedNodeId)) || (!isTable && positions.has(selectedNodeId))))
       inspector = <NeighborInspector summary={summary} neighborId={selectedNodeId} onClose={clearSelection} onFocusEntity={openFocus} {...rowEvents}
         crossLinks={shownCross?.links.filter(link => link.source === selectedNodeId || link.target === selectedNodeId).map(link => asLink(link.link, selectedNodeId))} />;
-    else if (!isTable) inspector = <FocusInspector onOpenTable={() => navigate({ view: "table" })} summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
+    else if (!isTable && !isTimeline) inspector = <FocusInspector onOpenTable={() => navigate({ view: "table" })} summary={summary} onClose={selected ? clearSelection : undefined} {...rowEvents} />;
   }
 
   if (missing) return (
@@ -288,10 +297,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         {VIEWS.length > 1 && <ViewSwitcher {...switcher} />}
         {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
       </>}>
-        {!isTable && !isPath && !isExplore && summary && layout && (
+        {!isTable && !isPath && !isExplore && !isTimeline && summary && layout && (
           <p className="mt-1 text-sm text-muted-foreground">
             <span>
-              {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
+              {entityName(summary.focus)}: {linkTotal} links in {layout.sectors.length} families.
               {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
             </span>
             {" "}<span role="status" className={crossQuiet ? "max-md:sr-only" : undefined}>{crossCaption}</span>
@@ -304,7 +313,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         </div>
       )}
       <GraphFilterChips filters={filters} onChange={changeFilters} />
-      {summary && filtering && !isTable && !isPath && <p role="status" className="border-b px-4 py-2 label-13 tabular-nums text-fg-muted">
+      {summary && filtering && !isTable && !isPath && !isTimeline && <p role="status" className="border-b px-4 py-2 label-13 tabular-nums text-fg-muted">
         {drawableLinks(summary).length} of {rawTotal} links match, {drawableLinks(summary).filter(link => link.support_state === "inferred").length} inferred.
       </p>}
       {error && (
@@ -315,7 +324,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           </Button>
         </div>
       )}
-      {atLimit && !isTable && !isPath && !isExplore && (
+      {atLimit && !isTable && !isPath && !isExplore && !isTimeline && (
         <p role="status" className="border-b px-4 py-2 text-sm">
           The canvas shows at most {VIEW_LIMIT} entities. No more neighbors can be added to this view.
         </p>
@@ -325,7 +334,12 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         <ExploreView root={rawSummary} filters={filters} url={urlState} phone={phone} navigate={navigate} onResetFilters={changeFilters} />
       ) : !isPath && <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${expanded ? "max-md:h-[120px] max-md:flex-none" : ""}`}>
-          {isTable && summary && layout ? (
+          {isTimeline && summary ? (
+            <>
+              <TimelineView summary={summary} unfilteredTotal={rawTotal} filters={filters} phone={phone} selection={urlState.selection} onRange={(from, to) => changeFilters({ ...filters, from, to })} onSelect={(id, docId) => { navigate({ selection: id }); setSelectedDoc(docId ?? null); }} onMark={setMarkedDoc} onReset={() => changeFilters(defaultFilters())} />
+              <EvidenceShelf documents={documents} entityId={summary!.focus.id} selectedDocument={timelineDocument} marked={markedDocs} onMark={setMarkedDoc} className={selected ? "max-md:hidden" : undefined} />
+            </>
+          ) : isTable && summary && layout ? (
             <LinkTable summary={summary} layout={layout} unfilteredTotal={rawTotal} onResetFilters={() => changeFilters(defaultFilters())} selection={urlState.selection} onSelectLink={selectLinkKey} />
           ) : <>
           <section className="relative min-h-0 flex-1" aria-label="Graph workspace">
@@ -360,7 +374,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             ) : !error && (
               <div role="status" className="flex h-full items-center justify-center gap-2 text-sm">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                Loading neighbors…
+                {isTimeline ? "Loading timeline…" : "Loading neighbors…"}
               </div>
             )}
             {layout && !leaf && !expanded && (
@@ -407,7 +421,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             aria-label="Evidence inspector"
             className={`shrink-0 overflow-y-auto border-t border-border bg-background max-md:rounded-t-xl max-md:shadow-(--shadow-overlay) md:h-auto md:w-[380px] md:border-l md:border-t-0 ${expanded ? "max-md:min-h-0 max-md:flex-1" : "h-[300px]"} ${selected || leaf ? "" : "max-md:hidden"}`}
           >
-            {phone && selected && !isTable && (
+            {phone && selected && !isTable && !isTimeline && (
               <button type="button" aria-expanded={expanded} onClick={() => setExpandedSheet(expanded ? null : sheetKey)}
                 className="sticky top-0 z-10 flex h-8 w-full items-center justify-center bg-background">
                 <span aria-hidden className="h-1 w-9 rounded-full bg-border-strong" />

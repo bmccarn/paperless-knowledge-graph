@@ -37,7 +37,7 @@ export interface NodeSummary {
   focus: { id: string; label: string; name: string; aliases: string[]; evidence_doc_count: number;
            link_count: number; is_hub: boolean; is_owner: boolean };
   links: SummaryLink[];
-  documents: Record<string, { title: string; date: string | null; doc_type: string | null }>;
+  documents: Record<string, { title: string; date: string | null; parsed_date?: string | null; doc_type: string | null }>;
   owner_status: string;
   /** On the owner's summary: the other Persons that match the owner setting; empty on any other. */
   owner_duplicates: { id: string; label: string; name: string; evidence_doc_count: number }[];

@@ -107,3 +107,9 @@ test('large filtered groups use a bounded search and clearing filters keeps the 
   assert.ok(filterLayout(neighborhoodLayout(raw, 2, next), filtered).nodes.some(node => node.id === 'large-140'));
   assert.ok(reads < 100, `Bounded layout work: ${reads} reads of the 2,000-link collection`);
 });
+
+test('date filters use the parsed backend date and keep unparseable dates outside ranges', () => {
+  const mixed = { 1: { date: 'January 3, 2026', parsed_date: '2026-01-03' }, 2: { date: '2026-01-01', parsed_date: null } };
+  const [result] = filterLinks([link], mixed, filters('from=2026-01&to=2026-01'));
+  assert.deepEqual(result.records.map(record => record.doc_id), [1]);
+});

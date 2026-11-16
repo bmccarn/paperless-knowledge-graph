@@ -12,8 +12,10 @@ import {
   entityName,
   keyFacts,
   linksByFamily,
+  lowestConfidence,
   plural,
   rankLinks,
+  scoreText,
   shortDate,
   supportSummary,
   supportText,
@@ -21,6 +23,7 @@ import {
   type SummaryDocument,
 } from "@/lib/graph-inspector";
 import { FAMILIES, MORE_STEP, VIEW_LIMIT, type LayoutSector, type NodeSummary, type SummaryLink } from "@/lib/graph-layout";
+import { LinkEvidence } from "./link-evidence";
 
 /** Rows per family and documents before "Show all". */
 const FAMILY_ROWS = 6;
@@ -236,14 +239,12 @@ export function NeighborInspector({ summary, neighborId, crossLinks = [], onClos
   );
 }
 
-/** Phase 1 link summary: family, endpoints, type, support state and the documents. `end` replaces the focus for a link between neighbors. */
+/** A link: family, endpoints, type, support state, lowest score and its evidence. `end` replaces the focus for a link between neighbors. */
 export function LinkInspector({ summary, link, end = summary.focus, onClose }: {
   summary: NodeSummary; link: SummaryLink; end?: { id: string; name: string; label: string }; onClose: () => void;
 }) {
   const [from, to] = link.direction === "out" ? [end, link.neighbor] : [link.neighbor, end];
   const ids = new Set(link.records.map(record => record.doc_id));
-  const documents = documentsByDate({ ...summary, documents: Object.fromEntries(
-    [...ids].map(id => [String(id), summary.documents[String(id)] ?? { title: "", date: null, doc_type: null }])) });
   return (
     <Shell label="Inspector: link" onClose={onClose}>
       <p className="label-12 text-fg-muted">Link in {familyName(link.family)}</p>
@@ -255,9 +256,14 @@ export function LinkInspector({ summary, link, end = summary.focus, onClose }: {
       <p className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border pb-3 pt-2 label-12 text-fg-muted">
         <span className="font-semibold text-fg">{supportText(link)}</span>
         <span className="tabular-nums">{plural(ids.size, "document")}</span>
+        <span className="tabular-nums">{scoreText("Lowest confidence", lowestConfidence(link))}</span>
       </p>
-      <h3 className={heading}>Documents</h3>
-      <DocumentList documents={documents} limit={Infinity} />
+      <LinkEvidence link={link} documents={summary.documents} names={[from.name, to.name]} />
+      <div className="mt-6 flex flex-wrap gap-2">
+        <Button asChild>
+          <Link href={`/query?draft=${encodeURIComponent(`How is ${entityName(from)} related to ${entityName(to)}?`)}`}><MessageSquareText />Ask about this link</Link>
+        </Button>
+      </div>
     </Shell>
   );
 }

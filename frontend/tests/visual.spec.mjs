@@ -283,9 +283,13 @@ const extraStates = [
       }
       await page.getByRole("complementary", { name: "Evidence inspector" }).getByRole("button", { name: /^2014 Honda Fit/ }).click();
       await page.getByRole("region", { name: "Inspector: link" }).getByText("Stated in 1, inferred in 1", { exact: true }).waitFor();
+      await page.getByRole("region", { name: "Inspector: link" }).locator("blockquote").first().waitFor();
     } },
+  // A link between two neighbors opens the same evidence.
+  { name: "graph-neighborhood-cross-link", route: "/graph?focus=nb-rowan&sel=nb-coverage-0~ISSUED_BY~nb-money-0", state: "selected-cross-link",
+    ready: page => page.getByRole("region", { name: "Inspector: link" }).locator("blockquote").first() },
   { name: "graph-table-evidence", route: "/graph?focus=nb-rowan&view=table&sel=nb-rowan~EMPLOYED_BY~nb-parties-0", state: "selected-link",
-    ready: page => page.getByRole("region", { name: "Inspector: link" }) },
+    ready: page => page.getByRole("region", { name: "Inspector: link" }).locator("blockquote").first() },
   { name: "graph-table-empty", route: "/graph?focus=nb-leaf&view=table", state: "empty",
     ready: page => page.getByText("No direct links extracted. Open Focus to see this entity's documents.", { exact: true }) },
   { name: "graph-view-sheet", route: "/graph?focus=nb-rowan", state: "view-sheet", phoneOnly: true,

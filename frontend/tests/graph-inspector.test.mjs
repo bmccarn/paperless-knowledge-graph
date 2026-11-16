@@ -9,6 +9,8 @@ import {
   legendItems,
   linksByFamily,
   linksOfDocument,
+  lowestConfidence,
+  scoreText,
   shortDate,
   supportSummary,
   supportText,
@@ -129,4 +131,14 @@ test("the canvas name counts drawn-family links and only fully inferred ones; a 
   assert.equal(canvasName(data, neighborhoodLayout(data, 6), 1), "Neighborhood of Focus: 3 links in 2 families, 1 inferred; 1 link between neighbors");
   const one = summary([link("parties", "EMPLOYED_BY", "a", [1])]);
   assert.equal(canvasName(one, neighborhoodLayout(one, 6)), "Neighborhood of Focus: 1 link in 1 family, 0 inferred");
+});
+
+test("a link's score: the lowest record confidence, or No score when any record or every record is missing", () => {
+  const scored = link("coverage", "COVERS", "car", [1, 2]);
+  scored.records[1].confidence = 0.62;
+  assert.equal(scoreText("Lowest confidence", lowestConfidence(scored)), "Lowest confidence 0.62");
+  scored.records[0].confidence = null;
+  assert.equal(scoreText("Lowest confidence", lowestConfidence(scored)), "No score");
+  assert.equal(lowestConfidence({ records: [] }), null);
+  assert.equal(scoreText("Confidence", 0.9), "Confidence 0.90");
 });

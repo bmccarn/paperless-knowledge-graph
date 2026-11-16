@@ -150,9 +150,9 @@ try {
   const title = 'Policy HM-2208 (auto) issued by Harbor Mutual Insurance';
   await linkHeading.filter({ hasText: 'issued by' }).waitFor();
   assert.equal((await linkHeading.innerText()).replace(/\s+/g, ' '), title);
-  await inspector.getByText('Synthetic archive 217', { exact: true }).waitFor();
+  await inspector.getByRole('heading', { name: 'Synthetic archive 217', exact: true }).waitFor();
   await page.reload();
-  await inspector.getByText('Synthetic archive 217', { exact: true }).waitFor();
+  await inspector.getByRole('heading', { name: 'Synthetic archive 217', exact: true }).waitFor();
   assert.equal((await linkHeading.innerText()).replace(/\s+/g, ' '), title, 'The selected link survives a reload');
   await page.screenshot({ path: path.join(artifacts, 'cross-links-selected-link.png') });
 

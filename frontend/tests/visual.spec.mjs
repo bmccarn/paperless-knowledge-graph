@@ -50,6 +50,7 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { name: "graph-timeline-unnamed", route: "/graph?focus=nb-unnamed&view=timeline", state: "unnamed", ready: page => page.getByRole("region", { name: "Timeline of Organization nb-unn", exact: true }) },
   { name: "graph-timeline-hub", route: "/graph?focus=nb-rowan&view=timeline", state: "hub", ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }) },
   { name: "graph-timeline-leaf", route: "/graph?focus=nb-leaf&view=timeline", state: "leaf", ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
   { name: "graph-timeline-undated", route: "/graph?focus=nb-timeline&view=timeline", state: "undated",

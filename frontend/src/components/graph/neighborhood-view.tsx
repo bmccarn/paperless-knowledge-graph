@@ -27,7 +27,7 @@ import {
   type SubgraphLink,
   type SummaryLink,
 } from "@/lib/graph-layout";
-import { canvasName, documentsByDate, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
+import { canvasName, documentsByDate, entityName, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
 import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
@@ -241,7 +241,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     crossCaption = <>{crossCaption} Filters apply to the 600 strongest links between neighbors.</>;
     crossQuiet = false;
   }
-  const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
+  const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary ? entityName(summary.focus) : null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
   // On phone the inspector is a bottom sheet: a 300 px peek, or expanded over all but 120 px of the canvas.
@@ -296,7 +296,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           {!isTable && !isPath && !isTimeline && summary && layout && (
             <p className="mt-1 text-sm text-muted-foreground">
               <span>
-                {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
+                {entityName(summary.focus)}: {linkTotal} links in {layout.sectors.length} families.
                 {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}
               </span>
               {" "}<span role="status" className={crossQuiet ? "max-md:sr-only" : undefined}>{crossCaption}</span>

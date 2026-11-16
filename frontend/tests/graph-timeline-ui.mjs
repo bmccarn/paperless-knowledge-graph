@@ -105,6 +105,16 @@ try {
     } else await timeline.locator('[data-document-ids]').first().waitFor();
     await page.screenshot({ path: path.join(artifacts, `timeline-${width}-${theme}.png`) });
   }
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${base}/graph?focus=nb-unnamed`);
+    await page.getByRole('heading', { name: 'Evidence · 2 documents', exact: true }).waitFor();
+    if (width === 390) await page.getByRole('button', { name: 'View: Focus', exact: true }).click();
+    const choice = (width === 390 ? page.getByRole('dialog', { name: 'View', exact: true }) : page.getByRole('toolbar', { name: 'View', exact: true })).getByRole('button', { name: width === 390 ? /^Timeline/ : 'Timeline', exact: width !== 390 });
+    assert.equal(await choice.getAttribute('aria-disabled'), null, 'An unnamed focus enables Timeline');
+    await choice.click();
+    await page.getByRole('region', { name: 'Timeline of Organization nb-unn', exact: true }).waitFor();
+  }
   await page.goto(`${base}/graph?focus=nb-leaf&view=timeline`);
   await page.getByText('No direct links extracted. This entity appears in 2 documents.', { exact: true }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Timeline of Spare key tag', exact: true }).getByRole('link').count(), 2, 'A leaf document opens its document page');

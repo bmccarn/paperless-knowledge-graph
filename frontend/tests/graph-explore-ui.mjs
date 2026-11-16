@@ -209,7 +209,9 @@ try {
   const peek = phone.getByRole('button', { name: /^Explored from Policy KT-9030 \(auto\)/ });
   assert.equal((await peek.boundingBox()).height, 56);
   await peek.click();
-  await phone.getByRole('dialog').getByRole('region', { name: 'Explored from Policy KT-9030 (auto)' }).waitFor();
+  const sheetTrail = phone.getByRole('dialog').getByRole('region', { name: 'Explored from Policy KT-9030 (auto)' });
+  await sheetTrail.waitFor();
+  assert.equal((await sheetTrail.getByRole('button', { name: 'Policy KT-9030 (auto)', exact: true }).boundingBox()).height, 44);
   await phone.keyboard.press('Escape');
   await phone.goto(`${root}&sel=ex-car`);
   await settle(phone, ': 7 entities');
@@ -219,6 +221,18 @@ try {
   await phone.waitForURL(url => url.searchParams.get('x') === 'ex-car');
   await settle(phone, ': 11 entities');
   assert.equal(await inspector(phone).getByRole('button', { name: 'Collapse' }).evaluate(element => element.getBoundingClientRect().height), 44);
+  // A name in the trail sheet selects its entity: the sheet closes and the inspector opens.
+  await inspector(phone).getByRole('button', { name: 'Clear selection' }).click();
+  await phone.waitForURL(url => !url.searchParams.has('sel'));
+  await peek.click();
+  const carRow = sheetTrail.getByRole('button', { name: '2021 Mazda CX-5', exact: true });
+  await carRow.waitFor();
+  assert.equal((await carRow.boundingBox()).height, 44);
+  assert.equal((await sheetTrail.getByRole('button', { name: 'Collapse 2021 Mazda CX-5' }).boundingBox()).height, 44);
+  await carRow.click();
+  await phone.waitForURL(url => url.searchParams.get('sel') === 'ex-car');
+  await inspector(phone).getByRole('button', { name: 'Collapse' }).waitFor();
+  assert.equal(await phone.getByRole('dialog').count(), 0);
   await phone.screenshot({ path: path.join(artifacts, 'explore-phone.png') });
 
   assert.deepEqual(errors, []);

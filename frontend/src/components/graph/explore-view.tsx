@@ -343,7 +343,8 @@ function Trail({ rootId, rootName, rootLabel, rootLinks, expansions, pending, on
   onCollapse: (index: number) => void;
   onRetry: () => void;
 }) {
-  const name = "truncate text-left label-13 text-fg underline-offset-4 hover:underline";
+  // The name fills the row's height, so on a phone it is a 44 px target.
+  const name = "flex min-w-0 items-center self-stretch text-left label-13 text-fg underline-offset-4 hover:underline";
   const row = "grid h-8 grid-cols-[16px_minmax(0,1fr)_auto_28px] items-center gap-2 rounded-(--r-ctl) pl-2 max-md:h-11";
   return (
     <section aria-label={`Explored from ${rootName}`} className="rounded-(--r-panel) border border-border bg-surface px-2 pb-2 pt-3 max-md:border-0 max-md:bg-transparent">
@@ -354,13 +355,13 @@ function Trail({ rootId, rootName, rootLabel, rootLinks, expansions, pending, on
       <ol className="max-h-[50vh] overflow-y-auto">
         <li className={cn(row, "grid-cols-[16px_minmax(0,1fr)_auto] pr-2")}>
           <KindShape label={rootLabel} bare />
-          <button type="button" className={name} onClick={() => onSelect(rootId)}>{rootName}</button>
+          <button type="button" className={name} onClick={() => onSelect(rootId)}><span className="truncate">{rootName}</span></button>
           <span className="label-12 tabular-nums text-fg-muted">{plural(rootLinks, "link")}</span>
         </li>
         {expansions.map(({ index, added, node }) => (
           <li key={index} className={row}>
             <KindShape label={node.label} bare />
-            <button type="button" className={name} onClick={() => onSelect(node.id)}>{entityName(node)}</button>
+            <button type="button" className={name} onClick={() => onSelect(node.id)}><span className="truncate">{entityName(node)}</span></button>
             <span className="label-12 tabular-nums text-fg-muted">+{added.length}</span>
             <Button variant="ghost" size="icon-xs" aria-label={`Collapse ${entityName(node)}`} title="Collapse" onClick={() => onCollapse(index)}>
               <X />

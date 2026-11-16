@@ -32,12 +32,12 @@ const GROUP_GAP = 36;
  * The map is arranged for the area the canvas fits it into at 1440 x 900, in screen pixels. Gaps, the room for group
  * names and the small groups band are sized in pixels at that fit, so they keep their size on screen at any archive size.
  */
-export const FIT_AREA = { width: 1152, height: 676 };
+const FIT_AREA = { width: 1152, height: 676 };
 /** The largest groups get room for their name above their circle. */
-export const NAMED = 16;
+const NAMED = 16;
 const PX = { gap: 14, name: 24, cell: 13, row: 9, caption: 26, bandGap: 32, dot: 3.4 };
 /** Group names: Geist Serif 15 px and the count in Geist 12 px, estimated, so the layout never depends on loaded fonts. */
-export const nameWidth = (name: string, count: number) => name.length * 7.6 + String(count).length * 7.2 + 14;
+const nameWidth = (name: string, count: number) => name.length * 7.6 + String(count).length * 7.2 + 14;
 /** At map zoom, lines between groups are drawn for this many pairs of groups. */
 export const BRIDGES = 16;
 

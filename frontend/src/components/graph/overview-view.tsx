@@ -15,7 +15,7 @@ import { kindColor, nodeKind, nodeLabelText, NODE_LABELS, type Kind } from "@/li
 import { displayName } from "@/lib/graph-encoding";
 import { defaultFilters, filterUrl, parseFilters, type GraphFilters } from "@/lib/graph-filters";
 import { plural } from "@/lib/graph-inspector";
-import { mainKinds, overviewLinks, readOverview, type KindCount, type OverviewMap, type OverviewResponse } from "@/lib/graph-overview";
+import { bridgeLinks, mainKinds, overviewLinks, readOverview, type KindCount, type OverviewMap, type OverviewResponse } from "@/lib/graph-overview";
 import { GRAPH_VIEWS, graphNavigation, listedViews, parseGraphState, type GraphView } from "@/lib/graph-url-state";
 import { cn, errMsg } from "@/lib/utils";
 import type { ArrangeRequest } from "@/lib/overview.worker";
@@ -121,7 +121,7 @@ function OverviewLegend({ map, detail }: { map: OverviewMap; detail: boolean }) 
     const seen = new Set(map.nodes.filter((_, at) => !Number.isNaN(map.positions[at * 2])).map(node => node.label));
     return { kinds: (Object.keys(KIND_NAMES) as Kind[]).filter(kind => [...seen].some(label => nodeKind(label).kind === kind)),
       labels: [...NODE_LABELS.filter(label => seen.has(label)), ...([...seen].some(label => nodeKind(label).kind === "unknown") ? ["Other"] : [])],
-      inferred: map.links.some(link => link.support === 2), between: map.links.some(link => map.groupOf[link.source] !== map.groupOf[link.target]) };
+      inferred: map.links.some(link => link.support === 2), between: bridgeLinks(map.links, map.groupOf).length > 0 };
   }, [map]);
   const line = (dash: string | undefined, text: string, stroke = "var(--graph-edge)") => (
     <li className="flex items-center gap-2 label-12 text-fg-muted"><svg aria-hidden width="24" height="10"><line x1="1" y1="5" x2="23" y2="5" stroke={stroke} strokeWidth={detail ? 2 : 1} strokeDasharray={dash} /></svg>{text}</li>);

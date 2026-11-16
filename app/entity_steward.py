@@ -17,8 +17,8 @@ from typing import Any
 from app.config import settings
 from app.embeddings import embeddings_store
 from app.entity_decisions import EntityMergeProhibited
-from app.entity_policy import (AUTO_MERGE_REVIEW_METHOD, LOW_RISK_LABELS, TERMINAL_DECISIONS, auto_merge_blocker,
-                               extract_identifiers, name_key)
+from app.entity_policy import (AUTO_MERGE_LABELS, AUTO_MERGE_REVIEW_METHOD, LOW_RISK_LABELS, TERMINAL_DECISIONS,
+                               auto_merge_blocker, auto_merge_key, extract_identifiers, name_key)
 from app.entity_resolver import AutoMergeBlocked, entity_resolver
 from app.graph import graph_store
 from app.strands_orchestrator import strands_orchestrator
@@ -139,7 +139,7 @@ class EntitySteward:
 
     async def _auto_merge_pass(self, reason: str, decisions: list[dict],
                                ignored_pairs: set[tuple[str, str]]) -> dict[str, Any]:
-        """Exact-duplicate low-risk pairs: shadow records them, "on" merges them.
+        """Exact-duplicate low-risk and Address pairs: shadow records them, "on" merges them.
 
         The agent can only block. At most `max_per_run` pairs reach the agent,
         least recently reviewed first, so repeated runs move through the backlog.
@@ -155,17 +155,18 @@ class EntitySteward:
                 pair = tuple(sorted([row["left_uuid"], row["right_uuid"]]))
                 last_reviewed[pair] = max(last_reviewed.get(pair, ""), str(row.get("created_at") or ""))
         pairs = []
-        for label in sorted(LOW_RISK_LABELS):
+        for label in sorted(AUTO_MERGE_LABELS):
             groups = defaultdict(list)
             for node in await graph_store.get_entities_by_type(label):
-                if isinstance(node.get("name"), str) and node["name"].strip() and isinstance(node.get("uuid"), str):
-                    groups[name_key(node["name"], label)].append(node)
-            for group in groups.values():
+                key = auto_merge_key(node, label)
+                if key and isinstance(node.get("uuid"), str):
+                    groups[key].append(node)
+            for key, group in groups.items():
                 if len(group) > 2:
                     report["auto_merge_groups_over_two"] += 1
                 elif len(group) == 2:
-                    pairs.append((label, *sorted(group, key=lambda node: node["uuid"])))
-        pairs.sort(key=lambda item: last_reviewed.get((item[1]["uuid"], item[2]["uuid"]), ""))
+                    pairs.append((label, key, *sorted(group, key=lambda node: node["uuid"])))
+        pairs.sort(key=lambda item: last_reviewed.get((item[2]["uuid"], item[3]["uuid"]), ""))
 
         async def suggest(pair, decision, payload):
             note = json.dumps({"reason": reason, **payload}, default=str, separators=(",", ":"))
@@ -174,7 +175,7 @@ class EntitySteward:
             handled.add(pair)
 
         agent_calls = 0
-        for label, left, right in pairs:
+        for label, key, left, right in pairs:
             pair = (left["uuid"], right["uuid"])
             # Cheap snapshot pre-filter; the resolver checks every rule again on fresh reads.
             blocker = "decision_row" if pair in ignored_pairs else auto_merge_blocker(
@@ -191,13 +192,16 @@ class EntitySteward:
                 continue
             agent_calls += 1
             nodes = {left["uuid"]: left, right["uuid"]: right}
+            primary, duplicate = nodes[check["primary_uuid"]], nodes[check["duplicate_uuid"]]
             candidate = {"label": label,
-                         "left": {"uuid": check["primary_uuid"], "name": nodes[check["primary_uuid"]]["name"],
-                                  "properties": nodes[check["primary_uuid"]]},
-                         "right": {"uuid": check["duplicate_uuid"], "name": nodes[check["duplicate_uuid"]]["name"],
-                                   "properties": nodes[check["duplicate_uuid"]]}}
+                         "left": {"uuid": primary["uuid"], "name": primary.get("name") or primary.get("full_address"),
+                                  "properties": primary},
+                         "right": {"uuid": duplicate["uuid"], "name": duplicate.get("name") or duplicate.get("full_address"),
+                                   "properties": duplicate}}
+            key_name = "address key" if label == "Address" else "name_key"
             facts = {"mode": mode, "label": label, "primary_uuid": check["primary_uuid"],
-                     "duplicate_uuid": check["duplicate_uuid"], "gate": "exact name_key pair passed every rule"}
+                     "duplicate_uuid": check["duplicate_uuid"], "key": key,
+                     "gate": f"exact {key_name} pair passed every rule"}
             try:
                 agent_review = await strands_orchestrator.review_entity_candidate(
                     candidate, {"label": label, "risk": "low", "auto_merge_gate": facts["gate"]})

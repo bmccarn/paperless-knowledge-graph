@@ -14,6 +14,11 @@ EXPLICIT_REVIEW_METHOD = "entity_review_api"
 AUTO_MERGE_REVIEW_METHOD = "entity_steward_auto"
 TERMINAL_DECISIONS = {"ignore", "split", "merged", "never_merge", "auto_merged"}
 LOW_RISK_LABELS = frozenset({"Organization", "Product", "System", "DocumentRef", "Location"})
+# Address joins only through its exact address key; it stays high risk everywhere else.
+AUTO_MERGE_LABELS = LOW_RISK_LABELS | {"Address"}
+# The only abbreviations address_key applies: whole-word street types, long form to short.
+STREET_TYPES = {"street": "st", "avenue": "ave", "road": "rd", "drive": "dr", "lane": "ln", "court": "ct",
+                "boulevard": "blvd", "place": "pl", "parkway": "pkwy", "circle": "cir"}
 IDENTIFIER_PROPERTIES = frozenset({"identity_hints", "policy_number", "reference_number"})
 ENTITY_TYPES = frozenset({
     "Person", "Organization", "Location", "System", "Product", "Document",
@@ -47,23 +52,28 @@ def auto_merge_blocker(left: dict, right: dict, label: str, same_key_count: int)
     `left`/`right` are graph_store.get_node results. Decision rows, vetoes and
     the agent check are the caller's job.
     """
+    from app.entity_decisions import entity_identity
     lp, rp = left.get("properties") or {}, right.get("properties") or {}
-    if label not in LOW_RISK_LABELS or left.get("labels") != [label] or right.get("labels") != [label]:
+    if label not in AUTO_MERGE_LABELS or left.get("labels") != [label] or right.get("labels") != [label]:
         return "label"
-    names = [p.get("name") for p in (lp, rp)]
-    if not all(isinstance(n, str) and n.strip() for n in names) or name_key(names[0], label) != name_key(names[1], label):
-        return "name_key"
+    key = auto_merge_key(lp, label)
+    if not key or key != auto_merge_key(rp, label):
+        return "address_key" if label == "Address" else "name_key"
+    # Without a postal code after the house number, one street address can name many places.
+    if label == "Address" and not re.search(r" \d{5}(?:-\d{4})?(?: |$)", key):
+        return "postal_code"
     if same_key_count != 2:
         return "group_size"
     if any(p.get("resolution_status") in {"ambiguous", "isolated", "quarantined"} for p in (lp, rp)):
         return "resolution_status"
     if any(p.get("review_anchor") is True for p in (lp, rp)):
         return "review_anchor"
-    if any(context_bound_name(p["name"], label, p.get("name_usage") or "") for p in (lp, rp)):
+    if label != "Address" and any(context_bound_name(p["name"], label, p.get("name_usage") or "") for p in (lp, rp)):
         return "context_bound"
     if set(lp.get("identity_hints") or []) != set(rp.get("identity_hints") or []):
         return "identity_hints"
-    if set(lp.get("source_doc_ids") or []) & set(rp.get("source_doc_ids") or []):
+    # Document-owned nodes carry their document on the edge, not in source_doc_ids.
+    if set(entity_identity(left)["source_doc_ids"]) & set(entity_identity(right)["source_doc_ids"]):
         return "shared_document"
     if any((rel.get("neighbor_props") or {}).get("uuid") == rp.get("uuid") for rel in left.get("relationships") or []):
         return "direct_edge"
@@ -83,6 +93,27 @@ def auto_merge_survivor(left: dict, right: dict) -> tuple[dict, dict]:
     def rank(p):
         return (-len(p.get("source_doc_ids") or []), p.get("resolution_policy") != RESOLUTION_POLICY, str(p.get("uuid")))
     return tuple(sorted((left, right), key=rank))
+
+
+def address_key(text) -> str:
+    """Exact identity key of a street address; "" when there is none.
+
+    Case, spacing and the punctuation . , ; : carry no meaning. Every other
+    character stays, so house numbers, units and postal codes are never lost.
+    """
+    if not isinstance(text, str):
+        return ""
+    words = re.sub(r"[.,;:]", " ", display_name(text).casefold()).split()
+    return " ".join(STREET_TYPES.get(word, word) for word in words)
+
+
+def auto_merge_key(props: dict, label: str) -> str:
+    """The exact key automatic merge groups by: the address for Address, else name_key."""
+    if label == "Address":
+        text = props.get("full_address")
+        return address_key(text if isinstance(text, str) and text.strip() else props.get("name"))
+    name = props.get("name")
+    return name_key(name, label) if isinstance(name, str) and name.strip() else ""
 
 
 def display_name(name: str) -> str:

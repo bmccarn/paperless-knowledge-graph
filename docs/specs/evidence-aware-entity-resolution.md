@@ -9,28 +9,34 @@ Source-window extraction and source-aware verification precede identity resoluti
 - `entity_resolver.py`: a unique compatible canonical orthographic match, human-reviewed canonical pair/alias, or actual explicit source co-reference can select an identity. Multiple matches abstain into a source-local ambiguous identity rather than choose the first result. Human vetoes are checked before every match and explicit UUID merge. Short acronyms/partial person names need source scope or reviewed proof. Similarity remains available to steward review suggestions, not mutations.
 - `entity_bindings.py` / `pipeline.py`: one document-lifetime registry binds each accepted identity to UUID and final graph label. Legacy metadata can reference but cannot recreate/retype rejected or ambiguous identities. Relationship endpoints and entity vectors consume this registry; no search-based fallback or repeated name resolution. Context-local metadata bindings reset even on error. Errors prevent the document completion marker.
 - `graph.py`: candidate reads include all canonical matches and provenance. Source membership is updated on use and removed on document replacement. Raw aliases remain searchable for compatibility but do not authorize identity.
-- `POST /resolve-entities` (existing bulk endpoint): now non-mutating identity-review reporting, `total_merged=0`. Co-occurrence or even identical names cannot safely merge existing UUIDs, with one owner-approved exception: the steward's automatic merge of exact-duplicate low-risk pairs (below). Explicit human review merge is still supported and guarded by no-merge decisions.
+- `POST /resolve-entities` (existing bulk endpoint): now non-mutating identity-review reporting, `total_merged=0`. Co-occurrence or even identical names cannot safely merge existing UUIDs, with one owner-approved exception: the steward's automatic merge of exact-duplicate low-risk and `Address` pairs (below). Explicit human review merge is still supported and guarded by no-merge decisions.
 
-## Automatic merge of exact-duplicate low-risk entities
+## Automatic merge of exact-duplicate low-risk entities and addresses
 
 Ingestion already binds a new mention to an existing node when their names are equal under `name_key`. The steward may therefore merge two existing nodes that ingestion would treat as one identity. The setting `ENTITY_STEWARD_AUTO_MERGE` is `off`, `shadow` (the default) or `on`.
 
 A pair merges only if every rule holds. `auto_merge_blocker` in `entity_policy.py` checks the node facts (rules 1-2 and 4-10). The resolver checks every rule again on fresh reads under its mutation lock before it merges.
 
-1. Both nodes have exactly one label, the same one, in `LOW_RISK_LABELS` (Organization, Product, System, DocumentRef, Location).
-2. Their names are equal under `name_key` for that label.
-3. Exactly two nodes of the whole label have that `name_key`. Groups of three or more stay in the human queue.
+1. Both nodes have exactly one label, the same one, in `AUTO_MERGE_LABELS`: the `LOW_RISK_LABELS` (Organization, Product, System, DocumentRef, Location) and `Address`.
+2. Their keys from `auto_merge_key` are equal and non-empty: `name_key` of the name, or for an `Address` the address key (below).
+3. Exactly two nodes of the whole label have that key. Groups of three or more stay in the human queue.
 4. Neither node is `ambiguous`, `isolated` or `quarantined`.
 5. Neither node has `review_anchor = true`.
-6. Neither name is context-bound.
+6. Neither name is context-bound (not checked for `Address`).
 7. `identity_hints` are both empty or equal.
-8. `source_doc_ids` do not overlap.
+8. The source documents do not overlap, counting both `source_doc_ids` and the documents on the node's edges.
 9. No direct edge connects the pair.
 10. The identifier properties in `IDENTIFIER_PROPERTIES` (other than `identity_hints`) have equal normalized values on both nodes; a value on one side only also blocks.
 11. The pair has no terminal decision row and no `legacy_unknown` row.
 12. `merge_is_prohibited` and `alias_replay_prohibited` both pass.
 13. The steward's agent review returns a merge verdict with numeric confidence of at least 0.82 and low risk. Any other answer, an empty answer, an error or a timeout blocks. The agent can block a merge and can never authorize one.
 14. The run is under `ENTITY_STEWARD_AUTO_MERGE_MAX_PER_RUN` (default 10, at most 100). The cap counts agent reviews, so it also bounds model calls; pairs reviewed longest ago go first.
+
+### Addresses
+
+`Address` stays a high-risk label for the similarity review. It enters the automatic merge only through its exact address key. `address_key` in `entity_policy.py` reads `full_address`, or `name` when `full_address` is empty; many `Address` nodes are document-owned and have no name. The key is case-folded, its whitespace collapsed, and `.`, `,`, `;` and `:` replaced by spaces. The only abbreviations are whole-word street types, long form to short: Street, Avenue, Road, Drive, Lane, Court, Boulevard, Place, Parkway and Circle. Directionals, unit words and state names stay as written. Every other character stays, so house numbers, units (`Apt 2` and `Apt 3`) and postal codes are never dropped. An `Address` with neither field has no key and never qualifies. A key also needs a US postal code (5 digits, optionally `-` and 4 more) after its first word; without one, one street address can name places in many towns. That blocker is `postal_code`. A pair blocks on `address_key` when the keys differ. The suggestion note records the matched `key`.
+
+`entity_identity` uses `full_address` as the canonical name of a nameless `Address`, so a split recorded by undo still matches a node that a reindex recreates with a new UUID. A human review merge of a nameless `Address` is still refused.
 
 The survivor is the node with more `source_doc_ids`, then the node on the current `resolution_policy`, then the smaller UUID.
 
@@ -39,7 +45,7 @@ The survivor is the node with more `source_doc_ids`, then the node on the curren
 - Human-review replay and alias lineage read only human `merged` rows, so an `auto_merged` row authorizes no later match. Later ingestion binds either name to the survivor through the orthographic route.
 - A pair the agent blocks, or a merge a veto prohibits, is written as `suggest_review` for a person.
 
-Residual risk: two different real organizations or products with the same name, from different documents and with no hints, will merge. No name-only rule can prove identity. Ingestion already takes this risk for new mentions; the merge journal is the remedy.
+Residual risk: two different real organizations or products with the same name, from different documents and with no hints, will merge. No name-only rule can prove identity. Ingestion already takes this risk for new mentions; the merge journal is the remedy. For addresses, ingestion still matches by `name_key` and attaches a new node for each document's property address, so a reindex can create a new duplicate that a later steward run finds again.
 
 ## Additive storage/migration interface
 

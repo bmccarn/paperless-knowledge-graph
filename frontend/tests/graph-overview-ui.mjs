@@ -39,12 +39,18 @@ try {
   await page.goto(`${base}/graph?view=overview`);
   await page.getByRole('img', { name: /^Map of the archive: 277 entities in 15 groups and 18 small groups\.$/ }).waitFor();
   await page.getByRole('status').filter({ hasText: '412 entities link only to documents and 12 only to the owner. The owner is hidden.' }).waitFor();
+  await page.setViewportSize({ width: 1440, height: 600 });
   await page.getByRole('button', { name: 'Show as list' }).click();
   const table = page.getByRole('table', { name: 'Groups of the archive' });
   const sizes = async () => (await table.locator('tbody tr td:nth-child(2)').allInnerTexts()).map(Number);
   const descending = await sizes();
   assert.equal(descending.length, 15);
   assert.deepEqual(descending, [...descending].sort((a, b) => b - a), 'the list opens largest first');
+  // The list scrolls inside the page frame: the last group is reachable on a short screen.
+  const list = await page.getByRole('region', { name: 'Groups' }).evaluate(section => ({
+    bottom: section.getBoundingClientRect().bottom, scrolls: section.scrollHeight > section.clientHeight }));
+  assert.ok(list.bottom <= 600 && list.scrolls, `the list scrolls inside the window: ${JSON.stringify(list)}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await table.getByRole('button', { name: 'Entities' }).click();
   assert.equal(await table.getByRole('columnheader', { name: 'Entities' }).getAttribute('aria-sort'), 'ascending');
   assert.deepEqual(await sizes(), [...descending].reverse());

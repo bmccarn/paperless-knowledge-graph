@@ -42,8 +42,11 @@ const OVERVIEW = GRAPH_VIEWS.find(view => view.id === "overview")!;
 const SWITCHER_VIEWS = [...listedViews(), { ...OVERVIEW, listed: true }];
 const exploreListed = GRAPH_VIEWS.some(view => view.id === "explore" && view.listed);
 
-/** Arranged maps for this session, by response version and the filters that shape the groups. */
-const arranged = new Map<string, OverviewMap>();
+/**
+ * Arranged maps, per response and the filters that shape the groups. Keyed by the response object, not its version:
+ * the version covers node ids and pairs only, so a new fetch with new names or counts must arrange again.
+ */
+const arranged = new WeakMap<OverviewResponse, Map<string, OverviewMap>>();
 const filterKey = ({ families, support, minDocs }: GraphFilters) => JSON.stringify([families, support, minDocs]);
 
 type Load = { attempt: number; response?: OverviewResponse; error?: string };
@@ -67,7 +70,8 @@ function useOverviewMap(filters: GraphFilters) {
   const key = response ? `${response.version}|${shape}|${attempt}` : null;
   useEffect(() => {
     if (!response || !key) return;
-    const cached = arranged.get(`${response.version}|${shape}`);
+    if (!arranged.has(response)) arranged.set(response, new Map());
+    const cached = arranged.get(response)!.get(shape);
     if (cached) {
       queueMicrotask(() => setArrange({ key, map: cached }));
       return;
@@ -78,7 +82,7 @@ function useOverviewMap(filters: GraphFilters) {
       if (data.map) {
         // The real-archive trial reads this measure: worker round trip, with the worker's own group and layout times.
         performance.measure("overview-arrange", { start, end: performance.now(), detail: { entities: data.map.nodes.length, ...data.map.timings } });
-        arranged.set(`${response.version}|${shape}`, data.map);
+        arranged.get(response)?.set(shape, data.map);
       }
       setArrange({ key, ...data });
       worker.terminate();
@@ -193,7 +197,7 @@ function GroupTable({ map, selected, onSelectGroup }: { map: OverviewMap; select
     return descending ? order : order.reverse();
   }, [map, descending]);
   return (
-    <section aria-label="Groups" className="min-h-0 flex-1 overflow-auto px-4 pb-8 pt-16 md:px-8">
+    <section aria-label="Groups" className="absolute inset-0 overflow-auto px-4 pb-8 pt-16 md:px-8">
       <Table aria-label="Groups of the archive" className="label-13">
         <TableHeader>
           <TableRow className="hover:bg-transparent">

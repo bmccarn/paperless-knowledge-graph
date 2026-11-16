@@ -173,14 +173,14 @@ export function OverviewCanvas({ map, selectedGroup, selectedNode, onSelectGroup
       ctx.lineWidth = 1.5 / k;
       ctx.stroke();
     }
-    // Links in one path per style: links inside a group, then dotted links between groups.
+    // Links in one path per style. At map zoom, links between groups are dotted; detail zoom uses the shared encoding.
     const styles = new Map<string, { path: Path2D; width: number; dash: number[]; color: string }>();
     for (const link of map.links) {
       const [sx, sy] = at(link.source), [tx, ty] = at(link.target);
       if (Number.isNaN(sx) || Number.isNaN(tx)) continue;
       if (!inView(Math.min(sx, tx), Math.min(sy, ty), Math.abs(sx - tx) + Math.abs(sy - ty))) continue;
-      const between = map.groupOf[link.source] !== map.groupOf[link.target] || map.groupOf[link.source] < 0;
-      const width = zoomed && !between ? linkWidth(link.weight) : 1;
+      const between = !zoomed && (map.groupOf[link.source] !== map.groupOf[link.target] || map.groupOf[link.source] < 0);
+      const width = zoomed ? linkWidth(link.weight) : 1;
       const dash = between ? [2, 3] : zoomed && link.support === 2 ? [6, 4] : [];
       const color = between ? colors["border-strong"] : zoomed ? colors["graph-edge"] : colors.border;
       const style = `${width}|${dash}|${color}`;
@@ -410,7 +410,7 @@ function OverviewLegend({ detail, kinds, labels, inferred, between }: { detail: 
           <ul aria-label="Links" className={cn("mt-2 grid gap-1 border-t border-border pt-2")}>
             {detail && line(undefined, "Supported")}
             {detail && inferred && line("6 4", "Inferred")}
-            {between && line("2 3", "Between groups", "var(--border-strong)")}
+            {!detail && between && line("2 3", "Between groups", "var(--border-strong)")}
           </ul>
           <p className="mt-2 border-t border-border pt-2">
             {detail ? "Size: evidence documents. Zoom out for the map of groups." : "Dots show kind by color. Zoom in for shapes, sizes and names."}

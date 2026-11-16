@@ -59,6 +59,12 @@ test("group circles never touch and every member sits inside its circle", () => 
   for (let i = 0; i < radii.length; i++) for (let j = i + 1; j < radii.length; j++)
     assert.ok(Math.hypot(centers[i].x - centers[j].x, centers[i].y - centers[j].y) >= radii[i] + radii[j]);
   assert.deepEqual(centers[0], { x: 0, y: 0 });
+  // Groups come in entity order: a chain of 17 has a smaller circle than stars of 14. The largest circle still goes first.
+  const mixed = [40, 60, 60, 60, 12, 80];
+  const spread = packCircles(mixed);
+  for (let i = 0; i < mixed.length; i++) for (let j = i + 1; j < mixed.length; j++)
+    assert.ok(Math.hypot(spread[i].x - spread[j].x, spread[i].y - spread[j].y) >= mixed[i] + mixed[j], `circles ${i} and ${j} overlap`);
+  assert.deepEqual(spread[5], { x: 0, y: 0 });
 });
 
 test("label propagation settles a star on one label and visits nodes in id order", () => {

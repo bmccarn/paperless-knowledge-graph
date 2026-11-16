@@ -170,11 +170,15 @@ export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: n
   const placed: { x: number; y: number; r: number }[] = [];
   const pitch = 2 * gap;
   const a = pitch / (2 * Math.PI);
-  // A grid of placed circles: a later circle is no larger, so it can touch circle i only within 2 r_i + gap of its center.
+  // A grid of placed circles: circles go out largest first, so a later circle can touch circle i only within
+  // 2 r_i + gap of its center. Groups come in entity order, which is not always radius order.
   const CELL = 64;
   const grid = new Map<number, number[]>();
   const key = (gx: number, gy: number) => gx * 1e6 + gy;
-  for (const r of radii) {
+  const order = radii.map((_, index) => index).sort((p, q) => radii[q] - radii[p] || p - q);
+  const centers: { x: number; y: number }[] = new Array(radii.length);
+  for (const at of order) {
+    const r = radii[at];
     let theta = 0;
     for (;;) {
       const rho = a * theta;
@@ -193,13 +197,14 @@ export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: n
             else grid.set(key(gx, gy), [placed.length]);
           }
         placed.push({ x, y, r });
+        centers[at] = { x, y };
         break;
       }
       // Steps of half the radius sample the spiral finer than any circle; arc length to angle: ds = sqrt(rho^2 + a^2) dtheta.
       theta += Math.max(overlap, r / 2) / Math.hypot(rho, a);
     }
   }
-  return placed.map(({ x, y }) => ({ x, y }));
+  return centers;
 }
 
 /** Groups, the per-group layout and the small groups band, for one response and filter. */

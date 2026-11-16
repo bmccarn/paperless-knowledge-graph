@@ -425,10 +425,13 @@ export function PathView({ focus, phone }: { focus: PathNode | null; phone: bool
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
-          <section ref={stage} aria-label="Graph workspace" className="relative min-h-0 min-w-0 flex-1">
+          {/* Below about 1100 px the inspector leaves the canvas too narrow to draw; it scrolls sideways instead. */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-x-auto">
+          <section ref={stage} aria-label="Graph workspace" className="relative h-full min-w-[520px]">
             {message ? <div className="flex h-full items-center justify-center p-8">{message}</div>
               : data && a && b && size && <PathCanvas data={data} a={a} b={b} selected={selected} onSelect={select} width={size.width} height={size.height} />}
           </section>
+          </div>
           {results && <aside aria-label="Evidence inspector" className="w-[380px] shrink-0 overflow-y-auto border-l border-border">{results}</aside>}
         </div>
       )}

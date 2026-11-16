@@ -698,7 +698,7 @@ class Handler(BaseHTTPRequestHandler):
                         # Relevance ties fall back to the uuid, as in the backend; an empty query lists nothing.
                         rows = sorted(rows, key=lambda row: row['properties']['uuid']) if query else []
                     offset, limit = int(get('offset', '0')), int(get('limit', '20'))
-                    return self.reply({'query': get('q'), 'total': len(rows), 'offset': offset, 'limit': limit,
+                    return self.reply({'query': get('q'), 'owner': HUB, 'total': len(rows), 'offset': offset, 'limit': limit,
                                        'has_more': offset + limit < len(rows), 'results': rows[offset:offset + limit]})
                 rows = [{'labels': node['labels'], 'properties': node['props']} for node in SEARCH_NODES
                         if query in json.dumps(node).lower()]

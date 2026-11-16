@@ -20,6 +20,7 @@ import { GRAPH_VIEWS, graphNavigation, listedViews, parseGraphState, type GraphV
 import { cn, errMsg } from "@/lib/utils";
 import type { ArrangeRequest } from "@/lib/overview.worker";
 import { filterChips, GraphFilterChips, GraphFiltersSheet } from "./graph-filters";
+import { GraphHeader } from "./graph-landing";
 import type { OverviewCamera } from "./overview-canvas";
 import { Toggle } from "./path-view";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
@@ -400,16 +401,9 @@ export function OverviewPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
-        <div className="min-w-0">
-          <h1 className="page-title">Graph</h1>
-          {text && <p role="status" className="mt-1 max-w-3xl text-sm text-muted-foreground max-md:sr-only">{text.text}</p>}
-        </div>
-        <div className="flex items-center gap-3 max-md:hidden">
-          <ViewSwitcher {...switcher} />
-          {filterSheet}
-        </div>
-      </header>
+      <GraphHeader controls={<><ViewSwitcher {...switcher} />{filterSheet}</>}>
+        {text && <p role="status" className="mt-1 max-w-3xl text-sm text-muted-foreground max-md:sr-only">{text.text}</p>}
+      </GraphHeader>
       <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 md:hidden"><ViewSheet {...switcher} />{filterSheet}</div>
       <GraphFilterChips filters={filters} onChange={changeFilters} />
       {body}

@@ -21,12 +21,13 @@ Names, documents and counts in the mockup are invented. The numbers in this text
 - The encoding is the one in #109 and `mockup.html#encoding`: shape, color and icon by kind; radius from evidence documents; link width from supporting documents; inferred links dashed 6 on, 4 off; arrows and link labels only on the selection and on paths. One exception, in Overview at map zoom, is stated in that section.
 - Positions are computed once per change by a pure function and never move afterwards. No view runs a continuous simulation, and no node can be dragged. The same URL draws the same picture.
 - Every view has the same header, filters sheet, inspector (380 px), legend (only what is in view) and evidence shelf where the view has a focus entity.
+- The Graph tab opens a graph at once (#228). `/graph` without a focus opens the last entity in Recent if it still exists, else the archive owner, else the first Most connected entity; the chosen focus replaces the address. Only an archive without entities shows an empty page with the search box. The header search box (300 px, `/` focuses it) lists Recent and Most connected when it has focus and no text, and a choice opens that entity in the current view.
 
 ## The switcher
 
 **Place.** The switcher replaces the "View" segmented control at the right of the graph header, before Filters (`views-mockup.html#focus`). It holds six buttons in this order: Focus, Explore, Timeline, Table, Paths, then a 1 px divider and Overview. Overview is set apart because it shows the whole archive, not the focus entity. Labels are words only; each button's tooltip names its key ("Timeline, key 3").
 
-**States.** The current view is the pressed button (`--accent-solid` fill). With no focus entity (Overview opened from the landing page), Focus, Explore, Timeline and Table have `aria-disabled="true"` in `--fg-subtle`. Pressing one announces "Pick an entity on the map or search first." Paths stays enabled because it has its own pickers. `views-mockup.html#switcher` shows every state.
+**States.** The current view is the pressed button (`--accent-solid` fill). With no focus entity (Paths or Overview opened without one), Focus, Explore, Timeline and Table have `aria-disabled="true"` in `--fg-subtle`. Pressing one announces "Pick an entity on the map or search first." Paths stays enabled because it has its own pickers. `views-mockup.html#switcher` shows every state.
 
 **Keyboard and screen reader.**
 - The switcher is `role="toolbar"` with `aria-label="View"`. It is one Tab stop with a roving tabindex: Left and Right move, Home and End jump, Enter and Space switch. Each button has `aria-pressed`.
@@ -384,7 +385,7 @@ Each ticket is one pull request under the working rules in the first comment of 
 **V8. Accept or remove the Overview prototype**
 - **Blocked by:** V7 and the owner's trial on the real archive.
 - **Parallel with:** none.
-- **What it delivers:** if every threshold passes, Overview in the switcher with key 6 and a link from the landing page ("See the whole archive"). Otherwise the owner's chosen next step, recorded in the issue.
+- **What it delivers:** if every threshold passes, Overview in the switcher with key 6 and a decision on what `/graph` opens by default (#228 opens a focus entity until then). Otherwise the owner's chosen next step, recorded in the issue.
 - **Acceptance criteria:**
   - [ ] The pull request quotes the owner's measured thresholds.
 

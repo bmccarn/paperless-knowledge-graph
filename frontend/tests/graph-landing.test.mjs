@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addRecent,
+  defaultFocus,
   entityName,
   entityRow,
   exactMatch,
@@ -55,6 +56,15 @@ test("most connected leaves out the owner and its other matches, and keeps 10", 
   const top = mostConnected(rows);
   assert.equal(top.length, 10);
   assert.deepEqual(top.map(item => item.id), Array.from({ length: 10 }, (_, index) => String(index)));
+});
+
+test("/graph opens the owner, else the first Most connected, else nothing", () => {
+  const rows = [row("dup", "Person", "Owner", false, true), row("top", "Organization"), row("next", "Person")];
+  assert.equal(defaultFocus("owner-id", rows), "owner-id");
+  // The owner rule found no owner: its other matches still stay out.
+  assert.equal(defaultFocus(null, rows), "top");
+  assert.equal(defaultFocus(undefined, [row("dup", "Person", "Owner", false, true)]), null);
+  assert.equal(defaultFocus(null, []), null);
 });
 
 test("Recent puts the latest first, once, and keeps 10", () => {

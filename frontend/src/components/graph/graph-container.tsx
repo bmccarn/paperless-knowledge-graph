@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { drawnView, parseGraphState } from "@/lib/graph-url-state";
-import { GraphLanding } from "./graph-landing";
+import { GraphOpener } from "./graph-landing";
 import { NeighborhoodView } from "./neighborhood-view";
 import { OverviewPage } from "./overview-view";
 import { PathPage } from "./path-view";
@@ -19,7 +19,7 @@ function GraphRoute() {
   if (view === "overview") return <OverviewPage />;
   if (focus) return <NeighborhoodView key={focus} focusId={focus} />;
   // Paths has its own pickers, so it opens without a focus entity.
-  return view === "path" ? <PathPage /> : <GraphLanding key={query} initialQuery={query} />;
+  return view === "path" ? <PathPage /> : <GraphOpener query={query} />;
 }
 
 export function GraphContainer() {

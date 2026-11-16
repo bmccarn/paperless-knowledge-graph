@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TypeDot } from "@/components/kind-shape";
 import { getGraphLink, getPaperlessDocUrl, usePaperlessUrl, type LinkRecord } from "@/lib/api";
-import { scoreText, shortDate } from "@/lib/graph-inspector";
-import { markTerms } from "@/lib/graph-landing";
+import { quoteParts, scoreText, shortDate } from "@/lib/graph-inspector";
 import type { NodeSummary, SummaryLink } from "@/lib/graph-layout";
 import { cn } from "@/lib/utils";
 
@@ -62,7 +61,7 @@ export function LinkEvidence({ link, documents, names }: { link: SummaryLink; do
             {loading ? <Skeleton aria-hidden className="mt-2 h-[42px]" />
               : evidence && (evidence.quotes.length ? evidence.quotes.map((quote, index) => (
                 <blockquote key={index} className="quote mt-2 text-fg">
-                  “{markTerms(quote, names).map((part, at) => part.match
+                  “{quoteParts(quote, names).map((part, at) => part.match
                     ? <mark key={at} className="rounded-[2px] bg-mark px-px text-on-mark">{part.text}</mark> : part.text)}”
                 </blockquote>
               )) : <p className="mt-2 label-12 text-fg-muted">No quote stored for this document.</p>)}

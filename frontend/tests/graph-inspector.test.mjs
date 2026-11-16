@@ -10,6 +10,7 @@ import {
   linksByFamily,
   linksOfDocument,
   lowestConfidence,
+  quoteParts,
   scoreText,
   shortDate,
   supportSummary,
@@ -141,4 +142,10 @@ test("a link's score: the lowest record confidence, or No score when any record 
   assert.equal(scoreText("Lowest confidence", lowestConfidence(scored)), "No score");
   assert.equal(lowestConfidence({ records: [] }), null);
   assert.equal(scoreText("Confidence", 0.9), "Confidence 0.90");
+});
+
+test("a quote marks both end names, but never a name under 3 characters", () => {
+  assert.deepEqual(quoteParts("Al paid Harbor Mutual.", ["Al", "Harbor Mutual"]),
+    [{ text: "Al paid ", match: false }, { text: "Harbor Mutual", match: true }, { text: ".", match: false }]);
+  assert.deepEqual(quoteParts("A cat sat.", ["A", " ab "]), [{ text: "A cat sat.", match: false }]);
 });

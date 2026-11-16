@@ -604,6 +604,36 @@ export function ForceGraphClient({
     [paint, data, focusId, selectedNodeId, selectedLinkId, markedLinkIds, entitySelected, hoveredId, keyboardNodeId, showLabels, phone, skipOverlaps, nodeLinked, pillWidth, font, dimensions, handleBox],
   );
 
+  /**
+   * The node under a click, from the shapes the hit map paints; later nodes are painted on top. force-graph picks the
+   * clicked object from a hit map it repaints at most every 800 ms (HOVER_CANVAS_THROTTLE_DELAY, force-graph.mjs:762
+   * in 1.52.0), so for that long after the camera moves it names whatever used to be under the pointer.
+   */
+  const nodeAt = (event: MouseEvent) => {
+    const graph = handleRef.current;
+    const ctx = event.target instanceof HTMLCanvasElement ? event.target.getContext("2d") : null;
+    if (!graph || !ctx) return null;
+    const rect = ctx.canvas.getBoundingClientRect(), scale = graph.zoom();
+    return data.nodes.findLast(node => {
+      if (node.x === undefined || node.y === undefined) return false;
+      const at = graph.graph2ScreenCoords(node.x, node.y);
+      const x = event.clientX - rect.left - at.x, y = event.clientY - rect.top - at.y;
+      if (node.label === HANDLE) {
+        const box = handleBox(ctx, node, scale);
+        return x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1;
+      }
+      if (node.label === "Aggregate") return Math.abs(x) <= pillWidth(ctx, node) / 2 && Math.abs(y) <= PILL_HEIGHT / 2;
+      return Math.hypot(x, y) <= shapeExtent(node.label, nodeRadius(nodeDocs(node))) + 2;
+    }) ?? null;
+  };
+  /** A node under the click wins; force-graph's own pick (a link or the background) runs only when there is none. */
+  const click = (event: MouseEvent, otherwise: () => void) => {
+    const node = nodeAt(event);
+    if (!node) otherwise();
+    else if (node.label === HANDLE) onHandle?.(String(node.props.of));
+    else onSelectNode(node, event);
+  };
+
   const hover = useCallback((node: RenderNode | null) => {
     clearTimeout(hoverTimer.current);
     // Moving onto the handle keeps its node hovered, so the handle stays.
@@ -680,27 +710,14 @@ export function ForceGraphClient({
             ctx.fill();
           }}
           onNodeHover={hover}
-          onNodeClick={(node, event) => (node.label === HANDLE ? onHandle?.(String(node.props.of)) : onSelectNode(node, event))}
-          onBackgroundClick={(event) => {
-            // A click on a handle that force-graph's hit map does not hold yet (see HANDLE_GRACE) still expands its node.
-            const node = data.nodes.find(item => item.label === HANDLE);
-            const graph = handleRef.current;
-            const ctx = event.target instanceof HTMLCanvasElement ? event.target.getContext("2d") : null;
-            if (node && graph && ctx && node.x !== undefined && node.y !== undefined) {
-              const box = handleBox(ctx, node, graph.zoom());
-              const at = graph.graph2ScreenCoords(node.x, node.y);
-              const rect = ctx.canvas.getBoundingClientRect();
-              const x = event.clientX - rect.left - at.x, y = event.clientY - rect.top - at.y;
-              if (x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1) return onHandle?.(String(node.props.of));
-            }
-            onClear();
-          }}
-          onLinkClick={(link) =>
+          onNodeClick={(_node, event) => click(event, onClear)}
+          onBackgroundClick={(event) => click(event, onClear)}
+          onLinkClick={(link, event) => click(event, () =>
             onSelectLink({
               ...link,
               source: endpointId(link.source),
               target: endpointId(link.target),
-            })
+            }))
           }
           onNodeDragEnd={(node) => {
             if (fixed) return;

@@ -299,6 +299,19 @@ test("the header search lists Recent and Most connected when empty, and a choice
   await page.getByRole("table", { name: "Links of Lakeshore Pharmacy" }).waitFor();
   await page.goBack();
   await page.waitForURL(url => url.search === "?focus=nb-rowan&view=table");
+  // In Paths a choice becomes the start of the path and keeps the other end.
+  await page.goto(`${base}/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1`);
+  await search.fill("lake");
+  await page.getByRole("option", { name: /^Lakeshore Pharmacy/ }).click();
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy&view=path&a=nb-pharmacy&b=nb-places-1");
+  // Back restores the search text with its address, even for the same focus.
+  await page.goto(`${base}/graph?focus=nb-pharmacy&q=Lakeshore`);
+  await page.getByRole("option", { name: /^Lakeshore Pharmacy/ }).click();
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy");
+  assert.equal(await search.inputValue(), "");
+  await page.goBack();
+  await page.waitForURL(url => url.search === "?focus=nb-pharmacy&q=Lakeshore");
+  assert.equal(await search.inputValue(), "Lakeshore");
 });
 
 test("two characters show at most 8 entities grouped by kind, without documents, and Enter opens the first", async t => {

@@ -85,6 +85,12 @@ export function GraphSearch({ className }: { className?: string }) {
   const initialQuery = params.get("q") ?? "";
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(initialQuery);
+  // Back and Forward can change `q` without a new focus; the box follows the address.
+  const [shownQuery, setShownQuery] = useState(initialQuery);
+  if (shownQuery !== initialQuery) {
+    setShownQuery(initialQuery);
+    setQuery(initialQuery);
+  }
   const [results, setResults] = useState<{ query: string; rows: EntityRow[] } | null>(null);
   const [searchError, setSearchError] = useState<{ query: string; message: string } | null>(null);
   const [closed, setClosed] = useState(true);
@@ -144,6 +150,8 @@ export function GraphSearch({ className }: { className?: string }) {
   const choose = (row: RecentEntity) => {
     const current = new URLSearchParams(params);
     current.delete("q");
+    // In Paths the choice becomes the start of the path, as "Path from here" does.
+    if (current.get("view") === "path") current.set("a", row.id);
     router.push(graphNavigation(current, { focus: row.id }).href, { scroll: false });
     setClosed(true);
     setQuery("");

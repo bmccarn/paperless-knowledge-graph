@@ -46,6 +46,13 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { ...mainStates[11], name: "graph-filters-types", state: "filter-types", prepare: async page => {
+    await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
+    const types = page.getByRole("dialog", { name: "Filters", exact: true }).getByRole("group", { name: "Document type", exact: true });
+    await types.scrollIntoViewIfNeeded();
+    await types.getByRole("button", { name: /^Work / }).click();
+    await page.waitForURL(url => url.searchParams.has("dtype"));
+  } },
   { ...mainStates[11], name: "graph-filters-sheet", state: "filters", prepare: async page => {
     await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
     await page.getByRole("dialog", { name: "Filters", exact: true }).waitFor();

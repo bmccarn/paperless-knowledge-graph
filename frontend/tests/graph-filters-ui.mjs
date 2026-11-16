@@ -60,8 +60,12 @@ try {
   await sheet.getByRole('button', { name: 'Reset filters', exact: true }).click();
   await sheet.getByRole('button', { name: /^At least 2 documents/ }).click();
   await page.waitForURL(url => url.searchParams.get('mindocs') === '2');
-  await sheet.getByRole('button', { name: /^Work / }).click();
+  const workChip = sheet.getByRole('button', { name: /^Work / });
+  const pressedBorder = await workChip.evaluate(button => getComputedStyle(button).borderColor);
+  await workChip.click();
   await page.waitForURL(url => url.searchParams.has('dtype'));
+  const unpressedBorder = await workChip.evaluate(button => getComputedStyle(button).borderColor);
+  assert.notEqual(unpressedBorder, pressedBorder, 'Document type chips visibly distinguish pressed and unpressed states');
   await sheet.getByLabel('To', { exact: true }).fill('2026-11');
   await page.waitForURL(url => url.searchParams.get('to') === '2026-11');
   await sheet.getByRole('checkbox', { name: /^Hide the owner entity/ }).click();
@@ -105,6 +109,8 @@ try {
     assert.ok(box.x === 0 && box.height === (width === 390 ? 844 : 900));
     if (width === 390) assert.equal(box.width, 390);
     await page.screenshot({ path: path.join(artifacts, `filters-${width}-${theme}.png`) });
+    await sheet.getByRole('group', { name: 'Document type', exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifacts, `filter-types-${width}-${theme}.png`) });
     await sheet.getByRole('button', { name: /^Show \d+ links$/ }).click();
     await page.screenshot({ path: path.join(artifacts, `filtered-focus-${width}-${theme}.png`) });
     await page.keyboard.press('t');

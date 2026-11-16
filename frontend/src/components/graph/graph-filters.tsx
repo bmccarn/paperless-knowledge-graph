@@ -57,7 +57,7 @@ export function GraphFilterControls({ summary, filters, view, onChange }: Props)
     </fieldset>
     <fieldset className={field}><legend>Evidence documents per link</legend>
       <div className="flex gap-1">{[1, 2, 3, 5, 10].map(value => <Button key={value} variant={filters.minDocs === value ? "default" : "outline"} aria-pressed={filters.minDocs === value}
-        aria-label={`At least ${value} ${value === 1 ? "document" : "documents"}, ${count({ minDocs: value })} links`} onClick={() => change({ minDocs: value })} className="h-11 flex-1 flex-col gap-0 px-1 tabular-nums"><span>{value}</span><span className="label-12">{count({ minDocs: value })}</span></Button>)}</div>
+        onClick={() => change({ minDocs: value })} className="h-11 flex-1 flex-col gap-0 px-1 tabular-nums"><span><span className="sr-only">At least </span>{value}<span className="sr-only"> {value === 1 ? "document" : "documents"}</span></span><span className="label-12">{count({ minDocs: value })}<span className="sr-only"> links</span></span></Button>)}</div>
     </fieldset>
     <fieldset disabled={overview} className={field}><legend>Document date</legend>
       <div className="grid grid-cols-2 gap-3">{([['from', 'From'], ['to', 'To']] as const).map(([key, label]) => <label key={key} className="min-w-0 space-y-2 label-13"><span className="flex justify-between">{label}<span className="tabular-nums text-fg-muted">{count()}</span></span>
@@ -67,7 +67,7 @@ export function GraphFilterControls({ summary, filters, view, onChange }: Props)
     <fieldset disabled={overview} className={field}><legend>Document type</legend>
       <div className="flex flex-wrap gap-2">{types.map(key => <Button key={key} variant="outline" aria-pressed={filters.types === null || filters.types.includes(key)}
         onClick={() => { const next = toggle(filters.types ?? types, key); change({ types: next.length === types.length ? null : next }); }}
-        className="h-11 gap-2 px-2.5 aria-pressed:border-accent-line aria-pressed:bg-accent-wash md:h-8"><TypeDot type={key} /><span className="tabular-nums text-fg-muted">{count({ types: [key] })}</span></Button>)}</div>
+        className="h-11 gap-2 px-2.5 aria-pressed:border-fg aria-pressed:bg-raised md:h-8"><TypeDot type={key} /><span className="tabular-nums text-fg-muted">{count({ types: [key] })}</span></Button>)}</div>
     </fieldset>
     <fieldset disabled={overview} className="space-y-2 [&>legend]:mb-3 [&>legend]:label-13 [&>legend]:font-semibold"><legend>Owner</legend>
       <label className={row}><input type="checkbox" checked={ownerHidden(filters, view)} onChange={event => change({ owner: event.target.checked ? "hide" : "show" })} className="size-4 accent-(--accent-solid)" />Hide the owner entity<span className={countClass}>{count({ owner: "hide" })}</span></label>
@@ -96,7 +96,7 @@ export function GraphFilterChips({ filters, onChange }: Pick<Props, "filters" | 
   if (!chips.length) return null;
   return <div aria-label="Active filters" role="group" className="flex shrink-0 items-center gap-2 overflow-x-auto border-b px-4 py-2 md:flex-wrap md:px-5">
     {chips.map(chip => <Button key={chip.label} variant="outline" aria-label={`Remove ${chip.label}`} onClick={() => onChange({ ...filters, ...chip.clear })}
-      className="h-auto min-h-11 shrink-0 md:max-w-full md:whitespace-normal border-accent-line bg-accent-wash px-2.5 text-left label-12 md:min-h-8">{chip.label}<X className="size-3.5 shrink-0" /></Button>)}
+      className="h-auto min-h-11 shrink-0 md:max-w-full md:whitespace-normal px-2.5 text-left label-12 md:min-h-8">{chip.label}<X className="size-3.5 shrink-0" /></Button>)}
     <Button variant="link" className="h-11 shrink-0 px-1 label-12 md:h-8" onClick={() => onChange(defaultFilters())}>Reset filters</Button>
   </div>;
 }

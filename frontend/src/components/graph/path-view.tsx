@@ -7,14 +7,14 @@ import { ArrowDown, ArrowLeftRight, ArrowUp, CircleX, Loader2, MessageSquareText
 import { KindShape } from "@/components/kind-shape";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ApiError, getGraphPaths, searchEntities } from "@/lib/api";
+import { ApiError, getGraphLink, getGraphPaths, searchEntities } from "@/lib/api";
 import { kindColor, nodeKind } from "@/lib/categories";
 import { nodeLabel, nodeRadius, shapePath } from "@/lib/graph-encoding";
-import { plural, supportText, typeWords } from "@/lib/graph-inspector";
+import { plural, quoteParts, supportText, typeWords } from "@/lib/graph-inspector";
 import { entityName, entityRow, type EntityRow } from "@/lib/graph-landing";
 import { graphNavigation, listedViews } from "@/lib/graph-url-state";
 import {
-  askRelated, forward, linkDocs, MAX_LEN, parseMaxLen, pathLayout, routeText, weakestDocs,
+  askRelated, bestQuote, forward, linkDocs, MAX_LEN, parseMaxLen, pathLayout, routeText, weakestDocs,
   type GraphPath, type PathNode, type PathsResponse,
 } from "@/lib/graph-paths";
 import { cn, errMsg } from "@/lib/utils";
@@ -213,8 +213,17 @@ function PathCanvas({ data, a, b, selected, onSelect, width, height }: {
   );
 }
 
-/** The links of one path as a stepper: each entity, then the link to the next with its support state. */
+/** The links of one path as a stepper: each entity, then the link to the next with its support state and best quote. */
 function Steps({ data, path }: { data: PathsResponse; path: GraphPath }) {
+  // Quotes arrive per link from GET /graph/link; a link whose quote fails to load shows none.
+  const [quotes, setQuotes] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    let active = true;
+    for (const key of path.links) getGraphLink(key).then(
+      found => { if (active) setQuotes(value => ({ ...value, [key]: bestQuote(found.records) })); },
+      () => { if (active) setQuotes(value => ({ ...value, [key]: null })); });
+    return () => { active = false; };
+  }, [path]);
   return (
     <ol aria-label="Steps of the path">
       {path.nodes.map((id, k) => {
@@ -233,6 +242,12 @@ function Steps({ data, path }: { data: PathsResponse; path: GraphPath }) {
                   <span className="sr-only">{nameOf(data.nodes[link.source])} {typeWords(link.type).toLowerCase()} {nameOf(data.nodes[link.target])}.</span>
                   <span className="label-12 text-fg-muted">{supportText(link)}, <span className="tabular-nums">{plural(linkDocs(link), "doc")}</span></span>
                 </p>
+                {quotes[path.links[k]] && (
+                  <blockquote className="quote mt-2 text-fg">
+                    “{quoteParts(quotes[path.links[k]]!, [nameOf(data.nodes[link.source]), nameOf(data.nodes[link.target])]).map((part, at) => part.match
+                      ? <mark key={at} className="rounded-[2px] bg-mark px-px text-on-mark">{part.text}</mark> : part.text)}”
+                  </blockquote>
+                )}
               </div>
             )}
           </li>

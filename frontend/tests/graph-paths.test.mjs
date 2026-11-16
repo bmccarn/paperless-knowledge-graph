@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { askRelated, forward, parseMaxLen, pathLayout, routeText, weakestDocs } from "../.test-build/graph-paths.js";
+import { askRelated, bestQuote, forward, parseMaxLen, pathLayout, routeText, weakestDocs } from "../.test-build/graph-paths.js";
 
 const link = (source, type, target, docs, state = "supported") =>
   ({ source, type, target, family: "parties", weight: docs, support_state: state, stated_count: state === "inferred" ? 0 : docs, inferred_count: state === "inferred" ? docs : 0 });
@@ -65,4 +65,13 @@ test("path text: route, weakest link documents, link direction and the Ask quest
   assert.equal(forward(data, data.paths[1], 1), false, "b PAYS n runs against the path");
   assert.equal(askRelated("Dana Whitlock", "Northgate Credit Union"), "How is Dana Whitlock related to Northgate Credit Union?");
   assert.deepEqual(["2", "3", "4", "5", "1", null, "x"].map(parseMaxLen), [2, 3, 4, 4, 4, 4, 4]);
+});
+
+test("the best quote comes from a stated record first, then the highest score, then the document id", () => {
+  const record = (doc_id, inferred, confidence, quotes) => ({ doc_id, inferred, confidence, quotes });
+  assert.equal(bestQuote([record(1, true, 0.99, ["inferred"]), record(2, false, 0.5, ["stated"])]), "stated");
+  assert.equal(bestQuote([record(3, false, null, ["no score"]), record(4, false, 0.7, ["scored"])]), "scored");
+  assert.equal(bestQuote([record(6, false, 0.7, ["six"]), record(5, false, 0.7, ["five"])]), "five");
+  assert.equal(bestQuote([record(7, false, 0.9, []), record(8, true, 0.2, ["only quote"])]), "only quote");
+  assert.equal(bestQuote([record(9, false, 0.9, [])]), null);
 });

@@ -85,6 +85,12 @@ try {
   assert.deepEqual((await steps.locator(':scope > li > p:first-child').allTextContents()).map(text => text.trim()),
     ['Harbor Mutual Insurance', 'Policy HM-2208 (auto)', OWNER, 'Port Ellery']);
   assert.match(await steps.innerText(), /Policy HM-2208 \(auto\) issued by Harbor Mutual Insurance\./);
+  // Each link shows its best quote, with both end names marked.
+  const quote = steps.locator('blockquote').filter({ hasText: 'issued by' });
+  await quote.waitFor();
+  assert.equal((await quote.innerText()).trim(), '“Policy HM-2208 (auto) issued by Harbor Mutual Insurance, as listed in this record.”');
+  assert.deepEqual(await quote.locator('mark').allTextContents(), ['Policy HM-2208 (auto)', 'Harbor Mutual Insurance']);
+  assert.equal(await steps.locator('blockquote').count(), 3);
 
   // The inferred-link control and Most links are filters too.
   await page.getByRole('button', { name: 'Inferred links', exact: true }).click();

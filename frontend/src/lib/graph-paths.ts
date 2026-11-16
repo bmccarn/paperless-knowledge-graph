@@ -41,6 +41,13 @@ export function routeText(data: PathsResponse, path: GraphPath, name: (node: Pat
 export const forward = (data: PathsResponse, path: GraphPath, k: number) =>
   data.links_detail[path.links[k]].source === path.nodes[k];
 
+/** The quote shown for a path link: a stated record before an inferred one, then the highest score, then the document id. */
+export function bestQuote(records: { doc_id: number; inferred: boolean; confidence: number | null; quotes: string[] }[]): string | null {
+  const [best] = records.filter(record => record.quotes.length)
+    .sort((x, y) => Number(x.inferred) - Number(y.inferred) || (y.confidence ?? -1) - (x.confidence ?? -1) || x.doc_id - y.doc_id);
+  return best?.quotes[0] ?? null;
+}
+
 export const askRelated = (a: string, b: string) => `How is ${a} related to ${b}?`;
 
 export interface PathLayout {

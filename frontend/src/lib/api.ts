@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { StatusResponse } from "@/lib/types";
 import type { NodeSummary, Subgraph } from "@/lib/graph-layout";
 import type { PathsResponse } from "@/lib/graph-paths";
+import type { OverviewResponse } from "@/lib/graph-overview";
 import { parseDocumentDate } from "@/lib/answer-state";
 
 export const API_URL = "/api";
@@ -207,6 +208,11 @@ export async function getGraphLink(key: string): Promise<{ records: LinkRecord[]
 /** The links among 2 to 150 entities, for the links between neighbors in Focus. */
 export async function getGraphSubgraph(ids: string[]): Promise<Subgraph> {
   return apiFetch(`/graph/subgraph?${new URLSearchParams({ ids: ids.join(",") })}`);
+}
+
+/** Every linked entity and the merged links between them, for Overview. */
+export async function getGraphOverview(): Promise<OverviewResponse> {
+  return apiFetch("/graph/overview");
 }
 
 /** Up to five paths between two entities; a 503 with `path_search_timeout` when the 5 s budget runs out. */

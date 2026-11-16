@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { startTransition, useOptimistic, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Info, Loader2, Maximize, Minus, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { defaultFilters, filterLayout, filterLinks, filterUrl, parseFilters, showMoreFiltered, type GraphFilters } from "@/lib/graph-filters";
+import { GraphFilterChips, GraphFiltersSheet, filterChips } from "./graph-filters";
 import { cn, errMsg } from "@/lib/utils";
 import { ApiError, getGraphNodeSummary, getGraphSubgraph } from "@/lib/api";
 import { graphNavigation, listedViews, parseGraphState, parseLinkKey, shownView } from "@/lib/graph-url-state";
@@ -19,7 +21,6 @@ import {
   neighborhoodLayout,
   PHONE_PILL_RADIUS,
   PILL_RADIUS,
-  showMore,
   VIEW_LIMIT,
   type NodeSummary,
   type Subgraph,
@@ -54,14 +55,15 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const router = useRouter();
   const params = useSearchParams();
   const urlState = parseGraphState(new URLSearchParams(params));
-  const [summary, setSummary] = useState<NodeSummary | null>(null);
+  const [rawSummary, setSummary] = useState<NodeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [extra, setExtra] = useState<Record<string, number>>({});
   const [atLimit, setAtLimit] = useState(false);
-  const isTable = shownView(urlState.view) === "table";
+  const view = shownView(urlState.view);
+  const isTable = view === "table";
   const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
   const selectedNodeId = selectedLinkId ? null : urlState.selection;
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
@@ -91,11 +93,21 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     return () => { active = false; };
   }, [focusId, attempt]);
 
+  const parsedFilters = useMemo(() => parseFilters(new URLSearchParams(params)), [params]);
+  const [filters, setOptimisticFilters] = useOptimistic(parsedFilters);
+  const summary = useMemo(() => rawSummary && ({ ...rawSummary,
+    links: filterLinks(rawSummary.links, rawSummary.documents, filters, undefined, shownView(parseGraphState(new URLSearchParams(params)).view)) }), [rawSummary, filters, params]);
+  const filtering = filterChips(filters).length > 0;
+  const changeFilters = (next: GraphFilters) => startTransition(() => {
+    setOptimisticFilters(next);
+    router.replace(filterUrl(new URLSearchParams(params), next), { scroll: false });
+  });
+  const rawTotal = rawSummary ? (isTable ? filterLinks(rawSummary.links, rawSummary.documents, defaultFilters()).length : drawableLinks(rawSummary).length) : 0;
   const cap = summary ? familyCap(summary.focus.is_hub, phone) : 0;
   // The phone View button and inspector peek leave a shorter canvas; give its pills more room.
   const pillRadius = phone ? PHONE_PILL_RADIUS + (urlState.selection ? 100 : 0) : PILL_RADIUS;
-  const layout = useMemo(() => summary && neighborhoodLayout(summary, cap, extra, pillRadius),
-    [summary, cap, extra, pillRadius]);
+  const layout = useMemo(() => summary && rawSummary && filterLayout(neighborhoodLayout(rawSummary, cap, extra, pillRadius), summary),
+    [summary, rawSummary, cap, extra, pillRadius]);
   // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
   const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
   const wantCross = !isTable && urlState.cross && crossIds.includes(",");
@@ -111,7 +123,13 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const crossLoading = wantCross && cross?.ids !== crossIds;
   const crossFailed = wantCross && !crossLoading && !cross?.data;
   // Until a new request returns, the last response still draws its links among the neighbors that remain.
-  const crossData = wantCross ? cross?.data : null;
+  const filteredCross = useMemo(() => {
+    if (!cross?.data || !rawSummary) return null;
+    const ownerIds = new Set([...(rawSummary.focus.is_owner ? [rawSummary.focus.id] : []),
+      ...rawSummary.links.filter(link => link.neighbor.is_owner).map(link => link.neighbor.id)]);
+    return { ...cross.data, links: filterLinks(cross.data.links, cross.data.documents, filters, ownerIds, shownView(parseGraphState(new URLSearchParams(params)).view)) };
+  }, [cross, rawSummary, filters, params]);
+  const crossData = wantCross ? filteredCross : null;
   const shownCross = useMemo(() => layout && crossData ? crossLinks(layout, crossData, crossCap(phone)) : null, [layout, crossData, phone]);
   const { graph, positions } = useMemo(() => {
     // The canvas sizes and rings nodes from these fields of the summary.
@@ -145,11 +163,11 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   }, [params, router]);
   /** "+N more": add up to 25 neighbors of the family to its sector. */
   const addMore = useCallback((family: string) => {
-    if (!summary) return;
-    const next = showMore(summary, cap, extra, family);
+    if (!rawSummary || !summary) return;
+    const next = showMoreFiltered(rawSummary, summary, cap, extra, family);
     if (next !== extra) setExtra(next);
     else if (layout && layout.entities >= VIEW_LIMIT) setAtLimit(true);
-  }, [summary, cap, extra, layout]);
+  }, [rawSummary, summary, cap, extra, layout]);
   // A pill click selects it and lists its members; Shift+click adds them, as "+N more" does.
   const selectNode = useCallback((node: ExplorerNode, event?: MouseEvent) => {
     if (node.label === "Aggregate" && event?.shiftKey) return addMore(node.id.slice("pill:".length));
@@ -177,7 +195,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const documents = useMemo(() => (summary ? documentsByDate(summary) : []), [summary]);
   const markedLinkIds = useMemo(() => (summary && markedDoc !== null ? linksOfDocument(summary, markedDoc) : undefined), [summary, markedDoc]);
   const legend = useMemo(() => layout && legendItems({ nodes: layout.nodes, links: [...layout.links, ...(shownCross?.links ?? [])] }), [layout, shownCross]);
-  const leaf = summary !== null && drawableLinks(summary).length === 0;
+  const leaf = rawSummary !== null && drawableLinks(rawSummary).length === 0;
+  const hiddenAll = !leaf && summary !== null && drawableLinks(summary).length === 0;
   /** A link between neighbors as a link of `from`, so the inspector rows and link summary can show it. */
   const asLink = useCallback(({ source, target, ...link }: SubgraphLink, from: string): SummaryLink => {
     const other = source === from ? target : source;
@@ -189,10 +208,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const markedDocs = useMemo(() => new Set(selectedLink?.records.map(record => record.doc_id)), [selectedLink]);
   const pill = !isTable && selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
   const adds = useMemo(() => {
-    if (!summary || !pill) return 0;
-    const next = showMore(summary, cap, extra, pill.family);
-    return next === extra ? 0 : neighborhoodLayout(summary, cap, next).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
-  }, [summary, cap, extra, pill]);
+    if (!rawSummary || !summary || !pill) return 0;
+    const next = showMoreFiltered(rawSummary, summary, cap, extra, pill.family);
+    return next === extra ? 0 : filterLayout(neighborhoodLayout(rawSummary, cap, next), summary).sectors.find(sector => sector.family === pill.family)!.drawn - pill.drawn;
+  }, [rawSummary, summary, cap, extra, pill]);
   const selected = Boolean(selectedLink || pill || (selectedNodeId && (positions.has(selectedNodeId) || (isTable && summary?.links.some(link => link.neighbor.id === selectedNodeId)))));
   const rowEvents = { onSelectLink: selectLinkKey, onFocusRow: setKeyboardNodeId };
   const crossCount = !urlState.cross ? null : !wantCross ? 0 : shownCross && !crossLoading ? shownCross.links.length : null;
@@ -208,6 +227,10 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   else if (shownCross) [crossCaption, crossQuiet] = shownCross.total > shownCross.links.length
     ? [`Showing the ${shownCross.links.length} strongest of ${shownCross.total} links between neighbors.`, false]
     : [`${plural(shownCross.total, "link")} between neighbors.`, true];
+  if (crossData?.truncated && filtering) {
+    crossCaption = <>{crossCaption} Filters apply to the 600 strongest links between neighbors.</>;
+    crossQuiet = false;
+  }
   const switcher = { views: VIEWS, current: shownView(urlState.view), focusName: summary?.focus.name ?? null, onSwitch: (view: typeof urlState.view) => navigate({ view }) };
 
   const sheetKey = selectedLinkId ?? selectedNodeId ?? "focus";
@@ -222,7 +245,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     else if (pill) {
       const drawn = new Set(layout.links.map(link => link.key));
       inspector = (
-        <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} atLimit={layout.entities >= VIEW_LIMIT} onOpenTable={() => navigate({ view: "table" })} {...rowEvents}
+        <GroupInspector sector={pill} adds={adds} onAdd={() => addMore(pill.family)} onClose={clearSelection} atLimit={!adds && pill.hidden > 0} onOpenTable={() => navigate({ view: "table" })} {...rowEvents}
           links={linksByFamily(summary).find(group => group.family === pill.family)!.links.filter(link => !drawn.has(link.key))} />);
     }
     else if (selectedNodeId && selectedNodeId !== summary.focus.id && ((isTable && summary.links.some(link => link.neighbor.id === selectedNodeId)) || (!isTable && positions.has(selectedNodeId))))
@@ -270,11 +293,20 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             </p>
           )}
         </div>
-        {VIEWS.length > 1 && <ViewSwitcher {...switcher} className="max-md:hidden" />}
+        <div className="flex items-center gap-3 max-md:hidden">
+          {VIEWS.length > 1 && <ViewSwitcher {...switcher} />}
+          {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
+        </div>
       </header>
       {VIEWS.length > 1 && (
-        <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden"><ViewSheet {...switcher} /></div>
+        <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 md:hidden"><ViewSheet {...switcher} />
+          {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
+        </div>
       )}
+      <GraphFilterChips filters={filters} onChange={changeFilters} />
+      {summary && filtering && !isTable && <p role="status" className="border-b px-4 py-2 label-13 tabular-nums text-fg-muted">
+        {drawableLinks(summary).length} of {rawTotal} links match, {drawableLinks(summary).filter(link => link.support_state === "inferred").length} inferred.
+      </p>}
       {error && (
         <div role="alert" className="flex items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
           <span>Could not load the neighborhood: {error}</span>
@@ -291,10 +323,15 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${expanded ? "max-md:h-[120px] max-md:flex-none" : ""}`}>
           {isTable && summary && layout ? (
-            <LinkTable summary={summary} layout={layout} selection={urlState.selection} onSelectLink={selectLinkKey} />
+            <LinkTable summary={summary} layout={layout} unfilteredTotal={rawTotal} onResetFilters={() => changeFilters(defaultFilters())} selection={urlState.selection} onSelectLink={selectLinkKey} />
           ) : <>
           <section className="relative min-h-0 flex-1" aria-label="Graph workspace">
-            {leaf ? (
+            {hiddenAll ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+                <p className="copy-14 text-fg-muted">Your filters hide all {rawTotal} links.</p>
+                <Button variant="outline" onClick={() => changeFilters(defaultFilters())}>Reset filters</Button>
+              </div>
+            ) : leaf ? (
               <div className="flex h-full items-center justify-center p-8">
                 <p className="max-w-sm text-balance text-center copy-14 text-fg-muted">
                   No direct links extracted. This entity appears in {plural(documents.length, "document")}.

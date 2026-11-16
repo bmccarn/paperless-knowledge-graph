@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { KindShape } from "@/components/kind-shape";
 import { Pager } from "@/components/pager";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,7 +11,8 @@ import type { NeighborhoodLayout, NodeSummary, SummaryLink } from "@/lib/graph-l
 import { TABLE_COLUMNS, TABLE_PAGE_SIZE, sortTableRows, tableRows, type TableColumn } from "@/lib/graph-table";
 
 /** Native table with one Tab stop across headers and rows. Arrow Up from the first row reaches the headers. */
-export function LinkTable({ summary, layout, selection, onSelectLink }: {
+export function LinkTable({ summary, layout, selection, onSelectLink, unfilteredTotal = 0, onResetFilters }: {
+  unfilteredTotal?: number; onResetFilters?: () => void;
   summary: NodeSummary; layout: NeighborhoodLayout; selection: string | null; onSelectLink: (key: string) => void;
 }) {
   const isSelected = (link: SummaryLink) => link.key === selection || (selection !== summary.focus.id && link.neighbor.id === selection);
@@ -99,7 +101,7 @@ export function LinkTable({ summary, layout, selection, onSelectLink }: {
                 <TableCell className="text-fg-muted">{shortDate(row.latest) || "No date"}</TableCell>
               </TableRow>
             ))}
-            {!rows.length && <TableRow><TableCell colSpan={TABLE_COLUMNS.length} className="py-8 text-center text-fg-muted">No direct links extracted. Open Focus to see this entity&apos;s documents.</TableCell></TableRow>}
+            {!rows.length && <TableRow><TableCell colSpan={TABLE_COLUMNS.length} className="py-8 text-center text-fg-muted">{unfilteredTotal ? <><p>Your filters hide all {unfilteredTotal} links.</p><Button variant="outline" className="mt-3" onClick={onResetFilters}>Reset filters</Button></> : "No direct links extracted. Open Focus to see this entity's documents."}</TableCell></TableRow>}
           </TableBody>
         </Table>
       </div>

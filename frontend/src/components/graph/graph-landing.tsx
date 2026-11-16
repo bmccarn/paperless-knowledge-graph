@@ -247,7 +247,7 @@ export function GraphSearch({ className }: { className?: string }) {
 /** The graph page header: title, entity search, then the view controls on the right. */
 export function GraphHeader({ controls, children }: { controls?: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <header className="relative border-b px-4 py-3 md:px-5">
+    <header className="relative border-b px-4 py-1 md:px-5 md:py-3">
       <div className="flex items-center gap-3 md:gap-6">
         <h1 className="page-title">Graph</h1>
         <GraphSearch className="min-w-0 flex-1 md:max-w-[300px]" />

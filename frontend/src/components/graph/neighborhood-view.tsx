@@ -287,7 +287,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
       </>}>
         {!isTable && !isPath && summary && layout && (
-          <p className="mt-1.5 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             <span>
               {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
               {summary.focus.is_hub && ` Large hub: the top ${cap} of each family are shown.`}

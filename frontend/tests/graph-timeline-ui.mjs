@@ -120,6 +120,15 @@ try {
     await page.goto(`${base}/graph?focus=nb-timeline&view=timeline`);
     await timeline.waitFor();
     await page.evaluate(() => document.fonts.ready);
+    const search = page.getByRole('combobox', { name: 'Search entities', exact: true });
+    const viewControl = width === 390 ? page.getByRole('button', { name: 'View: Timeline', exact: true }) : page.getByRole('toolbar', { name: 'View', exact: true });
+    const controls = await Promise.all([search.locator(".."), viewControl, page.getByRole('button', { name: 'Filters', exact: true })].map(control => control.boundingBox()));
+    assert.ok(controls.every(box => box && box.x >= 0 && box.x + box.width <= width), 'Search, view and Filters fit the header');
+    if (width === 1440) assert.equal(Math.round(controls[0].width), 300);
+    for (let i = 0; i < controls.length; i++) for (let j = i + 1; j < controls.length; j++) {
+      const a = controls[i], b = controls[j];
+      assert.equal(a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y, false, 'Header controls do not overlap');
+    }
     if (width === 390) {
       assert.equal(await timeline.locator('[data-timeline-desktop]').count(), 0);
       await timeline.getByRole('heading', { name: 'September 2026', exact: true }).waitFor();

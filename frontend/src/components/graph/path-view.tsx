@@ -20,6 +20,7 @@ import {
 } from "@/lib/graph-paths";
 import { cn, errMsg } from "@/lib/utils";
 import { iconData } from "./canvas-icons";
+import { GraphHeader } from "./graph-landing";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
 
 const heading = "mt-6 mb-2 label-13 font-semibold text-fg";
@@ -473,10 +474,7 @@ export function PathPage() {
     onSwitch: (view: Parameters<typeof graphNavigation>[1]["view"]) => router.push(graphNavigation(new URLSearchParams(params), { view }).href, { scroll: false }) };
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
-        <h1 className="page-title">Graph</h1>
-        <ViewSwitcher {...switcher} className="max-md:hidden" />
-      </header>
+      <GraphHeader controls={<ViewSwitcher {...switcher} />} />
       <div className="flex h-14 shrink-0 items-center border-b px-4 md:hidden"><ViewSheet {...switcher} /></div>
       <PathView focus={null} phone={phone} />
     </div>

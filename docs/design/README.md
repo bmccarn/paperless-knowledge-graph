@@ -75,7 +75,7 @@ These wireframe parts are not part of this redesign:
 
 | Wireframe | Not built |
 |---|---|
-| 01 landing | The archive map, "Life areas", the "Check the graph" queue, "Recently added", "Pinned" and "Saved views". The landing has search, Recent and Most connected only. |
+| 01 landing | The whole landing page. The Graph tab opens a graph at once (#228): the last entity in Recent, else the owner, else the first Most connected. Search, Recent and Most connected live in the graph header search box. |
 | 02 neighborhood | Hops 2 and 3, the "Documents as nodes" switch, the "Co-mentions" switch, "Save view" and "Pin". The view is one hop with documents as evidence. |
 | 03 hub caps | Hops 2 and 3 and "Save view". The rank selector is not built; ranking is fixed. |
 | 04 path | "Save view", maximum path length 5, "Allow inferred links", and "Allow same document hops". Paths have at most 4 links, allow inferred links, and never pass through documents. "Include the owner" replaces "Avoid the owner". |

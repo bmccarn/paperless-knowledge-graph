@@ -164,12 +164,8 @@ try {
   assert.equal(await composer.inputValue(), 'How is Harbor Mutual Insurance related to Port Ellery?');
   assert.equal(await page.getByText('The January statement lists a premium of $25.').count(), 0, 'the question is not submitted');
 
-  // Without a focus, p on the landing opens Paths with empty pickers; Focus and Table wait for an entity.
-  await page.goto(`${base}/graph`);
-  await page.getByRole('region', { name: 'Most connected', exact: true }).getByRole('link').first().waitFor();
-  await page.locator('h1').click();
-  await page.keyboard.press('p');
-  await page.waitForURL(url => url.searchParams.get('view') === 'path');
+  // Paths without a focus has empty pickers; Focus and Table wait for an entity.
+  await page.goto(`${base}/graph?view=path`);
   assert.equal(new URL(page.url()).searchParams.has('a'), false);
   await page.getByText('Pick two entities to see how they are connected.', { exact: true }).waitFor();
   const toolbar = page.getByRole('toolbar', { name: 'View', exact: true });

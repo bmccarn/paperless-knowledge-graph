@@ -23,13 +23,8 @@ for (const theme of ["dark", "light"]) for (const width of [1440, 390]) {
       assert.equal(response.status(), 200);
       await page.getByRole("heading", { name: label, exact: true, level: 1 }).waitFor();
       assert.equal(await page.locator("h1").count(), 1);
-      if (route === "/graph") {
-        // The graph landing opens with focus in its search box; the skip link still comes first.
-        await page.getByRole("combobox", { name: "Search entities", exact: true }).waitFor();
-        assert.equal(await page.locator(":focus").getAttribute("role"), "combobox");
-        // Restart sequential focus at the top of the document.
-        await page.evaluate(() => { document.body.tabIndex = -1; document.body.focus(); document.body.removeAttribute("tabindex"); });
-      }
+      // The Graph tab opens a graph at once, and its search box does not take focus.
+      if (route === "/graph") await page.waitForURL(url => url.searchParams.has("focus"));
       await page.keyboard.press("Tab");
       assert.equal(await page.locator(":focus").textContent(), "Skip to content");
       await page.keyboard.press("Enter");

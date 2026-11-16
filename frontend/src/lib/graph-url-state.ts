@@ -18,7 +18,7 @@ export const GRAPH_VIEWS: readonly GraphViewInfo[] = [
   { id: "explore", label: "Explore", question: "What lies two or three steps away, and where do the links loop back?", needsFocus: true, listed: false },
   { id: "timeline", label: "Timeline", question: "When was each link documented, and what arrived when?", needsFocus: true, listed: false },
   { id: "table", label: "Table", question: "Every link of this entity, sorted and filtered.", alias: "t", needsFocus: true, listed: true },
-  { id: "path", label: "Paths", question: "How are these two entities connected?", alias: "p", needsFocus: false, listed: false },
+  { id: "path", label: "Paths", question: "How are these two entities connected?", alias: "p", needsFocus: false, listed: true },
   { id: "overview", label: "Overview", question: "What is in the archive, and which parts hang together?", needsFocus: false, listed: false },
 ];
 
@@ -102,8 +102,11 @@ export function graphNavigation(current: URLSearchParams, change: Partial<GraphU
   const next = { ...previous, ...change };
   if (next.focus !== previous.focus && change.selection === undefined) next.selection = null;
   if (next.view !== previous.view && next.selection && change.selection === undefined && !viewHolds(next.view, next.selection)) next.selection = null;
+  const params = new URLSearchParams(current);
+  // A switch to Paths starts the search from the focus when A is empty.
+  if (next.view === "path" && previous.view !== "path" && next.focus && !params.get("a")) params.set("a", next.focus);
   return {
-    href: graphUrl(next, current),
+    href: graphUrl(next, params),
     method: next.focus !== previous.focus || next.view !== previous.view ? "push" as const : "replace" as const,
   };
 }

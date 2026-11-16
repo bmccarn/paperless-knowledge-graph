@@ -23,6 +23,8 @@ const mainStates = [
   { name: "graph-neighborhood", route: "/graph?focus=nb-rowan", ready: page => page.getByText("13 links between neighbors.", { exact: true }) },
 ];
 mainStates.push({ name: "graph-table", route: "/graph?focus=nb-rowan&view=table", ready: page => page.getByRole("table", { name: "Links of Rowan Vale" }) });
+const pathRoute = "/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1";
+mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getByText("2 paths of at most 4 links, strongest first. The owner is left out.", { exact: true }) });
 const gallery = { name: "gallery", route: "/gallery", ready: page => page.getByRole("heading", { name: "Component gallery", exact: true }) };
 const statusWith = (extra, routes = {}) => async page => {
   const healthy = await (await page.request.get("/api/status")).json();
@@ -293,6 +295,8 @@ const extraStates = [
       await page.getByRole("button", { name: "View: Focus" }).click();
       await page.getByRole("dialog", { name: "View", exact: true }).waitFor();
     } },
+  { name: "graph-path-owner", route: `${pathRoute}&owner=show`, state: "owner-included",
+    ready: page => page.getByText("5 paths of at most 4 links, strongest first. The owner is included.", { exact: true }) },
   { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
     ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
 ];

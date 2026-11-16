@@ -33,6 +33,7 @@ import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from
 import { GraphLegend, LegendContent } from "./graph-legend";
 import { rememberRecent } from "./graph-landing";
 import { LinkTable } from "./link-table";
+import { PathView } from "./path-view";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
 
 const ForceGraphClient = dynamic(
@@ -62,6 +63,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const [extra, setExtra] = useState<Record<string, number>>({});
   const [atLimit, setAtLimit] = useState(false);
   const isTable = shownView(urlState.view) === "table";
+  const isPath = shownView(urlState.view) === "path";
   const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
   const selectedNodeId = selectedLinkId ? null : urlState.selection;
   const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
@@ -98,7 +100,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     [summary, cap, extra, pillRadius]);
   // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
   const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
-  const wantCross = !isTable && urlState.cross && crossIds.includes(",");
+  const wantCross = !isTable && !isPath && urlState.cross && crossIds.includes(",");
   useEffect(() => {
     if (!wantCross) return;
     let active = true;
@@ -214,7 +216,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   // On phone the inspector is a bottom sheet: a 300 px peek, or expanded over all but 120 px of the canvas.
   const expanded = phone && !isTable && expandedSheet === sheetKey;
   let inspector = null;
-  if (summary && layout) {
+  if (summary && layout && !isPath) {
     if (selectedCross && selectedLink) inspector = (
       <LinkInspector summary={{ ...summary, documents: { ...cross?.data?.documents, ...summary.documents } }} link={selectedLink}
         end={summary.links.find(link => link.neighbor.id === selectedCross.source)!.neighbor} onClose={clearSelection} />);
@@ -260,7 +262,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
         <div>
           <h1 className="page-title">Graph</h1>
-          {!isTable && summary && layout && (
+          {!isTable && !isPath && summary && layout && (
             <p className="mt-1 text-sm text-muted-foreground">
               <span>
                 {summary.focus.name}: {linkTotal} links in {layout.sectors.length} families.
@@ -283,12 +285,13 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           </Button>
         </div>
       )}
-      {atLimit && !isTable && (
+      {atLimit && !isTable && !isPath && (
         <p role="status" className="border-b px-4 py-2 text-sm">
           The canvas shows at most {VIEW_LIMIT} entities. No more neighbors can be added to this view.
         </p>
       )}
-      <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
+      {isPath && <PathView focus={summary?.focus ?? null} phone={phone} />}
+      {!isPath && <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${expanded ? "max-md:h-[120px] max-md:flex-none" : ""}`}>
           {isTable && summary && layout ? (
             <LinkTable summary={summary} layout={layout} selection={urlState.selection} onSelectLink={selectLinkKey} />
@@ -377,7 +380,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
             {inspector}
           </aside>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

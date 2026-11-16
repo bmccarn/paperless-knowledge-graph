@@ -2,8 +2,10 @@
 
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { parseGraphState, shownView } from "@/lib/graph-url-state";
 import { GraphLanding } from "./graph-landing";
 import { NeighborhoodView } from "./neighborhood-view";
+import { PathPage } from "./path-view";
 import { useViewKeys } from "./view-switcher";
 
 function GraphRoute() {
@@ -11,7 +13,9 @@ function GraphRoute() {
   const focus = params.get("focus");
   const query = params.get("q") ?? "";
   useViewKeys();
-  return focus ? <NeighborhoodView key={focus} focusId={focus} /> : <GraphLanding key={query} initialQuery={query} />;
+  if (focus) return <NeighborhoodView key={focus} focusId={focus} />;
+  // Paths has its own pickers, so it opens without a focus entity.
+  return shownView(parseGraphState(params).view) === "path" ? <PathPage /> : <GraphLanding key={query} initialQuery={query} />;
 }
 
 export function GraphContainer() {

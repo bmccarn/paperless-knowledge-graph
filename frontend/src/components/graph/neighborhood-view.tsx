@@ -30,6 +30,7 @@ import {
 import { canvasName, documentsByDate, entityName, legendItems, linksByFamily, linksOfDocument, plural } from "@/lib/graph-inspector";
 import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
+import { ExploreView } from "./explore-view";
 import { FocusInspector, GroupInspector, LinkInspector, NeighborInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
 import { focusSummary, GraphHeader, rememberRecent } from "./graph-landing";
@@ -67,6 +68,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const view = shownView(urlState.view);
   const isTable = view === "table";
   const isPath = view === "path";
+  const isExplore = view === "explore";
   const isTimeline = view === "timeline";
   const selectedLinkId = urlState.selection && parseLinkKey(urlState.selection) ? urlState.selection : null;
   const selectedNodeId = selectedLinkId ? null : urlState.selection;
@@ -119,7 +121,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
     [summary, rawSummary, cap, extra, pillRadius]);
   // The route needs 2 to 150 ids; pills and their members are not sent. "+N more" requests again.
   const crossIds = useMemo(() => layout?.nodes.filter(node => node.kind === "neighbor").map(node => node.id).sort().join(",") ?? "", [layout]);
-  const wantCross = !isTable && !isPath && !isTimeline && urlState.cross && crossIds.includes(",");
+  const wantCross = !isTable && !isPath && !isExplore && !isTimeline && urlState.cross && crossIds.includes(",");
   useEffect(() => {
     if (!wantCross) return;
     let active = true;
@@ -295,7 +297,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
         {VIEWS.length > 1 && <ViewSwitcher {...switcher} />}
         {summary && <GraphFiltersSheet summary={rawSummary!} filters={filters} view={view} onChange={changeFilters} />}
       </>}>
-        {!isTable && !isPath && !isTimeline && summary && layout && (
+        {!isTable && !isPath && !isExplore && !isTimeline && summary && layout && (
           <p className="mt-1 text-sm text-muted-foreground">
             <span>
               {entityName(summary.focus)}: {linkTotal} links in {layout.sectors.length} families.
@@ -322,13 +324,15 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           </Button>
         </div>
       )}
-      {atLimit && !isTable && !isPath && !isTimeline && (
+      {atLimit && !isTable && !isPath && !isExplore && !isTimeline && (
         <p role="status" className="border-b px-4 py-2 text-sm">
           The canvas shows at most {VIEW_LIMIT} entities. No more neighbors can be added to this view.
         </p>
       )}
       {isPath && <PathView focus={summary?.focus ?? null} phone={phone} />}
-      {!isPath && <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
+      {isExplore && rawSummary ? (
+        <ExploreView root={rawSummary} filters={filters} url={urlState} phone={phone} navigate={navigate} onResetFilters={changeFilters} />
+      ) : !isPath && <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${expanded ? "max-md:h-[120px] max-md:flex-none" : ""}`}>
           {isTimeline && summary ? (
             <>

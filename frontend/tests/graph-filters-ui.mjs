@@ -80,13 +80,6 @@ try {
   await page.reload();
   await page.getByRole('group', { name: 'Active filters' }).getByRole('button', { name: 'Remove Owner hidden' }).waitFor();
 
-  // An unlisted view still renders Focus and must use Focus's enabled filters.
-  await page.goto(`${base}/graph?focus=nb-renewal&view=explore&from=2030-01`);
-  await page.getByText('Your filters hide all 1 links.', { exact: true }).waitFor();
-  await page.getByRole('button', { name: /^Filters/ }).filter({ visible: true }).click();
-  assert.equal(await sheet.getByRole('group', { name: 'Document date', exact: true }).getAttribute('disabled'), null);
-  await sheet.getByRole('button', { name: 'Close', exact: true }).click();
-
   // Cross-links use the family predicate too; the count announces the remaining links.
   await page.goto(`${base}/graph?focus=nb-rowan&fam=parties`);
   await page.getByRole('status').filter({ hasText: '1 link between neighbors.' }).waitFor();

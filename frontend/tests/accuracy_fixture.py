@@ -137,6 +137,45 @@ for start, rel_type, end, documents, inferred in [
     NB_CROSS.append((start, rel_type, end, [(next(_nb_doc), index in inferred, 0.9) for index in range(documents)]))
 
 
+# An island for Explore that no other entity links to, so every other page keeps its counts. The policy has 10
+# links, 8 on the start ring; the car has 8 new neighbors (one unnamed) and loops back to the holder; the loan leads
+# to hop 3; the insurer links to four same-named address records; shop, DMV and holder link to the town, which only
+# GET /graph/subgraph reveals. The landing search leaves these ids out. Documents 9262 to 9300 are in no other graph.
+EX_DOCS = list(range(9262, 9301))
+NB_ENTITIES.update({
+    'ex-policy': ('InsurancePolicy', 'Policy KT-9030 (auto)'), 'ex-insurer': ('Organization', 'Bayview Mutual'),
+    'ex-holder': ('Person', 'Lena Ortiz'), 'ex-car': ('Product', '2021 Mazda CX-5'),
+    'ex-premium': ('FinancialItem', 'Premium, May 2026, $588'), 'ex-town': ('Location', 'Calder Bay'),
+    'ex-prior': ('InsurancePolicy', 'Policy KT-8841 (2025)'), 'ex-start': ('DateEvent', '1 Jun 2026'),
+    'ex-end': ('DateEvent', '1 Dec 2026'), 'ex-agent': ('Person', 'Owen Pratt'),
+    'ex-bank': ('Organization', 'Tidewater Credit Union'), 'ex-loan': ('FinancialItem', 'Car loan CL-7710'),
+    'ex-shop': ('Organization', 'Bayline Auto Body'), 'ex-dmv': ('Organization', 'DMV, Calder Bay office'),
+    'ex-recall': ('Event', 'Recall notice, 2025'), 'ex-dealer': ('Organization', 'Northshore Mazda'),
+    'ex-tires': ('Product', 'Set of tires, 2026'), 'ex-plate': ('FinancialItem', ''),
+    'ex-servicer': ('Organization', 'Saltmarsh Lending'), 'ex-payment': ('FinancialItem', 'Loan payment, Oct 2026'),
+    'ex-payoff': ('DateEvent', 'Loan payoff, 2029'), 'ex-hq': ('Address', '12 Wharf Rd'),
+    **{f'ex-pier-{index}': ('Address', '40 Pier St') for index in range(1, 5)},
+})
+for start, rel_type, end, documents, inferred in [
+    ('ex-policy', 'ISSUED_BY', 'ex-insurer', range(0, 6), ()), ('ex-policy', 'PARTY_TO', 'ex-holder', range(0, 5), ()),
+    ('ex-policy', 'COVERS', 'ex-car', (0, 1, 2, 6), ()), ('ex-premium', 'APPLIES_TO', 'ex-policy', (3, 4, 7), ()),
+    ('ex-policy', 'GARAGED_IN', 'ex-town', (0, 1), ()), ('ex-policy', 'RELATED_TO', 'ex-prior', (8, 9), ()),
+    ('ex-policy', 'EFFECTIVE_FROM', 'ex-start', (0, 1), ()), ('ex-policy', 'EXPIRES_ON', 'ex-end', (0,), ()),
+    ('ex-policy', 'SIGNED_BY', 'ex-agent', (2,), ()), ('ex-policy', 'ASSOCIATED_WITH', 'ex-bank', (6,), (0,)),
+    ('ex-car', 'LOAN_FROM', 'ex-loan', range(10, 15), ()), ('ex-car', 'SERVICED_BY', 'ex-shop', (15, 16, 17), ()),
+    ('ex-car', 'FILED_WITH', 'ex-dmv', (18, 19), ()), ('ex-car', 'SUBJECT_OF', 'ex-recall', (20, 21), (0, 1)),
+    ('ex-holder', 'OWNER_OF', 'ex-car', (2, 6), ()), ('ex-car', 'ASSOCIATED_WITH', 'ex-bank', (6, 10), ()),
+    ('ex-car', 'CONTRACTED_WITH', 'ex-dealer', (22,), ()), ('ex-car', 'RELATED_TO', 'ex-tires', (23,), ()),
+    ('ex-car', 'RELATED_TO', 'ex-plate', (24,), ()),
+    ('ex-loan', 'PAID_TO', 'ex-servicer', (25, 26, 27), ()), ('ex-loan', 'LOAN_FROM', 'ex-bank', (10,), ()),
+    ('ex-payment', 'PAYMENT_FOR', 'ex-loan', (28,), ()), ('ex-loan', 'EXPIRES_ON', 'ex-payoff', (29, 30), ()),
+    ('ex-servicer', 'LOCATED_AT', 'ex-hq', (31,), ()),
+    ('ex-shop', 'LOCATED_IN', 'ex-town', (32,), ()), ('ex-dmv', 'LOCATED_IN', 'ex-town', (33, 34), ()),
+    ('ex-holder', 'RESIDES_AT', 'ex-town', (35,), ()), ('ex-insurer', 'ISSUED_BY', 'ex-prior', (8,), ()),
+    *[('ex-insurer', 'LOCATED_AT', f'ex-pier-{index}', (36 + index % 3,), ()) for index in range(1, 5)],
+]:
+    NB_LINKS.append((start, rel_type, end, [(EX_DOCS[doc], index in inferred, 0.9) for index, doc in enumerate(documents)]))
+
 # The sample person and organization also open as a neighborhood, for the inspector's source checks.
 NB_ENTITIES.update({'person-1': ('Person', 'Alex Example'), 'org-1': ('Organization', 'Example Utility')})
 NB_LINKS.append(('person-1', 'CUSTOMER_OF', 'org-1', [(101, True, None)]))
@@ -703,7 +742,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'detail': 'Synthetic graph search failure'}, 503)
                 if get('exclude_documents') in ('1', 'true'):
                     # The graph landing: entities with the derived fields, the owner flagged but not removed.
-                    pool = {**NB_ENTITIES, **{identity(node): (node['labels'][0], node['props']['name'])
+                    pool = {**{uid: entity for uid, entity in NB_ENTITIES.items() if not uid.startswith('ex-')},
+                            **{identity(node): (node['labels'][0], node['props']['name'])
                                               for node in SEARCH_NODES if 'Document' not in node['labels']}}
                     rows = [{'labels': [label], 'properties': {'uuid': uid, 'name': name},
                              'evidence_doc_count': nb_fields(uid)['evidence_doc_count'], 'matched_alias': None,

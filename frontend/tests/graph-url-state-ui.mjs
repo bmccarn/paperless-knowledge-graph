@@ -47,7 +47,7 @@ try {
   assert.equal(await page.getByRole("toolbar", { name: "View" }).count(), 1);
   const keysUrl = page.url();
   const keysHistory = await page.evaluate(() => history.length);
-  for (const key of ["1", "n", "2"]) {
+  for (const key of ["1", "n", "6"]) {
     await page.keyboard.press(key);
     await page.waitForTimeout(100);
     assert.equal(page.url(), keysUrl, `key ${key}`);

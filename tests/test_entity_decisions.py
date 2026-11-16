@@ -138,7 +138,7 @@ class MemoryGraph:
                 "before_image": {"nodes": before, "edges": []}})
         primary = self.nodes[primary_uuid]
         duplicate = self.nodes.pop(duplicate_uuid)
-        primary["aliases"] = list(dict.fromkeys([*primary.get("aliases", []), duplicate["name"], *duplicate.get("aliases", [])]))
+        primary["aliases"] = [a for a in dict.fromkeys([*primary.get("aliases", []), duplicate.get("name"), *duplicate.get("aliases", [])]) if a]
         primary["source_doc_ids"] = sorted(set(primary.get("source_doc_ids", [])) | set(duplicate.get("source_doc_ids", [])))
         if review_id:
             from app.entity_policy import human_alias_record, trusted_aliases

@@ -10,7 +10,7 @@ from app.entity_decisions import (EntityMergeProhibited, NO_MERGE_DECISIONS,
                                   carried_vetoes, entity_identity, merge_is_prohibited, identity_has_unresolved_veto,
                                   alias_revocations, alias_replay_prohibited)
 from app.entity_policy import (ENTITY_TYPES, RESOLUTION_POLICY, EXPLICIT_REVIEW_METHOD, display_name, name_key,
-    AUTO_MERGE_REVIEW_METHOD, LOW_RISK_LABELS, TERMINAL_DECISIONS, auto_merge_blocker, auto_merge_survivor,
+    AUTO_MERGE_REVIEW_METHOD, AUTO_MERGE_LABELS, TERMINAL_DECISIONS, auto_merge_blocker, auto_merge_key, auto_merge_survivor,
     context_bound_name, trusted_aliases, source_alias_record, alias_is_quarantined, initialism_expansions,
     has_local_alias_definition, verified_coreference, valid_identity_receipt, digest)
 
@@ -26,6 +26,8 @@ class EntityResolver:
         self._mutation_lock = asyncio.Lock()
 
     async def _ensure_embedding(self, props: dict) -> str:
+        if not isinstance(props.get("name"), str) or not props["name"].strip():
+            return props["uuid"]  # nameless record nodes have no entity vector
         await embeddings_store.store_entity_embedding(
             props["uuid"], props["name"], props["entity_type"], props.get("description") or "",
             only_missing=True)
@@ -119,12 +121,11 @@ class EntityResolver:
             return "missing", left_uuid, right_uuid
         left, right = nodes[left_uuid], nodes[right_uuid]
         label = (left.get("labels") or [""])[0]
-        if label not in LOW_RISK_LABELS:
+        if label not in AUTO_MERGE_LABELS:
             return "label", left_uuid, right_uuid
-        key = name_key(str(left["properties"].get("name") or ""), label)
+        key = auto_merge_key(left["properties"], label)
         # shortcut: reads the whole label per pair; batch the count if labels reach tens of thousands of nodes.
-        count = sum(1 for node in await graph_store.get_entities_by_type(label)
-                    if isinstance(node.get("name"), str) and name_key(node["name"], label) == key)
+        count = sum(1 for node in await graph_store.get_entities_by_type(label) if auto_merge_key(node, label) == key)
         primary, duplicate = auto_merge_survivor({**left["properties"], "uuid": left_uuid},
                                                  {**right["properties"], "uuid": right_uuid})
         primary_uuid, duplicate_uuid = primary["uuid"], duplicate["uuid"]
@@ -171,8 +172,10 @@ class EntityResolver:
                 raise ValueError("Entity pair not found")
             keep = entity_identity(primary)
             remove = entity_identity(duplicate)
+            # A nameless Address has the address as its identity; only the automatic gate merges one.
             if any(not isinstance(identity.get("canonical_name"), str) or not identity["canonical_name"].strip()
-                   for identity in (keep, remove)):
+                   for identity in (keep, remove)) or (not automatic and any(
+                       not isinstance(node["properties"].get("name"), str) for node in (primary, duplicate))):
                 raise ValueError("Malformed canonical identity requires explicit repair before merge")
             if not keep["type"] or keep["type"] != remove["type"]:
                 raise ValueError("Only entities of the same type may merge")

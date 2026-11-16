@@ -125,6 +125,32 @@ try {
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await inspector.waitFor();
 
+  // Paths obeys the shared owner and support filters only; the sheet says which groups the path search does not use.
+  await page.goto(`${base}/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1&from=2026-01`);
+  await inspector.waitFor();
+  assert.equal(searches.at(-1).get('include_owner'), '0');
+  assert.equal(await page.getByText(/links match, /).count(), 0, 'Paths has no neighborhood count line');
+  await page.getByRole('button', { name: /^Filters/ }).click();
+  const sheet = page.getByRole('dialog', { name: 'Filters' });
+  await sheet.getByText('The path search does not use families, confidence, document counts, dates or types.', { exact: true }).waitFor();
+  for (const group of ['Relationship families', 'Confidence', 'Evidence documents per link', 'Document date', 'Document type'])
+    assert.notEqual(await sheet.getByRole('group', { name: group }).getAttribute('disabled'), null, `${group} is disabled in Paths`);
+  for (const group of ['Support', 'Owner'])
+    assert.equal(await sheet.getByRole('group', { name: group }).getAttribute('disabled'), null, `${group} applies to Paths`);
+  const hideOwner = sheet.getByRole('checkbox', { name: /Hide the owner entity/ });
+  assert.equal(await hideOwner.isChecked(), true, 'the owner is hidden in Paths by default');
+  await hideOwner.uncheck();
+  await page.waitForURL(url => url.searchParams.get('owner') === 'show');
+  await sheet.getByRole('radio', { name: /Supported only/ }).check();
+  await page.waitForURL(url => url.searchParams.get('support') === 'supported');
+  await page.keyboard.press('Escape');
+  await inspector.getByText('The owner is included. Inferred links are left out.', { exact: false }).waitFor();
+  assert.equal(searches.at(-1).get('include_owner'), '1');
+  assert.equal(searches.at(-1).get('allow_inferred'), '0');
+  // The path bar toggle writes the same key: off is an explicit hide.
+  await page.getByRole('button', { name: 'Include the owner', exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get('owner') === 'hide');
+
   // No path joins the two: the response still names both ends.
   await page.goto(`${base}/graph?view=path&a=nb-money-0&b=nb-leaf`);
   await page.getByText('No path of at most 4 links joins Harbor Mutual Insurance and Spare key tag. The owner is left out.', { exact: true }).waitFor();

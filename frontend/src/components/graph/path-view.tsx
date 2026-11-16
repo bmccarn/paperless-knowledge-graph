@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ApiError, getGraphLink, getGraphPaths, searchEntities } from "@/lib/api";
 import { kindColor, nodeKind } from "@/lib/categories";
 import { nodeLabel, nodeRadius, shapePath } from "@/lib/graph-encoding";
+import { ownerHidden, parseFilters } from "@/lib/graph-filters";
 import { plural, quoteParts, supportText, typeWords } from "@/lib/graph-inspector";
 import { entityName, entityRow, type EntityRow } from "@/lib/graph-landing";
 import { graphNavigation, listedViews } from "@/lib/graph-url-state";
@@ -345,8 +346,10 @@ export function PathView({ focus, phone }: { focus: PathNode | null; phone: bool
   const params = useSearchParams();
   const a = params.get("a") || null, b = params.get("b") || null;
   const maxLen = parseMaxLen(params.get("maxlen"));
-  const includeOwner = params.get("owner") === "show";
-  const allowInferred = params.get("support") !== "supported";
+  // The shared filters: Paths obeys the owner and support keys; the path search takes no other filter.
+  const filters = parseFilters(new URLSearchParams(params));
+  const includeOwner = !ownerHidden(filters, "path");
+  const allowInferred = filters.support !== "supported";
   const [picked, setPicked] = useState<Record<string, PathNode>>({});
   const [result, setResult] = useState<Result | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -430,7 +433,7 @@ export function PathView({ focus, phone }: { focus: PathNode | null; phone: bool
               ))}
             </div>
           </div>
-          <Toggle on={includeOwner} label="Include the owner" onClick={() => update({ owner: includeOwner ? null : "show" }, "replace")} />
+          <Toggle on={includeOwner} label="Include the owner" onClick={() => update({ owner: includeOwner ? "hide" : "show" }, "replace")} />
           <Toggle on={allowInferred} label="Inferred links" onClick={() => update({ support: allowInferred ? "supported" : null }, "replace")} />
         </div>
       </div>

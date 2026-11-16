@@ -113,8 +113,8 @@ try {
   await settle(page, ': 15 entities');
   await inspector(page).getByRole('button', { name: 'Show 2 more links from here' }).click();
   await page.waitForURL(url => url.searchParams.get('x') === 'ex-car,ex-car');
-  frame = await settle(page, ': 17 entities');
-  assert.ok(frame['All links shown']);
+  await settle(page, ': 17 entities');
+  await page.waitForFunction(() => window.__frame['All links shown'], null, { timeout: 10000 });
   assert.equal(await inspector(page).getByRole('button', { name: 'All links shown' }).isDisabled(), true);
 
   // Collapse in the trail removes the branch and everything added through it.

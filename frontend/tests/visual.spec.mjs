@@ -64,6 +64,9 @@ const extraStates = [
     await page.getByRole("button", { name: /^Filters/ }).filter({ visible: true }).click();
     await page.getByRole("dialog", { name: "Filters", exact: true }).waitFor();
   } },
+  // A group selected on the map: its ring, all of its links between groups and the inspector; on a phone, its sheet.
+  { ...mainStates.find(state => state.name === "graph-overview"), name: "graph-overview-group", state: "group",
+    route: "/graph?view=overview&sel=grp:efe64294-b15a-9c31-be7d-1f907ee458bc" },
   { name: "graph-missing", route: "/graph?focus=removed-entity",
     ready: page => page.getByText("This entity no longer exists. It may have been merged.", { exact: true }) },
   ...["initial", "results", "empty", "error"].map(state => ({

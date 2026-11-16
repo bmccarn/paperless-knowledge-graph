@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getGraphOverview } from "@/lib/api";
-import { kindColor, nodeKind, nodeLabelText } from "@/lib/categories";
+import { kindColor, nodeKind, nodeLabelText, NODE_LABELS, type Kind } from "@/lib/categories";
 import { displayName } from "@/lib/graph-encoding";
 import { defaultFilters, filterUrl, parseFilters, type GraphFilters } from "@/lib/graph-filters";
 import { plural } from "@/lib/graph-inspector";
@@ -21,6 +21,7 @@ import { cn, errMsg } from "@/lib/utils";
 import type { ArrangeRequest } from "@/lib/overview.worker";
 import { filterChips, GraphFilterChips, GraphFiltersSheet } from "./graph-filters";
 import { GraphHeader } from "./graph-landing";
+import { GraphLegend } from "./graph-legend";
 import type { OverviewCamera } from "./overview-canvas";
 import { Toggle } from "./path-view";
 import { ViewSheet, ViewSwitcher } from "./view-switcher";
@@ -108,6 +109,41 @@ export function KindMix({ kinds, className }: { kinds: KindCount[]; className?: 
     <div aria-hidden className={cn("flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full", className)}>
       {kinds.map(kind => <span key={kind.label} className="h-full rounded-full" style={{ width: `${(100 * kind.count) / total}%`, background: kindColor(nodeKind(kind.label).kind) }} />)}
     </div>
+  );
+}
+
+const KIND_NAMES: Record<Kind, string> = { people: "People", org: "Organizations", place: "Places", money: "Money", agree: "Agreements",
+  thing: "Things", health: "Health", time: "Time", docs: "Documents", unknown: "Other" };
+
+/** Only what is drawn: kind colors at map zoom, shapes and line styles at detail zoom. Collapsed until opened, as on Focus. */
+function OverviewLegend({ map, detail }: { map: OverviewMap; detail: boolean }) {
+  const { kinds, labels, inferred, between } = useMemo(() => {
+    const seen = new Set(map.nodes.filter((_, at) => !Number.isNaN(map.positions[at * 2])).map(node => node.label));
+    return { kinds: (Object.keys(KIND_NAMES) as Kind[]).filter(kind => [...seen].some(label => nodeKind(label).kind === kind)),
+      labels: [...NODE_LABELS.filter(label => seen.has(label)), ...([...seen].some(label => nodeKind(label).kind === "unknown") ? ["Other"] : [])],
+      inferred: map.links.some(link => link.support === 2), between: map.links.some(link => map.groupOf[link.source] !== map.groupOf[link.target]) };
+  }, [map]);
+  const line = (dash: string | undefined, text: string, stroke = "var(--graph-edge)") => (
+    <li className="flex items-center gap-2 label-12 text-fg-muted"><svg aria-hidden width="24" height="10"><line x1="1" y1="5" x2="23" y2="5" stroke={stroke} strokeWidth={detail ? 2 : 1} strokeDasharray={dash} /></svg>{text}</li>);
+  return (
+    <GraphLegend className="max-md:hidden">
+      <ul aria-label="Kinds" className="flex flex-wrap gap-x-4 gap-y-1">
+        {detail
+          ? labels.map(label => <li key={label}><KindShape label={label} className="whitespace-nowrap label-12 text-fg-muted" /></li>)
+          : kinds.map(kind => (
+            <li key={kind} className="flex items-center gap-2 label-12 text-fg-muted">
+              <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: kindColor(kind) }} />{KIND_NAMES[kind]}
+            </li>))}
+      </ul>
+      <ul aria-label="Links" className="flex flex-wrap gap-x-4 gap-y-1">
+        {detail && line(undefined, "Supported")}
+        {detail && inferred && line("6 4", "Inferred")}
+        {!detail && between && line("2 3", "Strongest links between groups", "var(--border)")}
+      </ul>
+      <p className="label-12 text-fg-muted">
+        {detail ? "Size: evidence documents. Zoom out for the map of groups." : "Dots show kind by color. Zoom in for shapes, sizes and names."}
+      </p>
+    </GraphLegend>
   );
 }
 
@@ -298,6 +334,7 @@ export function OverviewPage() {
   });
   const { response, map, error, retry } = useOverviewMap(filters);
   const [list, setList] = useState(false);
+  const [detail, setDetail] = useState(false);
   const camera = useRef<OverviewCamera | null>(null);
   const onReady = useCallback((value: OverviewCamera | null) => { camera.current = value; }, []);
 
@@ -377,24 +414,28 @@ export function OverviewPage() {
         : null;
     body = (
       <div className="flex min-h-0 flex-1">
-        <section aria-label="Graph workspace" className="relative min-h-0 min-w-0 flex-1">
-          {list
-            ? <GroupTable map={map} selected={selectedGroup >= 0 ? selectedGroup : null} onSelectGroup={selectGroup} />
-            : <OverviewCanvas map={map} name={text!.name} selectedGroup={selectedGroup >= 0 ? selectedGroup : null} selectedNode={selectedNode >= 0 ? selectedNode : null}
-                onSelectGroup={group => (group === null ? navigate({ selection: null }) : selectGroup(group))} onSelectNode={selectNode} onReady={onReady} />}
-          <div className="absolute right-4 top-3 rounded-md border border-border-strong bg-surface pl-2.5 pr-1">
-            <Toggle on={list} label="Show as list" onClick={() => setList(!list)} />
-          </div>
-          {!list && (
-            <div role="group" aria-label="Zoom" className="absolute bottom-4 right-4 flex flex-col overflow-hidden rounded-(--r-ctl) border border-border-strong bg-surface">
-              {([["Zoom in", Plus, 1.5], ["Zoom out", Minus, 1 / 1.5], ["Fit view", Maximize, 0]] as const).map(([label, Icon, factor]) => (
-                <Button key={label} variant="ghost" size="icon-lg" aria-label={label} title={label}
-                  onClick={() => (factor ? camera.current?.zoomBy(factor) : camera.current?.fit())}
-                  className="rounded-none text-fg not-first:border-t not-first:border-border md:size-8"><Icon /></Button>
-              ))}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <section aria-label="Graph workspace" className="relative min-h-0 min-w-0 flex-1">
+            {list
+              ? <GroupTable map={map} selected={selectedGroup >= 0 ? selectedGroup : null} onSelectGroup={selectGroup} />
+              : <OverviewCanvas map={map} name={text!.name} selectedGroup={selectedGroup >= 0 ? selectedGroup : null} selectedNode={selectedNode >= 0 ? selectedNode : null}
+                  onSelectGroup={group => (group === null ? navigate({ selection: null }) : selectGroup(group))} onSelectNode={selectNode} onReady={onReady}
+                  detail={detail} onDetail={setDetail} />}
+            <div className="absolute right-4 top-3 rounded-md border border-border-strong bg-surface pl-2.5 pr-1">
+              <Toggle on={list} label="Show as list" onClick={() => setList(!list)} />
             </div>
-          )}
-        </section>
+            {!list && (
+              <div role="group" aria-label="Zoom" className="absolute bottom-4 right-4 flex flex-col overflow-hidden rounded-(--r-ctl) border border-border-strong bg-surface">
+                {([["Zoom in", Plus, 1.5], ["Zoom out", Minus, 1 / 1.5], ["Fit view", Maximize, 0]] as const).map(([label, Icon, factor]) => (
+                  <Button key={label} variant="ghost" size="icon-lg" aria-label={label} title={label}
+                    onClick={() => (factor ? camera.current?.zoomBy(factor) : camera.current?.fit())}
+                    className="rounded-none text-fg not-first:border-t not-first:border-border md:size-8"><Icon /></Button>
+                ))}
+              </div>
+            )}
+          </section>
+          {!list && <OverviewLegend map={map} detail={detail} />}
+        </div>
         {inspector && <aside aria-label="Evidence inspector" className="w-[380px] shrink-0 overflow-y-auto border-l border-border bg-background">{inspector}</aside>}
       </div>);
   }

@@ -1,6 +1,6 @@
 /** Overview: groups by label propagation and a fixed map layout, from `GET /graph/overview`. Pure; runs in a Web Worker. */
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force-3d";
-import { nodeRadius } from "./graph-encoding";
+import { nodeLabel, nodeRadius } from "./graph-encoding";
 import type { GraphFilters } from "./graph-filters";
 
 export interface OverviewResponse {
@@ -26,11 +26,20 @@ export const OVERVIEW_FAMILIES = ["parties", "money", "coverage", "health", "ser
 export const GROUP_MIN = 4;
 const ROUNDS = 20;
 const COLLIDE_TICKS = 40;
-/** Graph units between two group circles, so a group's name fits above it. */
+/** Graph units between two group circles, before the map's scale is known. */
 const GROUP_GAP = 36;
-/** The small groups band: one cell per set, in rows above the map. */
-const CELL = 26;
-const ROW = 22;
+/**
+ * The map is arranged for the area the canvas fits it into at 1440 x 900, in screen pixels. Gaps, the room for group
+ * names and the small groups band are sized in pixels at that fit, so they keep their size on screen at any archive size.
+ */
+export const FIT_AREA = { width: 1152, height: 676 };
+/** The largest groups get room for their name above their circle. */
+export const NAMED = 16;
+const PX = { gap: 14, name: 24, cell: 13, row: 9, caption: 26, bandGap: 32, dot: 3.4 };
+/** Group names: Geist Serif 15 px and the count in Geist 12 px, estimated, so the layout never depends on loaded fonts. */
+export const nameWidth = (name: string, count: number) => name.length * 7.6 + String(count).length * 7.2 + 14;
+/** At map zoom, lines between groups are drawn for this many pairs of groups. */
+export const BRIDGES = 16;
 
 export function readOverview(response: OverviewResponse): { nodes: OverviewNode[]; links: OverviewLink[] } {
   const at = (name: string) => response.columns.indexOf(name);
@@ -105,6 +114,8 @@ export interface OverviewGroup {
   r: number;
 }
 export interface OverviewMap {
+  /** The scale the map was arranged for: the fit zoom on a 1440 x 900 screen. */
+  scale: number;
   nodes: OverviewNode[];
   links: OverviewLink[];
   /** x, y per node index; NaN for an entity that is not drawn. */
@@ -116,6 +127,7 @@ export interface OverviewMap {
   ownerOnly: number;
   /** Entities, not drawn, whose links the filters hide. */
   hidden: number;
+  /** The small groups' dots; their caption sits above `y0`, inside `bounds`. */
   band: { x0: number; y0: number; x1: number; y1: number } | null;
   bounds: { x0: number; y0: number; x1: number; y1: number };
   /** Group index per node; -1 in the small groups band or not drawn. */
@@ -162,17 +174,27 @@ export function layoutGroup(members: number[], links: OverviewLink[], entities: 
   return { x, y, r: r + 12 };
 }
 
+type Rect = { x0: number; y0: number; x1: number; y1: number };
+/** The distance from a point to a rectangle; 0 inside it. */
+const reach = (x: number, y: number, box: Rect) => Math.hypot(Math.max(box.x0 - x, 0, x - box.x1), Math.max(box.y0 - y, 0, y - box.y1));
+/** A circle's name box: centered above it, `w` by `h`. */
+export const nameBox = (x: number, y: number, r: number, { w, h }: { w: number; h: number }): Rect => ({ x0: x - w / 2, y0: y - r - h, x1: x + w / 2, y1: y - r });
+
 /**
  * Circles placed largest first along a spiral from the center, each at the first spot where it touches no other.
- * A step inside another circle skips ahead by the overlap, which never passes a free spot.
+ * A circle with a `names` entry brings its name box, which touches no other circle or name box either. `aspect`
+ * stretches the spiral across, so the map fills a wide screen.
+ * A step inside another circle skips ahead by the overlap, which never passes a free spot; other steps are half the
+ * room a circle needs.
  */
-export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: number }[] {
+export function packCircles(radii: number[], gap = GROUP_GAP, names: ({ w: number; h: number } | null)[] = [], aspect = 1): { x: number; y: number }[] {
   const placed: { x: number; y: number; r: number }[] = [];
+  const boxes: Rect[] = [];
   const pitch = 2 * gap;
   const a = pitch / (2 * Math.PI);
   // A grid of placed circles: circles go out largest first, so a later circle can touch circle i only within
   // 2 r_i + gap of its center. Groups come in entity order, which is not always radius order.
-  const CELL = 64;
+  const CELL = Math.max(64, gap);
   const grid = new Map<number, number[]>();
   const key = (gx: number, gy: number) => gx * 1e6 + gy;
   const order = radii.map((_, index) => index).sort((p, q) => radii[q] - radii[p] || p - q);
@@ -182,13 +204,19 @@ export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: n
     let theta = 0;
     for (;;) {
       const rho = a * theta;
-      const x = rho * Math.cos(theta), y = rho * Math.sin(theta);
+      const x = aspect * rho * Math.cos(theta), y = rho * Math.sin(theta);
       let overlap = 0;
       for (const index of grid.get(key(Math.floor(x / CELL), Math.floor(y / CELL))) ?? []) {
         const other = placed[index];
         overlap = Math.max(overlap, r + other.r + gap - Math.hypot(x - other.x, y - other.y));
       }
+      // Name boxes are few (the largest groups), so they are checked one by one.
+      const box = names[at] ? nameBox(x, y, r, names[at]!) : null;
+      if (overlap <= 0 && (boxes.some(other => reach(x, y, other) < r + gap)
+        || (box && (boxes.some(other => box.x0 < other.x1 + gap && box.x1 > other.x0 - gap && box.y0 < other.y1 + gap && box.y1 > other.y0 - gap)
+          || placed.some(other => reach(other.x, other.y, box) < other.r + gap))))) overlap = Number.MIN_VALUE;
       if (overlap <= 0) {
+        if (box) boxes.push(box);
         const reach = 2 * r + gap;
         for (let gx = Math.floor((x - reach) / CELL); gx <= Math.floor((x + reach) / CELL); gx++)
           for (let gy = Math.floor((y - reach) / CELL); gy <= Math.floor((y + reach) / CELL); gy++) {
@@ -201,7 +229,7 @@ export function packCircles(radii: number[], gap = GROUP_GAP): { x: number; y: n
         break;
       }
       // Steps of half the radius sample the spiral finer than any circle; arc length to angle: ds = sqrt(rho^2 + a^2) dtheta.
-      theta += Math.max(overlap, r / 2) / Math.hypot(rho, a);
+      theta += Math.max(overlap, (r + gap) / 2) / (aspect * Math.hypot(rho, a));
     }
   }
   return centers;
@@ -246,7 +274,44 @@ export function arrangeOverview(response: OverviewResponse, filters: Pick<GraphF
 
   const positions = new Float64Array(nodes.length * 2).fill(NaN);
   const shapes = big.map(members => layoutGroup(members, links, nodes));
-  const centers = packCircles(shapes.map(shape => shape.r));
+  // Packed for a scale, then measured at the scale that fits it; a few rounds settle the room for names and the band.
+  const radii = shapes.map(shape => shape.r);
+  const widths = big.slice(0, NAMED).map(members => nameWidth(nodeLabel(nodes[members[0]].name, nodes[members[0]].id, nodes[members[0]].label), members.length));
+  const place = (scale: number) => {
+    const centers = packCircles(radii, PX.gap / scale, widths.map(w => ({ w: w / scale, h: PX.name / scale })), FIT_AREA.width / FIT_AREA.height);
+    const map = centers.length
+      ? centers.reduce((box, { x, y }, index) => {
+          const r = radii[index], name = index < NAMED ? nameBox(x, y, r, { w: widths[index] / scale, h: PX.name / scale }) : null;
+          return { x0: Math.min(box.x0, x - r, name?.x0 ?? x), y0: Math.min(box.y0, y - r, name?.y0 ?? y), x1: Math.max(box.x1, x + r, name?.x1 ?? x), y1: Math.max(box.y1, y + r) };
+        }, { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity })
+      : { x0: -240, y0: 0, x1: 240, y1: 0 };
+    let band = null;
+    if (small.length) {
+      // A band above the map, as wide as the map (at least 24 cells), in rows of cells, with its caption above it.
+      const cell = PX.cell / scale, row = PX.row / scale;
+      const perRow = Math.max(24, Math.floor((map.x1 - map.x0) / cell));
+      const rows = Math.ceil(small.length / perRow);
+      const y1 = centers.length ? map.y0 - PX.bandGap / scale : rows * row;
+      const x0 = centers.length ? map.x0 : -perRow * cell / 2;
+      band = { x0, y0: y1 - rows * row, x1: x0 + Math.min(perRow, small.length) * cell, y1, perRow, cell, row };
+    }
+    const bounds = band && centers.length
+      ? { x0: Math.min(map.x0, band.x0), y0: band.y0 - PX.caption / scale, x1: Math.max(map.x1, band.x1), y1: map.y1 }
+      : band ? { x0: band.x0, y0: band.y0 - PX.caption / scale, x1: band.x1, y1: band.y1 } : map;
+    const fit = Math.min(2, FIT_AREA.width / Math.max(1, bounds.x1 - bounds.x0), FIT_AREA.height / Math.max(1, bounds.y1 - bounds.y0));
+    return { centers, band, bounds, fit, scale };
+  };
+  // The first guess: the circles' squares fill half the area.
+  let layout = place(Math.min(2, Math.sqrt(FIT_AREA.width * FIT_AREA.height / 2 / Math.max(1, radii.reduce((sum, r) => sum + 4 * r * r, 0)))));
+  // Pixel room makes the map's area about C + G / scale^2, so 1 / fit^2 is close to linear in 1 / scale^2: each round
+  // aims at the fixed point fit = scale of the line through the last two rounds.
+  for (let round = 0, last = layout; round < 6 && Math.abs(layout.fit - layout.scale) > 0.02 * layout.scale; round++) {
+    const [x0, y0, x1, y1] = [last.scale ** -2, last.fit ** -2, layout.scale ** -2, layout.fit ** -2];
+    const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+    const x = slope < 1 && round > 0 ? (y1 - slope * x1) / (1 - slope) : y1;
+    [last, layout] = [layout, place(x > 0 ? x ** -0.5 : layout.fit)];
+  }
+  const { centers, band: cells, bounds, scale } = layout;
   const groups: OverviewGroup[] = big.map((members, index) => {
     const { x, y, r } = shapes[index];
     const center = centers[index];
@@ -259,33 +324,48 @@ export function arrangeOverview(response: OverviewResponse, filters: Pick<GraphF
     return { id: nodes[members[0]].id, lead: members[0], members, links: inner[index], x: center.x, y: center.y, r,
       kinds: [...kinds].map(([label, count]) => ({ label, count })).sort((p, q) => q.count - p.count || (p.label < q.label ? -1 : 1)) };
   });
-  const bounds = groups.length
-    ? { x0: Math.min(...groups.map(g => g.x - g.r)), y0: Math.min(...groups.map(g => g.y - g.r)),
-        x1: Math.max(...groups.map(g => g.x + g.r)), y1: Math.max(...groups.map(g => g.y + g.r)) }
-    : { x0: -240, y0: 0, x1: 240, y1: 0 };
   let band = null;
-  if (small.length) {
-    // A band above the map, as wide as the map (at least 24 cells), in rows of cells.
-    const perRow = Math.max(24, Math.floor((bounds.x1 - bounds.x0) / CELL));
-    const rows = Math.ceil(small.length / perRow);
-    const y0 = (groups.length ? bounds.y0 - GROUP_GAP * 1.5 : 0) - rows * ROW - 28;
-    const x0 = groups.length ? bounds.x0 : -perRow * CELL / 2;
+  if (cells) {
+    const { x0, y0, x1, y1, perRow, cell, row } = cells;
     small.forEach((members, index) => {
-      const cx = x0 + (index % perRow) * CELL + CELL / 2, cy = y0 + 28 + Math.floor(index / perRow) * ROW + ROW / 2;
-      // One dot, two side by side, or three in a triangle.
-      const spots = [[[0, 0]], [[-4, 0], [4, 0]], [[-4.5, 3], [4.5, 3], [0, -4.5]]][members.length - 1];
+      const cx = x0 + (index % perRow) * cell + cell / 2, cy = y0 + Math.floor(index / perRow) * row + row / 2;
+      // One dot, or two or three touching in a row.
       members.forEach((node, k) => {
-        positions[node * 2] = cx + spots[k][0];
-        positions[node * 2 + 1] = cy + spots[k][1];
+        positions[node * 2] = cx + (k - (members.length - 1) / 2) * PX.dot / scale;
+        positions[node * 2 + 1] = cy;
       });
     });
-    band = { x0, y0, x1: x0 + Math.min(perRow, small.length) * CELL, y1: y0 + 28 + rows * ROW };
+    band = { x0, y0, x1, y1 };
   }
-  const box = band && groups.length
-    ? { x0: Math.min(bounds.x0, band.x0), y0: band.y0, x1: Math.max(bounds.x1, band.x1), y1: bounds.y1 }
-    : band ?? bounds;
-  return { nodes, links, positions, groups, small, ownerOnly, hidden, band, bounds: box, groupOf,
+  return { scale, nodes, links, positions, groups, small, ownerOnly, hidden, band, bounds, groupOf,
     timings: { groups: grouped - start, layout: now() - grouped } };
+}
+
+/**
+ * The links between groups that map zoom draws, as indexes into `links`. One line for each of the `limit` pairs of
+ * groups with the most supporting documents between them (then the most links, then the smaller group indexes): the
+ * pair's link with the most documents (then the first). Links into the small groups band are left out. A selected
+ * group adds every link from it to another group or to the band.
+ */
+export function bridgeLinks(links: OverviewLink[], groupOf: Int32Array, selected: number | null = null, limit = BRIDGES): number[] {
+  const pairs = new Map<string, { a: number; b: number; weight: number; count: number; best: number }>();
+  const shown = new Set<number>();
+  links.forEach((link, index) => {
+    const a = groupOf[link.source], b = groupOf[link.target];
+    if (selected !== null && (a === selected) !== (b === selected)) shown.add(index);
+    if (a < 0 || b < 0 || a === b) return;
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+    const pair = pairs.get(key);
+    if (!pair) pairs.set(key, { a: Math.min(a, b), b: Math.max(a, b), weight: link.weight, count: 1, best: index });
+    else {
+      pair.weight += link.weight;
+      pair.count++;
+      if (link.weight > links[pair.best].weight) pair.best = index;
+    }
+  });
+  [...pairs.values()].sort((p, q) => q.weight - p.weight || q.count - p.count || p.a - q.a || p.b - q.b)
+    .slice(0, limit).forEach(pair => shown.add(pair.best));
+  return [...shown].sort((p, q) => p - q);
 }
 
 /** "Person, organization, financial item": the three most common kinds of a group, in words. */

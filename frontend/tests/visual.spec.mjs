@@ -28,6 +28,10 @@ mainStates.push({ name: "graph-filters", route: "/graph?focus=nb-rowan&support=s
 const pathRoute = "/graph?focus=nb-money-0&view=path&a=nb-money-0&b=nb-places-1";
 // The best quotes arrive per link after the paths; path 1 has three links.
 mainStates.push({ name: "graph-path", route: pathRoute, ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(2) });
+// Explore after two expansions, to hop 3. The link count includes the links among branches from a second request;
+// a phone adds 4 entities per expansion instead of 6.
+mainStates.push({ name: "graph-explore", route: "/graph?focus=ex-policy&view=explore&x=ex-car,ex-loan", ready: page => page.getByRole("img", {
+  name: page.viewportSize().width < 768 ? "Explore from Policy KT-9030 (auto): 15 entities, 20 links, 3 hops." : "Explore from Policy KT-9030 (auto): 18 entities, 24 links, 3 hops.", exact: true }) });
 mainStates.push({ name: "graph-timeline", route: "/graph?focus=nb-timeline&view=timeline", ready: page => page.getByRole("region", { name: "Timeline of Policy TL-2208 (auto)", exact: true }) });
 // The map on a wide screen; the group list on a phone, which has no canvas.
 mainStates.push({ name: "graph-overview", route: "/graph?view=overview",
@@ -350,6 +354,16 @@ const extraStates = [
     ready: page => page.getByRole("list", { name: "Steps of the path" }).locator("blockquote").nth(1) },
   { name: "graph-leaf", route: "/graph?focus=nb-leaf", state: "leaf",
     ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },
+  // Explore with a node selected: its handle, the inspector's grow and collapse buttons, and its links in view.
+  { name: "graph-explore-selected", route: "/graph?focus=ex-policy&view=explore&x=ex-car&sel=ex-car", state: "selected-node",
+    ready: page => page.getByRole("button", { name: /^Show (2|4) more links|^Show more links/ }) },
+  { name: "graph-explore-sparse", route: "/graph?focus=ex-hq&view=explore", state: "sparse",
+    ready: page => page.getByText("Explore from 12 Wharf Rd: 2 entities, 1 link, 1 hop.", { exact: true }) },
+  { name: "graph-explore-trail", route: "/graph?focus=ex-policy&view=explore&x=ex-car", state: "trail-sheet", phoneOnly: true,
+    ready: page => page.getByRole("button", { name: /^Explored from Policy KT-9030 \(auto\)/ }), prepare: async page => {
+      await page.getByRole("button", { name: /^Explored from Policy KT-9030 \(auto\)/ }).click();
+      await page.getByRole("dialog").getByRole("region", { name: "Explored from Policy KT-9030 (auto)" }).waitFor();
+    } },
 ];
 
 test.beforeEach(async ({ page, baseURL, request }, info) => {
@@ -379,7 +393,7 @@ for (const state of [gallery, ...mainStates, ...extraStates]) test(`${state.name
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; scroll-behavior: auto !important; caret-color: transparent !important; }" });
   await state.prepare?.(page);
   if (state.state !== "tooltip") await page.mouse.move(0, 0);
-  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters")
+  const graph = state.name === "graph" || state.name.startsWith("graph-neighborhood") || state.name.startsWith("graph-filters") || state.name.startsWith("graph-explore")
     || (state.name.startsWith("graph-overview") && !info.project.name.startsWith("phone"));
   if (graph) await page.locator("canvas").first().waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);

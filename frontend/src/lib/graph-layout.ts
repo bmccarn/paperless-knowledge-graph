@@ -134,7 +134,7 @@ export interface NeighborhoodLayout {
   entities: number;
 }
 
-const polar = (degrees: number, radius: number) => {
+export const polar = (degrees: number, radius: number) => {
   const angle = (degrees * Math.PI) / 180;
   // Rounding keeps positions byte-identical across engines and reloads.
   const round = (value: number) => Math.round(value * 1000) / 1000 || 0;

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, FileText, MessageSquareText, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, MessageSquareText, Minus, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { KindShape, TypeDot } from "@/components/kind-shape";
@@ -239,19 +239,63 @@ export function NeighborInspector({ summary, neighborId, crossLinks = [], onClos
   );
 }
 
+/**
+ * An entity in Explore, at any hop: its kind, name and distance from the root, the action that grows the view from it
+ * (or opens it in Focus at the last hop), Collapse when it was expanded, and its links drawn in this view.
+ */
+export function ExploreInspector({ entity, hop, rootName, links, grow, onCollapse, onFocusEntity, onClose, ...events }: {
+  entity: { id: string; name: string; label: string; evidence_doc_count: number };
+  hop: number;
+  rootName: string;
+  /** Links drawn in this view, seen from this entity. */
+  links: SummaryLink[];
+  grow: { label: string; disabled: boolean; onClick: () => void };
+  onCollapse?: () => void;
+  onFocusEntity: (id: string) => void;
+  onClose: () => void;
+} & RowEvents) {
+  const name = entityName(entity);
+  return (
+    <Shell label={`Inspector: ${name}`} onClose={onClose}>
+      <p className="label-12 text-fg-muted"><KindShape label={entity.label} className="label-12 text-fg-muted" /></p>
+      <h2 className="mt-2 mb-1 page-title break-words pr-8">{name}</h2>
+      <p className="label-13 text-fg-muted">
+        {plural(entity.evidence_doc_count, "document")} in the archive.{hop > 0 && ` ${plural(hop, "step")} from ${rootName}.`}
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button onClick={grow.onClick} disabled={grow.disabled}>{!grow.disabled && <Plus />}{grow.label}</Button>
+        {onCollapse && <Button variant="outline" onClick={onCollapse}><Minus />Collapse</Button>}
+        {hop < 3 && <Button variant="outline" onClick={() => onFocusEntity(entity.id)}>Open in Focus</Button>}
+        <Button variant="outline" asChild><Link href={askHref(name)}><MessageSquareText />Ask about this</Link></Button>
+      </div>
+      {links.length > 0 && (
+        <>
+          <h3 className={heading}>Linked in this view</h3>
+          <ul aria-label="Linked in this view">{links.map(link => <LinkRow key={link.key} link={link} {...events} />)}</ul>
+        </>
+      )}
+    </Shell>
+  );
+}
+
 /** A link: family, endpoints, type, support state, lowest score and its evidence. `end` replaces the focus for a link between neighbors. */
-export function LinkInspector({ summary, link, end = summary.focus, onClose }: {
+export function LinkInspector({ summary, link, end = summary.focus, onClose, onSelectEntity }: {
   summary: NodeSummary; link: SummaryLink; end?: { id: string; name: string; label: string }; onClose: () => void;
+  /** Explore: each end's name selects that entity, the keyboard route to nodes. */
+  onSelectEntity?: (id: string) => void;
 }) {
+  const endName = (entity: { id: string; name: string; label: string }) => onSelectEntity
+    ? <button type="button" className="text-left underline-offset-4 hover:underline" onClick={() => onSelectEntity(entity.id)}>{entityName(entity)}</button>
+    : <span>{entityName(entity)}</span>;
   const [from, to] = link.direction === "out" ? [end, link.neighbor] : [link.neighbor, end];
   const ids = new Set(link.records.map(record => record.doc_id));
   return (
     <Shell label="Inspector: link" onClose={onClose}>
       <p className="label-12 text-fg-muted">Link in {familyName(link.family)}</p>
       <h2 className="mt-2 mb-1 flex flex-wrap items-baseline gap-x-2 pr-8 font-[family-name:var(--font-geist-serif-regular)] text-xl leading-[26px] text-fg">
-        <span>{entityName(from)}</span>
+        {endName(from)}
         <span className="font-sans label-13 text-fg-muted">{typeWords(link.type).toLowerCase()}</span>
-        <span>{entityName(to)}</span>
+        {endName(to)}
       </h2>
       <p className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border pb-3 pt-2 label-12 text-fg-muted">
         <span className="font-semibold text-fg">{supportText(link)}</span>

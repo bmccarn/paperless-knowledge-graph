@@ -78,8 +78,10 @@ try {
   await page.goto(`${base}/graph?focus=nb-rowan&sel=${encodeURIComponent(key)}`);
   await page.locator('canvas').first().waitFor();
   const toolbar = page.getByRole('toolbar', { name: 'View', exact: true });
-  assert.deepEqual(await toolbar.getByRole('button').allTextContents(), ['Focus', 'Timeline', 'Table', 'Paths']);
+  assert.deepEqual(await toolbar.getByRole('button').allTextContents(), ['Focus', 'Explore', 'Timeline', 'Table', 'Paths']);
   await toolbar.getByRole('button', { name: 'Focus', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator(':focus').innerText(), 'Explore');
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.locator(':focus').innerText(), 'Timeline');
   await page.keyboard.press('ArrowRight');

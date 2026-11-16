@@ -145,10 +145,12 @@ export function TimelineView({ summary, unfilteredTotal, filters, phone, selecti
                 <svg aria-label={`Document marks for ${entityName(row)}`} role="group" viewBox={`0 0 ${trackWidth} ${height}`} preserveAspectRatio="none" className="w-full overflow-visible" style={{ height }}>
                   {range && months.length > 0 && <rect x={rangeX(from, 0)} width={Math.max(2, rangeX(to, trackWidth - 84) - rangeX(from, 0))} height="100%" fill="var(--raised)" />}
                   <line x1={trackWidth - 60} x2={trackWidth - 60} y1="0" y2="100%" stroke="var(--border)" strokeDasharray="3 4" />
+                  {/* Keep visible marks above every neighboring hit area, including other tracks. */}
+                  {tracks.flatMap(({ link, marks, y }) => marks.map((mark, index) => <circle key={`${link.key}:${index}`} aria-hidden cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="12" fill="transparent" className="cursor-pointer" onClick={() => onSelect(link.key, mark.ids[0])} />))}
                   {tracks.map(({ link, marks, y }) => {
                     const dates = marks.filter(mark => mark.month !== null);
                     return <g key={link.key} data-timeline-link={link.key}>
-                      {dates.length > 0 && <line x1={x(dates[0].month)} x2={x(dates[dates.length - 1].month)} y1={y} y2={y} stroke="var(--graph-edge)" strokeWidth={linkWidth(link.records.length)} strokeDasharray={link.support_state === "inferred" ? "6 4" : undefined} />}
+                      {dates.length > 0 && <line x1={x(dates[0].month)} x2={x(dates[dates.length - 1].month)} y1={y} y2={y} pointerEvents="none" stroke="var(--graph-edge)" strokeWidth={linkWidth(link.records.length)} strokeDasharray={link.support_state === "inferred" ? "6 4" : undefined} />}
                       {marks.map((mark, index) => {
                         const title = mark.ids.length > 1
                           ? `${plural(mark.ids.length, "document")}, ${mark.month ? monthLabel(mark.month, true) : "No date"}, ${mark.inferred ? "Inferred" : link.records.some(record => mark.ids.includes(record.doc_id) && record.inferred) ? "Stated and inferred" : "Stated"}, ${typeWords(link.type)}`
@@ -157,7 +159,7 @@ export function TimelineView({ summary, unfilteredTotal, filters, phone, selecti
                           onClick={() => { onSelect(link.key, mark.ids[0]); }} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(link.key, mark.ids[0]); } }}
                           onMouseEnter={() => onMark(mark.ids[0])} onMouseLeave={() => onMark(null)} onFocus={() => onMark(mark.ids[0])} onBlur={() => onMark(null)}
                           style={{ cursor: "pointer" }}>
-                          <title>{title}</title><circle cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="10" fill="none" stroke="var(--fg)" strokeWidth="2" className={selection === link.key ? undefined : "opacity-0 group-focus-visible:opacity-100"} /><circle cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="12" fill="transparent" />
+                          <title>{title}</title><circle cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="10" fill="none" pointerEvents="none" stroke="var(--fg)" strokeWidth="2" className={selection === link.key ? undefined : "opacity-0 group-focus-visible:opacity-100"} /><circle cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="12" fill="transparent" pointerEvents="none" />
                           <circle cx={x(mark.month) + mark.dx} cy={y + mark.dy} r="6" fill={mark.inferred ? "var(--bg)" : (inRange(mark.month, from, to) ? kindColor(nodeKind(row.label).kind) : "var(--graph-faded)")} stroke={(inRange(mark.month, from, to) ? kindColor(nodeKind(row.label).kind) : "var(--graph-faded)")} strokeWidth="2" />
                           {mark.ids.length > 1 && <text x={x(mark.month) + mark.dx + 10} y={y + mark.dy + 4} fontSize="12" fill="var(--fg-muted)">{mark.ids.length}</text>}
                         </g>;

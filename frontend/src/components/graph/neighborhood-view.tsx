@@ -215,7 +215,8 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
   const selectedCross = shownCross?.links.find(link => link.key === selectedLinkId);
   const selectedLink = summary?.links.find(link => link.key === selectedLinkId)
     ?? (selectedCross && asLink(selectedCross.link, selectedCross.source));
-  const markedDocs = useMemo(() => new Set([...(isTimeline && selectedDoc !== null && selectedLink?.records.some(record => record.doc_id === selectedDoc) ? [selectedDoc] : selectedLink?.records.map(record => record.doc_id) ?? []), ...(isTimeline && markedDoc !== null ? [markedDoc] : [])]), [selectedLink, isTimeline, markedDoc, selectedDoc]);
+  const timelineDocument = isTimeline && selectedDoc !== null && selectedLink?.records.some(record => record.doc_id === selectedDoc) ? selectedDoc : null;
+  const markedDocs = new Set([...(timelineDocument !== null ? [timelineDocument] : selectedLink?.records.map(record => record.doc_id) ?? []), ...(isTimeline && markedDoc !== null ? [markedDoc] : [])]);
   const pill = !isTable && selectedNodeId?.startsWith("pill:") ? layout?.sectors.find(sector => `pill:${sector.family}` === selectedNodeId) : undefined;
   const adds = useMemo(() => {
     if (!rawSummary || !summary || !pill) return 0;
@@ -336,7 +337,7 @@ export function NeighborhoodView({ focusId }: { focusId: string }) {
           {isTimeline && summary ? (
             <>
               <TimelineView summary={summary} unfilteredTotal={rawTotal} filters={filters} phone={phone} selection={urlState.selection} onRange={(from, to) => changeFilters({ ...filters, from, to })} onSelect={(id, docId) => { navigate({ selection: id }); setSelectedDoc(docId ?? null); }} onMark={setMarkedDoc} onReset={() => changeFilters(defaultFilters())} />
-              <EvidenceShelf documents={documents} entityId={summary!.focus.id} marked={markedDocs} onMark={setMarkedDoc} className={selected ? "max-md:hidden" : undefined} />
+              <EvidenceShelf documents={documents} entityId={summary!.focus.id} selectedDocument={timelineDocument} marked={markedDocs} onMark={setMarkedDoc} className={selected ? "max-md:hidden" : undefined} />
             </>
           ) : isTable && summary && layout ? (
             <LinkTable summary={summary} layout={layout} unfilteredTotal={rawTotal} onResetFilters={() => changeFilters(defaultFilters())} selection={urlState.selection} onSelectLink={selectLinkKey} />

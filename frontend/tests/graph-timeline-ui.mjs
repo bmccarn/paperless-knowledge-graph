@@ -61,6 +61,20 @@ try {
   assert.equal(await page.locator('#evidence-shelf-title').locator('..').locator('a[data-marked]').count(), 1, 'Clicked source stays highlighted after blur and mouse leave');
   await page.goto(`${base}/graph?focus=nb-rowan&view=timeline`);
   await page.getByRole('region', { name: 'Timeline of Rowan Vale', exact: true }).waitFor();
+  const olderMark = page.locator('[data-document-ids="9030"]');
+  const olderBox = await olderMark.boundingBox();
+  await olderMark.click({ position: { x: olderBox.width / 2 + 2, y: olderBox.height / 2 } });
+  const olderChip = page.getByRole('region', { name: /^Evidence ·/ }).locator('a[data-document-id="9030"][data-marked]');
+  await olderChip.waitFor();
+  await page.waitForFunction(() => {
+    const chip = document.querySelector('a[data-document-id="9030"][data-marked]');
+    if (!chip) return false;
+    const source = chip.getBoundingClientRect(), list = chip.closest('ul').getBoundingClientRect();
+    return source.left >= list.left - 1 && source.right <= list.right + 1;
+  });
+  assert.equal(await olderChip.locator('..').locator('..').locator('a[data-document-id]').count(), 12, 'The source stays within the twelve-chip cap');
+  await page.goto(`${base}/graph?focus=nb-rowan&view=timeline`);
+  await page.getByRole('region', { name: 'Timeline of Rowan Vale', exact: true }).waitFor();
   const counts = await page.locator('[data-timeline-family]').evaluateAll(lanes => lanes.map(lane => lane.querySelectorAll('[data-timeline-row]').length));
   assert.ok(counts.every(count => count <= 2));
   await page.getByRole('button', { name: /^\+\d+ more parties and roles$/ }).click();
@@ -78,6 +92,19 @@ try {
   await timeline.waitFor();
   assert.equal(await timeline.locator('[data-document-ids]').count(), 1, '61 records merge to one monthly mark');
   assert.match(await timeline.locator('[data-document-ids]').getAttribute('aria-label'), /^61 documents, January 2026, Stated and inferred/);
+  await page.unroute('**/api/graph/node/nb-timeline?summary=1');
+  const party = source.links.find(link => link.type === 'ISSUED_BY');
+  await page.route('**/api/graph/node/nb-timeline?summary=1', route => route.fulfill({ json: { ...source, links: [
+    { ...party, records: [party.records[0]] },
+    { ...party, key: 'nb-timeline~SIGNED_BY~nb-timeline-insurer', type: 'SIGNED_BY', records: [party.records[0]] },
+  ] } }));
+  await page.goto(`${base}/graph?focus=nb-timeline&view=timeline`);
+  await timeline.waitFor();
+  const upperMark = timeline.locator(`[data-timeline-link="${party.key}"] [data-document-ids="${party.records[0].doc_id}"]`);
+  const upperBox = await upperMark.boundingBox();
+  await upperMark.click({ position: { x: upperBox.width / 2, y: upperBox.height / 2 + 2 } });
+  await page.waitForURL(url => url.searchParams.get('sel') === party.key);
+  assert.equal(new URL(page.url()).searchParams.get('sel'), party.key, 'The next track cannot intercept a mark center');
   await page.unroute('**/api/graph/node/nb-timeline?summary=1');
   let fail = true;
   await page.route('**/api/graph/node/nb-timeline?summary=1', route => fail ? route.fulfill({ status: 503, json: { detail: 'Synthetic service unavailable' } }) : route.continue());

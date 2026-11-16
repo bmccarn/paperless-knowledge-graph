@@ -50,6 +50,18 @@ const graphReady = async page => {
 };
 
 const extraStates = [
+  { name: "graph-timeline-source", route: "/graph?focus=nb-rowan&view=timeline", state: "selected-source",
+    ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }), prepare: async page => {
+      await page.evaluate(() => document.fonts.ready);
+      if (page.viewportSize().width < 768) {
+        const summary = await (await page.request.get("/api/graph/node/nb-rowan?summary=1")).json();
+        await page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }).getByRole("button", { name: new RegExp(`^${summary.documents["9030"].title}`) }).click();
+      } else {
+        await page.locator('[data-document-ids="9030"]').click();
+        await page.getByRole("region", { name: /^Evidence ·/ }).locator('a[data-document-id="9030"][data-marked]').waitFor();
+      }
+      await page.getByRole("region", { name: "Inspector: link", exact: true }).locator("blockquote").first().waitFor();
+    } },
   { name: "graph-timeline-unnamed", route: "/graph?focus=nb-unnamed&view=timeline", state: "unnamed", ready: page => page.getByRole("region", { name: "Timeline of Organization nb-unn", exact: true }) },
   { name: "graph-timeline-hub", route: "/graph?focus=nb-rowan&view=timeline", state: "hub", ready: page => page.getByRole("region", { name: "Timeline of Rowan Vale", exact: true }) },
   { name: "graph-timeline-leaf", route: "/graph?focus=nb-leaf&view=timeline", state: "leaf", ready: page => page.getByText("No direct links extracted. This entity appears in 2 documents.", { exact: true }) },

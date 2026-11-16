@@ -140,15 +140,18 @@ export function exploreLayout(root: NodeSummary, summaries: ReadonlyMap<string, 
 }
 
 /**
- * `x` without the given expansions and every later expansion of an entity they added, directly or through others.
- * Entries that added nothing because their node was not in view are dropped too; entries still loading are kept.
+ * `x` without the given expansions, later expansions of the same entity (they grow from it), and every later expansion
+ * of an entity they added, directly or through others. Entries that added nothing because their node was not in view
+ * are dropped too; entries still loading are kept.
  */
 export function collapse(layout: ExploreLayout, x: readonly string[], indices: readonly number[]): string[] {
   const removed = new Set(indices);
   const gone = new Set<string>();
+  const cut = new Set<string>();
   for (const expansion of layout.expansions) {
-    if (removed.has(expansion.index) || gone.has(expansion.id)) {
+    if (removed.has(expansion.index) || gone.has(expansion.id) || cut.has(expansion.id)) {
       removed.add(expansion.index);
+      cut.add(expansion.id);
       for (const id of expansion.added) gone.add(id);
     }
   }

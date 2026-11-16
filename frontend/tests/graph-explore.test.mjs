@@ -125,6 +125,10 @@ test("collapse removes the expansion and everything added through it; nodes from
   const after = exploreLayout(all.get("root"), all, collapse(layout, x, [2]), DESKTOP);
   assert.ok(after.nodes.some(node => node.id === "loan"), "loan was added by car, not by its own expansion");
   assert.ok(!after.nodes.some(node => node.id === "lender"));
+  // A repeated expansion grows from the first: collapsing the first removes the repeat and its batch too.
+  const twice = exploreLayout(all.get("root"), all, ["car", "car"], DESKTOP);
+  assert.deepEqual(collapse(twice, ["car", "car"], [0]), []);
+  assert.deepEqual(collapse(twice, ["car", "car"], [1]), ["car"]);
 });
 
 test("cross links add only links among entities in view that no summary drew, strongest first, capped", () => {

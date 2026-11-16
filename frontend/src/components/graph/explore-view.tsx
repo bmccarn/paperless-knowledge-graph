@@ -26,7 +26,7 @@ import { EXPANSION_LIMIT, parseLinkKey, type GraphUrlState } from "@/lib/graph-u
 import { cn } from "@/lib/utils";
 import type { Camera } from "./force-graph-client";
 import { EvidenceShelf } from "./evidence-shelf";
-import { ExploreInspector, FocusInspector, LinkInspector } from "./entity-inspector";
+import { ExploreInspector, LinkInspector } from "./entity-inspector";
 import { GraphLegend, LegendContent } from "./graph-legend";
 
 const ForceGraphClient = dynamic(() => import("./force-graph-client").then((module) => module.ForceGraphClient), { ssr: false });
@@ -215,19 +215,19 @@ export function ExploreView({ root: rawRoot, filters, url, phone, navigate, onRe
   let inspector = null;
   if (selectedLink) inspector = (
     <LinkInspector summary={{ ...root, documents: allDocuments }} link={asLink(selectedLink.link, selectedLink.source)}
-      end={nodes.get(selectedLink.source)!} onClose={clearSelection} />);
-  else if (selectedNode?.hop === 0) inspector = <FocusInspector summary={root} onClose={clearSelection} onOpenTable={() => navigate({ view: "table" })} {...rowEvents} />;
+      end={nodes.get(selectedLink.source)!} onClose={clearSelection} onSelectEntity={id => navigate({ selection: id })} />);
   else if (selectedNode) {
     const count = hidden(selectedNode.id);
     const step = Math.min(limits.step, count ?? limits.step);
     const grow = selectedNode.hop >= MAX_HOP ? { label: "Open in Focus", disabled: false }
       : count === 0 ? { label: "All links shown", disabled: true }
+      : count === null && failed.has(selectedNode.id) ? { label: "Links did not load. Retry", disabled: false, onClick: () => retry(selectedNode.id) }
       : { label: phone ? "Show more links" : `Show ${step} more ${step === 1 ? "link" : "links"} from here`, disabled: count === null };
     const own = expansionsOf(selectedNode.id);
     inspector = (
       <ExploreInspector key={selectedNode.id} entity={selectedNode} hop={selectedNode.hop} rootName={rootName} {...rowEvents}
         links={links.filter(link => link.source === selectedNode.id || link.target === selectedNode.id).map(link => asLink(link.link, selectedNode.id))}
-        grow={{ ...grow, onClick: () => expand(selectedNode.id) }} onCollapse={own.length ? () => collapseAt(own) : undefined}
+        grow={{ onClick: () => expand(selectedNode.id), ...grow }} onCollapse={own.length ? () => collapseAt(own) : undefined}
         onFocusEntity={openFocus} onClose={clearSelection} />);
   }
 
@@ -238,7 +238,7 @@ export function ExploreView({ root: rawRoot, filters, url, phone, navigate, onRe
     .some(summary => summary && drawableLinks(summary).some(link => link.neighbor.is_owner));
   const crossNote = extra && extra.total > extra.links.length ? ` Showing the ${extra.links.length} strongest of ${extra.total} links between branches.` : "";
   const trail = (
-    <Trail rootName={rootName} rootLabel={root.focus.label} rootLinks={layout.links.filter(link => link.source === root.focus.id || link.target === root.focus.id).length}
+    <Trail rootId={root.focus.id} rootName={rootName} rootLabel={root.focus.label} onSelect={id => navigate({ selection: id })} rootLinks={layout.links.filter(link => link.source === root.focus.id || link.target === root.focus.id).length}
       expansions={layout.expansions.map(item => ({ ...item, node: nodes.get(item.id)! }))} pending={pendingId ? { name: entityName(nodes.get(pendingId) ?? { id: pendingId, name: "", label: "Entity" }), failed: pendingFailed } : null}
       onCollapse={index => collapseAt([index])} onRetry={() => pendingId && retry(pendingId)} />
   );
@@ -332,15 +332,18 @@ export function ExploreView({ root: rawRoot, filters, url, phone, navigate, onRe
 }
 
 /** "Explored from <root>": the root and each expansion in order, with the entities it added and Collapse. */
-function Trail({ rootName, rootLabel, rootLinks, expansions, pending, onCollapse, onRetry }: {
+function Trail({ rootId, rootName, rootLabel, rootLinks, expansions, pending, onSelect, onCollapse, onRetry }: {
+  rootId: string;
   rootName: string;
   rootLabel: string;
   rootLinks: number;
   expansions: { index: number; added: string[]; node: ExploreNode }[];
   pending: { name: string; failed: boolean } | null;
+  onSelect: (id: string) => void;
   onCollapse: (index: number) => void;
   onRetry: () => void;
 }) {
+  const name = "truncate text-left label-13 text-fg underline-offset-4 hover:underline";
   const row = "grid h-8 grid-cols-[16px_minmax(0,1fr)_auto_28px] items-center gap-2 rounded-(--r-ctl) pl-2 max-md:h-11";
   return (
     <section aria-label={`Explored from ${rootName}`} className="rounded-(--r-panel) border border-border bg-surface px-2 pb-2 pt-3 max-md:border-0 max-md:bg-transparent">
@@ -351,13 +354,13 @@ function Trail({ rootName, rootLabel, rootLinks, expansions, pending, onCollapse
       <ol className="max-h-[50vh] overflow-y-auto">
         <li className={cn(row, "grid-cols-[16px_minmax(0,1fr)_auto] pr-2")}>
           <KindShape label={rootLabel} bare />
-          <span className="truncate label-13 text-fg">{rootName}</span>
+          <button type="button" className={name} onClick={() => onSelect(rootId)}>{rootName}</button>
           <span className="label-12 tabular-nums text-fg-muted">{plural(rootLinks, "link")}</span>
         </li>
         {expansions.map(({ index, added, node }) => (
           <li key={index} className={row}>
             <KindShape label={node.label} bare />
-            <span className="truncate label-13 text-fg">{entityName(node)}</span>
+            <button type="button" className={name} onClick={() => onSelect(node.id)}>{entityName(node)}</button>
             <span className="label-12 tabular-nums text-fg-muted">+{added.length}</span>
             <Button variant="ghost" size="icon-xs" aria-label={`Collapse ${entityName(node)}`} title="Collapse" onClick={() => onCollapse(index)}>
               <X />

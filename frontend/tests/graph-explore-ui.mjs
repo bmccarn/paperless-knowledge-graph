@@ -155,6 +155,46 @@ try {
   await trail(page).getByRole('button', { name: 'Retry' }).click();
   await settle(page, ': 18 entities, 24 links, 3 hops.');
 
+  // The handle of a hovered node, not selected, stays while the pointer crosses to it, and expands the node.
+  await page.unroute('**/api/graph/node/ex-loan?summary=1');
+  await page.goto(root);
+  frame = await settle(page, ': 9 entities');
+  await page.waitForTimeout(900);
+  const box = await page.locator('canvas').first().boundingBox();
+  await page.mouse.move(box.x + frame['2021 Mazda CX-5'].x, box.y + frame['2021 Mazda CX-5'].y);
+  const handle = await (await page.waitForFunction(() => window.__frame['+8'])).jsonValue();
+  await page.mouse.move(box.x + handle.x, box.y + handle.y, { steps: 8 });
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForURL(url => url.searchParams.get('x') === 'ex-car');
+  assert.equal(params(page).has('sel'), false);
+
+  // Keyboard route: a trail name selects its node, the root offers its own expansion, and a link's ends select nodes.
+  await page.goto(root);
+  await settle(page, ': 9 entities');
+  await trail(page).getByRole('button', { name: 'Policy KT-9030 (auto)', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForURL(url => url.searchParams.get('sel') === 'ex-policy');
+  await inspector(page).getByRole('button', { name: 'Show 2 more links from here' }).waitFor();
+  await inspector(page).getByRole('list', { name: 'Linked in this view' }).getByRole('button', { name: /^2021 Mazda CX-5/ }).press('Enter');
+  await page.waitForURL(url => url.searchParams.get('sel') === 'ex-policy~COVERS~ex-car');
+  await page.getByRole('region', { name: 'Inspector: link' }).getByRole('button', { name: '2021 Mazda CX-5', exact: true }).press('Enter');
+  await page.waitForURL(url => url.searchParams.get('sel') === 'ex-car');
+  const growCar = inspector(page).getByRole('button', { name: 'Show 6 more links from here' });
+  await growCar.click({ trial: true }); // enabled once the car's links arrive
+  await growCar.press('Enter');
+  await page.waitForURL(url => url.searchParams.get('x') === 'ex-car');
+
+  // A selected node whose links did not load offers Retry in the inspector.
+  let failCar = true;
+  await page.route('**/api/graph/node/ex-car?summary=1', route => (failCar ? route.fulfill({ status: 503, json: { detail: 'Synthetic failure' } }) : route.fallback()));
+  await page.goto(`${root}&sel=ex-car`);
+  const retryCar = inspector(page).getByRole('button', { name: 'Links did not load. Retry' });
+  await retryCar.waitFor();
+  failCar = false;
+  await retryCar.click();
+  await inspector(page).getByRole('button', { name: 'Show 6 more links from here' }).waitFor();
+
   // Sparse and empty roots.
   await page.goto(`${base}/graph?focus=ex-hq&view=explore`);
   await settle(page, 'Explore from 12 Wharf Rd: 2 entities, 1 link, 1 hop.');

@@ -112,6 +112,11 @@ const HANDLE = "Handle";
 /** Handle spots: two distances from the shape, then turns away from straight out. */
 const HANDLE_SPOTS = [34, 24].flatMap(gap => [0, 45, -45, 90, -90, 135, -135, 180].map(turn => ({ gap, turn })));
 const HOVER_DELAY = 120;
+/**
+ * With handles, hover outlasts the pointer by this long, so the pointer can cross the gap to the handle. force-graph
+ * adds a new handle to its hit map up to 800 ms late (HOVER_CANVAS_THROTTLE_DELAY in force-graph 1.52.0).
+ */
+const HANDLE_GRACE = 1200;
 const docs = (count: number) => `${count} ${count === 1 ? "doc" : "docs"}`;
 const nodeDocs = (node: ExplorerNode) => Number(node.props.evidence_doc_count) || 0;
 const linkDocs = (link: { props: Record<string, unknown> }) =>
@@ -664,9 +669,11 @@ export function ForceGraphClient({
     clearTimeout(hoverTimer.current);
     // Moving onto the handle keeps its node hovered, so the handle stays.
     if (node?.label === HANDLE) return;
-    if (!node || node.label === "Aggregate") setHoveredId(null);
-    else hoverTimer.current = setTimeout(() => setHoveredId(node.id), HOVER_DELAY);
-  }, []);
+    if (!node || node.label === "Aggregate") {
+      if (handles) hoverTimer.current = setTimeout(() => setHoveredId(null), HANDLE_GRACE);
+      else setHoveredId(null);
+    } else hoverTimer.current = setTimeout(() => setHoveredId(node.id), HOVER_DELAY);
+  }, [handles]);
 
   const preserveUserView = (event: { target: EventTarget }) => {
     if (event.target instanceof HTMLCanvasElement) initialFitPending.current = false;
@@ -735,7 +742,20 @@ export function ForceGraphClient({
           }}
           onNodeHover={hover}
           onNodeClick={(node, event) => (node.label === HANDLE ? onHandle?.(String(node.props.of)) : onSelectNode(node, event))}
-          onBackgroundClick={onClear}
+          onBackgroundClick={(event) => {
+            // A click on a handle that force-graph's hit map does not hold yet (see HANDLE_GRACE) still expands its node.
+            const node = data.nodes.find(item => item.label === HANDLE);
+            const graph = handleRef.current;
+            const ctx = event.target instanceof HTMLCanvasElement ? event.target.getContext("2d") : null;
+            if (node && graph && ctx && node.x !== undefined && node.y !== undefined) {
+              const box = handleBox(ctx, node, graph.zoom());
+              const at = graph.graph2ScreenCoords(node.x, node.y);
+              const rect = ctx.canvas.getBoundingClientRect();
+              const x = event.clientX - rect.left - at.x, y = event.clientY - rect.top - at.y;
+              if (x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1) return onHandle?.(String(node.props.of));
+            }
+            onClear();
+          }}
           onLinkClick={(link) =>
             onSelectLink({
               ...link,
